@@ -1,0 +1,21 @@
+[Unit]
+Description=CLIProxyAPI (localhost subscription pool for Claude Code / Codex)
+Documentation=https://github.com/router-for-me/CLIProxyAPI
+After=network-online.target
+Wants=network-online.target
+StartLimitIntervalSec=300
+StartLimitBurst=10
+
+[Service]
+Type=simple
+WorkingDirectory=%h/.cli-proxy-api
+ExecStart=%h/.local/share/agent-stack/cliproxyapi/current/cli-proxy-api -config %h/.cli-proxy-api/config.yaml
+Restart=always
+RestartSec=5
+UMask=0077
+NoNewPrivileges=yes
+PrivateTmp=yes
+LimitNOFILE=65536
+
+[Install]
+WantedBy=default.target

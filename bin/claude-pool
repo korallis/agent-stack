@@ -1,0 +1,4 @@
+#!/usr/bin/env bash
+# Claude Code through the local CLIProxyAPI pool (2 Claude subscriptions). Plain `claude` stays on direct
+# claude.ai login so your claude.ai connectors keep working.
+exec claude --settings "$HOME/.config/agent-stack/claude-proxy-settings.json" "$@"

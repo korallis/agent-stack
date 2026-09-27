@@ -1,0 +1,5 @@
+#!/usr/bin/env bash
+# Restart the OpenRig daemon if /healthz fails twice (agents in tmux are unaffected).
+for i in 1 2; do curl -fsS -m 5 -o /dev/null http://127.0.0.1:7433/healthz && exit 0; sleep 5; done
+logger -t openrig-healthcheck "healthz failed twice; restarting openrig.service"
+systemctl --user restart openrig.service

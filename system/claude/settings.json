@@ -1,0 +1,16 @@
+{
+  "enabledPlugins": {
+    "typesafe@typesafe-ai": true
+  },
+  "extraKnownMarketplaces": {
+    "typesafe-ai": {
+      "source": {
+        "source": "github",
+        "repo": "typesafe-ai/skills"
+      }
+    }
+  },
+  "tui": "fullscreen",
+  "theme": "auto",
+  "skipDangerousModePermissionPrompt": true
+}

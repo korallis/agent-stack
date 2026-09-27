@@ -1,0 +1,8 @@
+[Unit]
+Description=Drain CLIProxyAPI usage queue every 30s
+[Timer]
+OnBootSec=1min
+OnUnitActiveSec=30s
+AccuracySec=2s
+[Install]
+WantedBy=timers.target

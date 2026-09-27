@@ -1,0 +1,3 @@
+#!/usr/bin/env bash
+# apiKeyHelper for Claude Code: prints the LOCAL proxy client key (not an upstream credential).
+exec sed -n 's/^CLIPROXY_CLIENT_KEY=//p' "$HOME/.config/agent-stack/secrets/cliproxy.env"

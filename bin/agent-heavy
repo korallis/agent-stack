@@ -1,0 +1,33 @@
+#!/usr/bin/env bash
+# agent-heavy <build|browser> [--wait SECONDS] -- <command...>
+# Runs a heavy build or browser test under a SHARED machine budget so 24 agents cannot starve the host:
+#   - concurrency slots (flock)            build: 2 at once, browser: 2 at once
+#   - cgroup limits via systemd-run --user build: 8 CPUs / 16G RAM, browser: 4 CPUs / 8G RAM
+# Budgets are ordinary code/config, never a model decision. Override with AGENT_HEAVY_<CLASS>_SLOTS etc.
+set -euo pipefail
+class=${1:?usage: agent-heavy <build|browser> [--wait S] -- cmd...}; shift
+wait_s=1800
+while [[ $# -gt 0 && $1 != "--" ]]; do case $1 in --wait) wait_s=$2; shift 2;; *) echo "unknown arg $1" >&2; exit 2;; esac; done
+[[ ${1:-} == "--" ]] && shift
+[[ $# -gt 0 ]] || { echo "no command given" >&2; exit 2; }
+case $class in
+  build)   slots=${AGENT_HEAVY_BUILD_SLOTS:-2};   cpu=${AGENT_HEAVY_BUILD_CPU:-800%};   mem=${AGENT_HEAVY_BUILD_MEM:-16G} ;;
+  browser) slots=${AGENT_HEAVY_BROWSER_SLOTS:-2}; cpu=${AGENT_HEAVY_BROWSER_CPU:-400%}; mem=${AGENT_HEAVY_BROWSER_MEM:-8G} ;;
+  *) echo "class must be build or browser" >&2; exit 2 ;;
+esac
+dir=${XDG_RUNTIME_DIR:-/tmp}/agent-heavy; mkdir -p "$dir"
+deadline=$(( $(date +%s) + wait_s ))
+while :; do
+  for i in $(seq 1 "$slots"); do
+    exec {fd}>"$dir/$class.$i.lock"
+    if flock -n "$fd"; then
+      echo "[agent-heavy] $class slot $i/$slots (cpu=$cpu mem=$mem) seat=${OPENRIG_SESSION_NAME:-$USER}" >&2
+      systemd-run --user --scope --quiet -p CPUQuota="$cpu" -p MemoryMax="$mem" -p MemorySwapMax=0 \
+        --unit="agent-heavy-$class-$i-$$" -- "$@"
+      exit $?
+    fi
+    exec {fd}>&-
+  done
+  (( $(date +%s) >= deadline )) && { echo "[agent-heavy] no $class slot free within ${wait_s}s" >&2; exit 75; }
+  sleep 5
+done

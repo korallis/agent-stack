@@ -1,0 +1,23 @@
+[Unit]
+Description=OpenRig daemon (kernel rig + restore last-running rigs), YOLO seats
+After=cliproxyapi.service network-online.target
+Wants=cliproxyapi.service
+
+[Service]
+Type=oneshot
+RemainAfterExit=yes
+Environment=OPENRIG_YOLO=1
+Environment=PATH=%h/.local/share/agent-stack/seat-bin:%h/.local/bin:%h/.local/share/mise/shims:/usr/local/bin:/usr/bin:/bin
+Environment=SHELL=/bin/bash
+WorkingDirectory=%h
+ExecStart=%h/.local/bin/rig daemon start
+# Restore rigs that were running before a reboot. On a plain daemon restart the rigs are still live
+# (agents run in tmux) and restore correctly declines; that is not a failure of this unit.
+ExecStartPost=-%h/.local/bin/rig start --last
+ExecStop=%h/.local/bin/rig daemon stop
+# Agents live in tmux sessions; never kill them when this unit stops/restarts.
+KillMode=process
+TimeoutStartSec=300
+
+[Install]
+WantedBy=default.target

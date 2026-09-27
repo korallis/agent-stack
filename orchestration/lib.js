@@ -1,0 +1,107 @@
+// Deterministic orchestration helpers: everything here is ordinary code (capacity, availability,
+// dependencies, ownership, budgets). Semantic judgments are delegated to jev/lib/engine.js.
+import { execFileSync } from "node:child_process";
+import { DatabaseSync } from "node:sqlite";
+import { mkdirSync } from "node:fs";
+import { join } from "node:path";
+import { STATE_DIR } from "../jev/lib/store.js";
+
+export function rig(args, { json = false, allowFail = false } = {}) {
+  try {
+    const out = execFileSync("rig", json ? [...args, "--json"] : args, { encoding: "utf8", stdio: ["ignore", "pipe", "pipe"], timeout: 60_000 });
+    return json ? JSON.parse(out) : out;
+  } catch (e) {
+    if (allowFail) return null;
+    throw new Error(`rig ${args.join(" ")} failed: ${(e.stderr || e.message).toString().slice(0, 300)}`);
+  }
+}
+
+// Role and model family come from the seat's pod/member naming (see rig/agent_team.py ROSTER).
+const POD_ROLE = { coord: null, arch: "architect", impl: "implementer", review: "reviewer", integ: "integrator" };
+export function seatInfo(node) {
+  const [pod, member] = node.logicalId.split(".");
+  let role = POD_ROLE[pod];
+  if (pod === "coord") role = member.startsWith("lead") ? "lead" : "deputy";
+  const family = node.runtime === "codex" ? "codex" : "claude";
+  return { seat: node.canonicalSessionName, pod, member, role, family, runtime: node.runtime,
+    running: node.lifecycleState === "running" && node.sessionStatus === "running",
+    idle: node.agentActivity?.state === "idle", assigned: node.assignedWorkCount ?? 0, pending: node.pendingWorkCount ?? 0 };
+}
+
+export function seats(rigName) {
+  const nodes = rig(["ps", "--nodes", "--rig", rigName], { json: true });
+  return (Array.isArray(nodes) ? nodes : nodes.nodes || []).filter((n) => n.runtime !== "terminal").map(seatInfo);
+}
+
+// Account availability from the proxy (never estimated by a model).
+export function eligibleFamilies() {
+  try {
+    const rows = JSON.parse(execFileSync("agent-proxy-status", ["--json"], { encoding: "utf8", timeout: 20_000 }));
+    const fam = { claude: 0, codex: 0 };
+    for (const r of rows) if (!r.disabled && !r.unavailable && r.status === "active") fam[r.provider] = (fam[r.provider] || 0) + 1;
+    return fam;
+  } catch {
+    return { claude: null, codex: null }; // unknown ≠ zero: do not block dispatch on a status-tool failure
+  }
+}
+
+// OpenRig queue JSON is camelCase (qitemId, destinationSession, ...); normalise once here.
+export function normQ(q) {
+  if (!q) return null;
+  const x = q.qitem || q;
+  return { id: x.qitemId, state: x.state, destination: x.destinationSession, source: x.sourceSession,
+    summary: x.summary, body: x.body, closureReason: x.closureReason, tags: x.tags };
+}
+export function queueItems(rigName, { all = false } = {}) {
+  const r = rig(["queue", "list", "-A", ...(all ? ["-a"] : []), "--limit", "500"], { json: true, allowFail: true });
+  const items = (Array.isArray(r) ? r : r?.items || r?.qitems || []).map(normQ);
+  return items.filter((q) => !rigName || String(q.destination || "").endsWith(`@${rigName}`));
+}
+
+// Durable orchestration state: seat quality record, recovery attempts, dispatch idempotency.
+let db;
+export function odb() {
+  if (db) return db;
+  mkdirSync(STATE_DIR, { recursive: true, mode: 0o700 });
+  db = new DatabaseSync(join(STATE_DIR, "orchestration.sqlite"));
+  db.exec(`PRAGMA journal_mode=WAL; PRAGMA busy_timeout=5000;
+    CREATE TABLE IF NOT EXISTS seat_quality (seat TEXT PRIMARY KEY, completed INTEGER DEFAULT 0, returned INTEGER DEFAULT 0, failed INTEGER DEFAULT 0);
+    CREATE TABLE IF NOT EXISTS recovery (id INTEGER PRIMARY KEY, ts INTEGER, item TEXT, seat TEXT, class TEXT, action TEXT, applied INTEGER, decided_by TEXT);
+    CREATE TABLE IF NOT EXISTS dispatches (key TEXT PRIMARY KEY, ts INTEGER, item TEXT, seat TEXT);`);
+  return db;
+}
+export function quality(seat) {
+  return odb().prepare("SELECT completed, returned, failed FROM seat_quality WHERE seat=?").get(seat) || { completed: 0, returned: 0, failed: 0 };
+}
+export function recordQuality(seat, field) {
+  if (!["completed", "returned", "failed"].includes(field)) throw new Error("bad field");
+  odb().prepare(`INSERT INTO seat_quality (seat, ${field}) VALUES (?,1) ON CONFLICT(seat) DO UPDATE SET ${field}=${field}+1`).run(seat);
+}
+// Laplace-smoothed success rate: new seats start at 0.5, demonstrated quality moves it.
+export function qualityScore(seat) {
+  const q = quality(seat);
+  return (q.completed + 1) / (q.completed + q.returned + q.failed + 2);
+}
+
+// Pick a concrete seat for a role: capacity + availability + balance + demonstrated quality. Pure code.
+export function pickSeat(all, role, { preferFamily = null, excludeFamily = null, families = eligibleFamilies() } = {}) {
+  const inFlight = { claude: 0, codex: 0 };
+  for (const s of all) inFlight[s.family] += s.assigned;
+  const pool = all.filter((s) => s.role === role && s.running && s.assigned === 0 && s.pending === 0
+    && s.family !== excludeFamily && families[s.family] !== 0);
+  pool.sort((a, b) =>
+    (preferFamily ? (b.family === preferFamily) - (a.family === preferFamily) : 0)
+    || inFlight[a.family] - inFlight[b.family]
+    || qualityScore(b.seat) - qualityScore(a.seat)
+    || (b.idle - a.idle)
+    || a.seat.localeCompare(b.seat));
+  return { seat: pool[0] || null, considered: pool.map((s) => s.seat), inFlight, families };
+}
+
+// Crude lexical prefilter so Jev only sees a focused candidate set (≤ n).
+export function lexicalTop(query, docs, n = 20) {
+  const toks = (s) => new Set(String(s).toLowerCase().match(/[a-z0-9_]{3,}/g) || []);
+  const q = toks(query);
+  return docs.map((d) => { const t = toks(d.text); let hit = 0; for (const w of q) if (t.has(w)) hit++; return { ...d, _s: hit / Math.sqrt(t.size + 1) }; })
+    .filter((d) => d._s > 0).sort((a, b) => b._s - a._s).slice(0, n).map(({ _s, ...d }) => d);
+}

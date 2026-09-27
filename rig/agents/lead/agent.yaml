@@ -1,0 +1,30 @@
+name: team-lead
+version: "1.0"
+description: "Team lead / coordinator: intake, dispatch, single coordination owner"
+
+defaults:
+  runtime: claude-code
+
+imports:
+  - ref: local:../../openrig-shared
+
+profiles:
+  default:
+    uses:
+      skills: [orchestration-team, verification-before-completion]
+      guidance: []
+      subagents: []
+      plugins: [shared:openrig-core]
+      runtime_resources: [shared:claude-activity-hooks]
+
+resources:
+  guidance:
+    - id: role
+      path: guidance/role.md
+
+startup:
+  files:
+    - path: guidance/role.md
+      delivery_hint: send_text
+      required: true
+  actions: []

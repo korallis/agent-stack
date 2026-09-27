@@ -1,0 +1,46 @@
+#!/usr/bin/env python3
+"""OpenRig seats only (first on the OpenRig daemon's PATH).
+
+1. OpenRig launches Codex from a `/bin/sh <script>` wrapper, so tmux's #{pane_current_command} reads
+   "sh" until Codex draws its TUI; OpenRig's restore probe treats that as "returned_to_shell". Making
+   Codex the terminal's foreground process group lets tmux report "codex" from the first instant.
+2. --no-daemon: the shared Codex app-server daemon runs hooks with the env of whichever seat started
+   it, so OpenRig activity hooks report the wrong seat/generation (openrig#69).
+3. model_catalog_json: the proxy's Codex catalog with display_name = slug. Codex 0.157 footers show the
+   display name ("GPT 6.0 Astra"); OpenRig's live-TUI matcher expects the slug ("  gpt-6-astra · …").
+   Same models and capabilities; only the label changes.
+"""
+import os, signal, sys
+
+real = os.path.expanduser("~/.local/share/mise/installs/codex/latest/bin/codex")
+try:
+    fd = os.open("/dev/tty", os.O_RDWR)
+    old = signal.signal(signal.SIGTTOU, signal.SIG_IGN)
+    os.setpgid(0, 0)
+    os.tcsetpgrp(fd, os.getpgrp())
+    signal.signal(signal.SIGTTOU, old)
+    os.close(fd)
+except OSError:
+    pass  # no controlling tty (non-interactive use): nothing to do
+
+catalog = os.path.join(os.path.dirname(os.path.realpath(__file__)), "codex-models.json")
+try:
+    import json, time, urllib.request
+    if not os.path.exists(catalog) or time.time() - os.path.getmtime(catalog) > 6 * 3600:
+        key = next(l.split("=", 1)[1].strip() for l in open(os.path.expanduser("~/.config/agent-stack/secrets/cliproxy.env"))
+                   if l.startswith("CLIPROXY_CLIENT_KEY="))
+        req = urllib.request.Request("http://127.0.0.1:8317/v1/models?client_version=0.157.1",
+                                     headers={"Authorization": f"Bearer {key}", "User-Agent": "codex_cli_rs/0.157.1"})
+        data = json.load(urllib.request.urlopen(req, timeout=5))
+        for m in data.get("models", []):
+            m["display_name"] = m["slug"]
+        tmp = catalog + ".tmp"
+        with open(tmp, "w") as f:
+            json.dump(data, f)
+        os.replace(tmp, catalog)
+except Exception:
+    pass  # keep the previous catalog; a stale label never blocks launch
+extra = ["-c", f'model_catalog_json="{catalog}"'] if os.path.exists(catalog) else []
+# Seats talk only to the local proxy: no analytics, feedback upload or update checks.
+extra += ["-c", "analytics.enabled=false", "-c", "feedback.enabled=false", "-c", "check_for_update_on_startup=false"]
+os.execv(real, [real, "--no-daemon", *extra, *sys.argv[1:]])

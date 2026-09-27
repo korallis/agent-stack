@@ -1,0 +1,6 @@
+[Unit]
+Description=CLIProxyAPI health check
+After=cliproxyapi.service
+[Service]
+Type=oneshot
+ExecStart=%h/.local/share/agent-stack/bin/cliproxy-healthcheck

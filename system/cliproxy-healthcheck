@@ -1,0 +1,6 @@
+#!/usr/bin/env bash
+# Restart CLIProxyAPI if /healthz fails twice in a row (bounded; systemd StartLimit caps restart loops).
+url=http://127.0.0.1:8317/healthz
+for i in 1 2; do curl -fsS -m 5 -o /dev/null "$url" && exit 0; sleep 5; done
+logger -t cliproxy-healthcheck "healthz failed twice; restarting cliproxyapi.service"
+systemctl --user restart cliproxyapi.service

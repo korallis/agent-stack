@@ -1,0 +1,70 @@
+# Managed by agent-stack (see ~/.local/share/agent-stack/README.md). CLIProxyAPI v8 layout.
+# No paid upstream api-keys groups are configured on purpose: subscription OAuth only.
+config-version: 8
+server:
+  host: "127.0.0.1"
+  port: 8317
+  trusted-proxies: []
+  tls: {enable: false, cert: "", key: ""}
+  commercial-mode: false
+  discovery: {enabled: false}
+management:
+  allow-remote: false
+  secret-key: "<bcrypt hash — see secrets/cliproxy.env>"
+  disable-control-panel: true
+  disable-auto-update-panel: true
+access:
+  api-keys:
+    - "sk-local-<redacted>"
+routing:
+  strategy: "round-robin"
+  session-affinity: true
+  session-affinity-ttl: "2h"
+  session-affinity-subagents: true
+  force-model-prefix: false
+  retry:
+    request-retry: 2
+    max-retry-credentials: 0
+    max-retry-interval: 30
+  cooldown:
+    disable-cooling: false
+    save-cooldown-status: true
+    transient-error-cooldown-seconds: 30
+requests:
+  proxy-url: ""
+  passthrough-headers: false
+  nonstream-keepalive-interval: 0
+  streaming:
+    keepalive-seconds: 15
+    bootstrap-retries: 1
+oauth:
+  auth-dir: "~/.cli-proxy-api"
+  providers:
+    codex:
+      response-steering: false
+      identity-confuse: false
+      disable-codex-cloaking: false
+      stream-bootstrap-buffering: true
+      stream-bootstrap-timeout: "20s"
+      model-level-cooling: true
+      live-media-relay: {enabled: false}
+    claude:
+      model-level-cooling: true
+      disable-claude-cloak-mode: false
+    antigravity:
+      antigravity-credits: false
+multimedia:
+  disable-image-generation: "passthrough"
+observability:
+  logs:
+    debug: false
+    logging-to-file: true
+    logs-max-total-size-mb: 512
+    error-logs-max-files: 20
+    request-log: false
+  usage:
+    usage-statistics-enabled: true
+    redis-usage-queue-retention-seconds: 3600
+  pprof: {enable: false, addr: "127.0.0.1:8316"}
+plugins:
+  enabled: false

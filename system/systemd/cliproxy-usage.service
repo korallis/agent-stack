@@ -1,0 +1,6 @@
+[Unit]
+Description=Drain CLIProxyAPI usage queue into redacted routing log
+After=cliproxyapi.service
+[Service]
+Type=oneshot
+ExecStart=/usr/bin/python3 /home/lee/Projects/agent-stack/proxy/usage_collector.py

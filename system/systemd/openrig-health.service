@@ -1,0 +1,5 @@
+[Unit]
+Description=OpenRig daemon health check
+[Service]
+Type=oneshot
+ExecStart=%h/.local/share/agent-stack/bin/openrig-healthcheck

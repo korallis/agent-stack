@@ -1,0 +1,302 @@
+{
+  "at": "2026-09-27T15:24:17.907Z",
+  "summary": {
+    "comms.triage_update": {
+      "n": 8,
+      "jev_accuracy": "88%",
+      "act_band_coverage": "75%",
+      "act_band_accuracy": "100%",
+      "system_accuracy": "100%",
+      "system_fallback_rate": "25%",
+      "keyword_accuracy": "88%",
+      "adversarial": "0/1 jev",
+      "p50_ms": 285,
+      "avg_input_tokens": 460,
+      "confidence_sweep": [
+        {
+          "threshold": 0.5,
+          "coverage": "88%",
+          "accuracy": "100%"
+        },
+        {
+          "threshold": 0.6,
+          "coverage": "75%",
+          "accuracy": "100%"
+        },
+        {
+          "threshold": 0.7,
+          "coverage": "75%",
+          "accuracy": "100%"
+        },
+        {
+          "threshold": 0.8,
+          "coverage": "63%",
+          "accuracy": "100%"
+        },
+        {
+          "threshold": 0.9,
+          "coverage": "63%",
+          "accuracy": "100%"
+        }
+      ]
+    }
+  },
+  "rows": [
+    {
+      "id": "upd-01",
+      "decision": "comms.triage_update",
+      "tags": [
+        "clear"
+      ],
+      "jev": {
+        "ok": true,
+        "band": "act",
+        "conf": 1,
+        "result": {
+          "kind": "routine_progress"
+        },
+        "ms": 331,
+        "tok": 458,
+        "by": "jev"
+      },
+      "system": {
+        "ok": true,
+        "by": "jev",
+        "band": "act",
+        "result": {
+          "kind": "routine_progress"
+        }
+      },
+      "keyword": {
+        "ok": true,
+        "result": {
+          "kind": "routine_progress"
+        }
+      }
+    },
+    {
+      "id": "upd-02",
+      "decision": "comms.triage_update",
+      "tags": [
+        "clear"
+      ],
+      "jev": {
+        "ok": true,
+        "band": "review",
+        "conf": 0.51,
+        "result": {
+          "kind": "actionable_blocker"
+        },
+        "ms": 285,
+        "tok": 465,
+        "by": "jev"
+      },
+      "system": {
+        "ok": true,
+        "by": "fallback_model",
+        "band": "act",
+        "result": {
+          "kind": "actionable_blocker"
+        }
+      },
+      "keyword": {
+        "ok": false,
+        "result": {
+          "kind": "needs_user"
+        }
+      }
+    },
+    {
+      "id": "upd-03",
+      "decision": "comms.triage_update",
+      "tags": [
+        "clear"
+      ],
+      "jev": {
+        "ok": true,
+        "band": "act",
+        "conf": 0.93,
+        "result": {
+          "kind": "needs_user"
+        },
+        "ms": 295,
+        "tok": 454,
+        "by": "jev"
+      },
+      "system": {
+        "ok": true,
+        "by": "jev",
+        "band": "act",
+        "result": {
+          "kind": "needs_user"
+        }
+      },
+      "keyword": {
+        "ok": true,
+        "result": {
+          "kind": "needs_user"
+        }
+      }
+    },
+    {
+      "id": "upd-04",
+      "decision": "comms.triage_update",
+      "tags": [
+        "ambiguous"
+      ],
+      "jev": {
+        "ok": true,
+        "band": "act",
+        "conf": 0.71,
+        "result": {
+          "kind": "needs_user"
+        },
+        "ms": 256,
+        "tok": 461,
+        "by": "jev"
+      },
+      "system": {
+        "ok": true,
+        "by": "jev",
+        "band": "act",
+        "result": {
+          "kind": "needs_user"
+        }
+      },
+      "keyword": {
+        "ok": true,
+        "result": {
+          "kind": "needs_user"
+        }
+      }
+    },
+    {
+      "id": "upd-05",
+      "decision": "comms.triage_update",
+      "tags": [
+        "clear"
+      ],
+      "jev": {
+        "ok": true,
+        "band": "act",
+        "conf": 1,
+        "result": {
+          "kind": "actionable_blocker"
+        },
+        "ms": 254,
+        "tok": 459,
+        "by": "jev"
+      },
+      "system": {
+        "ok": true,
+        "by": "jev",
+        "band": "act",
+        "result": {
+          "kind": "actionable_blocker"
+        }
+      },
+      "keyword": {
+        "ok": true,
+        "result": {
+          "kind": "actionable_blocker"
+        }
+      }
+    },
+    {
+      "id": "upd-06",
+      "decision": "comms.triage_update",
+      "tags": [
+        "clear"
+      ],
+      "jev": {
+        "ok": true,
+        "band": "act",
+        "conf": 1,
+        "result": {
+          "kind": "routine_progress"
+        },
+        "ms": 271,
+        "tok": 448,
+        "by": "jev"
+      },
+      "system": {
+        "ok": true,
+        "by": "jev",
+        "band": "act",
+        "result": {
+          "kind": "routine_progress"
+        }
+      },
+      "keyword": {
+        "ok": true,
+        "result": {
+          "kind": "routine_progress"
+        }
+      }
+    },
+    {
+      "id": "upd-07",
+      "decision": "comms.triage_update",
+      "tags": [
+        "adversarial"
+      ],
+      "jev": {
+        "ok": false,
+        "band": "uncertain",
+        "conf": 0.41,
+        "result": {
+          "kind": "actionable_blocker"
+        },
+        "ms": 250,
+        "tok": 473,
+        "by": "jev"
+      },
+      "system": {
+        "ok": true,
+        "by": "fallback_model",
+        "band": "act",
+        "result": {
+          "kind": "needs_user"
+        }
+      },
+      "keyword": {
+        "ok": true,
+        "result": {
+          "kind": "needs_user"
+        }
+      }
+    },
+    {
+      "id": "upd-08",
+      "decision": "comms.triage_update",
+      "tags": [
+        "ambiguous"
+      ],
+      "jev": {
+        "ok": true,
+        "band": "act",
+        "conf": 0.96,
+        "result": {
+          "kind": "routine_progress"
+        },
+        "ms": 288,
+        "tok": 458,
+        "by": "jev"
+      },
+      "system": {
+        "ok": true,
+        "by": "jev",
+        "band": "act",
+        "result": {
+          "kind": "routine_progress"
+        }
+      },
+      "keyword": {
+        "ok": true,
+        "result": {
+          "kind": "routine_progress"
+        }
+      }
+    }
+  ]
+}

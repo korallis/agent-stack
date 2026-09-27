@@ -1,0 +1,123 @@
+# Managed by agent-stack (backup + rollback: ~/Projects/agent-stack/docs/ROLLBACK.md).
+# Codex -> local CLIProxyAPI pool (4 ChatGPT Pro accounts). Upstream credentials stay in the proxy.
+model_provider = "cliproxyapi"
+model = "gpt-6-astra"
+model_reasoning_effort = "high"
+approval_policy = "on-request"
+sandbox_mode = "workspace-write"
+
+[model_providers.cliproxyapi]
+name = "CLIProxyAPI (local pool)"
+base_url = "http://127.0.0.1:8317/v1"
+wire_api = "responses"
+requires_openai_auth = false
+supports_websockets = true
+model_catalog_url = "http://127.0.0.1:8317/v1/models"
+request_max_retries = 4
+stream_max_retries = 5
+stream_idle_timeout_ms = 300000
+
+[model_providers.cliproxyapi.auth]
+command = "/home/lee/.local/share/agent-stack/bin/cliproxy-key"
+timeout_ms = 5000
+refresh_interval_ms = 3600000
+
+# OpenRig submits pasted messages with C-m. With tmux extended-keys (csi-u, Omarchy default) Codex
+# receives that as Ctrl+M, which by default inserts a newline, so rig messages never submitted.
+# Make Ctrl+M submit (Enter unchanged); newline stays on Shift+Enter / Ctrl+J / Alt+Enter.
+[tui.keymap.composer]
+submit = ["enter", "ctrl-m"]
+
+[tui.keymap.editor]
+insert_newline = ["shift-enter", "ctrl-j", "alt-enter"]
+
+[mcp_servers.jev]
+command = "/home/lee/.local/bin/jev-mcp"
+# Jev decisions are advisory and read-only; pre-approve so non-interactive/rig Codex seats can call them.
+default_tools_approval_mode = "approve"
+
+[features]
+hooks = true
+
+# BEGIN OPENRIG MANAGED ACTIVITY HOOKS
+[[hooks.SessionStart]]
+[[hooks.SessionStart.hooks]]
+type = "command"
+command = 'node "/home/lee/.local/share/agent-stack/openrig/lib/node_modules/@openrig/cli/daemon/assets/plugins/openrig-core/hooks/scripts/activity-relay.cjs"'
+timeout = 5
+
+[[hooks.UserPromptSubmit]]
+[[hooks.UserPromptSubmit.hooks]]
+type = "command"
+command = 'node "/home/lee/.local/share/agent-stack/openrig/lib/node_modules/@openrig/cli/daemon/assets/plugins/openrig-core/hooks/scripts/activity-relay.cjs"'
+timeout = 5
+
+[[hooks.Stop]]
+[[hooks.Stop.hooks]]
+type = "command"
+command = 'node "/home/lee/.local/share/agent-stack/openrig/lib/node_modules/@openrig/cli/daemon/assets/plugins/openrig-core/hooks/scripts/activity-relay.cjs"'
+timeout = 5
+
+[[hooks.PermissionRequest]]
+[[hooks.PermissionRequest.hooks]]
+type = "command"
+command = 'node "/home/lee/.local/share/agent-stack/openrig/lib/node_modules/@openrig/cli/daemon/assets/plugins/openrig-core/hooks/scripts/activity-relay.cjs"'
+timeout = 5
+# END OPENRIG MANAGED ACTIVITY HOOKS
+
+[hooks.state."/home/lee/.codex/config.toml:session_start:0:0"]
+trusted_hash = "sha256:738eb8d673bce4918c08badd679200618ffa9adf0f10d489f8d06c892f758ae0"
+
+[hooks.state."/home/lee/.codex/config.toml:user_prompt_submit:0:0"]
+trusted_hash = "sha256:2e1d2d3c345d7c7e175ca481acd42da98203f35fe52ebbd8385a1f56dae5920d"
+
+[hooks.state."/home/lee/.codex/config.toml:stop:0:0"]
+trusted_hash = "sha256:4699a74c414ee202efb9e09b4870c96c71fa93c4428cb75428aba2c8af4509c4"
+
+[hooks.state."/home/lee/.codex/config.toml:permission_request:0:0"]
+trusted_hash = "sha256:7fe04b251a2078c38a11a7fc07063c76ff1a605d28d4d2b29747e13c3c1e9932"
+
+[projects."/home/lee/Projects/rig-pilot/.worktrees/impl-codex-1"]
+trust_level = "trusted"
+
+[projects."/tmp/claude-1000"]
+trust_level = "trusted"
+
+[tui]
+screen_reader_detection_done = true
+
+[tui.model_availability_nux]
+gpt-6-astra = 4
+
+[projects."/home/lee/Projects/rig-pilot/.worktrees/arch-codex"]
+trust_level = "trusted"
+
+[projects."/home/lee/Projects/rig-pilot/.worktrees/coord-deputy-codex"]
+trust_level = "trusted"
+
+[projects."/home/lee/Projects/rig-pilot/.worktrees/impl-codex-2"]
+trust_level = "trusted"
+
+[projects."/home/lee/Projects/rig-pilot/.worktrees/impl-codex-3"]
+trust_level = "trusted"
+
+[projects."/home/lee/Projects/rig-pilot/.worktrees/impl-codex-4"]
+trust_level = "trusted"
+
+[projects."/home/lee/Projects/rig-pilot/.worktrees/impl-codex-5"]
+trust_level = "trusted"
+
+[projects."/home/lee/Projects/rig-pilot/.worktrees/impl-codex-6"]
+trust_level = "trusted"
+
+[projects."/home/lee/Projects/rig-pilot/.worktrees/integ-codex"]
+trust_level = "trusted"
+
+[projects."/home/lee/Projects/rig-pilot/.worktrees/review-codex-1"]
+trust_level = "trusted"
+
+[projects."/home/lee/Projects/rig-pilot/.worktrees/review-codex-2"]
+trust_level = "trusted"
+
+[projects."/home/lee/Projects/rig-pilot/.worktrees/review-codex-3"]
+trust_level = "trusted"

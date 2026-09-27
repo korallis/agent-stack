@@ -1,0 +1,5 @@
+# agent-stack role profile for OpenRig seats (codex_config_profile: pool-impl). Profiles replace -s, so sandbox is set here.
+model = "gpt-6-astra"
+model_reasoning_effort = "high"
+sandbox_mode = "workspace-write"
+approval_policy = "on-request"
