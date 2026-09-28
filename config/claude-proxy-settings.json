@@ -1,5 +1,5 @@
 {
-  "apiKeyHelper": "/home/lee/.local/share/agent-stack/bin/cliproxy-key",
+  "apiKeyHelper": "$HOME/.local/share/agent-stack/bin/cliproxy-key",
   "model": "claude-opus-5-5",
   "env": {
     "ANTHROPIC_BASE_URL": "http://127.0.0.1:8317",

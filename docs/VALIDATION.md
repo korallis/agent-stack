@@ -4,7 +4,7 @@ Disposable repo: `~/Projects/rig-pilot`. Evidence came from process tables, prox
 
 | Requirement | Result | Evidence |
 |---|---|---|
-| Six distinct identities | ✅ | 2 Claude (org hashes bd1faed5, ae273fe9), 4 ChatGPT **pro** (f479ae30, dbbe0512, 600d6e13, 143d24e5) |
+| Six distinct identities | ✅ | 2 Claude and 4 ChatGPT **pro** accounts, each a different organisation (identifiers redacted) |
 | Inference through every account | ✅ | streamed PONG per account; proxy usage record per `auth_index`; model returned == model requested |
 | No paid fallback | ✅ | no `api-keys` upstreams; Claude overage `rejected`; Codex `has_credits=False` on all 4 |
 | Claude Code via proxy: generate, stream, tools, follow-up | ✅ | `apiKeySource=apiKeyHelper`, Write+Bash tool calls, `--resume` recalled turn 1 |

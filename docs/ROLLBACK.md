@@ -16,9 +16,9 @@ B=$(cat ~/.local/share/agent-stack/LAST_BACKUP)
 cp $B/claude-settings.json ~/.claude/settings.json
 rm ~/.codex/config.toml ~/.codex/pool-*.config.toml      # there was no config.toml before
 # ~/.bashrc: delete the two "agent-stack env" lines (original in $B/bashrc)
-rm ~/.local/bin/{rig,openrig-tui,cli-proxy-api,agent-*,jev-*,claude-pool,openrig-upgrade}
+rm ~/.local/bin/{rig,openrig-tui,cli-proxy-api,agent-*,jev-*,claude-pool,openrig-upgrade,openrig-update}
 rm -rf ~/.local/share/agent-stack/{openrig,cliproxyapi,seat-bin} ~/.openrig ~/.cli-proxy-api   # removes pooled OAuth tokens
-loginctl disable-linger lee    # only if nothing else needs linger
+loginctl disable-linger $USER    # only if nothing else needs linger
 ```
 `rm -rf ~/.config/agent-stack/secrets` last, after revoking the TypeSafe key in the console if desired.
 

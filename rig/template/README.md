@@ -43,13 +43,13 @@ git worktree add --detach $WT/integ-claude main
 # 3. rig folder
 mkdir -p $W/rig; cd $W/rig
 cp ~/Projects/agent-stack/rig/template/{core.yaml,CULTURE.md,merge-sweep.watchdog.yaml} .
-sed -i "s#@RIG@#$RIG#g; s#@REPO@#$R#g; s#@WT@#$WT#g" core.yaml merge-sweep.watchdog.yaml
+sed -i "s#@RIG@#$RIG#g; s#@REPO@#$R#g; s#@WT@#$WT#g; s#@AGENT_STACK@#$HOME/Projects/agent-stack#g" core.yaml merge-sweep.watchdog.yaml   # or build.yaml / team.yaml / fallback-codex.yaml
 #    append a "<Repo> specifics" section to CULTURE.md (status names, Jev procedure, commit identity)
 rig spec validate core.yaml && rig up core.yaml
 
 # 4. keep PRs moving
 rig watchdog register --policy periodic-reminder --spec $W/rig/merge-sweep.watchdog.yaml \
-  --target-session integ-claude@$RIG --interval-seconds 900 --registered-by lee
+  --target-session integ-claude@$RIG --interval-seconds 900 --registered-by $USER
 ```
 
 Workspace config is machine-wide: one project workspace is active at a time (`rig config get workspace.root`).

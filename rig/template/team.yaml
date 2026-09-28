@@ -1,5 +1,5 @@
 # Balanced 24-seat team: 12 Claude Code + 12 Codex.
-# Copy to <workspace>/rig/, replace @RIG@ (rig name, e.g. hc), @REPO@ (absolute repo path) and
+# Copy to <workspace>/rig/, replace @RIG@ (rig name, e.g. hc), @REPO@ (absolute repo path), @AGENT_STACK@ (this repo, e.g. $HOME/Projects/agent-stack) and
 # @WT@ (absolute worktrees folder, e.g. <repo>.worktrees), create the worktrees with git, then:
 #   rig spec validate <file>  →  rig up <file>   (later: rig down @RIG@ --snapshot / rig up @RIG@)
 # Roles come from the shared template (path: refs), so improving a role improves every repo's rig.
@@ -25,14 +25,14 @@ pods:
     label: "Coordination"
     members:
       - id: lead-claude
-        agent_ref: "path:/home/lee/Projects/agent-stack/rig/template/agents/lead"
+        agent_ref: "path:@AGENT_STACK@/rig/template/agents/lead"
         profile: default
         runtime: claude-code
         model: claude-opus-5-5
         cwd: "@WT@/coord-lead-claude"
         restore_policy: resume_if_possible
       - id: deputy-codex
-        agent_ref: "path:/home/lee/Projects/agent-stack/rig/template/agents/deputy"
+        agent_ref: "path:@AGENT_STACK@/rig/template/agents/deputy"
         profile: default
         runtime: codex
         model: gpt-6-sol
@@ -50,14 +50,14 @@ pods:
     label: "Architecture & planning"
     members:
       - id: claude
-        agent_ref: "path:/home/lee/Projects/agent-stack/rig/template/agents/architect"
+        agent_ref: "path:@AGENT_STACK@/rig/template/agents/architect"
         profile: default
         runtime: claude-code
         model: claude-opus-5-5
         cwd: "@WT@/arch-claude"
         restore_policy: resume_if_possible
       - id: codex
-        agent_ref: "path:/home/lee/Projects/agent-stack/rig/template/agents/architect"
+        agent_ref: "path:@AGENT_STACK@/rig/template/agents/architect"
         profile: default
         runtime: codex
         model: gpt-6-sol
@@ -69,84 +69,84 @@ pods:
     label: "Implementation"
     members:
       - id: claude-1
-        agent_ref: "path:/home/lee/Projects/agent-stack/rig/template/agents/implementer"
+        agent_ref: "path:@AGENT_STACK@/rig/template/agents/implementer"
         profile: default
         runtime: claude-code
         model: claude-opus-5-5
         cwd: "@WT@/impl-claude-1"
         restore_policy: resume_if_possible
       - id: claude-2
-        agent_ref: "path:/home/lee/Projects/agent-stack/rig/template/agents/implementer"
+        agent_ref: "path:@AGENT_STACK@/rig/template/agents/implementer"
         profile: default
         runtime: claude-code
         model: claude-opus-5-5
         cwd: "@WT@/impl-claude-2"
         restore_policy: resume_if_possible
       - id: claude-3
-        agent_ref: "path:/home/lee/Projects/agent-stack/rig/template/agents/implementer"
+        agent_ref: "path:@AGENT_STACK@/rig/template/agents/implementer"
         profile: default
         runtime: claude-code
         model: claude-opus-5-5
         cwd: "@WT@/impl-claude-3"
         restore_policy: resume_if_possible
       - id: claude-4
-        agent_ref: "path:/home/lee/Projects/agent-stack/rig/template/agents/implementer"
+        agent_ref: "path:@AGENT_STACK@/rig/template/agents/implementer"
         profile: default
         runtime: claude-code
         model: claude-opus-5-5
         cwd: "@WT@/impl-claude-4"
         restore_policy: resume_if_possible
       - id: claude-5
-        agent_ref: "path:/home/lee/Projects/agent-stack/rig/template/agents/implementer"
+        agent_ref: "path:@AGENT_STACK@/rig/template/agents/implementer"
         profile: default
         runtime: claude-code
         model: claude-opus-5-5
         cwd: "@WT@/impl-claude-5"
         restore_policy: resume_if_possible
       - id: claude-6
-        agent_ref: "path:/home/lee/Projects/agent-stack/rig/template/agents/implementer"
+        agent_ref: "path:@AGENT_STACK@/rig/template/agents/implementer"
         profile: default
         runtime: claude-code
         model: claude-opus-5-5
         cwd: "@WT@/impl-claude-6"
         restore_policy: resume_if_possible
       - id: codex-1
-        agent_ref: "path:/home/lee/Projects/agent-stack/rig/template/agents/implementer"
+        agent_ref: "path:@AGENT_STACK@/rig/template/agents/implementer"
         profile: default
         runtime: codex
         model: gpt-6-sol
         cwd: "@WT@/impl-codex-1"
         restore_policy: resume_if_possible
       - id: codex-2
-        agent_ref: "path:/home/lee/Projects/agent-stack/rig/template/agents/implementer"
+        agent_ref: "path:@AGENT_STACK@/rig/template/agents/implementer"
         profile: default
         runtime: codex
         model: gpt-6-sol
         cwd: "@WT@/impl-codex-2"
         restore_policy: resume_if_possible
       - id: codex-3
-        agent_ref: "path:/home/lee/Projects/agent-stack/rig/template/agents/implementer"
+        agent_ref: "path:@AGENT_STACK@/rig/template/agents/implementer"
         profile: default
         runtime: codex
         model: gpt-6-sol
         cwd: "@WT@/impl-codex-3"
         restore_policy: resume_if_possible
       - id: codex-4
-        agent_ref: "path:/home/lee/Projects/agent-stack/rig/template/agents/implementer"
+        agent_ref: "path:@AGENT_STACK@/rig/template/agents/implementer"
         profile: default
         runtime: codex
         model: gpt-6-sol
         cwd: "@WT@/impl-codex-4"
         restore_policy: resume_if_possible
       - id: codex-5
-        agent_ref: "path:/home/lee/Projects/agent-stack/rig/template/agents/implementer"
+        agent_ref: "path:@AGENT_STACK@/rig/template/agents/implementer"
         profile: default
         runtime: codex
         model: gpt-6-sol
         cwd: "@WT@/impl-codex-5"
         restore_policy: resume_if_possible
       - id: codex-6
-        agent_ref: "path:/home/lee/Projects/agent-stack/rig/template/agents/implementer"
+        agent_ref: "path:@AGENT_STACK@/rig/template/agents/implementer"
         profile: default
         runtime: codex
         model: gpt-6-sol
@@ -158,42 +158,42 @@ pods:
     label: "Independent review"
     members:
       - id: claude-1
-        agent_ref: "path:/home/lee/Projects/agent-stack/rig/template/agents/reviewer"
+        agent_ref: "path:@AGENT_STACK@/rig/template/agents/reviewer"
         profile: default
         runtime: claude-code
         model: claude-opus-5-5
         cwd: "@WT@/review-claude-1"
         restore_policy: resume_if_possible
       - id: claude-2
-        agent_ref: "path:/home/lee/Projects/agent-stack/rig/template/agents/reviewer"
+        agent_ref: "path:@AGENT_STACK@/rig/template/agents/reviewer"
         profile: default
         runtime: claude-code
         model: claude-opus-5-5
         cwd: "@WT@/review-claude-2"
         restore_policy: resume_if_possible
       - id: claude-3
-        agent_ref: "path:/home/lee/Projects/agent-stack/rig/template/agents/reviewer"
+        agent_ref: "path:@AGENT_STACK@/rig/template/agents/reviewer"
         profile: default
         runtime: claude-code
         model: claude-opus-5-5
         cwd: "@WT@/review-claude-3"
         restore_policy: resume_if_possible
       - id: codex-1
-        agent_ref: "path:/home/lee/Projects/agent-stack/rig/template/agents/reviewer"
+        agent_ref: "path:@AGENT_STACK@/rig/template/agents/reviewer"
         profile: default
         runtime: codex
         model: gpt-6-sol
         cwd: "@WT@/review-codex-1"
         restore_policy: resume_if_possible
       - id: codex-2
-        agent_ref: "path:/home/lee/Projects/agent-stack/rig/template/agents/reviewer"
+        agent_ref: "path:@AGENT_STACK@/rig/template/agents/reviewer"
         profile: default
         runtime: codex
         model: gpt-6-sol
         cwd: "@WT@/review-codex-2"
         restore_policy: resume_if_possible
       - id: codex-3
-        agent_ref: "path:/home/lee/Projects/agent-stack/rig/template/agents/reviewer"
+        agent_ref: "path:@AGENT_STACK@/rig/template/agents/reviewer"
         profile: default
         runtime: codex
         model: gpt-6-sol
@@ -205,14 +205,14 @@ pods:
     label: "Merge owner & recovery"
     members:
       - id: claude
-        agent_ref: "path:/home/lee/Projects/agent-stack/rig/template/agents/integrator"
+        agent_ref: "path:@AGENT_STACK@/rig/template/agents/integrator"
         profile: default
         runtime: claude-code
         model: claude-opus-5-5
         cwd: "@WT@/integ-claude"
         restore_policy: resume_if_possible
       - id: codex
-        agent_ref: "path:/home/lee/Projects/agent-stack/rig/template/agents/recovery"
+        agent_ref: "path:@AGENT_STACK@/rig/template/agents/recovery"
         profile: default
         runtime: codex
         model: gpt-6-sol

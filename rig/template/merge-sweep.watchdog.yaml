@@ -1,5 +1,5 @@
 # Wake the merge owner every 15 minutes so no PR is left waiting. Replace @RIG@, then after `rig up`:
-#   rig watchdog register --policy periodic-reminder --spec <this file> --target-session integ-claude@@RIG@ --interval-seconds 900 --registered-by lee
+#   rig watchdog register --policy periodic-reminder --spec <this file> --target-session integ-claude@@RIG@ --interval-seconds 900 --registered-by $USER
 target:
   session: "integ-claude@@RIG@"
 message: >-

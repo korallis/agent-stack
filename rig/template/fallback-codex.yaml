@@ -1,6 +1,6 @@
 # FALLBACK team with no Claude accounts (use if both Claude plans are unavailable or suspended).
 # Same roles as build.yaml; Kimi K3 is the "other family" for locked tests and reviews of Codex work.
-# Copy to <workspace>/rig/, replace @RIG@, @REPO@, @WT@, create one git worktree per seat, then:
+# Copy to <workspace>/rig/, replace @RIG@, @REPO@, @WT@, @AGENT_STACK@ (this repo), create one git worktree per seat, then:
 #   rig spec validate fallback-codex.yaml  →  rig up fallback-codex.yaml
 # Role texts name "integ-claude" as merge owner; in this team the merge owner seat is integ-codex.
 version: "0.2"
@@ -24,7 +24,7 @@ pods:
     label: "Coordination"
     members:
       - id: lead-codex
-        agent_ref: "path:/home/lee/Projects/agent-stack/rig/template/agents/lead"
+        agent_ref: "path:@AGENT_STACK@/rig/template/agents/lead"
         profile: default
         runtime: codex
         model: "gpt-6-sol"
@@ -36,7 +36,7 @@ pods:
     label: "Plan and acceptance criteria"
     members:
       - id: astra
-        agent_ref: "path:/home/lee/Projects/agent-stack/rig/template/agents/architect"
+        agent_ref: "path:@AGENT_STACK@/rig/template/agents/architect"
         profile: default
         runtime: codex
         model: "gpt-6-astra"
@@ -48,7 +48,7 @@ pods:
     label: "Locked user-journey tests (Kimi = the other family from Codex implementers)"
     members:
       - id: kimi
-        agent_ref: "path:/home/lee/Projects/agent-stack/rig/template/agents/test-author"
+        agent_ref: "path:@AGENT_STACK@/rig/template/agents/test-author"
         profile: default
         runtime: claude-code
         model: "kimi-k3-256k"
@@ -60,35 +60,35 @@ pods:
     label: "Implementation (max 4 busy + escalation seat)"
     members:
       - id: codex-1
-        agent_ref: "path:/home/lee/Projects/agent-stack/rig/template/agents/implementer"
+        agent_ref: "path:@AGENT_STACK@/rig/template/agents/implementer"
         profile: default
         runtime: codex
         model: "gpt-6-sol"
         cwd: "@WT@/impl-codex-1"
         restore_policy: resume_if_possible
       - id: codex-2
-        agent_ref: "path:/home/lee/Projects/agent-stack/rig/template/agents/implementer"
+        agent_ref: "path:@AGENT_STACK@/rig/template/agents/implementer"
         profile: default
         runtime: codex
         model: "gpt-6-sol"
         cwd: "@WT@/impl-codex-2"
         restore_policy: resume_if_possible
       - id: codex-3
-        agent_ref: "path:/home/lee/Projects/agent-stack/rig/template/agents/implementer"
+        agent_ref: "path:@AGENT_STACK@/rig/template/agents/implementer"
         profile: default
         runtime: codex
         model: "gpt-6-sol"
         cwd: "@WT@/impl-codex-3"
         restore_policy: resume_if_possible
       - id: codex-4
-        agent_ref: "path:/home/lee/Projects/agent-stack/rig/template/agents/implementer"
+        agent_ref: "path:@AGENT_STACK@/rig/template/agents/implementer"
         profile: default
         runtime: codex
         model: "gpt-6-sol"
         cwd: "@WT@/impl-codex-4"
         restore_policy: resume_if_possible
       - id: astra
-        agent_ref: "path:/home/lee/Projects/agent-stack/rig/template/agents/implementer"
+        agent_ref: "path:@AGENT_STACK@/rig/template/agents/implementer"
         profile: default
         runtime: codex
         model: "gpt-6-astra"
@@ -100,7 +100,7 @@ pods:
     label: "Hands-on user QA"
     members:
       - id: codex
-        agent_ref: "path:/home/lee/Projects/agent-stack/rig/template/agents/qa"
+        agent_ref: "path:@AGENT_STACK@/rig/template/agents/qa"
         profile: default
         runtime: codex
         model: "gpt-6-sol"
@@ -112,14 +112,14 @@ pods:
     label: "Independent review (Kimi reviews Codex PRs; Astra second opinion on risky)"
     members:
       - id: kimi
-        agent_ref: "path:/home/lee/Projects/agent-stack/rig/template/agents/reviewer"
+        agent_ref: "path:@AGENT_STACK@/rig/template/agents/reviewer"
         profile: default
         runtime: claude-code
         model: "kimi-k3[1m]"
         cwd: "@WT@/review-kimi"
         restore_policy: resume_if_possible
       - id: astra
-        agent_ref: "path:/home/lee/Projects/agent-stack/rig/template/agents/reviewer"
+        agent_ref: "path:@AGENT_STACK@/rig/template/agents/reviewer"
         profile: default
         runtime: codex
         model: "gpt-6-astra"
@@ -131,7 +131,7 @@ pods:
     label: "Merge owner"
     members:
       - id: codex
-        agent_ref: "path:/home/lee/Projects/agent-stack/rig/template/agents/integrator"
+        agent_ref: "path:@AGENT_STACK@/rig/template/agents/integrator"
         profile: default
         runtime: codex
         model: "gpt-6-sol"

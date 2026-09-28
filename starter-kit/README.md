@@ -21,11 +21,11 @@ feature exists and locked against the implementers, plus a hands-on QA pass.
 ## Start a project
 
 ```bash
-P=MyProject; R=~/Projects/$P; W=~/Projects/$P-work; WT=~/Projects/$P.worktrees; H=~/Projects/$P-heldout; RIG=myproj
+P=MyProject; GH=<your-github-user>; ID="Your Name <you@example.com>"; R=~/Projects/$P; W=~/Projects/$P-work; WT=~/Projects/$P.worktrees; H=~/Projects/$P-heldout; RIG=myproj
 
 # 1. repo from the kit (keep your own app scaffold; the kit only adds files)
 mkdir -p $R && cp -rn ~/Projects/agent-stack/starter-kit/. $R/ && cd $R && rm README.md
-sed -i "s#@PROJECT@#$P#g; s#@HELDOUT@#$H#g; s#@COMMIT_IDENTITY@#Korallis <lee.barry84@gmail.com>#g" AGENTS.md docs/PLAN.md
+sed -i "s#@PROJECT@#$P#g; s#@HELDOUT@#$H#g; s#@COMMIT_IDENTITY@#$ID#g" AGENTS.md docs/PLAN.md
 git init -b main && git add -A && git commit -m "chore: starter kit"
 #    add package.json scripts: start:test (serves on :3000 with test data), and optionally lint/typecheck/test
 npm i -D @playwright/test
@@ -34,17 +34,17 @@ npm i -D @playwright/test
 mkdir -p $H
 
 # 3. GitHub (private repo), then protection
-gh repo create korallis/$P --private --source . --push
-scripts/setup-github.sh korallis/$P
+gh repo create $GH/$P --private --source . --push
+scripts/setup-github.sh $GH/$P
 
 # 4. rig: the daily build team
 mkdir -p $W/rig && cd $W/rig
 cp ~/Projects/agent-stack/rig/template/{build.yaml,CULTURE.md,merge-sweep.watchdog.yaml,daily-summary.watchdog.yaml} .
-sed -i "s#@RIG@#$RIG#g; s#@REPO@#$R#g; s#@WT@#$WT#g" build.yaml merge-sweep.watchdog.yaml daily-summary.watchdog.yaml
+sed -i "s#@RIG@#$RIG#g; s#@REPO@#$R#g; s#@WT@#$WT#g; s#@AGENT_STACK@#$HOME/Projects/agent-stack#g" build.yaml merge-sweep.watchdog.yaml daily-summary.watchdog.yaml
 #    workspace + one worktree per seat: see ~/Projects/agent-stack/rig/template/README.md
 rig spec validate build.yaml && rig up build.yaml
-rig watchdog register --policy periodic-reminder --spec $W/rig/merge-sweep.watchdog.yaml --target-session integ-claude@$RIG --interval-seconds 900 --registered-by lee
-rig watchdog register --policy periodic-reminder --spec $W/rig/daily-summary.watchdog.yaml --target-session coord-lead-claude@$RIG --interval-seconds 86400 --registered-by lee
+rig watchdog register --policy periodic-reminder --spec $W/rig/merge-sweep.watchdog.yaml --target-session integ-claude@$RIG --interval-seconds 900 --registered-by $USER
+rig watchdog register --policy periodic-reminder --spec $W/rig/daily-summary.watchdog.yaml --target-session coord-lead-claude@$RIG --interval-seconds 86400 --registered-by $USER
 
 # 5. write docs/PLAN.md, commit it, then:
 rig send coord-lead-claude@$RIG "Build docs/PLAN.md"

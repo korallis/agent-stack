@@ -1,5 +1,5 @@
 # Daily build team (14 seats, models pinned per the Jev routing table in CULTURE.md).
-# Copy to <workspace>/rig/, replace @RIG@, @REPO@, @WT@, create one git worktree per seat, then:
+# Copy to <workspace>/rig/, replace @RIG@, @REPO@, @WT@, @AGENT_STACK@ (this repo), create one git worktree per seat, then:
 #   rig spec validate build.yaml  →  rig up build.yaml
 # Claude Code seats (incl. Kimi) reach models through CLIProxyAPI via ~/.config/agent-stack/env.sh; Codex seats via ~/.codex/config.toml.
 # Kimi seat: "kimi-k3[1m]" gives the 1M window. At most 4 implementers are busy at once; impl.astra is for escalations only.
@@ -24,7 +24,7 @@ pods:
     label: "Coordination"
     members:
       - id: lead-claude
-        agent_ref: "path:/home/lee/Projects/agent-stack/rig/template/agents/lead"
+        agent_ref: "path:@AGENT_STACK@/rig/template/agents/lead"
         profile: default
         runtime: claude-code
         model: "claude-opus-5-5"
@@ -36,7 +36,7 @@ pods:
     label: "Plan and acceptance criteria"
     members:
       - id: claude
-        agent_ref: "path:/home/lee/Projects/agent-stack/rig/template/agents/architect"
+        agent_ref: "path:@AGENT_STACK@/rig/template/agents/architect"
         profile: default
         runtime: claude-code
         model: "claude-opus-5-5"
@@ -48,14 +48,14 @@ pods:
     label: "Locked user-journey tests (other family from the implementer)"
     members:
       - id: claude
-        agent_ref: "path:/home/lee/Projects/agent-stack/rig/template/agents/test-author"
+        agent_ref: "path:@AGENT_STACK@/rig/template/agents/test-author"
         profile: default
         runtime: claude-code
         model: "claude-opus-5-5"
         cwd: "@WT@/tests-claude"
         restore_policy: resume_if_possible
       - id: codex
-        agent_ref: "path:/home/lee/Projects/agent-stack/rig/template/agents/test-author"
+        agent_ref: "path:@AGENT_STACK@/rig/template/agents/test-author"
         profile: default
         runtime: codex
         model: "gpt-6-sol"
@@ -67,35 +67,35 @@ pods:
     label: "Implementation (max 4 busy + escalation seat)"
     members:
       - id: codex-1
-        agent_ref: "path:/home/lee/Projects/agent-stack/rig/template/agents/implementer"
+        agent_ref: "path:@AGENT_STACK@/rig/template/agents/implementer"
         profile: default
         runtime: codex
         model: "gpt-6-sol"
         cwd: "@WT@/impl-codex-1"
         restore_policy: resume_if_possible
       - id: codex-2
-        agent_ref: "path:/home/lee/Projects/agent-stack/rig/template/agents/implementer"
+        agent_ref: "path:@AGENT_STACK@/rig/template/agents/implementer"
         profile: default
         runtime: codex
         model: "gpt-6-sol"
         cwd: "@WT@/impl-codex-2"
         restore_policy: resume_if_possible
       - id: codex-3
-        agent_ref: "path:/home/lee/Projects/agent-stack/rig/template/agents/implementer"
+        agent_ref: "path:@AGENT_STACK@/rig/template/agents/implementer"
         profile: default
         runtime: codex
         model: "gpt-6-sol"
         cwd: "@WT@/impl-codex-3"
         restore_policy: resume_if_possible
       - id: claude-ui
-        agent_ref: "path:/home/lee/Projects/agent-stack/rig/template/agents/implementer"
+        agent_ref: "path:@AGENT_STACK@/rig/template/agents/implementer"
         profile: default
         runtime: claude-code
         model: "claude-opus-5-5"
         cwd: "@WT@/impl-claude-ui"
         restore_policy: resume_if_possible
       - id: astra
-        agent_ref: "path:/home/lee/Projects/agent-stack/rig/template/agents/implementer"
+        agent_ref: "path:@AGENT_STACK@/rig/template/agents/implementer"
         profile: default
         runtime: codex
         model: "gpt-6-astra"
@@ -107,7 +107,7 @@ pods:
     label: "Hands-on user QA"
     members:
       - id: codex
-        agent_ref: "path:/home/lee/Projects/agent-stack/rig/template/agents/qa"
+        agent_ref: "path:@AGENT_STACK@/rig/template/agents/qa"
         profile: default
         runtime: codex
         model: "gpt-6-sol"
@@ -119,21 +119,21 @@ pods:
     label: "Independent review (Opus reviews Codex, Sol reviews Claude, Kimi third family)"
     members:
       - id: claude
-        agent_ref: "path:/home/lee/Projects/agent-stack/rig/template/agents/reviewer"
+        agent_ref: "path:@AGENT_STACK@/rig/template/agents/reviewer"
         profile: default
         runtime: claude-code
         model: "claude-opus-5-5"
         cwd: "@WT@/review-claude"
         restore_policy: resume_if_possible
       - id: codex
-        agent_ref: "path:/home/lee/Projects/agent-stack/rig/template/agents/reviewer"
+        agent_ref: "path:@AGENT_STACK@/rig/template/agents/reviewer"
         profile: default
         runtime: codex
         model: "gpt-6-sol"
         cwd: "@WT@/review-codex"
         restore_policy: resume_if_possible
       - id: kimi
-        agent_ref: "path:/home/lee/Projects/agent-stack/rig/template/agents/reviewer"
+        agent_ref: "path:@AGENT_STACK@/rig/template/agents/reviewer"
         profile: default
         runtime: claude-code
         model: "kimi-k3[1m]"
@@ -145,7 +145,7 @@ pods:
     label: "Merge owner"
     members:
       - id: claude
-        agent_ref: "path:/home/lee/Projects/agent-stack/rig/template/agents/integrator"
+        agent_ref: "path:@AGENT_STACK@/rig/template/agents/integrator"
         profile: default
         runtime: claude-code
         model: "claude-opus-5-5"

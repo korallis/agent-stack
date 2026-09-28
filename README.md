@@ -1,56 +1,88 @@
 # agent-stack
 
-Local multi-agent setup on **Beast** (Omarchy 4.0.4, Ryzen 9 9950X3D2 16C/32T, 59 GiB RAM):
-a balanced **12 Claude Code + 12 Codex** team coordinated by **OpenRig**, running on **4 ChatGPT Pro + 2 Claude**
-subscriptions pooled by **CLIProxyAPI**, with **TypeSafe Jev** for bounded semantic decisions.
+A reproducible, local multi-agent software team for Linux. You write a plan; a team of AI coding agents turns it into
+merged, user-tested features, and asks you for one approval plus genuine decisions.
+
+- **OpenRig** runs the team: seats, roles, task queue, handoffs, watchdogs and a single merge owner.
+- **Claude Code** is the harness for Anthropic models and Kimi K3; **Codex CLI** is the harness for OpenAI GPT-6 models.
+- **CLIProxyAPI** pools your subscriptions (Claude, ChatGPT, Kimi) on `127.0.0.1:8317` with failover between accounts.
+- **TypeSafe Jev** makes bounded, fast decisions (routing, triage, merge-gate veto); ordinary code owns anything exact.
+- **Superpowers** gives each implementer a plan → test-first → verify discipline; **Playwright** gives agents a real browser.
+
+The core rule: **a feature is done only when a person could use it.** Browser journeys are written before the feature
+by a different model family, locked against the implementers by CI, and backed by a hands-on QA pass and a held-out suite.
 
 | Concern | Owner |
 |---|---|
 | Account rotation, failover, cooldowns | CLIProxyAPI (`127.0.0.1:8317`) |
 | Tasks, ownership, seats, sessions, messaging | OpenRig (`127.0.0.1:7433`) |
 | Bounded semantic decisions (classify / select / score / yes-no) | Jev via `jev-decide`, MCP `jev_decide` |
-| Capacity, dependencies, permissions, budgets, arithmetic | ordinary code (`orchestration/`) |
+| Capacity, dependencies, permissions, budgets, arithmetic | ordinary code (`orchestration/`, CI guards) |
 
-## Versions (installed 2026-09-27)
+## Install on a new machine
 
-| Component | Version | Location |
-|---|---|---|
-| CLIProxyAPI | 8.0.3 (sha256-verified release, upgraded 2026-09-28) | `~/.local/share/agent-stack/cliproxyapi/releases/8.0.3`, `current` symlink |
-| OpenRig | 0.5.17 on Node 22.23.3 | `~/.local/share/agent-stack/openrig`, wrapper `~/.local/bin/rig` |
-| Claude Code | 2.1.283 (mise) | proxy via `claude-pool` and OpenRig seats |
-| Codex CLI | 0.157.1 (mise) | proxy is the default provider |
-| TypeSafe skill | plugin `typesafe@typesafe-ai` 0.5.7 (Claude), `~/.agents/skills/typesafe-ai` (Codex) | |
-| TypeSafe JS SDK | `@typesafe-ai/sdk` 0.6.0, model pinned `jev-1.13.0` | `jev/` (Node 24.21.0) |
-| tmux | 3.7c (Omarchy config unchanged) | |
-
-## Daily use (plain OpenRig)
-
-Every repo's rig uses the shared roles in `rig/template/` (lead, deputy, architect, implementer, reviewer, merge owner,
-recovery). Per repo you copy `core.yaml` (4 seats) or `team.yaml` (24), `CULTURE.md` and the merge-sweep watchdog into
-`<workspace>/rig/` — see `rig/template/README.md`. The merge owner merges each PR once CI, an independent review and
-live Jev agree (shared `review.merge_gate` decision unless the repo has its own procedure). Example: `~/Projects/HC-Prime-work/rig/`.
+Needs Linux with a systemd user session, and subscriptions you are allowed to use this way (see Known limits).
 
 ```bash
-cd ~/Projects/rig-pilot
-rig spec validate rig/pilot.yaml
-rig up rig/pilot.yaml                     # first launch (later: rig up pilot)
-rig ps --nodes --rig pilot                # seat states
-rig send coord-lead-claude@pilot "…your request…"
+git clone https://github.com/<you>/agent-stack ~/Projects/agent-stack
+cd ~/Projects/agent-stack && ./install.sh          # safe to re-run; ./install.sh --check only reports
+```
+
+`install.sh` installs pinned versions from `config/versions.env` (OpenRig, CLIProxyAPI, Node), Claude Code and Codex via
+mise, the helper scripts, shell environment, harness config, systemd services and timers, Superpowers, the Playwright MCP
+browser, the TOON CLI and Jev. It never overwrites existing secrets, OAuth logins, the proxy config or a Codex config.
+It finishes with the steps only you can do: `gh auth login`, one `agent-login <claude|codex|kimi> <label>` per
+subscription, and your TypeSafe key.
+
+## Staying current
+
+- **OpenRig** follows upstream automatically: `openrig-update.timer` checks npm daily. It upgrades only when no project
+  rig is running, re-applies this setup's adjustments (`bin/openrig-upgrade`), validates every team spec, rolls back on
+  any failure, and on success bumps `config/versions.env` and commits it. Run `openrig-update --check` to see status.
+- Everything that makes this setup yours (roles, specs, culture, starter kit, configs) lives in this repo, outside the
+  OpenRig install, so upgrades cannot overwrite it.
+- CLIProxyAPI: bump `CLIPROXY_VERSION` in `config/versions.env` and re-run `./install.sh` (sha256-verified download);
+  rollback steps are in `docs/ROLLBACK.md`.
+
+## Daily use
+
+1. Make a repo from `starter-kit/` (locked acceptance journeys, CI guards, desktop+phone Playwright, PR template).
+2. Copy `rig/template/build.yaml` (14 seats, models pinned per role) with `CULTURE.md` and the two watchdogs; `rig up`.
+3. Write `docs/PLAN.md` and send the lead: `rig send coord-lead-claude@<rig> "Build docs/PLAN.md"`.
+4. Approve the feature list when notified. You are notified again only for risky merges, blockers and the daily summary.
+
+Full steps: `starter-kit/README.md` and `rig/template/README.md`. If the Claude accounts are unavailable, use
+`rig/template/fallback-codex.yaml`.
+
+```bash
+rig ps --nodes --rig <rig>                # seat states
 rig queue list -a -A                      # task ownership / handoffs
-rig down pilot --snapshot                 # stop (resume with: rig up pilot)
-git worktree add .worktrees/<seat> -b agent/<seat>   # one worktree per new seat before adding it to a spec
-agent-proxy-status [--recent 20]          # pool health / routing (not OpenRig)
-jev-decide stats                          # Jev decisions (not OpenRig)
-claude-pool                               # your own Claude Code session through the pool
-agent-login <claude|codex> <label>        # re-authenticate one account
+rig down <rig> --snapshot                 # stop (resume with: rig up <rig>)
+agent-proxy-status [--recent 20]          # pool health / routing
+jev-decide stats                          # Jev decisions
+claude-pool                               # your own Claude Code session through the pool (Claude + Kimi models)
+agent-login <claude|codex|kimi> <label>   # add or re-authenticate one account
 ```
 
 The OpenRig service only starts the daemon and the kernel rig at boot; project rigs start when you run `rig up`.
 
+## Models and routing
+
+| Work | Model (harness) |
+|---|---|
+| Plan decomposition, acceptance criteria, architecture, UI, migrations, review of Codex PRs | Claude Opus 5.5 (Claude Code) |
+| Volume implementation, unit tests, mechanical work, hands-on QA, review of Claude PRs | GPT-6 Sol (Codex) |
+| Escalation after two red CI runs | GPT-6 Astra (Codex) |
+| Long-context reading, third-family review of risky changes | Kimi K3, `kimi-k3[1m]` (Claude Code via the proxy) |
+| Claude fallback when Opus is rate-limited | Claude Fable 5.1 |
+
+Chosen from published benchmarks and checked with Jev; revise it from your own rig outcomes.
+
 ## Where things are
 
 - Secrets (0600, never in git): `~/.config/agent-stack/secrets/{cliproxy.env,typesafe.env}`; OAuth tokens in `~/.cli-proxy-api/*.json`.
-- Proxy config `~/.cli-proxy-api/config.yaml`; services `cliproxyapi`, `cliproxyapi-health.timer`, `cliproxy-usage.timer`, `openrig`, `openrig-health.timer` (user units, linger on).
+- Proxy config `~/.cli-proxy-api/config.yaml`; services `cliproxyapi`, `openrig` and timers `cliproxyapi-health`, `cliproxy-usage`, `openrig-health`, `cliproxy-authwatch` (alerts on repeated 401/403 for one account), `openrig-update` (user units, linger on).
+- Pinned versions: `config/versions.env`.
 - Jev decisions (single source of truth): `config/decisions.yaml`; evaluation: `eval/` (`node eval/run.js`); unit tests: `node --test 'test/*.test.js'`.
 - Decision log: `~/.local/state/agent-stack/jev.sqlite` + `jev-decisions.jsonl` (state hash only, no raw payloads).
 - Routing log: `~/.local/share/agent-stack/logs/proxy-usage.jsonl` (account, model, status, latency, quota; no content).
@@ -93,6 +125,6 @@ After an OpenRig upgrade run `openrig-upgrade <version>` and re-check these.
 - Codex reasoning effort is global (`high`); OpenRig 0.5.x cannot set it per seat under YOLO (#75).
 - Jev thresholds were tuned on the same 46 labelled cases they were measured on; add held-out cases before trusting
   fine distinctions. On error classification a keyword baseline matched Jev, so exact signatures are rules in code first.
-- Provider terms may restrict pooling subscriptions through a proxy (risk accepted by the owner).
+- **Provider terms may prohibit pooling consumer subscriptions through a proxy.** Anthropic's Claude Code terms explicitly do. Read your providers' terms; if you pool anyway, that is your decision and your risk. `cliproxy-authwatch` alerts you when an account starts failing authentication, and `fallback-codex.yaml` keeps you working without Claude.
 
 See `docs/ROLLBACK.md` and `docs/VALIDATION.md`.

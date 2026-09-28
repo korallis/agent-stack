@@ -1,0 +1,7 @@
+[Unit]
+Description=Upgrade OpenRig to the latest upstream release when no project rig is running (validated, with rollback)
+After=openrig.service network-online.target
+[Service]
+Type=oneshot
+Environment=PATH=%h/.local/bin:%h/.local/share/mise/shims:/usr/local/bin:/usr/bin
+ExecStart=%h/.local/bin/openrig-update
