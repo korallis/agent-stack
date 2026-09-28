@@ -62,6 +62,19 @@ whole backlog), planning, user interfaces, big migrations and reviewing Codex's 
 Claude Fable 5.1 stands in for Opus 5.5 when Opus is rate-limited. Smaller projects can use `build.yaml`
 (14 seats), and `fallback-codex.yaml` keeps working with no Claude account at all.
 
+## What gets installed
+
+Everything is listed with versions in [`config/tools.md`](config/tools.md). In short:
+
+- **Programs:** OpenRig, CLIProxyAPI, Claude Code, Codex CLI, Node.js (via mise), ripgrep and fd for fast search,
+  the TOON CLI for compact prompts, and Playwright with Chromium.
+- **In every seat:** the **Superpowers** plugin (for Claude Code and for Codex) for disciplined plan → test → build →
+  verify work; the **TypeSafe** skill; this repo's **agent-stack** skill; OpenRig's own skills.
+- **Tools the agents can call:** **Jev** (fast typed decisions) and a **Playwright browser** (so QA can use the app
+  like a person), both in Claude Code and Codex.
+- **Background services:** the subscription pool, the OpenRig daemon, health checks, usage logging, a sign-in
+  failure alert, a quota warning at 80%, and the daily OpenRig updater.
+
 ## What you need
 
 - A Linux computer with systemd (built and tested on Arch/Omarchy; a 16-core, 64 GB machine runs several teams).
