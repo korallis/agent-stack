@@ -131,7 +131,9 @@ openrig-update --check                   # is OpenRig up to date?
 ## Several projects at once
 
 Each project gets its own team, its own worktrees (`~/Projects/<Name>.worktrees/`) and its own OpenRig workspace
-(`~/Projects/<Name>-work`); seats find their workspace automatically from those names. Add projects whenever you
+(`~/Projects/<Name>-work`); seats find their workspace automatically from those names. OpenRig itself points at
+`~/Projects/openrig-workspace`, whose `workspace.yaml` lists every project, so the OpenRig TUI's **PROJECTS** view
+shows each project's missions and slices. Add projects whenever you
 like. The shared limit is subscription quota, not the computer: `cliproxy-quotawatch` warns you at 80% of any
 account's 5-hour or weekly allowance, and loudly when a whole provider is nearly used up. Add another subscription
 with `agent-login` and the pool uses it straight away.

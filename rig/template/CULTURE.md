@@ -64,3 +64,13 @@ over seats that have capacity; code decides anything exact (capacity, retry coun
 - A feature whose CI goes red twice on the same implementer is escalated by the lead to the Astra seat with both failure logs.
 - Risky-tier changes (auth, database migrations, infrastructure, CI/workflows, dependency manifests) also get the Kimi
   third-family review and are held for the owner's glance before merge.
+
+## GitHub API is shared (binding)
+- Every seat of every rig uses the same GitHub account, and GitHub blocks the whole account for a while when calls burst.
+  Never poll in a tight loop. Wait at least 60 seconds between status checks (for example
+  `gh pr checks <n> --watch --interval 60`), run at most one waiting loop per seat, and prefer one `gh api` REST call
+  over repeated `gh pr view` / `gh pr list` (those use GraphQL).
+- On any "rate limit" or "secondary rate limit" error: stop GitHub calls for 2 minutes, then retry once. Do not retry
+  in a loop, and do not switch to a different command to get around it.
+- The merge owner's 15-minute sweep is the default rhythm for PR status; other seats do not poll PRs they are not
+  actively working on.

@@ -1,0 +1,6 @@
+schema: openrig.workspace/v0alpha1
+# One catalog for every project on this machine. Each project keeps its own workspace folder
+# (~/Projects/<Project>-work, with its own missions/slices). Add an entry when you create a project, e.g.:
+#   - id: my-project
+#     root: /home/<you>/Projects/MyProject-work
+projects: []

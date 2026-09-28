@@ -29,9 +29,11 @@ R=~/Projects/<Repo>; W=~/Projects/<Repo>-work; WT=~/Projects/<Repo>.worktrees; R
 rig config init-workspace --root $W                 # does not change the global workspace.root
 sed -i "s/  - id: default/  - id: $RIG/" $W/workspace.yaml
 for k in files.allowlist progress.scan_roots; do c=$(rig config get $k); rig config set $k "${c:+$c,}$RIG:$W"; done
+printf '  - id: %s\n    root: %s\n' "$RIG" "$W" >> ~/Projects/openrig-workspace/workspace.yaml   # list it in the all-projects catalog
+systemctl --user restart openrig.service     # picks up the new roots; running teams keep working (seats live in tmux)
 #    seats find this workspace automatically: env.sh sets OPENRIG_WORK_ROOT=~/Projects/<Repo>-work for any seat
 #    running in ~/Projects/<Repo>.worktrees/<seat> (so keep those two names). Only if this is your very first
-#    project, also: rig config set workspace.root $W; rig config set workspace.slices_root $W/missions
+#    project on a machine not set up by install.sh, create ~/Projects/openrig-workspace first (see config/openrig-workspace/)
 #    edit $W/SPEC.md, add conventions.md to project.yaml install.context
 
 # 2. worktrees (one per seat; implementers get a branch) + commit identity if the repo requires one

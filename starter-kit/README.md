@@ -44,6 +44,7 @@ sed -i "s#@RIG@#$RIG#g; s#@REPO@#$R#g; s#@WT@#$WT#g; s#@AGENT_STACK@#$HOME/Proje
 #    own workspace (other projects keep running) + one worktree per seat:
 rig config init-workspace --root $W && sed -i "s/  - id: default/  - id: $RIG/" $W/workspace.yaml
 for k in files.allowlist progress.scan_roots; do c=$(rig config get $k); rig config set $k "${c:+$c,}$RIG:$W"; done
+printf '  - id: %s\n    root: %s\n' "$RIG" "$W" >> ~/Projects/openrig-workspace/workspace.yaml && systemctl --user restart openrig.service
 #    worktrees: see ~/Projects/agent-stack/rig/template/README.md (keep the $P.worktrees / $P-work names:
 #    seats find their workspace from them)
 rig spec validate full-stack.yaml && rig up full-stack.yaml

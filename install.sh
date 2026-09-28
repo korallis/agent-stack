@@ -122,6 +122,14 @@ for d in "$HOME/.claude/skills" "$HOME/.agents/skills"; do
   [ -d "$src" ] && { [ -d "$d/openrig-skills" ] && ok "$d/openrig-skills" || { [ $CHECK = 1 ] && todo "$d/openrig-skills" || { mkdir -p "$d"; cp -r "$src" "$d/"; ok "$d/openrig-skills"; }; }; }
 done
 
+step "OpenRig multi-project catalog"
+U=$HOME/Projects/openrig-workspace
+if [ -f "$U/workspace.yaml" ]; then ok "$U (catalog kept as is)"; elif [ $CHECK = 1 ]; then todo "$U catalog"; else
+  mkdir -p "$U/missions" "$U/exhaust"; cp "$S/config/openrig-workspace/"{SPEC.md,workspace.yaml} "$U/"
+  "$B/rig" config init-workspace --root "$U" >/dev/null 2>&1 || true
+  for kv in "workspace.root $U" "workspace.slices_root $U/missions" "workspace.catalog_path $U/workspace.yaml" "files.allowlist workspace:$U" "progress.scan_roots workspace:$U"; do "$B/rig" config set $kv >/dev/null 2>&1 || true; done
+  systemctl --user restart openrig.service >/dev/null 2>&1 || true; ok "$U created; OpenRig points at it (add each project to its workspace.yaml)"; fi
+
 step "Agent tools: plugins, MCP servers, browsers"
 if [ $CHECK = 0 ]; then
   claude plugin marketplace add typesafe-ai/skills >/dev/null 2>&1 || true
