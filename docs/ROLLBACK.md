@@ -23,6 +23,8 @@ loginctl disable-linger lee    # only if nothing else needs linger
 `rm -rf ~/.config/agent-stack/secrets` last, after revoking the TypeSafe key in the console if desired.
 
 ## Partial rollbacks
+- **CLIProxyAPI 8.0.3 → 8.0.2:** `ln -sfn ~/.local/share/agent-stack/cliproxyapi/releases/8.0.2 ~/.local/share/agent-stack/cliproxyapi/current`,
+  then `systemctl --user restart cliproxyapi` (8.0.2 is still unpacked; same config file).
 - **CLIProxyAPI 8.0.2 → 7.3.20:** download the v7.3.20 release asset, verify with `checksums.txt`, unpack to
   `releases/7.3.20`, `ln -sfn releases/7.3.20 ~/.local/share/agent-stack/cliproxyapi/current`, `systemctl --user restart cliproxyapi`.
   v7 reads the v8 file's legacy fields; if not, restore a `cpa-config.*.yaml` backup.

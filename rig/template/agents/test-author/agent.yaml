@@ -1,0 +1,32 @@
+name: team-test-author
+version: "1.0"
+description: "Test author: writes the locked user-journey acceptance tests before implementation"
+
+defaults:
+  runtime: claude-code
+
+# Reuse OpenRig's built-in skills and activity hooks.
+imports:
+  - ref: local:../../openrig-shared
+
+profiles:
+  default:
+    uses:
+      skills: [test-driven-development, verification-before-completion]
+      guidance: []
+      subagents: []
+      plugins: [shared:openrig-core]
+      runtime_resources: [shared:claude-activity-hooks]
+
+resources:
+  guidance:
+    - id: role
+      path: guidance/role.md
+
+# The role text is sent to the seat as its first message.
+startup:
+  files:
+    - path: guidance/role.md
+      delivery_hint: send_text
+      required: true
+  actions: []

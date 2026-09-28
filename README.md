@@ -15,7 +15,7 @@ subscriptions pooled by **CLIProxyAPI**, with **TypeSafe Jev** for bounded seman
 
 | Component | Version | Location |
 |---|---|---|
-| CLIProxyAPI | 8.0.2 (sha256-verified release) | `~/.local/share/agent-stack/cliproxyapi/releases/8.0.2`, `current` symlink |
+| CLIProxyAPI | 8.0.3 (sha256-verified release, upgraded 2026-09-28) | `~/.local/share/agent-stack/cliproxyapi/releases/8.0.3`, `current` symlink |
 | OpenRig | 0.5.17 on Node 22.23.3 | `~/.local/share/agent-stack/openrig`, wrapper `~/.local/bin/rig` |
 | Claude Code | 2.1.283 (mise) | proxy via `claude-pool` and OpenRig seats |
 | Codex CLI | 0.157.1 (mise) | proxy is the default provider |

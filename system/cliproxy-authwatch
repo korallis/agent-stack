@@ -1,0 +1,24 @@
+#!/usr/bin/env bash
+# Alert when a pooled account keeps failing authentication (401/403) instead of letting the proxy
+# silently shift all load to the other accounts. Reads the routing log only (no secrets, no content).
+# Alerts at most once per account every 6 hours. Runs from cliproxy-authwatch.timer every 5 minutes.
+set -euo pipefail
+log=${AUTHWATCH_LOG:-$HOME/.local/share/agent-stack/logs/proxy-usage.jsonl}
+state=${AUTHWATCH_STATE:-$HOME/.local/state/agent-stack/authwatch}; mkdir -p "$state"
+window_min=15; threshold=3; quiet_s=$((6 * 3600))
+[ -r "$log" ] || exit 0
+
+since=$(date -d "-${window_min} min" +%Y-%m-%dT%H:%M:%S)   # the log writes local time, so compare as strings
+tail -n 5000 "$log" | jq -r --arg since "$since" '
+  select((.status == 401 or .status == 403) and ((.ts // "")[0:19] >= $since))
+  | "\(.account // "unknown")\t\(.provider // "?")\t\(.status)"' 2>/dev/null |
+  awk -F'\t' '{n[$1"\t"$2]++; s[$1"\t"$2]=$3} END {for (k in n) print k"\t"n[k]"\t"s[k]}' |
+while IFS=$'\t' read -r account provider count status; do
+  [ "$count" -ge "$threshold" ] || continue
+  stamp="$state/$account"
+  if [ -f "$stamp" ] && [ $(( $(date +%s) - $(stat -c %Y "$stamp") )) -lt "$quiet_s" ]; then continue; fi
+  touch "$stamp"
+  msg="$provider account '$account': $count auth failures (last HTTP $status) in ${window_min} min. Check the login (agent-login $provider $account) or whether the account was suspended."
+  logger -t cliproxy-authwatch "$msg"
+  notify-send --urgency=critical --app-name="Agent stack" "Proxy account failing auth" "$msg" 2>/dev/null || true
+done

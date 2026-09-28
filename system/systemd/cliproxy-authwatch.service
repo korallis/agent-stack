@@ -1,0 +1,6 @@
+[Unit]
+Description=Alert on repeated auth failures for a pooled CLIProxyAPI account
+After=cliproxyapi.service
+[Service]
+Type=oneshot
+ExecStart=%h/.local/share/agent-stack/bin/cliproxy-authwatch

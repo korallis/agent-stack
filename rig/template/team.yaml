@@ -35,7 +35,7 @@ pods:
         agent_ref: "path:/home/lee/Projects/agent-stack/rig/template/agents/deputy"
         profile: default
         runtime: codex
-        model: gpt-6-astra
+        model: gpt-6-sol
         cwd: "@WT@/coord-deputy-codex"
         restore_policy: resume_if_possible
     edges:
@@ -60,7 +60,7 @@ pods:
         agent_ref: "path:/home/lee/Projects/agent-stack/rig/template/agents/architect"
         profile: default
         runtime: codex
-        model: gpt-6-astra
+        model: gpt-6-sol
         cwd: "@WT@/arch-codex"
         restore_policy: resume_if_possible
     edges: []
@@ -114,42 +114,42 @@ pods:
         agent_ref: "path:/home/lee/Projects/agent-stack/rig/template/agents/implementer"
         profile: default
         runtime: codex
-        model: gpt-6-astra
+        model: gpt-6-sol
         cwd: "@WT@/impl-codex-1"
         restore_policy: resume_if_possible
       - id: codex-2
         agent_ref: "path:/home/lee/Projects/agent-stack/rig/template/agents/implementer"
         profile: default
         runtime: codex
-        model: gpt-6-astra
+        model: gpt-6-sol
         cwd: "@WT@/impl-codex-2"
         restore_policy: resume_if_possible
       - id: codex-3
         agent_ref: "path:/home/lee/Projects/agent-stack/rig/template/agents/implementer"
         profile: default
         runtime: codex
-        model: gpt-6-astra
+        model: gpt-6-sol
         cwd: "@WT@/impl-codex-3"
         restore_policy: resume_if_possible
       - id: codex-4
         agent_ref: "path:/home/lee/Projects/agent-stack/rig/template/agents/implementer"
         profile: default
         runtime: codex
-        model: gpt-6-astra
+        model: gpt-6-sol
         cwd: "@WT@/impl-codex-4"
         restore_policy: resume_if_possible
       - id: codex-5
         agent_ref: "path:/home/lee/Projects/agent-stack/rig/template/agents/implementer"
         profile: default
         runtime: codex
-        model: gpt-6-astra
+        model: gpt-6-sol
         cwd: "@WT@/impl-codex-5"
         restore_policy: resume_if_possible
       - id: codex-6
         agent_ref: "path:/home/lee/Projects/agent-stack/rig/template/agents/implementer"
         profile: default
         runtime: codex
-        model: gpt-6-astra
+        model: gpt-6-sol
         cwd: "@WT@/impl-codex-6"
         restore_policy: resume_if_possible
     edges: []
@@ -182,21 +182,21 @@ pods:
         agent_ref: "path:/home/lee/Projects/agent-stack/rig/template/agents/reviewer"
         profile: default
         runtime: codex
-        model: gpt-6-astra
+        model: gpt-6-sol
         cwd: "@WT@/review-codex-1"
         restore_policy: resume_if_possible
       - id: codex-2
         agent_ref: "path:/home/lee/Projects/agent-stack/rig/template/agents/reviewer"
         profile: default
         runtime: codex
-        model: gpt-6-astra
+        model: gpt-6-sol
         cwd: "@WT@/review-codex-2"
         restore_policy: resume_if_possible
       - id: codex-3
         agent_ref: "path:/home/lee/Projects/agent-stack/rig/template/agents/reviewer"
         profile: default
         runtime: codex
-        model: gpt-6-astra
+        model: gpt-6-sol
         cwd: "@WT@/review-codex-3"
         restore_policy: resume_if_possible
     edges: []
@@ -215,7 +215,7 @@ pods:
         agent_ref: "path:/home/lee/Projects/agent-stack/rig/template/agents/recovery"
         profile: default
         runtime: codex
-        model: gpt-6-astra
+        model: gpt-6-sol
         cwd: "@WT@/integ-codex"
         restore_policy: resume_if_possible
     edges:

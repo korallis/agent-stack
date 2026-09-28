@@ -1,0 +1,32 @@
+name: team-qa
+version: "1.0"
+description: "QA: uses the running app like a person and records evidence; never edits code"
+
+defaults:
+  runtime: claude-code
+
+# Reuse OpenRig's built-in skills and activity hooks.
+imports:
+  - ref: local:../../openrig-shared
+
+profiles:
+  default:
+    uses:
+      skills: [systematic-debugging, verification-before-completion]
+      guidance: []
+      subagents: []
+      plugins: [shared:openrig-core]
+      runtime_resources: [shared:claude-activity-hooks]
+
+resources:
+  guidance:
+    - id: role
+      path: guidance/role.md
+
+# The role text is sent to the seat as its first message.
+startup:
+  files:
+    - path: guidance/role.md
+      delivery_hint: send_text
+      required: true
+  actions: []

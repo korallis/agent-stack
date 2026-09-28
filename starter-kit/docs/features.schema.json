@@ -1,0 +1,19 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "features.json",
+  "type": "array",
+  "items": {
+    "type": "object",
+    "required": ["id", "title", "user_story", "acceptance_criteria", "risk_tier", "depends_on", "ui", "passes"],
+    "properties": {
+      "id": { "type": "string", "pattern": "^F-[0-9]{3}$" },
+      "title": { "type": "string" },
+      "user_story": { "type": "string", "description": "As a <person>, I want <thing>, so that <reason>." },
+      "acceptance_criteria": { "type": "array", "minItems": 1, "items": { "type": "string", "description": "Something a person does and then sees." } },
+      "risk_tier": { "enum": ["trivial", "standard", "risky"] },
+      "depends_on": { "type": "array", "items": { "type": "string" } },
+      "ui": { "type": "boolean" },
+      "passes": { "type": "boolean", "description": "Set true by the lead only after locked journeys pass and QA passed by hand." }
+    }
+  }
+}

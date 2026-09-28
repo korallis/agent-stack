@@ -7,6 +7,23 @@
     "CLAUDE_CODE_API_KEY_HELPER_TTL_MS": "3600000",
     "ANTHROPIC_DEFAULT_OPUS_MODEL": "claude-opus-5-5",
     "ANTHROPIC_DEFAULT_SONNET_MODEL": "claude-sonnet-5",
-    "ANTHROPIC_DEFAULT_HAIKU_MODEL": "claude-haiku-4-5-20251001"
+    "ANTHROPIC_DEFAULT_HAIKU_MODEL": "claude-haiku-4-5-20251001",
+    "ANTHROPIC_DEFAULT_FABLE_MODEL": "claude-fable-5-1",
+    "CLAUDE_CODE_MAX_CONTEXT_TOKENS": "256000"
+  },
+  "modelPicker": {
+    "options": [
+      {
+        "model": "kimi-k3[1m]",
+        "label": "Kimi K3 (1M)",
+        "description": "Kimi K3 via the proxy, 1M context. Long-context reading and analysis",
+        "behavesAs": "claude-opus-5-5"
+      },
+      {
+        "model": "kimi-k3-256k",
+        "label": "Kimi K3 (256K)",
+        "description": "Kimi K3 via the proxy, 256K context, about half the quota"
+      }
+    ]
   }
 }

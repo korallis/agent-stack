@@ -1,0 +1,184 @@
+# FALLBACK team with no Claude accounts (use if both Claude plans are unavailable or suspended).
+# Same roles as build.yaml; Kimi K3 is the "other family" for locked tests and reviews of Codex work.
+# Copy to <workspace>/rig/, replace @RIG@, @REPO@, @WT@, create one git worktree per seat, then:
+#   rig spec validate fallback-codex.yaml  →  rig up fallback-codex.yaml
+# Role texts name "integ-claude" as merge owner; in this team the merge owner seat is integ-codex.
+version: "0.2"
+name: "@RIG@"
+summary: "Fallback build team without Claude: Codex implements, Kimi tests and reviews, Codex merges"
+culture_file: CULTURE.md
+permission_policy: builtin:yolo
+managed_blocks:
+  claude-code: CLAUDE.local.md
+
+workspace:
+  workspace_root: "@REPO@"
+  repos:
+    - name: "@RIG@"
+      path: .
+      kind: project
+  default_repo: "@RIG@"
+
+pods:
+  - id: coord
+    label: "Coordination"
+    members:
+      - id: lead-codex
+        agent_ref: "path:/home/lee/Projects/agent-stack/rig/template/agents/lead"
+        profile: default
+        runtime: codex
+        model: "gpt-6-sol"
+        cwd: "@WT@/coord-lead-codex"
+        restore_policy: resume_if_possible
+    edges: []
+
+  - id: arch
+    label: "Plan and acceptance criteria"
+    members:
+      - id: astra
+        agent_ref: "path:/home/lee/Projects/agent-stack/rig/template/agents/architect"
+        profile: default
+        runtime: codex
+        model: "gpt-6-astra"
+        cwd: "@WT@/arch-astra"
+        restore_policy: resume_if_possible
+    edges: []
+
+  - id: tests
+    label: "Locked user-journey tests (Kimi = the other family from Codex implementers)"
+    members:
+      - id: kimi
+        agent_ref: "path:/home/lee/Projects/agent-stack/rig/template/agents/test-author"
+        profile: default
+        runtime: claude-code
+        model: "kimi-k3-256k"
+        cwd: "@WT@/tests-kimi"
+        restore_policy: resume_if_possible
+    edges: []
+
+  - id: impl
+    label: "Implementation (max 4 busy + escalation seat)"
+    members:
+      - id: codex-1
+        agent_ref: "path:/home/lee/Projects/agent-stack/rig/template/agents/implementer"
+        profile: default
+        runtime: codex
+        model: "gpt-6-sol"
+        cwd: "@WT@/impl-codex-1"
+        restore_policy: resume_if_possible
+      - id: codex-2
+        agent_ref: "path:/home/lee/Projects/agent-stack/rig/template/agents/implementer"
+        profile: default
+        runtime: codex
+        model: "gpt-6-sol"
+        cwd: "@WT@/impl-codex-2"
+        restore_policy: resume_if_possible
+      - id: codex-3
+        agent_ref: "path:/home/lee/Projects/agent-stack/rig/template/agents/implementer"
+        profile: default
+        runtime: codex
+        model: "gpt-6-sol"
+        cwd: "@WT@/impl-codex-3"
+        restore_policy: resume_if_possible
+      - id: codex-4
+        agent_ref: "path:/home/lee/Projects/agent-stack/rig/template/agents/implementer"
+        profile: default
+        runtime: codex
+        model: "gpt-6-sol"
+        cwd: "@WT@/impl-codex-4"
+        restore_policy: resume_if_possible
+      - id: astra
+        agent_ref: "path:/home/lee/Projects/agent-stack/rig/template/agents/implementer"
+        profile: default
+        runtime: codex
+        model: "gpt-6-astra"
+        cwd: "@WT@/impl-astra"
+        restore_policy: resume_if_possible
+    edges: []
+
+  - id: qa
+    label: "Hands-on user QA"
+    members:
+      - id: codex
+        agent_ref: "path:/home/lee/Projects/agent-stack/rig/template/agents/qa"
+        profile: default
+        runtime: codex
+        model: "gpt-6-sol"
+        cwd: "@WT@/qa-codex"
+        restore_policy: resume_if_possible
+    edges: []
+
+  - id: review
+    label: "Independent review (Kimi reviews Codex PRs; Astra second opinion on risky)"
+    members:
+      - id: kimi
+        agent_ref: "path:/home/lee/Projects/agent-stack/rig/template/agents/reviewer"
+        profile: default
+        runtime: claude-code
+        model: "kimi-k3[1m]"
+        cwd: "@WT@/review-kimi"
+        restore_policy: resume_if_possible
+      - id: astra
+        agent_ref: "path:/home/lee/Projects/agent-stack/rig/template/agents/reviewer"
+        profile: default
+        runtime: codex
+        model: "gpt-6-astra"
+        cwd: "@WT@/review-astra"
+        restore_policy: resume_if_possible
+    edges: []
+
+  - id: integ
+    label: "Merge owner"
+    members:
+      - id: codex
+        agent_ref: "path:/home/lee/Projects/agent-stack/rig/template/agents/integrator"
+        profile: default
+        runtime: codex
+        model: "gpt-6-sol"
+        cwd: "@WT@/integ-codex"
+        restore_policy: resume_if_possible
+    edges: []
+
+edges:
+  - kind: delegates_to
+    from: coord.lead-codex
+    to: arch.astra
+  - kind: delegates_to
+    from: coord.lead-codex
+    to: tests.kimi
+  - kind: delegates_to
+    from: coord.lead-codex
+    to: impl.codex-1
+  - kind: delegates_to
+    from: coord.lead-codex
+    to: impl.codex-2
+  - kind: delegates_to
+    from: coord.lead-codex
+    to: impl.codex-3
+  - kind: delegates_to
+    from: coord.lead-codex
+    to: impl.codex-4
+  - kind: delegates_to
+    from: coord.lead-codex
+    to: impl.astra
+  - kind: delegates_to
+    from: coord.lead-codex
+    to: qa.codex
+  - kind: delegates_to
+    from: coord.lead-codex
+    to: review.kimi
+  - kind: delegates_to
+    from: coord.lead-codex
+    to: review.astra
+  - kind: delegates_to
+    from: coord.lead-codex
+    to: integ.codex
+  - kind: delegates_to
+    from: integ.codex
+    to: review.kimi
+  - kind: delegates_to
+    from: integ.codex
+    to: review.astra
+  - kind: escalates_to
+    from: integ.codex
+    to: coord.lead-codex

@@ -1,14 +1,14 @@
 #!/usr/bin/env bash
-# Usage: agent-login <claude|codex> <label>
+# Usage: agent-login <claude|codex|kimi> <label>   (kimi = international kimi.ai OAuth)
 # Runs the CLIProxyAPI OAuth login for ONE account, then labels the new credential (note field)
 # and prints a non-secret identity summary. Credentials stay in ~/.cli-proxy-api (0600).
 set -euo pipefail
-prov=${1:?claude|codex}; label=${2:?label e.g. claude-a}
+prov=${1:?claude|codex|kimi}; label=${2:?label e.g. claude-a}
 source ~/.config/agent-stack/secrets/cliproxy.env
 M=http://127.0.0.1:8317/v8/management; H="Authorization: Bearer $CLIPROXY_MGMT_KEY"
 dir=~/.cli-proxy-api
 before=$(ls "$dir"/${prov}-*.json 2>/dev/null | sort || true)
-case $prov in claude) flag=-claude-login;; codex) flag=-codex-login;; *) echo "bad provider"; exit 2;; esac
+case $prov in claude) flag=-claude-login;; codex) flag=-codex-login;; kimi) flag=-kimi-ai-login;; *) echo "bad provider"; exit 2;; esac
 echo ">> Open the URL below in a PRIVATE/INCOGNITO window signed in to the account for '$label'."
 ~/.local/share/agent-stack/cliproxyapi/current/cli-proxy-api -config "$dir/config.yaml" $flag -no-browser
 after=$(ls "$dir"/${prov}-*.json 2>/dev/null | sort || true)

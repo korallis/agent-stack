@@ -40,7 +40,7 @@ pods:
         agent_ref: "path:/home/lee/Projects/agent-stack/rig/template/agents/implementer"
         profile: default
         runtime: codex
-        model: gpt-6-astra
+        model: gpt-6-sol
         cwd: "@WT@/impl-codex-1"
         restore_policy: resume_if_possible
     edges: []
@@ -52,7 +52,7 @@ pods:
         agent_ref: "path:/home/lee/Projects/agent-stack/rig/template/agents/reviewer"
         profile: default
         runtime: codex
-        model: gpt-6-astra
+        model: gpt-6-sol
         cwd: "@WT@/review-codex"
         restore_policy: resume_if_possible
     edges: []
