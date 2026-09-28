@@ -21,7 +21,7 @@ feature exists and locked against the implementers, plus a hands-on QA pass.
 ## Start a project
 
 ```bash
-P=MyProject; GH=<your-github-user>; ID="Your Name <you@example.com>"; R=~/Projects/$P; W=~/Projects/$P-work; WT=~/Projects/$P.worktrees; H=~/Projects/$P-heldout; RIG=myproj
+P=MyProject; GH=<your-github-user>; ID="Your Name <you@example.com>"; R=~/Projects/$P; W=~/Projects/$P-work; WT=~/Projects/$P.worktrees; H=~/Projects/$P-heldout; RIG=myproj; LEAD=coord-lead-codex; MERGE=integ-codex   # full-stack seat names
 
 # 1. repo from the kit (keep your own app scaffold; the kit only adds files)
 mkdir -p $R && cp -rn ~/Projects/agent-stack/starter-kit/. $R/ && cd $R && rm README.md
@@ -37,21 +37,21 @@ mkdir -p $H
 gh repo create $GH/$P --private --source . --push
 scripts/setup-github.sh $GH/$P
 
-# 4. rig: the daily build team
+# 4. rig: the full-stack team (27 seats; use build.yaml for a 14-seat team)
 mkdir -p $W/rig && cd $W/rig
-cp ~/Projects/agent-stack/rig/template/{build.yaml,CULTURE.md,merge-sweep.watchdog.yaml,daily-summary.watchdog.yaml} .
-sed -i "s#@RIG@#$RIG#g; s#@REPO@#$R#g; s#@WT@#$WT#g; s#@AGENT_STACK@#$HOME/Projects/agent-stack#g" build.yaml merge-sweep.watchdog.yaml daily-summary.watchdog.yaml
+cp ~/Projects/agent-stack/rig/template/{full-stack.yaml,CULTURE.md,merge-sweep.watchdog.yaml,daily-summary.watchdog.yaml} .
+sed -i "s#@RIG@#$RIG#g; s#@REPO@#$R#g; s#@WT@#$WT#g; s#@AGENT_STACK@#$HOME/Projects/agent-stack#g; s#@LEAD_SEAT@#$LEAD#g; s#@MERGE_SEAT@#$MERGE#g" full-stack.yaml merge-sweep.watchdog.yaml daily-summary.watchdog.yaml
 #    own workspace (other projects keep running) + one worktree per seat:
 rig config init-workspace --root $W && sed -i "s/  - id: default/  - id: $RIG/" $W/workspace.yaml
 for k in files.allowlist progress.scan_roots; do c=$(rig config get $k); rig config set $k "${c:+$c,}$RIG:$W"; done
 #    worktrees: see ~/Projects/agent-stack/rig/template/README.md (keep the $P.worktrees / $P-work names:
 #    seats find their workspace from them)
-rig spec validate build.yaml && rig up build.yaml
-rig watchdog register --policy periodic-reminder --spec $W/rig/merge-sweep.watchdog.yaml --target-session integ-claude@$RIG --interval-seconds 900 --registered-by $USER
-rig watchdog register --policy periodic-reminder --spec $W/rig/daily-summary.watchdog.yaml --target-session coord-lead-claude@$RIG --interval-seconds 86400 --registered-by $USER
+rig spec validate full-stack.yaml && rig up full-stack.yaml
+rig watchdog register --policy periodic-reminder --spec $W/rig/merge-sweep.watchdog.yaml --target-session $MERGE@$RIG --interval-seconds 900 --registered-by $USER
+rig watchdog register --policy periodic-reminder --spec $W/rig/daily-summary.watchdog.yaml --target-session $LEAD@$RIG --interval-seconds 86400 --registered-by $USER
 
 # 5. write docs/PLAN.md, commit it, then:
-rig send coord-lead-claude@$RIG "Build docs/PLAN.md"
+rig send $LEAD@$RIG "Build docs/PLAN.md"
 ```
 
 From then on you get a desktop notification when the feature list is ready for your approval, when a risky PR

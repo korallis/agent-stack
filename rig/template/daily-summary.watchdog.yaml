@@ -1,9 +1,9 @@
-# Wake the lead once a day to write the owner's summary. Replace @RIG@, then register it at the time of day
+# Wake the lead once a day to write the owner's summary. Replace @RIG@ and @LEAD_SEAT@ (full-stack: coord-lead-codex; core/team/build: coord-lead-claude), then register it at the time of day
 # you want it (the first reminder fires one interval after registration), e.g. at 07:30:
 #   rig watchdog register --policy periodic-reminder --spec $W/rig/daily-summary.watchdog.yaml \
-#     --target-session coord-lead-claude@@RIG@ --interval-seconds 86400 --registered-by $USER
+#     --target-session @LEAD_SEAT@@@RIG@ --interval-seconds 86400 --registered-by $USER
 target:
-  session: "coord-lead-claude@@RIG@"
+  session: "@LEAD_SEAT@@@RIG@"
 message: >-
   Daily summary: write docs/summary/<today>.md per your role (merged features with QA evidence links, features in
   flight, blockers, decisions the owner owes) and send the owner a desktop notification with the counts. If nothing

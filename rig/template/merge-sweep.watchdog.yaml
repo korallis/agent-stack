@@ -1,7 +1,7 @@
-# Wake the merge owner every 15 minutes so no PR is left waiting. Replace @RIG@, then after `rig up`:
-#   rig watchdog register --policy periodic-reminder --spec <this file> --target-session integ-claude@@RIG@ --interval-seconds 900 --registered-by $USER
+# Wake the merge owner every 15 minutes so no PR is left waiting. Replace @RIG@ and @MERGE_SEAT@ (full-stack: integ-codex; core/team/build: integ-claude), then after `rig up`:
+#   rig watchdog register --policy periodic-reminder --spec <this file> --target-session @MERGE_SEAT@@@RIG@ --interval-seconds 900 --registered-by $USER
 target:
-  session: "integ-claude@@RIG@"
+  session: "@MERGE_SEAT@@@RIG@"
 message: >-
   Merge sweep: go through every open PR per your role (update behind branches, get missing independent
   reviews from a non-author of the other model family, live Jev merge gate, merge pinned to the reviewed

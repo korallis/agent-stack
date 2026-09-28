@@ -10,12 +10,13 @@ improves every repo's rig the next time it launches.
 | `CULTURE.md` | shared team rules (copy into each rig folder and append that repo's specifics) |
 | `core.yaml` | 4 seats: Claude lead, Codex implementer, Codex reviewer, Claude merge owner |
 | `team.yaml` | 24 seats: balanced 12 Claude + 12 Codex |
-| `build.yaml` | **Daily build team, 14 seats.** Models pinned per the routing table in `CULTURE.md`: Opus 5.5 lead/architect/UI/reviewer/merge owner, GPT-6 Sol implementers/QA/reviewer, GPT-6 Astra escalation seat, Kimi K3 (1M) third-family reviewer, test authors of both families. Max 4 busy implementers |
+| `full-stack.yaml` | **Default: the large, fast team, 27 seats.** Pinned per the Jev routing table: 8 GPT-6 Sol implementers + 2 Opus UI implementers + Astra escalation, 3 Sol QA seats, 2 Opus + 2 Sol + 1 Kimi reviewers, Opus lead/architect/merge owner, Sol deputy and recovery, test authors of both families. About 9 implementers busy at once |
+| `build.yaml` | **Standard team, 14 seats.** Models pinned per the routing table in `CULTURE.md`: Opus 5.5 lead/architect/UI/reviewer/merge owner, GPT-6 Sol implementers/QA/reviewer, GPT-6 Astra escalation seat, Kimi K3 (1M) third-family reviewer, test authors of both families. Max 4 busy implementers |
 | `fallback-codex.yaml` | Same roles with no Claude accounts: Codex builds and merges, Kimi writes the locked tests and reviews |
 | `daily-summary.watchdog.yaml` | Wakes the lead once a day to write `docs/summary/<date>.md` and notify the owner |
 | `merge-sweep.watchdog.yaml` | wakes the merge owner every 15 minutes |
 
-Merge rule everywhere: the merge owner (`integ-claude`) merges each PR as soon as required CI is green, an independent
+Merge rule everywhere: the merge owner (the `integ-*` seat) merges each PR as soon as required CI is green, an independent
 non-author review is done with findings actioned, and live Jev says merge (repo procedure if it has one, else the shared
 `review.merge_gate` decision). Nobody else merges.
 
@@ -45,7 +46,7 @@ git worktree add --detach $WT/integ-claude main
 # 3. rig folder
 mkdir -p $W/rig; cd $W/rig
 cp ~/Projects/agent-stack/rig/template/{core.yaml,CULTURE.md,merge-sweep.watchdog.yaml} .
-sed -i "s#@RIG@#$RIG#g; s#@REPO@#$R#g; s#@WT@#$WT#g; s#@AGENT_STACK@#$HOME/Projects/agent-stack#g" core.yaml merge-sweep.watchdog.yaml   # or build.yaml / team.yaml / fallback-codex.yaml
+sed -i "s#@RIG@#$RIG#g; s#@REPO@#$R#g; s#@WT@#$WT#g; s#@AGENT_STACK@#$HOME/Projects/agent-stack#g; s#@MERGE_SEAT@#integ-claude#g; s#@LEAD_SEAT@#coord-lead-claude#g" core.yaml merge-sweep.watchdog.yaml   # or build.yaml / team.yaml / fallback-codex.yaml
 #    append a "<Repo> specifics" section to CULTURE.md (status names, Jev procedure, commit identity)
 rig spec validate core.yaml && rig up core.yaml
 
@@ -57,7 +58,7 @@ rig watchdog register --policy periodic-reminder --spec $W/rig/merge-sweep.watch
 Run as many projects at once as your quotas allow. Each project has its own workspace (`~/Projects/<Repo>-work`), rig and worktrees; the global `workspace.root` is only the default for commands run outside any seat. Pass `--workspace <path>` (or set `OPENRIG_WORK_ROOT`) when you run `rig scope` / `rig proof` by hand for a specific project.
 
 
-## Plan in, user-tested features out (build.yaml)
+## Plan in, user-tested features out (full-stack.yaml or build.yaml)
 1. You write `docs/PLAN.md` in a repo made from `~/Projects/agent-stack/starter-kit` and send the lead "Build docs/PLAN.md".
 2. The architect turns it into `features.json` with acceptance criteria written as things a person does and sees. You get one desktop notification to approve it.
 3. For each feature, the test author of the *other* model family writes locked Playwright journeys (a person using the app, desktop and phone). CI rejects any implementation PR that touches them.

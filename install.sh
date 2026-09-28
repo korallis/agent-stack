@@ -70,7 +70,7 @@ if [ -s "$HOME/.cli-proxy-api/config.yaml" ]; then ok "$HOME/.cli-proxy-api/conf
 
 step "Helper scripts"
 mkdir -p "$L/bin" "$L/seat-bin" "$B"
-for f in agent-login cliproxy-healthcheck cliproxy-key openrig-healthcheck cliproxy-authwatch; do place "$S/system/$f" "$L/bin/$f" 755; done
+for f in agent-login cliproxy-healthcheck cliproxy-key openrig-healthcheck cliproxy-authwatch cliproxy-quotawatch; do place "$S/system/$f" "$L/bin/$f" 755; done
 place "$S/system/seat-bin-codex" "$L/seat-bin/codex" 755
 link "$L/bin/agent-login" "$B/agent-login"
 for f in claude-pool agent-heavy openrig-upgrade openrig-update; do link "$S/bin/$f" "$B/$f"; done
@@ -114,7 +114,7 @@ if [ $CHECK = 0 ]; then
   printf '#!/usr/bin/env bash\nexport PATH="%s:$PATH"\nexec "%s/openrig/bin/rig" "$@"\n' "$node22" "$L" > "$B/rig"; chmod 755 "$B/rig"
   if [ "$("$B/rig" --version 2>/dev/null | awk '{print $1}')" != "$OPENRIG_VERSION" ]; then "$S/bin/openrig-upgrade" "$OPENRIG_VERSION"; fi
   systemctl --user enable --now openrig.service >/dev/null 2>&1 || true
-  for t in cliproxyapi-health cliproxy-usage openrig-health cliproxy-authwatch openrig-update; do systemctl --user enable --now "$t.timer" >/dev/null 2>&1 || todo "$t.timer"; done
+  for t in cliproxyapi-health cliproxy-usage openrig-health cliproxy-authwatch cliproxy-quotawatch openrig-update; do systemctl --user enable --now "$t.timer" >/dev/null 2>&1 || todo "$t.timer"; done
 fi
 "$B/rig" --version >/dev/null 2>&1 && ok "rig $("$B/rig" --version | awk '{print $1}')" || todo "OpenRig not installed"
 for d in "$HOME/.claude/skills" "$HOME/.agents/skills"; do

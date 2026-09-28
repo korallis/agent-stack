@@ -1,0 +1,7 @@
+[Unit]
+Description=Warn before pooled subscriptions run out of quota
+After=cliproxyapi.service
+[Service]
+Type=oneshot
+Environment=PATH=%h/.local/bin:/usr/local/bin:/usr/bin
+ExecStart=%h/.local/share/agent-stack/bin/cliproxy-quotawatch

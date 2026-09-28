@@ -47,8 +47,8 @@ subscription, and your TypeSafe key.
 ## Daily use
 
 1. Make a repo from `starter-kit/` (locked acceptance journeys, CI guards, desktop+phone Playwright, PR template).
-2. Copy `rig/template/build.yaml` (14 seats, models pinned per role) with `CULTURE.md` and the two watchdogs; `rig up`.
-3. Write `docs/PLAN.md` and send the lead: `rig send coord-lead-claude@<rig> "Build docs/PLAN.md"`.
+2. Copy `rig/template/full-stack.yaml` (27 seats, models pinned per role; `build.yaml` is a 14-seat option) with `CULTURE.md` and the two watchdogs; `rig up`.
+3. Write `docs/PLAN.md` and send the lead: `rig send coord-lead-codex@<rig> "Build docs/PLAN.md"` (full-stack; `coord-lead-claude` in the other teams).
 4. Approve the feature list when notified. You are notified again only for risky merges, blockers and the daily summary.
 
 Full steps: `starter-kit/README.md` and `rig/template/README.md`. If the Claude accounts are unavailable, use
@@ -71,7 +71,7 @@ The OpenRig service only starts the daemon and the kernel rig at boot; project r
 | Work | Model (harness) |
 |---|---|
 | Plan decomposition, acceptance criteria, architecture, UI, migrations, review of Codex PRs | Claude Opus 5.5 (Claude Code) |
-| Volume implementation, unit tests, mechanical work, hands-on QA, review of Claude PRs | GPT-6 Sol (Codex) |
+| Lead / coordination, merge owner, volume implementation, unit tests, mechanical work, hands-on QA, review of Claude PRs | GPT-6 Sol (Codex) |
 | Escalation after two red CI runs | GPT-6 Astra (Codex) |
 | Long-context reading, third-family review of risky changes | Kimi K3, `kimi-k3[1m]` (Claude Code via the proxy) |
 | Claude fallback when Opus is rate-limited | Claude Fable 5.1 |
@@ -81,7 +81,7 @@ Chosen from published benchmarks and checked with Jev; revise it from your own r
 ## Where things are
 
 - Secrets (0600, never in git): `~/.config/agent-stack/secrets/{cliproxy.env,typesafe.env}`; OAuth tokens in `~/.cli-proxy-api/*.json`.
-- Proxy config `~/.cli-proxy-api/config.yaml`; services `cliproxyapi`, `openrig` and timers `cliproxyapi-health`, `cliproxy-usage`, `openrig-health`, `cliproxy-authwatch` (alerts on repeated 401/403 for one account), `openrig-update` (user units, linger on).
+- Proxy config `~/.cli-proxy-api/config.yaml`; services `cliproxyapi`, `openrig` and timers `cliproxyapi-health`, `cliproxy-usage`, `openrig-health`, `cliproxy-authwatch` (alerts on repeated 401/403 for one account), `cliproxy-quotawatch` (warns at 80% of any 5-hour or weekly allowance, critical when a whole provider is past it), `openrig-update` (user units, linger on).
 - Pinned versions: `config/versions.env`.
 - Jev decisions (single source of truth): `config/decisions.yaml`; evaluation: `eval/` (`node eval/run.js`); unit tests: `node --test 'test/*.test.js'`.
 - Decision log: `~/.local/state/agent-stack/jev.sqlite` + `jev-decisions.jsonl` (state hash only, no raw payloads).

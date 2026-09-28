@@ -10,7 +10,7 @@
   reconciles the issue straight after every merge.
 - Only Ready work is started. Blocked work stays blocked until its dependency is really done.
 - Pull requests are ready (never drafts) and reviewed by a seat that did not author them, preferring the other model family.
-- One merge owner (integ-claude) merges every PR, one at a time, as soon as CI, the independent review and live Jev agree. Nobody else merges, and no PR is left waiting.
+- One merge owner (the integ-* seat) merges every PR, one at a time, as soon as CI, the independent review and live Jev agree. Nobody else merges, and no PR is left waiting.
 - Evidence before claims: tests, logs and screenshots attached to the slice with `rig proof add`.
 - Secrets stay in local env files and the hosting provider; never in code, commits, tasks, tests or logs.
 - If you have no owned work, wait quietly.
@@ -38,6 +38,7 @@
 ## Models and routing (who does what)
 | Work | Seat model |
 |---|---|
+| Lead / coordination, deputy, merge owner, recovery | GPT-6 Sol (Codex) |
 | Plan decomposition, acceptance criteria, architecture | Opus 5.5 |
 | Volume implementation, unit tests, lint/renames/docs | GPT-6 Sol (Codex) |
 | Frontend/UI and large migrations | Opus 5.5 |

@@ -1,0 +1,358 @@
+# FULL-STACK team: the large, fast default (27 seats). Every seat is pinned to the model the Jev routing table
+# assigns its role (CULTURE.md "Models and routing"): GPT-6 Sol leads, merges and does the volume work; Opus 5.5 plans,
+# writes acceptance criteria, builds UI and migrations and reviews Codex PRs; Astra takes escalations; Kimi K3 is the
+# third-family / long-context reviewer. Seats: lead coord-lead-codex, merge owner integ-codex.
+# The lead routes each task to a seat with Jev intake.specialist over the idle seats of the right kind.
+# Busy implementers are capped by verification capacity (3 per QA seat, 2 per reviewer): about 9 at once.
+# Resources: ~13 GB RAM idle; subscription quota is the real limit (19 Codex seats, 7 Opus seats, 1 Kimi seat).
+# Copy to <workspace>/rig/, replace @RIG@ (e.g. <project>-fs), @REPO@, @WT@, @AGENT_STACK@ (this repo), create one git
+# worktree per seat, then:  rig spec validate full-stack.yaml  →  rig up full-stack.yaml
+version: "0.2"
+name: "@RIG@"
+summary: "Full-stack build team: 27 seats, models pinned per the Jev routing table, plan-in to user-tested merges"
+culture_file: CULTURE.md
+permission_policy: builtin:yolo
+managed_blocks:
+  claude-code: CLAUDE.local.md
+
+workspace:
+  workspace_root: "@REPO@"
+  repos:
+    - name: "@RIG@"
+      path: .
+      kind: project
+  default_repo: "@RIG@"
+
+pods:
+  - id: coord
+    label: "Coordination: Sol lead and deputy (Jev routing: lead 0.92)"
+    members:
+      - id: lead-codex
+        agent_ref: "path:@AGENT_STACK@/rig/template/agents/lead"
+        profile: default
+        runtime: codex
+        model: "gpt-6-sol"
+        cwd: "@WT@/coord-lead-codex"
+        restore_policy: resume_if_possible
+      - id: deputy-codex
+        agent_ref: "path:@AGENT_STACK@/rig/template/agents/deputy"
+        profile: default
+        runtime: codex
+        model: "gpt-6-sol"
+        cwd: "@WT@/coord-deputy-codex"
+        restore_policy: resume_if_possible
+    edges:
+      - kind: delegates_to
+        from: lead-codex
+        to: deputy-codex
+      - kind: escalates_to
+        from: deputy-codex
+        to: lead-codex
+
+  - id: arch
+    label: "Plan decomposition and acceptance criteria"
+    members:
+      - id: claude
+        agent_ref: "path:@AGENT_STACK@/rig/template/agents/architect"
+        profile: default
+        runtime: claude-code
+        model: "claude-opus-5-5"
+        cwd: "@WT@/arch-claude"
+        restore_policy: resume_if_possible
+    edges: []
+
+  - id: tests
+    label: "Locked user-journey tests, written by the family NOT implementing the feature"
+    members:
+      - id: claude-1
+        agent_ref: "path:@AGENT_STACK@/rig/template/agents/test-author"
+        profile: default
+        runtime: claude-code
+        model: "claude-opus-5-5"
+        cwd: "@WT@/tests-claude-1"
+        restore_policy: resume_if_possible
+      - id: claude-2
+        agent_ref: "path:@AGENT_STACK@/rig/template/agents/test-author"
+        profile: default
+        runtime: claude-code
+        model: "claude-opus-5-5"
+        cwd: "@WT@/tests-claude-2"
+        restore_policy: resume_if_possible
+      - id: codex
+        agent_ref: "path:@AGENT_STACK@/rig/template/agents/test-author"
+        profile: default
+        runtime: codex
+        model: "gpt-6-sol"
+        cwd: "@WT@/tests-codex"
+        restore_policy: resume_if_possible
+    edges: []
+
+  - id: impl
+    label: "Implementation: Sol for volume, Opus for UI and migrations, Astra for escalations only"
+    members:
+      - id: codex-1
+        agent_ref: "path:@AGENT_STACK@/rig/template/agents/implementer"
+        profile: default
+        runtime: codex
+        model: "gpt-6-sol"
+        cwd: "@WT@/impl-codex-1"
+        restore_policy: resume_if_possible
+      - id: codex-2
+        agent_ref: "path:@AGENT_STACK@/rig/template/agents/implementer"
+        profile: default
+        runtime: codex
+        model: "gpt-6-sol"
+        cwd: "@WT@/impl-codex-2"
+        restore_policy: resume_if_possible
+      - id: codex-3
+        agent_ref: "path:@AGENT_STACK@/rig/template/agents/implementer"
+        profile: default
+        runtime: codex
+        model: "gpt-6-sol"
+        cwd: "@WT@/impl-codex-3"
+        restore_policy: resume_if_possible
+      - id: codex-4
+        agent_ref: "path:@AGENT_STACK@/rig/template/agents/implementer"
+        profile: default
+        runtime: codex
+        model: "gpt-6-sol"
+        cwd: "@WT@/impl-codex-4"
+        restore_policy: resume_if_possible
+      - id: codex-5
+        agent_ref: "path:@AGENT_STACK@/rig/template/agents/implementer"
+        profile: default
+        runtime: codex
+        model: "gpt-6-sol"
+        cwd: "@WT@/impl-codex-5"
+        restore_policy: resume_if_possible
+      - id: codex-6
+        agent_ref: "path:@AGENT_STACK@/rig/template/agents/implementer"
+        profile: default
+        runtime: codex
+        model: "gpt-6-sol"
+        cwd: "@WT@/impl-codex-6"
+        restore_policy: resume_if_possible
+      - id: codex-7
+        agent_ref: "path:@AGENT_STACK@/rig/template/agents/implementer"
+        profile: default
+        runtime: codex
+        model: "gpt-6-sol"
+        cwd: "@WT@/impl-codex-7"
+        restore_policy: resume_if_possible
+      - id: codex-8
+        agent_ref: "path:@AGENT_STACK@/rig/template/agents/implementer"
+        profile: default
+        runtime: codex
+        model: "gpt-6-sol"
+        cwd: "@WT@/impl-codex-8"
+        restore_policy: resume_if_possible
+      - id: claude-ui-1
+        agent_ref: "path:@AGENT_STACK@/rig/template/agents/implementer"
+        profile: default
+        runtime: claude-code
+        model: "claude-opus-5-5"
+        cwd: "@WT@/impl-claude-ui-1"
+        restore_policy: resume_if_possible
+      - id: claude-ui-2
+        agent_ref: "path:@AGENT_STACK@/rig/template/agents/implementer"
+        profile: default
+        runtime: claude-code
+        model: "claude-opus-5-5"
+        cwd: "@WT@/impl-claude-ui-2"
+        restore_policy: resume_if_possible
+      - id: astra
+        agent_ref: "path:@AGENT_STACK@/rig/template/agents/implementer"
+        profile: default
+        runtime: codex
+        model: "gpt-6-astra"
+        cwd: "@WT@/impl-astra"
+        restore_policy: resume_if_possible
+    edges: []
+
+  - id: qa
+    label: "Hands-on user QA in a real browser"
+    members:
+      - id: codex-1
+        agent_ref: "path:@AGENT_STACK@/rig/template/agents/qa"
+        profile: default
+        runtime: codex
+        model: "gpt-6-sol"
+        cwd: "@WT@/qa-codex-1"
+        restore_policy: resume_if_possible
+      - id: codex-2
+        agent_ref: "path:@AGENT_STACK@/rig/template/agents/qa"
+        profile: default
+        runtime: codex
+        model: "gpt-6-sol"
+        cwd: "@WT@/qa-codex-2"
+        restore_policy: resume_if_possible
+      - id: codex-3
+        agent_ref: "path:@AGENT_STACK@/rig/template/agents/qa"
+        profile: default
+        runtime: codex
+        model: "gpt-6-sol"
+        cwd: "@WT@/qa-codex-3"
+        restore_policy: resume_if_possible
+    edges: []
+
+  - id: review
+    label: "Independent review: Opus reviews Codex PRs, Sol reviews Claude PRs, Kimi third family and long-context"
+    members:
+      - id: claude-1
+        agent_ref: "path:@AGENT_STACK@/rig/template/agents/reviewer"
+        profile: default
+        runtime: claude-code
+        model: "claude-opus-5-5"
+        cwd: "@WT@/review-claude-1"
+        restore_policy: resume_if_possible
+      - id: claude-2
+        agent_ref: "path:@AGENT_STACK@/rig/template/agents/reviewer"
+        profile: default
+        runtime: claude-code
+        model: "claude-opus-5-5"
+        cwd: "@WT@/review-claude-2"
+        restore_policy: resume_if_possible
+      - id: codex-1
+        agent_ref: "path:@AGENT_STACK@/rig/template/agents/reviewer"
+        profile: default
+        runtime: codex
+        model: "gpt-6-sol"
+        cwd: "@WT@/review-codex-1"
+        restore_policy: resume_if_possible
+      - id: codex-2
+        agent_ref: "path:@AGENT_STACK@/rig/template/agents/reviewer"
+        profile: default
+        runtime: codex
+        model: "gpt-6-sol"
+        cwd: "@WT@/review-codex-2"
+        restore_policy: resume_if_possible
+      - id: kimi
+        agent_ref: "path:@AGENT_STACK@/rig/template/agents/reviewer"
+        profile: default
+        runtime: claude-code
+        model: "kimi-k3[1m]"
+        cwd: "@WT@/review-kimi"
+        restore_policy: resume_if_possible
+    edges: []
+
+  - id: integ
+    label: "Merge owner, the only seat that merges (Jev routing: Sol 0.76)"
+    members:
+      - id: codex
+        agent_ref: "path:@AGENT_STACK@/rig/template/agents/integrator"
+        profile: default
+        runtime: codex
+        model: "gpt-6-sol"
+        cwd: "@WT@/integ-codex"
+        restore_policy: resume_if_possible
+    edges: []
+
+  - id: ops
+    label: "Recovery: stalled seats, broken CI, merge conflicts"
+    members:
+      - id: codex
+        agent_ref: "path:@AGENT_STACK@/rig/template/agents/recovery"
+        profile: default
+        runtime: codex
+        model: "gpt-6-sol"
+        cwd: "@WT@/ops-codex"
+        restore_policy: resume_if_possible
+    edges: []
+
+edges:
+  - kind: delegates_to
+    from: coord.lead-codex
+    to: arch.claude
+  - kind: delegates_to
+    from: coord.lead-codex
+    to: tests.claude-1
+  - kind: delegates_to
+    from: coord.lead-codex
+    to: tests.claude-2
+  - kind: delegates_to
+    from: coord.lead-codex
+    to: tests.codex
+  - kind: delegates_to
+    from: coord.lead-codex
+    to: impl.codex-1
+  - kind: delegates_to
+    from: coord.lead-codex
+    to: impl.codex-2
+  - kind: delegates_to
+    from: coord.lead-codex
+    to: impl.codex-3
+  - kind: delegates_to
+    from: coord.lead-codex
+    to: impl.codex-4
+  - kind: delegates_to
+    from: coord.lead-codex
+    to: impl.codex-5
+  - kind: delegates_to
+    from: coord.lead-codex
+    to: impl.codex-6
+  - kind: delegates_to
+    from: coord.lead-codex
+    to: impl.codex-7
+  - kind: delegates_to
+    from: coord.lead-codex
+    to: impl.codex-8
+  - kind: delegates_to
+    from: coord.lead-codex
+    to: impl.claude-ui-1
+  - kind: delegates_to
+    from: coord.lead-codex
+    to: impl.claude-ui-2
+  - kind: delegates_to
+    from: coord.lead-codex
+    to: impl.astra
+  - kind: delegates_to
+    from: coord.lead-codex
+    to: qa.codex-1
+  - kind: delegates_to
+    from: coord.lead-codex
+    to: qa.codex-2
+  - kind: delegates_to
+    from: coord.lead-codex
+    to: qa.codex-3
+  - kind: delegates_to
+    from: coord.lead-codex
+    to: review.claude-1
+  - kind: delegates_to
+    from: coord.lead-codex
+    to: review.claude-2
+  - kind: delegates_to
+    from: coord.lead-codex
+    to: review.codex-1
+  - kind: delegates_to
+    from: coord.lead-codex
+    to: review.codex-2
+  - kind: delegates_to
+    from: coord.lead-codex
+    to: review.kimi
+  - kind: delegates_to
+    from: coord.lead-codex
+    to: integ.codex
+  - kind: delegates_to
+    from: coord.lead-codex
+    to: ops.codex
+  - kind: delegates_to
+    from: integ.codex
+    to: review.claude-1
+  - kind: delegates_to
+    from: integ.codex
+    to: review.claude-2
+  - kind: delegates_to
+    from: integ.codex
+    to: review.codex-1
+  - kind: delegates_to
+    from: integ.codex
+    to: review.codex-2
+  - kind: delegates_to
+    from: integ.codex
+    to: review.kimi
+  - kind: escalates_to
+    from: integ.codex
+    to: coord.lead-codex
+  - kind: escalates_to
+    from: ops.codex
+    to: coord.lead-codex
