@@ -1,17 +1,18 @@
-name: team-architect
+name: team-integrator
 version: "1.0"
-description: "Architecture / planning specialist"
+description: "Merge owner: keeps every PR moving; merges when CI, independent review and Jev all agree"
 
 defaults:
   runtime: claude-code
 
+# Reuse OpenRig's built-in skills and activity hooks.
 imports:
   - ref: local:../../openrig-shared
 
 profiles:
   default:
     uses:
-      skills: [verification-before-completion]
+      skills: [systematic-debugging, verification-before-completion]
       guidance: []
       subagents: []
       plugins: [shared:openrig-core]
@@ -22,6 +23,7 @@ resources:
     - id: role
       path: guidance/role.md
 
+# The role text is sent to the seat as its first message.
 startup:
   files:
     - path: guidance/role.md

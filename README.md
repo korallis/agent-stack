@@ -25,8 +25,10 @@ subscriptions pooled by **CLIProxyAPI**, with **TypeSafe Jev** for bounded seman
 
 ## Daily use (plain OpenRig)
 
-Rigs are ordinary OpenRig RigSpec files kept in the project, e.g. `~/Projects/rig-pilot/rig/pilot.yaml` and
-`rig/team.yaml` (commented; copy the `rig/` folder into a new repo and edit paths/names).
+Every repo's rig uses the shared roles in `rig/template/` (lead, deputy, architect, implementer, reviewer, merge owner,
+recovery). Per repo you copy `core.yaml` (4 seats) or `team.yaml` (24), `CULTURE.md` and the merge-sweep watchdog into
+`<workspace>/rig/` — see `rig/template/README.md`. The merge owner merges each PR once CI, an independent review and
+live Jev agree (shared `review.merge_gate` decision unless the repo has its own procedure). Example: `~/Projects/HC-Prime-work/rig/`.
 
 ```bash
 cd ~/Projects/rig-pilot

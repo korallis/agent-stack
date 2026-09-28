@@ -1,0 +1,235 @@
+# Balanced 24-seat team: 12 Claude Code + 12 Codex.
+# Copy to <workspace>/rig/, replace @RIG@ (rig name, e.g. hc), @REPO@ (absolute repo path) and
+# @WT@ (absolute worktrees folder, e.g. <repo>.worktrees), create the worktrees with git, then:
+#   rig spec validate <file>  →  rig up <file>   (later: rig down @RIG@ --snapshot / rig up @RIG@)
+# Roles come from the shared template (path: refs), so improving a role improves every repo's rig.
+version: "0.2"
+name: "@RIG@"
+summary: "Balanced 12 Claude + 12 Codex team"
+culture_file: CULTURE.md
+# Seats launch with permission checks off.
+permission_policy: builtin:yolo
+managed_blocks:
+  claude-code: CLAUDE.local.md
+
+workspace:
+  workspace_root: "@REPO@"
+  repos:
+    - name: "@RIG@"
+      path: .
+      kind: project
+  default_repo: "@RIG@"
+
+pods:
+  - id: coord
+    label: "Coordination"
+    members:
+      - id: lead-claude
+        agent_ref: "path:/home/lee/Projects/agent-stack/rig/template/agents/lead"
+        profile: default
+        runtime: claude-code
+        model: claude-opus-5-5
+        cwd: "@WT@/coord-lead-claude"
+        restore_policy: resume_if_possible
+      - id: deputy-codex
+        agent_ref: "path:/home/lee/Projects/agent-stack/rig/template/agents/deputy"
+        profile: default
+        runtime: codex
+        model: gpt-6-astra
+        cwd: "@WT@/coord-deputy-codex"
+        restore_policy: resume_if_possible
+    edges:
+      - kind: delegates_to
+        from: lead-claude
+        to: deputy-codex
+      - kind: escalates_to
+        from: deputy-codex
+        to: lead-claude
+
+  - id: arch
+    label: "Architecture & planning"
+    members:
+      - id: claude
+        agent_ref: "path:/home/lee/Projects/agent-stack/rig/template/agents/architect"
+        profile: default
+        runtime: claude-code
+        model: claude-opus-5-5
+        cwd: "@WT@/arch-claude"
+        restore_policy: resume_if_possible
+      - id: codex
+        agent_ref: "path:/home/lee/Projects/agent-stack/rig/template/agents/architect"
+        profile: default
+        runtime: codex
+        model: gpt-6-astra
+        cwd: "@WT@/arch-codex"
+        restore_policy: resume_if_possible
+    edges: []
+
+  - id: impl
+    label: "Implementation"
+    members:
+      - id: claude-1
+        agent_ref: "path:/home/lee/Projects/agent-stack/rig/template/agents/implementer"
+        profile: default
+        runtime: claude-code
+        model: claude-opus-5-5
+        cwd: "@WT@/impl-claude-1"
+        restore_policy: resume_if_possible
+      - id: claude-2
+        agent_ref: "path:/home/lee/Projects/agent-stack/rig/template/agents/implementer"
+        profile: default
+        runtime: claude-code
+        model: claude-opus-5-5
+        cwd: "@WT@/impl-claude-2"
+        restore_policy: resume_if_possible
+      - id: claude-3
+        agent_ref: "path:/home/lee/Projects/agent-stack/rig/template/agents/implementer"
+        profile: default
+        runtime: claude-code
+        model: claude-opus-5-5
+        cwd: "@WT@/impl-claude-3"
+        restore_policy: resume_if_possible
+      - id: claude-4
+        agent_ref: "path:/home/lee/Projects/agent-stack/rig/template/agents/implementer"
+        profile: default
+        runtime: claude-code
+        model: claude-opus-5-5
+        cwd: "@WT@/impl-claude-4"
+        restore_policy: resume_if_possible
+      - id: claude-5
+        agent_ref: "path:/home/lee/Projects/agent-stack/rig/template/agents/implementer"
+        profile: default
+        runtime: claude-code
+        model: claude-opus-5-5
+        cwd: "@WT@/impl-claude-5"
+        restore_policy: resume_if_possible
+      - id: claude-6
+        agent_ref: "path:/home/lee/Projects/agent-stack/rig/template/agents/implementer"
+        profile: default
+        runtime: claude-code
+        model: claude-opus-5-5
+        cwd: "@WT@/impl-claude-6"
+        restore_policy: resume_if_possible
+      - id: codex-1
+        agent_ref: "path:/home/lee/Projects/agent-stack/rig/template/agents/implementer"
+        profile: default
+        runtime: codex
+        model: gpt-6-astra
+        cwd: "@WT@/impl-codex-1"
+        restore_policy: resume_if_possible
+      - id: codex-2
+        agent_ref: "path:/home/lee/Projects/agent-stack/rig/template/agents/implementer"
+        profile: default
+        runtime: codex
+        model: gpt-6-astra
+        cwd: "@WT@/impl-codex-2"
+        restore_policy: resume_if_possible
+      - id: codex-3
+        agent_ref: "path:/home/lee/Projects/agent-stack/rig/template/agents/implementer"
+        profile: default
+        runtime: codex
+        model: gpt-6-astra
+        cwd: "@WT@/impl-codex-3"
+        restore_policy: resume_if_possible
+      - id: codex-4
+        agent_ref: "path:/home/lee/Projects/agent-stack/rig/template/agents/implementer"
+        profile: default
+        runtime: codex
+        model: gpt-6-astra
+        cwd: "@WT@/impl-codex-4"
+        restore_policy: resume_if_possible
+      - id: codex-5
+        agent_ref: "path:/home/lee/Projects/agent-stack/rig/template/agents/implementer"
+        profile: default
+        runtime: codex
+        model: gpt-6-astra
+        cwd: "@WT@/impl-codex-5"
+        restore_policy: resume_if_possible
+      - id: codex-6
+        agent_ref: "path:/home/lee/Projects/agent-stack/rig/template/agents/implementer"
+        profile: default
+        runtime: codex
+        model: gpt-6-astra
+        cwd: "@WT@/impl-codex-6"
+        restore_policy: resume_if_possible
+    edges: []
+
+  - id: review
+    label: "Independent review"
+    members:
+      - id: claude-1
+        agent_ref: "path:/home/lee/Projects/agent-stack/rig/template/agents/reviewer"
+        profile: default
+        runtime: claude-code
+        model: claude-opus-5-5
+        cwd: "@WT@/review-claude-1"
+        restore_policy: resume_if_possible
+      - id: claude-2
+        agent_ref: "path:/home/lee/Projects/agent-stack/rig/template/agents/reviewer"
+        profile: default
+        runtime: claude-code
+        model: claude-opus-5-5
+        cwd: "@WT@/review-claude-2"
+        restore_policy: resume_if_possible
+      - id: claude-3
+        agent_ref: "path:/home/lee/Projects/agent-stack/rig/template/agents/reviewer"
+        profile: default
+        runtime: claude-code
+        model: claude-opus-5-5
+        cwd: "@WT@/review-claude-3"
+        restore_policy: resume_if_possible
+      - id: codex-1
+        agent_ref: "path:/home/lee/Projects/agent-stack/rig/template/agents/reviewer"
+        profile: default
+        runtime: codex
+        model: gpt-6-astra
+        cwd: "@WT@/review-codex-1"
+        restore_policy: resume_if_possible
+      - id: codex-2
+        agent_ref: "path:/home/lee/Projects/agent-stack/rig/template/agents/reviewer"
+        profile: default
+        runtime: codex
+        model: gpt-6-astra
+        cwd: "@WT@/review-codex-2"
+        restore_policy: resume_if_possible
+      - id: codex-3
+        agent_ref: "path:/home/lee/Projects/agent-stack/rig/template/agents/reviewer"
+        profile: default
+        runtime: codex
+        model: gpt-6-astra
+        cwd: "@WT@/review-codex-3"
+        restore_policy: resume_if_possible
+    edges: []
+
+  - id: integ
+    label: "Merge owner & recovery"
+    members:
+      - id: claude
+        agent_ref: "path:/home/lee/Projects/agent-stack/rig/template/agents/integrator"
+        profile: default
+        runtime: claude-code
+        model: claude-opus-5-5
+        cwd: "@WT@/integ-claude"
+        restore_policy: resume_if_possible
+      - id: codex
+        agent_ref: "path:/home/lee/Projects/agent-stack/rig/template/agents/recovery"
+        profile: default
+        runtime: codex
+        model: gpt-6-astra
+        cwd: "@WT@/integ-codex"
+        restore_policy: resume_if_possible
+    edges:
+      - kind: delegates_to
+        from: claude
+        to: codex
+
+edges:
+  - kind: delegates_to
+    from: coord.lead-claude
+    to: arch.claude
+  - kind: delegates_to
+    from: coord.lead-claude
+    to: arch.codex
+  - kind: delegates_to
+    from: coord.lead-claude
+    to: integ.claude

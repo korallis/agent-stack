@@ -1,17 +1,18 @@
-name: team-implementer
+name: team-reviewer
 version: "1.0"
-description: "Implementation specialist working in its own worktree"
+description: "Independent reviewer: reviews PRs it did not author and posts independent-review"
 
 defaults:
   runtime: claude-code
 
+# Reuse OpenRig's built-in skills and activity hooks.
 imports:
   - ref: local:../../openrig-shared
 
 profiles:
   default:
     uses:
-      skills: [development-team, test-driven-development, systematic-debugging, verification-before-completion]
+      skills: [review-team, systematic-debugging, verification-before-completion]
       guidance: []
       subagents: []
       plugins: [shared:openrig-core]
@@ -22,6 +23,7 @@ resources:
     - id: role
       path: guidance/role.md
 
+# The role text is sent to the seat as its first message.
 startup:
   files:
     - path: guidance/role.md

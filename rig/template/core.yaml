@@ -1,0 +1,81 @@
+# Core 4-seat team: lead, implementer, reviewer, merge owner.
+# Copy to <workspace>/rig/, replace @RIG@ (rig name, e.g. hc), @REPO@ (absolute repo path) and
+# @WT@ (absolute worktrees folder, e.g. <repo>.worktrees), create the worktrees with git, then:
+#   rig spec validate <file>  →  rig up <file>   (later: rig down @RIG@ --snapshot / rig up @RIG@)
+# Roles come from the shared template (path: refs), so improving a role improves every repo's rig.
+version: "0.2"
+name: "@RIG@"
+summary: "Core team: Claude lead, Codex implementer, Codex reviewer, Claude merge owner"
+culture_file: CULTURE.md
+# Seats launch with permission checks off.
+permission_policy: builtin:yolo
+managed_blocks:
+  claude-code: CLAUDE.local.md
+
+workspace:
+  workspace_root: "@REPO@"
+  repos:
+    - name: "@RIG@"
+      path: .
+      kind: project
+  default_repo: "@RIG@"
+
+pods:
+  - id: coord
+    label: "Coordination"
+    members:
+      - id: lead-claude
+        agent_ref: "path:/home/lee/Projects/agent-stack/rig/template/agents/lead"
+        profile: default
+        runtime: claude-code
+        model: claude-opus-5-5
+        cwd: "@WT@/coord-lead-claude"
+        restore_policy: resume_if_possible
+    edges: []
+
+  - id: impl
+    label: "Implementation"
+    members:
+      - id: codex-1
+        agent_ref: "path:/home/lee/Projects/agent-stack/rig/template/agents/implementer"
+        profile: default
+        runtime: codex
+        model: gpt-6-astra
+        cwd: "@WT@/impl-codex-1"
+        restore_policy: resume_if_possible
+    edges: []
+
+  - id: review
+    label: "Independent review"
+    members:
+      - id: codex
+        agent_ref: "path:/home/lee/Projects/agent-stack/rig/template/agents/reviewer"
+        profile: default
+        runtime: codex
+        model: gpt-6-astra
+        cwd: "@WT@/review-codex"
+        restore_policy: resume_if_possible
+    edges: []
+
+  - id: integ
+    label: "Merge owner"
+    members:
+      - id: claude
+        agent_ref: "path:/home/lee/Projects/agent-stack/rig/template/agents/integrator"
+        profile: default
+        runtime: claude-code
+        model: claude-opus-5-5
+        cwd: "@WT@/integ-claude"
+        restore_policy: resume_if_possible
+    edges: []
+
+edges:
+  - kind: delegates_to
+    from: coord.lead-claude
+    to: impl.codex-1
+  - kind: delegates_to
+    from: integ.claude
+    to: review.codex
+  - kind: escalates_to
+    from: integ.claude
+    to: coord.lead-claude

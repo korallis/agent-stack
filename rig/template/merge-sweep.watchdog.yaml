@@ -1,0 +1,8 @@
+# Wake the merge owner every 15 minutes so no PR is left waiting. Replace @RIG@, then after `rig up`:
+#   rig watchdog register --policy periodic-reminder --spec <this file> --target-session integ-claude@@RIG@ --interval-seconds 900 --registered-by lee
+target:
+  session: "integ-claude@@RIG@"
+message: >-
+  Merge sweep: go through every open PR per your role (update behind branches, get missing independent
+  reviews from a non-author of the other model family, live Jev merge gate, merge pinned to the reviewed
+  head, reconcile the tracker). If nothing changed since your last sweep, reply "no change" in one line.

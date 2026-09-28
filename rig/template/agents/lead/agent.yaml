@@ -1,17 +1,18 @@
-name: team-reviewer
+name: team-lead
 version: "1.0"
-description: "Review / testing specialist (independent, cross-family)"
+description: "Lead: plans missions/slices from the repo's plan, dispatches, reviews other-family PRs"
 
 defaults:
   runtime: claude-code
 
+# Reuse OpenRig's built-in skills and activity hooks.
 imports:
   - ref: local:../../openrig-shared
 
 profiles:
   default:
     uses:
-      skills: [review-team, systematic-debugging, verification-before-completion]
+      skills: [orchestration-team, verification-before-completion]
       guidance: []
       subagents: []
       plugins: [shared:openrig-core]
@@ -22,6 +23,7 @@ resources:
     - id: role
       path: guidance/role.md
 
+# The role text is sent to the seat as its first message.
 startup:
   files:
     - path: guidance/role.md
