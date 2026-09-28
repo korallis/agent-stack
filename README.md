@@ -63,7 +63,7 @@ The OpenRig service only starts the daemon and the kernel rig at boot; project r
 - **Codex seats:** global `~/.codex/config.toml` (pool provider, key via `auth.command`) plus the seat-only shim
   `~/.local/share/agent-stack/seat-bin/codex` (first on the OpenRig daemon's PATH): `--no-daemon`, slug display names,
   analytics/update checks off, and makes Codex the terminal foreground group.
-- **YOLO:** `permission_policy: builtin:yolo` in each RigSpec and in the kernel specs (OpenRig ignores the
+- **YOLO:** `permission_policy: builtin:yolo` in each RigSpec you write and in all 13 built-in presets (re-applied by `openrig-upgrade`) (OpenRig ignores the
   ambient `OPENRIG_YOLO`). `skipDangerousModePermissionPrompt` in `~/.claude/settings.json` stops the bypass warning
   dialog from exiting seats.
 - **Jev:** MCP server `jev` registered at user scope in both harnesses (runs outside the Codex sandbox); `TYPESAFE_API_KEY`
