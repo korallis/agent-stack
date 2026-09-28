@@ -10,7 +10,8 @@ These rules are binding for every seat. The rig culture (CULTURE.md) adds team r
 
 ## How to run it
 - Install: `npm ci`
-- Start for tests: `npm run start:test` (must serve the app on http://127.0.0.1:3000 with test data)
+- Start for tests: `npm run start:test` (must serve the app on `$PORT` with test data; Playwright sets PORT to your
+  seat's own `E2E_PORT`, so parallel seats never share a server)
 - Unit tests (optional, never proof of done): `npm test`
 - Acceptance journeys: `npx playwright test` (desktop and phone)
 - Held-out journeys (merge owner only): `E2E_TEST_DIR=@HELDOUT@ npx playwright test`

@@ -139,8 +139,9 @@ if [ $CHECK = 0 ]; then
   ts=$(ls -d "$HOME"/.claude/plugins/cache/typesafe-ai/typesafe/*/skills/typesafe-ai 2>/dev/null | tail -1)
   [ -n "$ts" ] && [ ! -e "$HOME/.agents/skills/typesafe-ai" ] && { mkdir -p "$HOME/.agents/skills"; cp -r "$ts" "$HOME/.agents/skills/"; }
   claude mcp get jev >/dev/null 2>&1 || claude mcp add --scope user jev -- "$B/jev-mcp" >/dev/null
-  claude mcp get playwright >/dev/null 2>&1 || claude mcp add --scope user playwright -- npx -y @playwright/mcp@latest --headless >/dev/null
-  codex mcp get playwright >/dev/null 2>&1 || codex mcp add playwright -- npx -y @playwright/mcp@latest --headless >/dev/null
+  pw=(npx -y @playwright/mcp@latest --headless); cr=$(command -v chromium || command -v chromium-browser || command -v google-chrome || true)
+  [ -n "$cr" ] && pw+=(--executable-path "$cr")   # use the system browser (Playwright's default Chrome channel is often absent on Linux)
+  claude mcp get playwright >/dev/null 2>&1 || claude mcp add --scope user playwright -- "${pw[@]}" >/dev/null
   command -v toon >/dev/null || npm install -g @toon-format/cli >/dev/null 2>&1
   npx -y playwright@latest install chromium >/dev/null 2>&1 || todo "playwright chromium"
 fi

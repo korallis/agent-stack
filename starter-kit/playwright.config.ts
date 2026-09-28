@@ -1,8 +1,10 @@
 import { defineConfig, devices } from '@playwright/test';
 
 // Acceptance journeys: a person using the running app, on a desktop and on a phone.
-// E2E_BASE_URL / E2E_START_COMMAND let the merge owner point the held-out suite at the same app.
-const baseURL = process.env.E2E_BASE_URL ?? 'http://127.0.0.1:3000';
+// Each seat serves the app on its own port (E2E_PORT, set per seat by agent-stack's env.sh) so parallel seats never
+// test each other's servers. E2E_BASE_URL / E2E_START_COMMAND let the merge owner point the held-out suite at an app.
+const port = process.env.E2E_PORT ?? process.env.PORT ?? '3000';
+const baseURL = process.env.E2E_BASE_URL ?? `http://127.0.0.1:${port}`;
 
 export default defineConfig({
   testDir: process.env.E2E_TEST_DIR ?? 'tests/acceptance',
@@ -25,7 +27,9 @@ export default defineConfig({
     : {
         command: process.env.E2E_START_COMMAND ?? 'npm run start:test',
         url: baseURL,
-        reuseExistingServer: !process.env.CI,
+        env: { PORT: port },
+        // Never reuse a server this run did not start: an occupied port fails loudly instead of testing someone else's app.
+        reuseExistingServer: false,
         timeout: 180_000,
       },
 });

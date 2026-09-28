@@ -24,6 +24,12 @@ if [ -n "${OPENRIG_NODE_ID:-}" ] && [ -r "$HOME/.config/agent-stack/secrets/clip
   export CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC=1
 fi
 
+# Many seats run app/test servers at once: give each seat its own port (20000-29999, stable per seat folder).
+# The starter kit's Playwright config serves the app on it and never reuses a server it did not start.
+if [ -n "${OPENRIG_NODE_ID:-}" ] && [ -z "${E2E_PORT:-}" ]; then
+  export E2E_PORT=$(( 20000 + $(printf %s "$PWD" | cksum | cut -d' ' -f1) % 10000 ))
+fi
+
 # Several projects at once: each OpenRig seat runs in ~/Projects/<Project>.worktrees/<seat>. Point its
 # `rig scope` / `rig proof` commands at that project's own workspace (~/Projects/<Project>-work) instead of the
 # single machine-wide workspace.root, so every project keeps its own missions and slices.

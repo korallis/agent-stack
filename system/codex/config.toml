@@ -39,7 +39,9 @@ default_tools_approval_mode = "approve"
 # Real browser for hands-on QA and user-journey checks.
 [mcp_servers.playwright]
 command = "npx"
-args = ["-y", "@playwright/mcp@latest", "--headless"]
+args = ["-y", "@playwright/mcp@latest", "--headless", "--executable-path", "/usr/bin/chromium"]
+# Browser actions are pre-approved so QA seats never stall on per-action prompts.
+default_tools_approval_mode = "approve"
 
 [plugins."superpowers@openai-api-curated"]
 enabled = true
