@@ -23,19 +23,27 @@ subscriptions pooled by **CLIProxyAPI**, with **TypeSafe Jev** for bounded seman
 | TypeSafe JS SDK | `@typesafe-ai/sdk` 0.6.0, model pinned `jev-1.13.0` | `jev/` (Node 24.21.0) |
 | tmux | 3.7c (Omarchy config unchanged) | |
 
-## Daily use
+## Daily use (plain OpenRig)
+
+Rigs are ordinary OpenRig RigSpec files kept in the project, e.g. `~/Projects/rig-pilot/rig/pilot.yaml` and
+`rig/team.yaml` (commented; copy the `rig/` folder into a new repo and edit paths/names).
 
 ```bash
-agent-team up ~/Projects/<repo>          # worktrees + rendered RigSpec + validate + rig up (24 seats)
-agent-team up ~/Projects/<repo> --pilot  # 1 Claude lead + 1 Codex implementer
-agent-team grow|shrink <repo> <seat…>    # resize (see `agent-team roster`)
-rig send coord-lead-claude@team-<repo> "…your request…"
-rig ps --nodes --rig team-<repo>         # seat states;  rig down team-<repo> --snapshot / rig up team-<repo>
-agent-proxy-status [--recent 20]         # pool health, per-account quota, routing log
-jev-decide stats                         # who decided: jev | cache | fallback_model | code
-claude-pool                              # your own Claude Code session through the pool
-agent-login <claude|codex> <label>       # (re)authenticate one account
+cd ~/Projects/rig-pilot
+rig spec validate rig/pilot.yaml
+rig up rig/pilot.yaml                     # first launch (later: rig up pilot)
+rig ps --nodes --rig pilot                # seat states
+rig send coord-lead-claude@pilot "…your request…"
+rig queue list -a -A                      # task ownership / handoffs
+rig down pilot --snapshot                 # stop (resume with: rig up pilot)
+git worktree add .worktrees/<seat> -b agent/<seat>   # one worktree per new seat before adding it to a spec
+agent-proxy-status [--recent 20]          # pool health / routing (not OpenRig)
+jev-decide stats                          # Jev decisions (not OpenRig)
+claude-pool                               # your own Claude Code session through the pool
+agent-login <claude|codex> <label>        # re-authenticate one account
 ```
+
+The OpenRig service only starts the daemon and the kernel rig at boot; project rigs start when you run `rig up`.
 
 ## Where things are
 
@@ -44,7 +52,7 @@ agent-login <claude|codex> <label>       # (re)authenticate one account
 - Jev decisions (single source of truth): `config/decisions.yaml`; evaluation: `eval/` (`node eval/run.js`); unit tests: `node --test 'test/*.test.js'`.
 - Decision log: `~/.local/state/agent-stack/jev.sqlite` + `jev-decisions.jsonl` (state hash only, no raw payloads).
 - Routing log: `~/.local/share/agent-stack/logs/proxy-usage.jsonl` (account, model, status, latency, quota; no content).
-- Per-project team state: `<repo>/.agent-team/` (REQUIREMENTS, DECISIONS, plans, handoffs, incidents; git-excluded).
+- Per-project team notes: `<repo>/.team/` (REQUIREMENTS, DECISIONS, plans, handoffs, incidents; git-excluded).
 - Snapshot of non-secret system files: `system/` (secrets redacted).
 
 ## How seats get their configuration (launch and restart alike)
@@ -55,7 +63,7 @@ agent-login <claude|codex> <label>       # (re)authenticate one account
 - **Codex seats:** global `~/.codex/config.toml` (pool provider, key via `auth.command`) plus the seat-only shim
   `~/.local/share/agent-stack/seat-bin/codex` (first on the OpenRig daemon's PATH): `--no-daemon`, slug display names,
   analytics/update checks off, and makes Codex the terminal foreground group.
-- **YOLO:** `permission_policy: builtin:yolo` in every generated RigSpec and in the kernel specs (OpenRig ignores the
+- **YOLO:** `permission_policy: builtin:yolo` in each RigSpec and in the kernel specs (OpenRig ignores the
   ambient `OPENRIG_YOLO`). `skipDangerousModePermissionPrompt` in `~/.claude/settings.json` stops the bypass warning
   dialog from exiting seats.
 - **Jev:** MCP server `jev` registered at user scope in both harnesses (runs outside the Codex sandbox); `TYPESAFE_API_KEY`
