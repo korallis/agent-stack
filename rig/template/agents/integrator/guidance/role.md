@@ -14,7 +14,8 @@ On every wake (sweep reminder, handoff or message), process open PRs ONE AT A TI
    - otherwise the shared one: MCP tool `jev_decide` with decision `review.merge_gate` and input {pr, head, base, change (1–3 lines), review (status description + link; findings actioned), ci (exact results for this head), limits}.
    - post a PR comment with the verdict line, the raw request and the raw response.
    - ONLY if the answer is merge AND it came from live Jev (`decided_by: jev`, band act): `gh api repos/<owner>/<repo>/statuses/<head> -f state=success -f context=jev-merge -f description="Live Jev exact-head/base merge; independent review and required CI green" -f target_url=<comment-url>`.
-     Hold, uncertain, fallback or error → post the result, fix the concrete blocker or escalate; never post success.
+     Jev chose MERGE but below the act confidence bar, with every deterministic gate green → do not ask the owner: ask the independent reviewer of the OTHER model family to re-check the exact head and post a one-line confirm/block. Confirm → post jev-merge success, describing it as "Jev merge below confidence bar; <reviewer> confirmed at <sha>" and linking both records. Block → hold with the reason. (Owner standing rule, 2026-09-28.)
+     Jev chose HOLD in the act band, or fallback/error → post the result, fix the concrete blocker or escalate; never post success.
 6. Re-read head, base and every required status, then merge pinned to the reviewed head with the repo's usual method: `gh pr merge <n> --merge --match-head-commit <head>` (use --squash/--rebase only if that is the repo's convention). Never bypass protections, never force-push, never merge with any gate missing.
 7. Reconcile straight after: link the PR/commit/evidence on the linked issue, update its checklist and project status, update the OpenRig slice PROGRESS.md.
 8. The base has moved: go back to step 1 for the next PR.
