@@ -1,10 +1,10 @@
 # FULL-STACK team: the large, fast default (27 seats). Every seat is pinned to the model the Jev routing table
-# assigns its role (CULTURE.md "Models and routing"): GPT-6 Sol leads, merges and does the volume work; Opus 5.5 plans,
+# assigns its role (CULTURE.md "Models and routing"): Opus 5.5 (1M context) leads and plans; GPT-6 Sol merges and does the volume work; Opus 5.5 also
 # writes acceptance criteria, builds UI and migrations and reviews Codex PRs; Astra takes escalations; Kimi K3 is the
-# third-family / long-context reviewer. Seats: lead coord-lead-codex, merge owner integ-codex.
+# third-family / long-context reviewer. Seats: lead coord-lead-claude, merge owner integ-codex.
 # The lead routes each task to a seat with Jev intake.specialist over the idle seats of the right kind.
 # Busy implementers are capped by verification capacity (3 per QA seat, 2 per reviewer): about 9 at once.
-# Resources: ~13 GB RAM idle; subscription quota is the real limit (19 Codex seats, 7 Opus seats, 1 Kimi seat).
+# Resources: ~13 GB RAM idle; subscription quota is the real limit (18 Codex seats, 8 Opus seats, 1 Kimi seat).
 # Copy to <workspace>/rig/, replace @RIG@ (e.g. <project>-fs), @REPO@, @WT@, @AGENT_STACK@ (this repo), create one git
 # worktree per seat, then:  rig spec validate full-stack.yaml  →  rig up full-stack.yaml
 version: "0.2"
@@ -25,14 +25,14 @@ workspace:
 
 pods:
   - id: coord
-    label: "Coordination: Sol lead and deputy (Jev routing: lead 0.92)"
+    label: "Coordination: Opus 5.5 (1M) lead, Sol deputy (Jev routing: lead Opus 0.98)"
     members:
-      - id: lead-codex
+      - id: lead-claude
         agent_ref: "path:@AGENT_STACK@/rig/template/agents/lead"
         profile: default
-        runtime: codex
-        model: "gpt-6-sol"
-        cwd: "@WT@/coord-lead-codex"
+        runtime: claude-code
+        model: "claude-opus-5-5[1m]"
+        cwd: "@WT@/coord-lead-claude"
         restore_policy: resume_if_possible
       - id: deputy-codex
         agent_ref: "path:@AGENT_STACK@/rig/template/agents/deputy"
@@ -43,11 +43,11 @@ pods:
         restore_policy: resume_if_possible
     edges:
       - kind: delegates_to
-        from: lead-codex
+        from: lead-claude
         to: deputy-codex
       - kind: escalates_to
         from: deputy-codex
-        to: lead-codex
+        to: lead-claude
 
   - id: arch
     label: "Plan decomposition and acceptance criteria"
@@ -56,7 +56,7 @@ pods:
         agent_ref: "path:@AGENT_STACK@/rig/template/agents/architect"
         profile: default
         runtime: claude-code
-        model: "claude-opus-5-5"
+        model: "claude-opus-5-5[1m]"
         cwd: "@WT@/arch-claude"
         restore_policy: resume_if_possible
     edges: []
@@ -261,79 +261,79 @@ pods:
 
 edges:
   - kind: delegates_to
-    from: coord.lead-codex
+    from: coord.lead-claude
     to: arch.claude
   - kind: delegates_to
-    from: coord.lead-codex
+    from: coord.lead-claude
     to: tests.claude-1
   - kind: delegates_to
-    from: coord.lead-codex
+    from: coord.lead-claude
     to: tests.claude-2
   - kind: delegates_to
-    from: coord.lead-codex
+    from: coord.lead-claude
     to: tests.codex
   - kind: delegates_to
-    from: coord.lead-codex
+    from: coord.lead-claude
     to: impl.codex-1
   - kind: delegates_to
-    from: coord.lead-codex
+    from: coord.lead-claude
     to: impl.codex-2
   - kind: delegates_to
-    from: coord.lead-codex
+    from: coord.lead-claude
     to: impl.codex-3
   - kind: delegates_to
-    from: coord.lead-codex
+    from: coord.lead-claude
     to: impl.codex-4
   - kind: delegates_to
-    from: coord.lead-codex
+    from: coord.lead-claude
     to: impl.codex-5
   - kind: delegates_to
-    from: coord.lead-codex
+    from: coord.lead-claude
     to: impl.codex-6
   - kind: delegates_to
-    from: coord.lead-codex
+    from: coord.lead-claude
     to: impl.codex-7
   - kind: delegates_to
-    from: coord.lead-codex
+    from: coord.lead-claude
     to: impl.codex-8
   - kind: delegates_to
-    from: coord.lead-codex
+    from: coord.lead-claude
     to: impl.claude-ui-1
   - kind: delegates_to
-    from: coord.lead-codex
+    from: coord.lead-claude
     to: impl.claude-ui-2
   - kind: delegates_to
-    from: coord.lead-codex
+    from: coord.lead-claude
     to: impl.astra
   - kind: delegates_to
-    from: coord.lead-codex
+    from: coord.lead-claude
     to: qa.codex-1
   - kind: delegates_to
-    from: coord.lead-codex
+    from: coord.lead-claude
     to: qa.codex-2
   - kind: delegates_to
-    from: coord.lead-codex
+    from: coord.lead-claude
     to: qa.codex-3
   - kind: delegates_to
-    from: coord.lead-codex
+    from: coord.lead-claude
     to: review.claude-1
   - kind: delegates_to
-    from: coord.lead-codex
+    from: coord.lead-claude
     to: review.claude-2
   - kind: delegates_to
-    from: coord.lead-codex
+    from: coord.lead-claude
     to: review.codex-1
   - kind: delegates_to
-    from: coord.lead-codex
+    from: coord.lead-claude
     to: review.codex-2
   - kind: delegates_to
-    from: coord.lead-codex
+    from: coord.lead-claude
     to: review.kimi
   - kind: delegates_to
-    from: coord.lead-codex
+    from: coord.lead-claude
     to: integ.codex
   - kind: delegates_to
-    from: coord.lead-codex
+    from: coord.lead-claude
     to: ops.codex
   - kind: delegates_to
     from: integ.codex
@@ -352,7 +352,7 @@ edges:
     to: review.kimi
   - kind: escalates_to
     from: integ.codex
-    to: coord.lead-codex
+    to: coord.lead-claude
   - kind: escalates_to
     from: ops.codex
-    to: coord.lead-codex
+    to: coord.lead-claude

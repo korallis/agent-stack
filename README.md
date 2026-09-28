@@ -41,12 +41,12 @@ It is built from existing tools, glued together and configured so they work as o
 ## Who does what (the full-stack team, 27 seats)
 
 Every seat is pinned to the model that published benchmarks and Jev picked for its job. Most of the work runs on
-GPT-6 Sol; Claude Opus 5.5 is used where it is strongest: planning, user interfaces, big migrations and reviewing
-Codex's work.
+GPT-6 Sol; Claude Opus 5.5 is used where it is strongest: orchestrating the team (its 1M-token context holds the
+whole backlog), planning, user interfaces, big migrations and reviewing Codex's work.
 
 | Seat | How many | Model | What it does |
 |---|---|---|---|
-| Lead | 1 | GPT-6 Sol | Runs the plan: asks for your approval, hands out work, tracks progress, writes the daily summary |
+| Lead | 1 | Claude Opus 5.5 (1M context) | The orchestrator: keeps the whole backlog in mind, asks for your approval, hands out work, tracks progress, writes the daily summary |
 | Deputy | 1 | GPT-6 Sol | Helps the lead dispatch, chase and keep notes |
 | Architect | 1 | Claude Opus 5.5 | Turns your plan into features with acceptance criteria a person can check |
 | Test authors | 3 | 2 × Opus 5.5, 1 × GPT-6 Sol | Write the locked browser tests before a feature is built (always the other family from its builder) |
@@ -96,7 +96,7 @@ the CI checks that enforce it, and a Playwright setup), give the project its own
 `rig/template/full-stack.yaml`, create a folder (git worktree) per seat, and start the team with `rig up`. Then:
 
 ```bash
-rig send coord-lead-codex@<rig> "Build docs/PLAN.md"
+rig send coord-lead-claude@<rig> "Build docs/PLAN.md"
 ```
 
 From then on you only hear from the team through desktop notifications: the feature list to approve, risky changes

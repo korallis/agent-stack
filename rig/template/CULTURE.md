@@ -38,7 +38,8 @@
 ## Models and routing (who does what)
 | Work | Seat model |
 |---|---|
-| Lead / coordination, deputy, merge owner, recovery | GPT-6 Sol (Codex) |
+| Lead / orchestration (holds the whole backlog; 1M context) | Opus 5.5 `[1m]` |
+| Deputy, merge owner, recovery | GPT-6 Sol (Codex) |
 | Plan decomposition, acceptance criteria, architecture | Opus 5.5 |
 | Volume implementation, unit tests, lint/renames/docs | GPT-6 Sol (Codex) |
 | Frontend/UI and large migrations | Opus 5.5 |

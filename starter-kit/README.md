@@ -21,7 +21,7 @@ feature exists and locked against the implementers, plus a hands-on QA pass.
 ## Start a project
 
 ```bash
-P=MyProject; GH=<your-github-user>; ID="Your Name <you@example.com>"; R=~/Projects/$P; W=~/Projects/$P-work; WT=~/Projects/$P.worktrees; H=~/Projects/$P-heldout; RIG=myproj; LEAD=coord-lead-codex; MERGE=integ-codex   # full-stack seat names
+P=MyProject; GH=<your-github-user>; ID="Your Name <you@example.com>"; R=~/Projects/$P; W=~/Projects/$P-work; WT=~/Projects/$P.worktrees; H=~/Projects/$P-heldout; RIG=myproj; LEAD=coord-lead-claude; MERGE=integ-codex   # full-stack seat names
 
 # 1. repo from the kit (keep your own app scaffold; the kit only adds files)
 mkdir -p $R && cp -rn ~/Projects/agent-stack/starter-kit/. $R/ && cd $R && rm README.md
