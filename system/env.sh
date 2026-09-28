@@ -23,3 +23,15 @@ if [ -n "${OPENRIG_NODE_ID:-}" ] && [ -r "$HOME/.config/agent-stack/secrets/clip
   # Seats talk only to the local proxy: no telemetry, error reporting, auto-update or feedback traffic.
   export CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC=1
 fi
+
+# Several projects at once: each OpenRig seat runs in ~/Projects/<Project>.worktrees/<seat>. Point its
+# `rig scope` / `rig proof` commands at that project's own workspace (~/Projects/<Project>-work) instead of the
+# single machine-wide workspace.root, so every project keeps its own missions and slices.
+if [ -n "${OPENRIG_NODE_ID:-}" ] && [ -z "${OPENRIG_WORK_ROOT:-}" ]; then
+  case "$PWD" in
+    "$HOME"/Projects/*.worktrees/*)
+      _p=${PWD#"$HOME/Projects/"}; _p=${_p%%.worktrees/*}
+      [ -d "$HOME/Projects/$_p-work/missions" ] && export OPENRIG_WORK_ROOT="$HOME/Projects/$_p-work"
+      unset _p ;;
+  esac
+fi

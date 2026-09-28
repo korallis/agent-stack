@@ -24,12 +24,14 @@ non-author review is done with findings actioned, and live Jev says merge (repo 
 ```bash
 R=~/Projects/<Repo>; W=~/Projects/<Repo>-work; WT=~/Projects/<Repo>.worktrees; RIG=<short-name>
 
-# 1. workspace
-rig config init-workspace --root $W
-rig config set workspace.root $W; rig config set workspace.slices_root $W/missions
-rig config set workspace.catalog_path $W/workspace.yaml; rig config set files.allowlist workspace:$W
-systemctl --user restart openrig.service; rig workspace doctor
-#    edit $W/SPEC.md, workspace.yaml (project id), add conventions.md to project.yaml install.context
+# 1. workspace (its own; other projects keep running untouched)
+rig config init-workspace --root $W                 # does not change the global workspace.root
+sed -i "s/  - id: default/  - id: $RIG/" $W/workspace.yaml
+for k in files.allowlist progress.scan_roots; do c=$(rig config get $k); rig config set $k "${c:+$c,}$RIG:$W"; done
+#    seats find this workspace automatically: env.sh sets OPENRIG_WORK_ROOT=~/Projects/<Repo>-work for any seat
+#    running in ~/Projects/<Repo>.worktrees/<seat> (so keep those two names). Only if this is your very first
+#    project, also: rig config set workspace.root $W; rig config set workspace.slices_root $W/missions
+#    edit $W/SPEC.md, add conventions.md to project.yaml install.context
 
 # 2. worktrees (one per seat; implementers get a branch) + commit identity if the repo requires one
 cd $R
@@ -52,7 +54,7 @@ rig watchdog register --policy periodic-reminder --spec $W/rig/merge-sweep.watch
   --target-session integ-claude@$RIG --interval-seconds 900 --registered-by $USER
 ```
 
-Workspace config is machine-wide: one project workspace is active at a time (`rig config get workspace.root`).
+Run as many projects at once as your quotas allow. Each project has its own workspace (`~/Projects/<Repo>-work`), rig and worktrees; the global `workspace.root` is only the default for commands run outside any seat. Pass `--workspace <path>` (or set `OPENRIG_WORK_ROOT`) when you run `rig scope` / `rig proof` by hand for a specific project.
 
 
 ## Plan in, user-tested features out (build.yaml)

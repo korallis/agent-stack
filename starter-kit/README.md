@@ -41,7 +41,11 @@ scripts/setup-github.sh $GH/$P
 mkdir -p $W/rig && cd $W/rig
 cp ~/Projects/agent-stack/rig/template/{build.yaml,CULTURE.md,merge-sweep.watchdog.yaml,daily-summary.watchdog.yaml} .
 sed -i "s#@RIG@#$RIG#g; s#@REPO@#$R#g; s#@WT@#$WT#g; s#@AGENT_STACK@#$HOME/Projects/agent-stack#g" build.yaml merge-sweep.watchdog.yaml daily-summary.watchdog.yaml
-#    workspace + one worktree per seat: see ~/Projects/agent-stack/rig/template/README.md
+#    own workspace (other projects keep running) + one worktree per seat:
+rig config init-workspace --root $W && sed -i "s/  - id: default/  - id: $RIG/" $W/workspace.yaml
+for k in files.allowlist progress.scan_roots; do c=$(rig config get $k); rig config set $k "${c:+$c,}$RIG:$W"; done
+#    worktrees: see ~/Projects/agent-stack/rig/template/README.md (keep the $P.worktrees / $P-work names:
+#    seats find their workspace from them)
 rig spec validate build.yaml && rig up build.yaml
 rig watchdog register --policy periodic-reminder --spec $W/rig/merge-sweep.watchdog.yaml --target-session integ-claude@$RIG --interval-seconds 900 --registered-by $USER
 rig watchdog register --policy periodic-reminder --spec $W/rig/daily-summary.watchdog.yaml --target-session coord-lead-claude@$RIG --interval-seconds 86400 --registered-by $USER
