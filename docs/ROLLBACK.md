@@ -30,5 +30,5 @@ loginctl disable-linger lee    # only if nothing else needs linger
 - **Claude direct (no pool) for seats:** remove the `OPENRIG_NODE_ID` block in `~/.config/agent-stack/env.sh`.
 - **Codex back to ChatGPT login:** delete `model_provider = "cliproxyapi"` from `~/.codex/config.toml`, run `codex login`.
 - **Seat shim:** remove `%h/.local/share/agent-stack/seat-bin:` from `Environment=PATH` in `openrig.service`.
-- **YOLO off:** remove `permission_policy: builtin:yolo` from `rig/agent_team.py` (and `rig policy apply standard` on kernel specs),
+- **YOLO off:** remove `permission_policy: builtin:yolo` from your RigSpec files (and `rig policy apply standard` on kernel specs),
   then recreate rigs; remove `skipDangerousModePermissionPrompt` from `~/.claude/settings.json`.
