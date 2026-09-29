@@ -63,7 +63,7 @@ test("a version with no patches warns loudly while local fixes are carried, and 
 
 test("every shipped patch is a -p1 diff against the package's dist trees", () => {
   const root = join(repo, "patches/openrig");
-  const patches = fs.existsSync(root) ? fs.readdirSync(root).flatMap(v => fs.readdirSync(join(root, v)).map(p => join(root, v, p))) : [];
+  const patches = fs.existsSync(root) ? fs.readdirSync(root, { withFileTypes: true }).filter(v => v.isDirectory()).flatMap(v => fs.readdirSync(join(root, v.name)).map(p => join(root, v.name, p))) : [];
   for (const p of patches) {
     assert.match(p, /\/patches\/openrig\/\d+\.\d+\.\d+[^/]*\/[^/]+\.patch$/);
     const targets = [...fs.readFileSync(p, "utf8").matchAll(/^\+\+\+ (\S+)/gm)].map(m => m[1]);
