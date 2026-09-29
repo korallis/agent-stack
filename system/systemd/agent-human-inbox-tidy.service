@@ -1,0 +1,9 @@
+[Unit]
+Description=Close informational rows in the owner's inbox once posted (decision requests are left alone)
+After=openrig.service
+[Service]
+Type=oneshot
+Environment=PATH=%h/.local/bin:%h/.local/share/mise/shims:/usr/local/bin:/usr/bin:/bin
+# The closes are recorded as coming from this job (no seat runs it).
+Environment=OPENRIG_SESSION_NAME=agent-human-inbox-tidy@agent-stack
+ExecStart=%h/.local/bin/agent-human-inbox-tidy

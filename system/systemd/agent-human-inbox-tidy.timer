@@ -1,0 +1,7 @@
+[Unit]
+Description=Tidy the owner's inbox every 5 minutes (posted FYIs only)
+[Timer]
+OnBootSec=3min
+OnUnitActiveSec=5min
+[Install]
+WantedBy=timers.target
