@@ -24,18 +24,21 @@ const sleeper = () => { const pid = Number(spawnSync("sh", ["-c", "sleep 300 >/d
 const running = pid => { try { process.kill(pid, 0); return !fs.readFileSync(`/proc/${pid}/stat`, "utf8").split(") ")[1].startsWith("Z"); } catch { return false; } };
 
 // ---- openrig-daemon-cycle ------------------------------------------------------------------------------
-// Fakes: `rig daemon stop` kills the daemon.json pid unless STOP_FAILS; curl answers while $dir/up exists;
+// Fakes: `rig daemon stop` kills the daemon.json pid and closes the listener unless stopFails; ss reports a listener
+// owned by the pid in $dir/owner while $dir/up exists; curl answers 200 unless $dir/http-error;
 // systemd-run --scope runs its command (so the stub `rig daemon start` really runs) and records its args.
-function cycleWorld({ stopFails = false, startFails = false } = {}) {
+function cycleWorld({ stopFails = false, startFails = false, startNoState = false, startWrongOwner = false } = {}) {
   const dir = fs.mkdtempSync(join(root, "cycle-")), bin = join(dir, "bin"), home = join(dir, "home");
   const daemon = sleeper();
   write(join(home, "daemon.json"), JSON.stringify({ pid: daemon, port: 7999 }));
-  fs.writeFileSync(join(dir, "up"), "");
+  fs.writeFileSync(join(dir, "up"), ""); fs.writeFileSync(join(dir, "owner"), String(daemon));
   stub(bin, "rig", `case "$1 $2" in
   "daemon stop") ${stopFails ? ":" : `kill $(jq -r .pid "$OPENRIG_HOME/daemon.json"); rm -f "${dir}/up"`} ;;
-  "daemon start") ${startFails ? ":" : `sleep 300 >/dev/null 2>&1 & printf '{"pid":%s,"port":7999}' $! > "$OPENRIG_HOME/daemon.json"; touch "${dir}/up"`} ;;
+  "daemon start") ${startFails ? ":" : startNoState ? `rm -f "$OPENRIG_HOME/daemon.json"; touch "${dir}/up"` :
+    `sleep 300 >/dev/null 2>&1 & p=$!; printf '{"pid":%s,"port":7999}' $p > "$OPENRIG_HOME/daemon.json"; touch "${dir}/up"; echo ${startWrongOwner ? "1" : "$p"} > "${dir}/owner"`} ;;
 esac; exit 0`);
-  stub(bin, "curl", `[ -f "${dir}/up" ]`);
+  stub(bin, "curl", `[ -f "${dir}/up" ] && [ ! -f "${dir}/http-error" ]`);
+  stub(bin, "ss", `[ -f "${dir}/up" ] && echo "LISTEN 0 511 127.0.0.1:7999 0.0.0.0:* users:((\\"node\\",pid=$(cat "${dir}/owner"),fd=3))"; exit 0`);
   stub(bin, "systemd-run", `while [ "\${1#-}" != "$1" ]; do shift; done; exec "$@"`);
   stub(bin, "systemctl", `[ "$*" = "--user show openrig.service -p Environment --value" ] && echo "OPENRIG_YOLO=1 PATH=${bin}:/usr/bin:/bin SHELL=/bin/bash"; exit 0`);
   stub(bin, "logger", "exit 0");
@@ -61,16 +64,32 @@ test("daemon-cycle: if the old daemon is still there after stop, it neither sign
   const w = cycleWorld({ stopFails: true });
   const r = cycle(w);
   assert.equal(r.status, 1);
-  assert.match(r.stdout, /STOP INCOMPLETE: pid \d+ still running port 7999 still answers\. Not signalling it/);
+  assert.match(r.stdout, /STOP INCOMPLETE: pid \d+ still running port 7999 still has a listener \(pid \d+\)\. Not signalling it/);
   assert.doesNotMatch(calls(w.dir), /daemon start|systemd-run/);
   assert.equal(running(w.daemon), true, "the old daemon was not signalled");
 });
 
-test("daemon-cycle: a start that never answers /healthz fails loudly (exit 1)", () => {
-  const w = cycleWorld({ startFails: true });
-  const r = cycle(w);
+test("daemon-cycle: a start with no new daemon behind the listener fails loudly (exit 1)", () => {
+  const none = cycleWorld({ startFails: true });
+  assert.equal(cycle(none).status, 1);
+  // QA: /healthz answers but there is no daemon.json at all
+  const noState = cycleWorld({ startNoState: true });
+  const r = cycle(noState);
   assert.equal(r.status, 1);
-  assert.match(r.stdout, /START FAILED: port 7999 does not answer \/healthz/);
+  assert.match(r.stdout, /START FAILED: no new running daemon owns the listener and answers \/healthz \(daemon\.json pid= port=/);
+  // daemon.json names a running pid, but some other process owns the port
+  const wrong = cycleWorld({ startWrongOwner: true });
+  assert.equal(cycle(wrong).status, 1);
+});
+
+test("daemon-cycle: a stale pid is not 'stopped' while any listener remains, even one answering HTTP errors (exit 1)", () => {
+  const w = cycleWorld();
+  fs.writeFileSync(join(w.home, "daemon.json"), JSON.stringify({ pid: 999999, port: 7999 })); // stale: no such process
+  fs.writeFileSync(join(w.dir, "owner"), "4242"); fs.writeFileSync(join(w.dir, "http-error"), ""); // a listener answering 503
+  write(join(w.bin, "rig"), fs.readFileSync(join(w.bin, "rig"), "utf8").replace(/kill \$\(jq[^;]*;/, ":;").replace('rm -f "' + w.dir + '/up"', ":"));
+  const r = cycle(w, "--stop-only");
+  assert.equal(r.status, 1);
+  assert.match(r.stdout, /STOP INCOMPLETE:  port 7999 still has a listener \(pid 4242\)\. Not signalling it/);
 });
 
 // ---- openrig-healthcheck -------------------------------------------------------------------------------
