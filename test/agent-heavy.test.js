@@ -130,8 +130,11 @@ test("the seat rules say servers stay outside agent-heavy and jobs have a max ru
 });
 
 // ---- agent-heavy status (read-only: who holds each slot) ------------------------------------------------------------
-const status = (...args) => spawnSync(join(repo, "bin/agent-heavy"), ["status", ...args], { encoding: "utf8",
-  env: { PATH: `${bin}:/usr/bin:/bin`, XDG_RUNTIME_DIR: root, USER: "t" } });
+const status = (...args) => {
+  const env = typeof args.at(-1) === "object" ? args.pop() : {};
+  return spawnSync(join(repo, "bin/agent-heavy"), ["status", ...args], { encoding: "utf8",
+    env: { PATH: `${bin}:/usr/bin:/bin`, XDG_RUNTIME_DIR: root, USER: "t", ...env } });
+};
 const until = async (pred, ms = 5000) => { const t = Date.now(); while (!pred()) { if (Date.now() - t > ms) return false; await new Promise(r => setTimeout(r, 50)); } return true; };
 
 test("status: every slot free when nothing runs; a bad class is a usage error", () => {
@@ -165,7 +168,38 @@ test("status: a slot held by an older agent-heavy (no holder file) is described 
   try {
     assert.ok(await until(() => /held/.test(status("browser").stdout)));
     const line = status("browser").stdout.split("\n").find(l => l.includes("held"));
-    assert.match(line, new RegExp(`^browser 2/2  held  seat=qa@proj  age=0m0[0-9]s  remaining=unknown \\(older agent-heavy\\)  cwd=\\S+  cmd=npx playwright test  pid=${old.pid}$`));
+    assert.match(line, new RegExp(`^browser 2/2  held  seat=qa@proj  age=0m0[0-9]s  remaining=unknown \\(no holder record\\)  cwd=\\S+  cmd=npx playwright test  pid=${old.pid}$`));
     assert.doesNotMatch(line, /ghost/);
   } finally { old.kill(); fs.rmSync(join(dir, "browser.2.holder"), { force: true }); }
+});
+
+// QA round 1 (PR #12): ownership is the lock itself, not an open fd; any path to the runtime dir works; what can't be
+// observed is unknown, never free.
+test("status: a process that merely opens the lock file is not its holder; the process whose fd carries the flock is", async () => {
+  const dir = join(root, "agent-heavy"), lock = join(dir, "build.2.lock"); fs.mkdirSync(dir, { recursive: true });
+  const observer = spawn("bash", ["-c", 'exec 8<>"$L"; sleep 30; true'], { env: { PATH: "/usr/bin:/bin", L: lock, OPENRIG_SESSION_NAME: "observer@x" }, stdio: "ignore" });
+  await until(() => fs.existsSync(lock));
+  const owner = spawn("bash", ["-c", 'exec 9>"$L"; flock 9; sleep 30; true'], { env: { PATH: "/usr/bin:/bin", L: lock, OPENRIG_SESSION_NAME: "owner@x" }, stdio: "ignore", detached: true });
+  try {
+    assert.ok(await until(() => /build 2\/2  held/.test(status("build").stdout)));
+    const line = status("build").stdout.split("\n").find(l => l.startsWith("build 2/2"));
+    assert.match(line, new RegExp(`seat=owner@x .* pid=${owner.pid}$`));
+    // a symlinked runtime dir (another path to the same lock) describes the same holder
+    const alias = join(root, "alias-run"); if (!fs.existsSync(alias)) fs.symlinkSync(root, alias);
+    assert.match(status("build", { XDG_RUNTIME_DIR: alias }).stdout, new RegExp(`build 2/2  held  seat=owner@x .* pid=${owner.pid}\n`));
+  } finally { process.kill(-owner.pid); observer.kill(); }   // the whole group: its sleep child inherited the locked fd
+  assert.ok(await until(() => /build 2\/2  free/.test(status("build").stdout)), "free once the owner is gone, observer or not");
+});
+
+test("status: an unreadable lock table is unknown, and a lock held with no visible holder is 'owner unknown', never free", () => {
+  const dir = join(root, "agent-heavy"), lock = join(dir, "browser.1.lock"); fs.mkdirSync(dir, { recursive: true });
+  fs.writeFileSync(lock, "");
+  const fake = fs.mkdtempSync(join(root, "proc-"));
+  assert.match(status("browser", { AGENT_HEAVY_PROC: fake }).stdout, /^browser 1\/2  unknown \(cannot read \S+\/locks\)$/m);
+  const st = spawnSync("stat", ["-L", "-c", "%Hd %Ld %i", lock], { encoding: "utf8" }).stdout.trim().split(" ").map(Number);
+  const id = `${st[0].toString(16).padStart(2, "0")}:${st[1].toString(16).padStart(2, "0")}:${st[2]}`;
+  fs.writeFileSync(join(fake, "locks"), `1: FLOCK  ADVISORY  WRITE 999999 ${id} 0 EOF\n`);
+  assert.match(status("browser", { AGENT_HEAVY_PROC: fake }).stdout, /^browser 1\/2  held  owner unknown \(lock \S+ is held but no holder is visible\)$/m);
+  fs.writeFileSync(join(fake, "locks"), "");
+  assert.match(status("browser", { AGENT_HEAVY_PROC: fake }).stdout, /^browser 1\/2  free$/m, "a readable table without the lock: free");
 });
