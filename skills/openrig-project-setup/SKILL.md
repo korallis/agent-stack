@@ -112,6 +112,18 @@ binding) and `adopted` (compares with OpenRig's own build) — not project fault
   topology by editing the spec, `rig down --snapshot`, archive the old record, `rig up` the spec, then
   reroute queue items (`rig queue fallback`) and re-register watchdogs.
 
+## Team conventions every rig carries (rig/template/CULTURE.md)
+New projects get these from the template. `agent-project-check` WARNs when an existing rig's CULTURE.md lacks
+"Owner decisions"; copy the two sections in from the template.
+- **Owner decisions**: dated standing decisions, delegations and approvals. The lead checks them before asking the
+  owner and adds each new one there.
+- **Operating rules**:
+  - owner FYI rows close only after `deliveryOutcome=posted` (decision requests use `--human-intent decision` and stay open);
+  - review/QA scratch checkouts go under `~/Projects/<P>.worktrees/`, never `/tmp`, removed in a trap, and tests clean up their `mkdtemp` dirs;
+  - proof by catalog id `rig proof show|judge <project-id>:<mission>/slices/<slice>`;
+  - never prompt (below);
+  - the merge gate (cross-family review, live Jev act band, merge pinned to head; integrator role).
+
 ## Never prompt (every project, every machine)
 Claude and Codex seats never ask for permission. `agent-project-check` FAILs when any of this is missing, and
 `agent-never-prompt-check [--rig R --spec F]` checks it on its own, e.g. on a fresh machine:

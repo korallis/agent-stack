@@ -15,6 +15,25 @@
 - Secrets stay in local env files and the hosting provider; never in code, commits, tasks, tests or logs.
 - If you have no owned work, wait quietly.
 
+## Owner decisions (binding; check before asking the owner)
+Standing decisions, delegations and approvals from the owner, newest last, one dated line each:
+`- YYYY-MM-DD: <decision> (scope; how it was given)`. The lead checks this list before asking the owner anything, and
+adds every new owner decision here the day it is made. A decision recorded here is not asked again.
+- (none yet)
+
+## Operating rules (binding)
+- Human FYIs: close an informational row addressed to the owner (lee@external) only after its `deliveryOutcome` is
+  `posted`. Closing it earlier cancels the post, and leaving it open after posting trips the stuck-sweep human-required
+  alarm. Decision requests use `--human-intent decision` and stay open until answered.
+- Scratch checkouts for review or QA go under `~/Projects/<P>.worktrees/`, never `/tmp`, and are removed in a
+  `finally`/`trap`. Test suites remove every `mkdtemp` directory they create.
+- Proof for a project in the workspace catalog: `rig proof show|judge <project-id>:<mission>/slices/<slice>` (the catalog
+  id). Never switch the daemon's workspace to judge.
+- Never prompt: every seat runs without permission prompts (agent-stack README, "Never prompt";
+  `agent-never-prompt-check`).
+- Merge gate: an independent review from the other model family, then live Jev `review.merge_gate` in the act band,
+  then a merge pinned to the reviewed head. The merge owner's procedure is in the integrator role guidance.
+
 ## Done means a person could use it (binding)
 - Every feature is proven from the user's side. Acceptance tests are browser journeys (Playwright) that do what a person
   does: open the page, read what is on screen, click buttons and links by their visible names, type into labelled

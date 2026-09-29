@@ -1,7 +1,9 @@
 [Unit]
-Description=Upgrade OpenRig to the latest upstream release when no project rig is running (validated, with rollback)
+Description=Check for a newer OpenRig release and ask the operator to schedule an upgrade window (never upgrades by itself)
 After=openrig.service network-online.target
 [Service]
 Type=oneshot
 Environment=PATH=%h/.local/bin:%h/.local/share/mise/shims:/usr/local/bin:/usr/bin
-ExecStart=%h/.local/bin/openrig-update
+# The queue item is recorded as coming from this timer (no seat runs it).
+Environment=OPENRIG_SESSION_NAME=openrig-update@agent-stack
+ExecStart=%h/.local/bin/openrig-update --notify

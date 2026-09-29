@@ -83,7 +83,7 @@ if [ $DRY = 0 ]; then
   [ -f "$W/rig/startup/context.md" ] || sed "s#@REPO@#$R#g; s#@WT@#$WT#g" "$AS/rig/template/startup/context.md" > "$W/rig/startup/context.md"
   sed -i "s#@RIG@#$RIG#g; s#@REPO@#$R#g; s#@WT@#$WT#g; s#@AGENT_STACK@#$AS#g; s#@LEAD_SEAT@#$LEAD#g; s#@MERGE_SEAT@#$MERGE#g" \
     "$W/rig/$TEAM.yaml" "$W/rig/merge-sweep.watchdog.yaml" "$W/rig/daily-summary.watchdog.yaml"
-  grep -q "^## $P specifics" "$W/rig/CULTURE.md" || printf '\n## %s specifics\n- (status names, commit identity, repo procedures; standing owner approvals and delegations go here)\n' "$P" >> "$W/rig/CULTURE.md"
+  grep -q "^## $P specifics" "$W/rig/CULTURE.md" || printf '\n## %s specifics\n- (status names, commit identity, repo procedures; owner decisions go in "Owner decisions" above)\n' "$P" >> "$W/rig/CULTURE.md"
 fi
 
 say "worktrees $WT (one per seat)"

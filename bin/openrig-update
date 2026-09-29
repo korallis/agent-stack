@@ -1,24 +1,14 @@
 #!/usr/bin/env bash
-# Keep OpenRig current with upstream without losing this setup's customisations.
-# - Checks npm for a newer @openrig/cli. Upgrades only when no project rig is running (kernel is fine).
-# - Upgrades via openrig-upgrade (which re-applies YOLO to presets and re-links shared agents).
-# - Validates every team spec in rig/template; on any failure rolls back to the previous version.
-# - On success bumps config/versions.env and commits it (pushes if the repo has a remote).
-# Runs daily from openrig-update.timer; safe to run by hand. --check only reports.
+# Tell the operator when a newer OpenRig is out. Never upgrades by itself: project rigs run around the clock, so an
+# unattended upgrade would either never fire or interrupt live seats. Upgrading is an operator-run window: docs/UPGRADE.md.
+#   openrig-update [--check]  report installed vs npm latest, and whether local patches exist for the target
+#   openrig-update --notify   weekly timer: the same, plus a desktop note and a queue item for the upgrade owner
+#                             (OPENRIG_UPGRADE_OWNER, default operator-agent@kernel), at most one per version per week
+#   openrig-update --validate validate every rig/template spec against the installed OpenRig (an UPGRADE.md step)
 set -uo pipefail
 S=$(cd "$(dirname "$(readlink -f "$0")")/.." && pwd); source "$S/config/versions.env"
+OWNER=${OPENRIG_UPGRADE_OWNER:-operator-agent@kernel}
 note() { logger -t openrig-update "$2"; notify-send --app-name="Agent stack" ${3:+--urgency=$3} "$1" "$2" 2>/dev/null || true; echo "$2"; }
-N=$(mise where "node@$NODE_FOR_OPENRIG")/bin
-latest=$(PATH=$N:$PATH npm view @openrig/cli version 2>/dev/null) || { echo "npm unreachable"; exit 0; }
-current=$(rig --version 2>/dev/null | awk '{print $1}')
-[ -n "$latest" ] && [ "$latest" != "$current" ] || { echo "OpenRig $current is current"; exit 0; }
-[ "${1:-}" = "--check" ] && { echo "OpenRig $latest available (installed $current)"; exit 0; }
-
-busy=$(rig ps --json 2>/dev/null | jq -r '[.[] | select(.name != "kernel" and .runningCount > 0) | .name] | join(", ")')
-if [ -n "$busy" ]; then
-  note "OpenRig $latest available" "Installed $current. Will upgrade automatically when no project rig is running (running: $busy)."
-  exit 0
-fi
 
 validate() {
   local tmp; tmp=$(mktemp -d); local ok=0
@@ -26,19 +16,31 @@ validate() {
     sed -e "s#@RIG@#chk$(basename "$f" .yaml)#g; s#@REPO@#$tmp/repo#g; s#@WT@#$tmp/wt#g; s#@AGENT_STACK@#$S#g" "$f" > "$tmp/$(basename "$f")"
     rig spec validate "$tmp/$(basename "$f")" >/dev/null 2>&1 || { echo "spec failed: $(basename "$f")"; ok=1; }
   done
-  rm -rf "$tmp"; return $ok
+  rm -rf "$tmp"; [ $ok = 0 ] && echo "all rig/template specs validate against OpenRig $(rig --version 2>/dev/null | awk '{print $1}')"
+  return $ok
 }
+[ "${1:-}" = "--validate" ] && { validate; exit; }
 
-"$S/bin/openrig-upgrade" "$latest" >/tmp/openrig-update.log 2>&1
-if [ "$(rig --version 2>/dev/null | awk '{print $1}')" = "$latest" ] && validate && rig ps --json >/dev/null 2>&1; then
-  sed -i "s/^OPENRIG_VERSION=.*/OPENRIG_VERSION=$latest/" "$S/config/versions.env"
-  if git -C "$S" diff --quiet -- config/versions.env; then :; else
-    git -C "$S" commit -q -m "chore: OpenRig $latest (validated upgrade from $current)" -- config/versions.env
-    git -C "$S" remote | grep -q . && git -C "$S" push -q 2>/dev/null || true
-  fi
-  note "OpenRig upgraded to $latest" "Upgrade from $current validated: all team specs pass. Customisations re-applied."
+N=$(mise where "node@$NODE_FOR_OPENRIG")/bin
+latest=$(PATH=$N:$PATH npm view @openrig/cli version 2>/dev/null) || { echo "npm unreachable"; exit 0; }
+current=$(rig --version 2>/dev/null | awk '{print $1}')
+[ -n "$latest" ] && [ "$latest" != "$current" ] || { echo "OpenRig $current is current"; exit 0; }
+
+have=$(cd "$S/patches/openrig/$latest" 2>/dev/null && ls *.patch 2>/dev/null | sed 's/\.patch$//' | paste -sd, -)
+carried=$(cd "$S/patches/openrig/$current" 2>/dev/null && ls *.patch 2>/dev/null | sed 's/\.patch$//' | paste -sd, -)
+patches="${have:+yes ($have)}"; patches=${patches:-"no${carried:+ (installed $current carries $carried: port them or confirm upstream fixed them)}"}
+summary="upgrade window due: OpenRig $current -> $latest, patches present? $patches"
+echo "$summary"
+[ "${1:-}" = "--notify" ] || exit 0
+
+note "OpenRig $latest available" "$summary. Upgrade in a planned window: $S/docs/UPGRADE.md"
+week=$(date +%G-W%V); err=$(mktemp); trap 'rm -f "$err"' EXIT
+body=$(printf '%s\n\n- installed: %s; npm latest: %s\n- local patches for %s: %s\n- procedure: %s/docs/UPGRADE.md (census, snapshots, verified SQLite backup, rollback copy of the install prefix, controlled restart, plugin refresh plan, `rig ps --nodes -A`, canary)\n- release notes: https://github.com/mvschwarz/openrig/releases/tag/v%s\n\nRaised by the weekly openrig-update timer; it upgrades nothing by itself. Close this row with the outcome (upgraded / deferred and why).\n' \
+  "$summary" "$current" "$latest" "$latest" "$patches" "$S" "$latest")
+if rig queue create --id "qitem-openrig-upgrade-$latest-$week" --destination "$OWNER" --summary "$summary" \
+     --tags "agent-stack,openrig-upgrade" --body "$body" >/dev/null 2>"$err"; then
+  echo "queue item for $OWNER: qitem-openrig-upgrade-$latest-$week"
 else
-  "$S/bin/openrig-upgrade" "$current" >>/tmp/openrig-update.log 2>&1
-  note "OpenRig upgrade to $latest rolled back" "Validation failed; reinstalled $current. Log: /tmp/openrig-update.log" critical
-  exit 1
+  note "OpenRig upgrade reminder not queued" "Could not create the queue item for $OWNER: $(head -c 200 "$err")" critical
 fi
+exit 0
