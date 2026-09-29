@@ -125,6 +125,14 @@ New projects get these from the template. `agent-project-check` WARNs when an ex
   - never prompt (below);
   - the merge gate (cross-family review, live Jev act band, merge pinned to head; integrator role).
 
+## Agent witness (default for every project)
+Done = acceptance tests + a FRESH agent witnessing the feature end to end through the real UI on the deployed
+environment, recorded as `agent-witnessed (YYYY-MM-DD, by <agent>, <model>)` with evidence. Tests, merges and deploys
+are not witnesses. Each mission ends with a W witness slice: copy `rig/template/witness-slice/` into
+`missions/<m>/slices/<NN>-w-<env>-witness/`. It has frontmatter `witness: true` and depends on all the mission's
+slices, sits in the mission's last wave, and gates the next mission or wave. `agent-project-check` WARNs when an open
+mission has none.
+
 ## Never prompt (every project, every machine)
 Claude and Codex seats never ask for permission. `agent-project-check` FAILs when any of this is missing, and
 `agent-never-prompt-check [--rig R --spec F]` checks it on its own, e.g. on a fresh machine:

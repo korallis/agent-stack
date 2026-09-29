@@ -104,7 +104,7 @@ rep("OK" if all(x in excl for x in ("/.openrig/", "/CLAUDE.local.md")) else "WAR
     "repo .git/info/exclude hides OpenRig seat files")
 
 # ---- 3. missions + slices ----------------------------------------------------------------------------
-ids, specs_by_id, open_slices_by_mission = {}, {}, {}
+ids, specs_by_id, open_slices_by_mission, witness_missions = {}, {}, {}, set()
 bad = {"sections": [], "depends_on": [], "territory": [], "status": [], "mission_files": [], "yaml_refs": []}
 for m in sorted(glob.glob(f"{W}/missions/*/")):
     mn = os.path.basename(m.rstrip("/"))
@@ -127,6 +127,8 @@ for m in sorted(glob.glob(f"{W}/missions/*/")):
                 bad["sections"].append(f"{mn}/{sn}"); break
         if "depends_on" not in fm:
             bad["depends_on"].append(f"{mn}/{sn}")
+        if str(fm.get("witness", "")).lower() == "true" or re.search(r"(^|-)w(-|$)|witness", sn):
+            witness_missions.add(mn)  # a W witness slice: `witness: true`, or named like NN-w-<env>-witness
         st = fm.get("status", "")
         if st not in ("done", "closed", "delivered", "abandoned"):
             open_slices_by_mission.setdefault(mn, []).append(sn)
@@ -134,6 +136,9 @@ for m in sorted(glob.glob(f"{W}/missions/*/")):
                 bad["territory"].append(f"{mn}/{sn}")
         if st in ("", "placeholder"):
             bad["status"].append(f"{mn}/{sn}")
+no_witness = sorted(m for m in open_slices_by_mission if m not in witness_missions)
+rep("OK" if not no_witness else "WARN", "every open mission ends with a W witness slice (agent witness gate)",
+    ("missing in " + ", ".join(no_witness[:5]) + "; copy agent-stack rig/template/witness-slice/") if no_witness else "")
 nslices = sum(len(v) for v in ids.values())
 dups = {k: v for k, v in ids.items() if len(v) > 1}
 rep("OK" if nslices else "WARN", f"{len(glob.glob(f'{W}/missions/*/'))} missions, {nslices} slices")
@@ -179,7 +184,7 @@ import urllib.parse, urllib.request
 # failure mode this catches (it once missed that waves must live in mission.yaml, not queue rows).
 def api(path):
     try:
-        return json.load(urllib.request.urlopen("http://127.0.0.1:7433" + path, timeout=30))
+        return json.load(urllib.request.urlopen(os.environ.get("OPENRIG_URL", "http://127.0.0.1:7433").rstrip("/") + path, timeout=30))
     except Exception as e:
         return {"__error__": e.__class__.__name__}
 pq = urllib.parse.urlencode({"project": pid or "", "projectRoot": W})

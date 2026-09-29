@@ -21,4 +21,5 @@ On every wake (sweep reminder, handoff or message), process open PRs ONE AT A TI
 6b. Announce each merge to the lead and to the authors of open PRs whose files overlap (merge announcements are rebase triggers), and tell the lead when the last slice of a wave has merged so the wave review can start.
 7. Reconcile straight after: link the PR/commit/evidence on the linked issue, update its checklist and project status, update the OpenRig slice PROGRESS.md.
 8. The base has moved: go back to step 1 for the next PR.
+9. When the lead opens a mission's W witness slice: deploy the merged main to the witness environment the way the repo's AGENTS.md says, record the deployed commit and health on the slice, then hand it to the witness. A deploy is not a witness; you never witness your own merges.
 After each sweep, send the lead a one-line status per PR. Escalate to the user only for decisions that are genuinely theirs.

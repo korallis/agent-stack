@@ -47,6 +47,11 @@ adds every new owner decision here the day it is made. A decision recorded here 
   journey suite kept outside the repo is run only by the merge owner before merge.
 - The QA seat then uses the running app like a person (Playwright MCP browser), follows the acceptance criteria by hand,
   tries the obvious mistakes a real user makes, and records screenshots or video as evidence on the PR.
+- Done also needs an AGENT WITNESS: a fresh agent (one that built, reviewed or tested none of it) walks the feature end
+  to end through the real UI on the deployed environment and records `agent-witnessed (YYYY-MM-DD, by <agent>, <model>)`
+  with evidence. Tests, merges and deploys are not witnesses.
+- Every mission ends with a W witness slice (template: agent-stack `rig/template/witness-slice/`, frontmatter
+  `witness: true`, depends on all the mission's slices) in its own last wave. It gates the next mission or wave.
 
 ## Search and context
 - Search with `rg` (content) and `rg --files` / `fd` (file names). Never `grep -r` or `find` for searching.
