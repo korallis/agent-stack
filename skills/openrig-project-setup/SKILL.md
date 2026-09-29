@@ -115,13 +115,18 @@ binding) and `adopted` (compares with OpenRig's own build) — not project fault
 
 ## Team conventions every rig carries (rig/template/CULTURE.md)
 New projects get these from the template. `agent-project-check` WARNs when an existing rig's CULTURE.md lacks
-"Owner decisions"; copy the two sections in from the template.
+"Owner decisions", or when its Operating rules lack the `agent-heavy` rule; copy them in from the template, then
+`agent-refresh-guidance <P> --apply` on a running rig.
 - **Owner decisions**: dated standing decisions, delegations and approvals. The lead checks them before asking the
   owner and adds each new one there.
 - **Operating rules**:
   - owner FYIs use `--human-intent update` and are auto-closed once posted (`agent-human-inbox-tidy`; an unset intent counts as a decision); decision requests use `--human-intent decision` and stay pending (never parked or claimed: the Slack reply closes only a pending row);
   - review/QA scratch checkouts go under `~/Projects/<P>.worktrees/`, never `/tmp`, removed in a trap, and tests clean up their `mkdtemp` dirs;
   - proof by catalog id `rig proof show|judge <project-id>:<mission>/slices/<slice>`;
+  - heavy runs (tsc, eslint, vitest/jest, `npm test`, `next build`, Playwright, full suites) only through
+    `agent-heavy build|browser -- <cmd>`, preferring focused runs (2026-09-29: load 101 on 32 cores from parallel
+    suites stalled the OpenRig daemon);
+  - never `pkill -f`/`killall` by pattern (it matches other seats' command lines); stop your own processes by PID;
   - never prompt (below);
   - the merge gate (cross-family review, live Jev act band, merge pinned to head; integrator role).
 

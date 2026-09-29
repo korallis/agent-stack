@@ -29,7 +29,7 @@ semantic judgments, and **ordinary code** does arithmetic, scheduling, permissio
 | `agent-dispatch review-plan --rig R --repo P --branch agent/<seat> [--apply --item ID]` | specialist reviews, test selection, cross-family reviewer |
 | `agent-dispatch triage-update --text "…"` | routine progress / actionable blocker / needs the user |
 | `agent-recover --rig R --seat S [--item ID] --error "…" [--apply] [--team-dir D]` | classify failure, choose among PERMITTED actions only |
-| `agent-heavy build\|browser -- <cmd>` | heavy builds / browser tests under shared CPU, RAM and concurrency budgets |
+| `agent-heavy build\|browser -- <cmd>` | REQUIRED for every tsc/eslint/vitest/`npm test`/`next build`/Playwright/full-suite run: shared CPU, RAM and concurrency budget (2 slots). Prefer focused runs |
 | `agent-proxy-status [--recent N]` | pool health per account; routing log |
 | `jev-decide list` / `jev-decide <id> --json '{…}'` / MCP tool `jev_decide` | direct Jev decisions |
 

@@ -26,6 +26,12 @@ adds every new owner decision here the day it is made. A decision recorded here 
   automatically once Slack has posted it (`agent-human-inbox-tidy`, every 5 minutes); don't reopen it. A row without
   `--human-intent` counts as a decision and stays open. Decision requests use `--human-intent decision` and
   stay pending until answered: the owner's Slack reply closes a pending row, and parking or claiming it breaks that.
+- Heavy runs share the machine: wrap every tsc, eslint, vitest/jest, `npm test`, `next build`, Playwright run and full
+  test suite in `agent-heavy build -- <cmd>` (`agent-heavy browser -- <cmd>` for Playwright and other browser tests). It
+  holds a shared slot (2 at once, capped CPU and RAM) so a burst of seats can't starve the host or the OpenRig daemon.
+  Prefer the focused run (the files or journeys you touched) over the full suite; run the full suite once, at the end.
+- Never `pkill -f`/`killall` by a pattern: it also matches other seats' command lines. Stop your own processes by PID
+  (`pgrep -f` narrowed by cwd or parent PID, then `kill <pid>`).
 - Scratch checkouts for review or QA go under `~/Projects/<P>.worktrees/`, never `/tmp`, and are removed in a
   `finally`/`trap`. Test suites remove every `mkdtemp` directory they create.
 - Proof for a project in the workspace catalog: `rig proof show|judge <project-id>:<mission>/slices/<slice>` (the catalog

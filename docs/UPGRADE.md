@@ -73,6 +73,9 @@ sqlite3 ~/.openrig/openrig.sqlite 'PRAGMA integrity_check'
 signals anything. It then runs `rig daemon start` in its own scope with `openrig.service`'s environment and waits for
 `/healthz`, then runs `rig up kernel --existing`. **Never** `systemctl stop|restart openrig.service` or
 `openrig-tmux.service` while rigs run.
+The new scope gets `CPUWeight=1000` and `IOWeight=1000`. The IO weight only takes effect once the user manager has the
+`io` controller delegated, which needs root once (`systemctl edit user@.service`: `[Service]` `Delegate=cpu cpuset io
+memory pids`, then log in again). Check with `cat /sys/fs/cgroup/user.slice/user-$(id -u).slice/user@$(id -u).service/cgroup.controllers`.
 - Exit 1 at "STOP INCOMPLETE": the old daemon is still there. Inspect it (the skill's stop rules); don't signal a PID.
 - Exit 1 at "START FAILED": roll back the prefix (below) and run `openrig-daemon-cycle --start-only`.
 

@@ -178,6 +178,17 @@ with `agent-login` and the pool uses it straight away.
 ### Where things are
 
 - Secrets (0600, never in git): `~/.config/agent-stack/secrets/{cliproxy.env,typesafe.env}`; OAuth tokens in `~/.cli-proxy-api/*.json`.
+- **Transcript capture:** every 15 seconds, 400 lines (`transcripts.poll_interval_seconds`, `transcripts.lines`; set by
+  `install.sh`). OpenRig's 2s/1000-line default across ~90 seats kept the daemon's event loop busy. `openrig-daemon-cycle`
+  starts the daemon without the `OPENRIG_TRANSCRIPTS_*` overrides that seats inherit from tmux.
+- **Daemon priority and health:** the daemon runs at `CPUWeight=1000` (10x a build or test) whether `openrig.service`
+  or `openrig-daemon-cycle` started it. `openrig-health` probes `/healthz` 3 times (15s each, 10s apart). After a
+  cycle it leaves a daemon that is merely slow alone for 10 minutes, alerting instead. A hung one (accept queue at 80%+
+  of the backlog, or a main thread with no CPU progress) is cycled at once. It cycles at most 3 times in 30 minutes,
+  then only alerts.
+- **Heavy runs:** every seat runs tsc, eslint, tests, builds and Playwright through `agent-heavy build|browser -- <cmd>`
+  (2 slots, capped CPU and RAM); the rig template's CULTURE.md makes it binding, and `agent-project-check` WARNs when a
+  project's conventions lack it.
 - **Seats never depend on the daemon unit.** Every seat lives in the tmux server of `openrig-tmux.service`, not in
   `openrig.service`. tmux ties each pane to the unit its server runs in, which is how `systemctl stop openrig.service`
   once stopped every seat. Restart the daemon with `openrig-daemon-cycle` (the health check does too), never with

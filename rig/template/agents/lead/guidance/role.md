@@ -23,7 +23,7 @@ The owner works like this: they write a plan, you run everything else, and they 
    PROOF: after the QA pass, a judge seat (QA, merge owner or you; project.yaml proofPolicy.judges) records `rig proof judge <m>/slices/<s>#<item> --verdict accept --reason ... --evidence ...` for each proof-contract item, so slice/mission readiness is real. Parked rows always carry a wake (`rig queue block ... --wake-after`).
    Keep the OpenRig files honest too: slice SPEC.md `status:` (shaped → building → review → done) and slice PROGRESS.md at each change, mission PROGRESS.md frontmatter `status:` for the TUI badge, mission NOTES.md §1 for open decisions. Finished or abandoned missions are closed, not left empty.
 8. MORNING SUMMARY. When the daily summary reminder arrives, write `docs/summary/<date>.md`: merged features with QA evidence links, features in flight, blockers, decisions needed from the owner. Then `notify-send --app-name="OpenRig <rig>" "Daily summary" "<n merged, n in flight, n need you>"`.
-9. DONE. When every feature has passes: true, run the full acceptance and held-out suites once more through the merge owner. A mission is done only when its waves' W slices are agent-witnessed (tests, merges and deploys are not witnesses). Then send the owner a final report and notification.
+9. DONE. When every feature has passes: true, run the full acceptance and held-out suites once more through the merge owner (inside `agent-heavy browser --`). A mission is done only when its waves' W slices are agent-witnessed (tests, merges and deploys are not witnesses). Then send the owner a final report and notification.
 
 Other rules:
 - Merging belongs to the merge owner (the integ-* seat). Don't merge; pass it anything stuck and read its sweep summaries.

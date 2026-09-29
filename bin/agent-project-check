@@ -55,6 +55,9 @@ rep("OK" if re.search(r"^sdlc:", proj, re.M) else "FAIL", "project.yaml declares
 rep("OK" if re.search(r"^git:", proj, re.M) else "FAIL", "project.yaml declares the git strategy")
 rep("OK" if re.search(r"^\s*-\s*conventions\.md\s*$", proj, re.M) and os.path.exists(f"{W}/conventions.md") else "WARN",
     "project.yaml install.context includes conventions.md")
+heavy = any("agent-heavy" in (read(p) or "") for p in (f"{W}/rig/CULTURE.md", f"{W}/conventions.md"))
+rep("OK" if heavy else "WARN", "conventions require agent-heavy for heavy runs (tsc/eslint/tests/builds)",
+    "" if heavy else "add the agent-heavy Operating rule from agent-stack rig/template/CULTURE.md, then agent-refresh-guidance")
 wsy = read(f"{W}/workspace.yaml") or ""
 pid = (re.search(r"^\s*-\s*id:\s*([\w.-]+)", wsy, re.M) or [None, None])[1]
 rep("OK" if pid and pid != "default" else "FAIL", f"workspace.yaml project id is set ({pid})")
