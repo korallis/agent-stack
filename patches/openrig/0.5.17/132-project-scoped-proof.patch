@@ -59,7 +59,7 @@
  export function proofRoutes() {
      const app = new Hono();
      app.onError((e, c) => {
-@@ -16,8 +21,33 @@
+@@ -16,15 +21,45 @@
              throw new JudgmentError("workspace_unavailable", "Configure the daemon workspace before reading or recording judgments", 503);
          return value;
      };
@@ -77,10 +77,15 @@
 +        if (qualified && project !== undefined && project !== qualified[1])
 +            throw new JudgmentError("project_conflict", `Scope names project ${qualified[1]} but --project names ${project}; select one project`);
 +        const scope = qualified ? qualified[2] : rawScope;
-+        if (id === undefined)
-+            return { root: indexer(c).slicesRoot, scope, owner: indexer(c) };
++        if (id === undefined) {
++            const owner = indexer(c);
++            return { root: owner.slicesRoot, evidenceRoot: path.dirname(owner.slicesRoot), scope, owner };
++        }
++        // Evidence is prepared against the project root (where project.yaml lives), the same root recordJudgment derives,
++        // so prepared references still match at judgment time under a nested authored missions.root.
 +        try {
-+            return { root: projectById(c, id).missionsRoot, scope, owner: null };
++            const p = projectById(c, id);
++            return { root: p.missionsRoot, evidenceRoot: p.root, scope, owner: null };
 +        }
 +        catch (e) {
 +            if (!(e instanceof ProjectReadError))
@@ -90,11 +95,19 @@
 +    };
      app.get("/", c => {
 -        const root = indexer(c).slicesRoot, scope = c.req.query("scope");
-+        const { root, scope } = target(c, c.req.query("scope"), c.req.query("project"));
++        const { root, evidenceRoot, scope } = target(c, c.req.query("scope"), c.req.query("project"));
          if (!scope)
              return c.json({ ...readProjectReadiness(root), sourceObservation: proofSourceObservation(c) });
          const dir = resolveProofScope(root, scope);
-@@ -39,9 +69,10 @@
+         if (path.basename(path.dirname(dir)) !== "slices")
+             return c.json({ ...readMissionReadiness(dir), sourceObservation: proofSourceObservation(c) });
+         const refs = c.req.queries("evidence") ?? [];
+-        return c.json({ ...readSliceReadiness(dir), sourceObservation: proofSourceObservation(c), ...(refs.length ? { preparedEvidence: refs.map(ref => evidenceAt(path.dirname(root), dir, ref)) } : {}) });
++        return c.json({ ...readSliceReadiness(dir), sourceObservation: proofSourceObservation(c), ...(refs.length ? { preparedEvidence: refs.map(ref => evidenceAt(evidenceRoot, dir, ref)) } : {}) });
+     });
+     app.post("/judge", async (c) => {
+         const body = await c.req.json().catch(() => null);
+@@ -39,9 +74,10 @@
          const identity = requireSenderIdentity(c, { verb: "proof judgment", bodyClaim: body.actorSession });
          if (!identity.ok)
              return identity.response;
