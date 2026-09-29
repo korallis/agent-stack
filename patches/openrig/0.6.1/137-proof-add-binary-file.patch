@@ -1,0 +1,149 @@
+--- a/dist/commands/proof.js
++++ b/dist/commands/proof.js
+@@ -1,4 +1,5 @@
+ import fs from "node:fs";
++import { randomUUID } from "node:crypto";
+ import path from "node:path";
+ import { Command } from "commander";
+ import YAML from "yaml";
+@@ -80,6 +81,31 @@
+ function isVideoFile(filePath) {
+     return VIDEO_EXTENSIONS.has(path.extname(filePath).toLowerCase());
+ }
++/** Extensions that are never a text artifact body (images, video, audio, archives, documents, fonts, binaries). */
++const BINARY_EXTENSIONS = new Set([
++    ...VIDEO_EXTENSIONS,
++    ".png", ".jpg", ".jpeg", ".gif", ".webp", ".bmp", ".ico", ".tif", ".tiff", ".avif", ".heic",
++    ".mp3", ".wav", ".ogg", ".flac", ".m4a",
++    ".pdf", ".zip", ".gz", ".tgz", ".tar", ".7z", ".xz", ".bz2", ".zst",
++    ".woff", ".woff2", ".ttf", ".otf",
++    ".sqlite", ".db", ".bin", ".exe", ".so", ".dylib", ".dll", ".class", ".jar", ".wasm", ".node",
++]);
++/** Why a --file can't be an artifact body, or null when it is text. The body is written as UTF-8 markdown under a
++ *  C1 header, so anything binary would be mangled (and, dropped under its own name, overwritten in place). */
++export function nonTextReason(filePath, bytes) {
++    const ext = path.extname(filePath).toLowerCase();
++    if (BINARY_EXTENSIONS.has(ext))
++        return `its extension ${ext} is a binary type`;
++    if (bytes.includes(0))
++        return "it contains NUL bytes";
++    try {
++        new TextDecoder("utf-8", { fatal: true }).decode(bytes);
++    }
++    catch {
++        return "it is not valid UTF-8";
++    }
++    return null;
++}
+ export function proofCommand() {
+     const cmd = new Command("proof").description("Capture evidence (add), record an attributed item judgment (judge), and read derived readiness (show). Capture, policy acceptance, higher outcome judgment and publication are separate.");
+     cmd.addHelpText("after", `
+@@ -177,7 +203,8 @@
+         .option("--slice-id <dot-id>", "C1 slice dot-ID (defaults to the slice frontmatter id)")
+         .option("--file <path>", "Artifact body from a file (mutually exclusive with --body)")
+         .option("--body <text>", "Artifact body inline (mutually exclusive with --file)")
+-        .option("--name <filename>", "Artifact filename in proof/ (defaults to the --file basename, else <artifact-type>-<verdict>-<UTC>.md)")
++        .option("--name <filename>", "Artifact filename in proof/, ending in .md (defaults to <--file basename without extension>.md, else <artifact-type>-<verdict>-<UTC>.md)")
++        .option("--replace", "Overwrite an existing .md artifact of the same name (never a non-.md file, never the --file source)")
+         .option("--evidences <refs>", "D2 attestation: comma-separated proof-contract item refs this artifact covers (item text or 1-based index)")
+         .option("--self-check <text>", "D2 attestation: the agent's assertion that it LOOKED at the evidence and confirmed it shows the claim")
+         .option("--media <refs>", "Corrective §3.4: comma-separated media refs (relative to the slice proof/ dir) this drop stands behind — appended to the artifact body as markdown refs so the composer curates them into delivered.items[].proof")
+@@ -207,7 +234,16 @@
+                         action: "Point --file at the evidence file, or use --body.",
+                     });
+                 }
+-                body = fs.readFileSync(opts.file, "utf8");
++                const bytes = fs.readFileSync(opts.file);
++                const notText = nonTextReason(opts.file, bytes);
++                if (notText) {
++                    throw new ScopeCliError({
++                        fact: `--file ${opts.file} is not a text file (${notText}).`,
++                        consequence: "The artifact was NOT dropped — an artifact is a markdown file (C1 header + text body); a binary body would be corrupted, and the file itself overwritten if it sits in proof/.",
++                        action: "For images or video: put the file in the slice's proof/ dir and reference it with --media <name>, with --body (or a text --file) for the note.",
++                    });
++                }
++                body = bytes.toString("utf8");
+             }
+             else if (opts.body) {
+                 body = opts.body;
+@@ -381,7 +417,8 @@
+             // Write the artifact: YAML frontmatter + body into proof/.
+             const proofDir = path.join(slice.absPath, "proof");
+             const defaultName = `${opts.artifactType}-${opts.verdict}-${new Date().toISOString().replace(/[:.]/g, "-")}.md`;
+-            const fileName = opts.name ?? (opts.file ? path.basename(opts.file) : defaultName);
++            const fileName = opts.name
++                ?? (opts.file ? `${path.basename(opts.file, path.extname(opts.file))}.md` : defaultName);
+             // rev1-r2 BLOCKING fix (a7dedd93 review): --name is a FILENAME, never
+             // a path. Reject separators / dot-dot / absolute shapes BEFORE any
+             // filesystem effect, so the drop can only land inside proof/ (the
+@@ -394,6 +431,13 @@
+                     action: "Pass a bare filename like qa-clear.md; the drop path owns the directory.",
+                 });
+             }
++            if (!fileName.toLowerCase().endsWith(".md") || fileName.length <= 3) {
++                throw new ScopeCliError({
++                    fact: `--name '${fileName}' does not end in .md.`,
++                    consequence: "The artifact was NOT dropped — an artifact is a markdown file (C1 header + body); any other name could overwrite evidence such as a screenshot.",
++                    action: "Pass a name ending in .md (e.g. qa-clear.md). Reference media with --media instead of naming the artifact after it.",
++                });
++            }
+             const target = path.resolve(proofDir, fileName);
+             // Defense-in-depth: even a name that slips the shape check must
+             // resolve INSIDE proof/ (same containment discipline as
+@@ -405,9 +449,55 @@
+                     action: "Pass a bare filename; the drop path owns the directory.",
+                 });
+             }
++            // Never overwrite silently, and never write THROUGH an existing name. Without --replace the artifact is created
++            // exclusively ("wx"; an existing file or link of that name refuses). With --replace it is written to a temp file
++            // in proof/ and renamed over the name: that swaps the directory entry, so a hardlink (e.g. to the --file source)
++            // or a symlink (e.g. to an image outside proof/) keeps its content. The --file source is never the target: an
++            // existing name that is the same file (device + inode, so hardlinks and symlinks count) is refused.
++            const existing = fs.statSync(target, { throwIfNoEntry: false });
++            if (opts.file && existing) {
++                const src = fs.statSync(opts.file);
++                if (src.dev === existing.dev && src.ino === existing.ino) {
++                    throw new ScopeCliError({
++                        fact: `The artifact proof/${fileName} would overwrite its own --file source.`,
++                        consequence: "The artifact was NOT dropped — the source evidence is left as it is.",
++                        action: "Pass a different --name, or drop from a copy outside proof/.",
++                    });
++                }
++            }
+             fs.mkdirSync(proofDir, { recursive: true });
+             const frontmatter = YAML.stringify(header).trimEnd();
+-            fs.writeFileSync(target, `---\n${frontmatter}\n---\n\n${body}`, "utf8");
++            const content = `---\n${frontmatter}\n---\n\n${body}`;
++            if (opts.replace) {
++                // A random name, created exclusively; on failure only a temp THIS run created is removed, never a file that
++                // happened to have that name already.
++                const tmp = path.join(proofDir, `.${fileName}.${process.pid}.${randomUUID()}.tmp`);
++                let created = false;
++                try {
++                    fs.writeFileSync(tmp, content, { encoding: "utf8", flag: "wx" });
++                    created = true;
++                    fs.renameSync(tmp, target);
++                }
++                catch (e) {
++                    if (created)
++                        fs.rmSync(tmp, { force: true });
++                    throw e;
++                }
++            }
++            else {
++                try {
++                    fs.writeFileSync(target, content, { encoding: "utf8", flag: "wx" });
++                }
++                catch (e) {
++                    if (e.code !== "EEXIST")
++                        throw e;
++                    throw new ScopeCliError({
++                        fact: `proof/${fileName} already exists.`,
++                        consequence: "The artifact was NOT dropped — the existing artifact is left as it is.",
++                        action: "Pass a different --name, or --replace to overwrite that artifact deliberately.",
++                    });
++                }
++            }
+             // Echo the parsed header — the seat sees what the composer will see.
+             const echo = {
+                 dropped: path.relative(process.cwd(), target),
