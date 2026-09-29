@@ -1,6 +1,12 @@
 --- a/dist/commands/proof.js
 +++ b/dist/commands/proof.js
-@@ -80,6 +80,31 @@
+@@ -1,4 +1,5 @@
+ import fs from "node:fs";
++import { randomUUID } from "node:crypto";
+ import path from "node:path";
+ import { Command } from "commander";
+ import YAML from "yaml";
+@@ -80,6 +81,31 @@
  function isVideoFile(filePath) {
      return VIDEO_EXTENSIONS.has(path.extname(filePath).toLowerCase());
  }
@@ -32,7 +38,7 @@
  export function proofCommand() {
      const cmd = new Command("proof").description("Capture evidence (add), record an attributed item judgment (judge), and read derived readiness (show). Capture, policy acceptance, higher outcome judgment and publication are separate.");
      cmd.addHelpText("after", `
-@@ -177,7 +202,8 @@
+@@ -177,7 +203,8 @@
          .option("--slice-id <dot-id>", "C1 slice dot-ID (defaults to the slice frontmatter id)")
          .option("--file <path>", "Artifact body from a file (mutually exclusive with --body)")
          .option("--body <text>", "Artifact body inline (mutually exclusive with --file)")
@@ -42,7 +48,7 @@
          .option("--evidences <refs>", "D2 attestation: comma-separated proof-contract item refs this artifact covers (item text or 1-based index)")
          .option("--self-check <text>", "D2 attestation: the agent's assertion that it LOOKED at the evidence and confirmed it shows the claim")
          .option("--media <refs>", "Corrective §3.4: comma-separated media refs (relative to the slice proof/ dir) this drop stands behind — appended to the artifact body as markdown refs so the composer curates them into delivered.items[].proof")
-@@ -207,7 +233,16 @@
+@@ -207,7 +234,16 @@
                          action: "Point --file at the evidence file, or use --body.",
                      });
                  }
@@ -60,7 +66,7 @@
              }
              else if (opts.body) {
                  body = opts.body;
-@@ -381,7 +416,8 @@
+@@ -381,7 +417,8 @@
              // Write the artifact: YAML frontmatter + body into proof/.
              const proofDir = path.join(slice.absPath, "proof");
              const defaultName = `${opts.artifactType}-${opts.verdict}-${new Date().toISOString().replace(/[:.]/g, "-")}.md`;
@@ -70,7 +76,7 @@
              // rev1-r2 BLOCKING fix (a7dedd93 review): --name is a FILENAME, never
              // a path. Reject separators / dot-dot / absolute shapes BEFORE any
              // filesystem effect, so the drop can only land inside proof/ (the
-@@ -394,6 +430,13 @@
+@@ -394,6 +431,13 @@
                      action: "Pass a bare filename like qa-clear.md; the drop path owns the directory.",
                  });
              }
@@ -84,7 +90,7 @@
              const target = path.resolve(proofDir, fileName);
              // Defense-in-depth: even a name that slips the shape check must
              // resolve INSIDE proof/ (same containment discipline as
-@@ -405,9 +448,50 @@
+@@ -405,9 +449,55 @@
                      action: "Pass a bare filename; the drop path owns the directory.",
                  });
              }
@@ -109,13 +115,18 @@
 -            fs.writeFileSync(target, `---\n${frontmatter}\n---\n\n${body}`, "utf8");
 +            const content = `---\n${frontmatter}\n---\n\n${body}`;
 +            if (opts.replace) {
-+                const tmp = path.join(proofDir, `.${fileName}.${process.pid}.tmp`);
++                // A random name, created exclusively; on failure only a temp THIS run created is removed, never a file that
++                // happened to have that name already.
++                const tmp = path.join(proofDir, `.${fileName}.${process.pid}.${randomUUID()}.tmp`);
++                let created = false;
 +                try {
 +                    fs.writeFileSync(tmp, content, { encoding: "utf8", flag: "wx" });
++                    created = true;
 +                    fs.renameSync(tmp, target);
 +                }
 +                catch (e) {
-+                    fs.rmSync(tmp, { force: true });
++                    if (created)
++                        fs.rmSync(tmp, { force: true });
 +                    throw e;
 +                }
 +            }
