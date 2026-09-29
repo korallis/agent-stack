@@ -71,7 +71,11 @@ project-workspace.md) and the `mission-slice-sop` skill. Verify each point on di
    - scratch checkouts go under `~/Projects/<P>.worktrees/`, never `/tmp`, removed in a trap;
    - judge proof as `rig proof judge <project-id>:<mission>/slices/<slice>`;
    - merge = cross-family review + live Jev act band + merge pinned to head.
-10. OpenRig upgrades are operator windows (`docs/UPGRADE.md`), raised weekly by `openrig-update.timer`; never ad hoc. Owner delegations/standing approvals go into the rig CULTURE.md.
+10. Done needs an agent witness: a fresh agent uses the deployed feature through the real UI and records
+    `agent-witnessed (YYYY-MM-DD, by <agent>, <model>)` with evidence. Every wave with user-facing slices ends with a
+    W witness slice (`rig/template/witness-slice/`) that gates the next wave. Only a docs/infra-only wave may skip it,
+    with `no-witness: <reason>`. Tests, merges and deploys are not witnesses.
+11. OpenRig upgrades are operator windows (`docs/UPGRADE.md`), raised weekly by `openrig-update.timer`; never ad hoc. Owner delegations/standing approvals go into the rig CULTURE.md.
 
 ## Using Jev well
 - Only for decisions in `jev-decide list`, or new ones added to `~/Projects/agent-stack/config/decisions.yaml`
