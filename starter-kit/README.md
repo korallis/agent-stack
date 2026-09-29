@@ -20,6 +20,9 @@ feature exists and locked against the implementers, plus a hands-on QA pass.
 
 ## Start a project
 
+Use `agent-project-new --name <P> --rig <short> --github <user>` (then `agent-project-check <P>`): it runs every step below,
+idempotently. The manual steps are kept for reference.
+
 ```bash
 P=MyProject; GH=<your-github-user>; ID="Your Name <you@example.com>"; R=~/Projects/$P; W=~/Projects/$P-work; WT=~/Projects/$P.worktrees; H=~/Projects/$P-heldout; RIG=myproj; LEAD=coord-lead-claude; MERGE=integ-codex   # full-stack seat names
 

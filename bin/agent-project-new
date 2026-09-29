@@ -1,0 +1,110 @@
+#!/usr/bin/env bash
+# agent-project-new: set up a project for an OpenRig build team, the correct way, in one idempotent run.
+#
+#   agent-project-new --name <Project> --rig <short> [--github <user>] [--team full-stack|build|core]
+#                     [--identity "Name <email>"] [--no-github] [--no-up] [--no-deps] [--dry-run]
+#
+# Creates or completes (never overwrites):
+#   ~/Projects/<P>            the repo, with the starter kit added (existing files kept)
+#   ~/Projects/<P>-heldout    held-out journeys, outside the repo
+#   ~/Projects/<P>-work       the OpenRig workspace: project.yaml (+ agent-stack SDLC/wave/git defaults),
+#                             workspace.yaml, SPEC.md, conventions.md, missions/, rig/ (spec, CULTURE, watchdogs)
+#   ~/Projects/<P>.worktrees  one git worktree per seat (implementers on agent/<seat>, others detached)
+# and wires it: umbrella catalog, files.allowlist, progress.scan_roots, .git/info/exclude, GitHub protection,
+# rig up, the merge-sweep and daily-summary watchdogs (never duplicated). Finishes with agent-project-check.
+# Missions, slices and wave maps are the lead's job once the plan is in (see the openrig-project-setup skill).
+set -euo pipefail
+AS=$(cd "$(dirname "$(readlink -f "$0")")/.." && pwd)
+NAME= RIG= GH= TEAM=full-stack ID= GITHUB=1 UP=1 DEPS=1 DRY=0
+while [ $# -gt 0 ]; do case "$1" in
+  --name) NAME=$2; shift 2 ;; --rig) RIG=$2; shift 2 ;; --github) GH=$2; shift 2 ;; --team) TEAM=$2; shift 2 ;;
+  --identity) ID=$2; shift 2 ;; --no-github) GITHUB=0; shift ;; --no-up) UP=0; shift ;; --no-deps) DEPS=0; shift ;;
+  --dry-run) DRY=1; shift ;; -h|--help) sed -n 2,16p "$0"; exit 0 ;; *) echo "unknown option $1" >&2; exit 2 ;; esac; done
+[ -n "$NAME" ] && [ -n "$RIG" ] || { sed -n 2,6p "$0"; exit 2; }
+[ -f "$AS/rig/template/$TEAM.yaml" ] || { echo "no team spec rig/template/$TEAM.yaml" >&2; exit 2; }
+P=$NAME; R=$HOME/Projects/$P; W=$HOME/Projects/$P-work; WT=$HOME/Projects/$P.worktrees; H=$HOME/Projects/$P-heldout
+U=$HOME/Projects/openrig-workspace; LEAD=coord-lead-claude; MERGE=integ-codex
+[ "$TEAM" = core ] && MERGE=integ-claude
+say() { printf '\033[1m==\033[0m %s\n' "$*"; }
+run() { if [ $DRY = 1 ]; then echo "  would: $*"; else "$@"; fi; }
+ID=${ID:-$(git config --global user.name 2>/dev/null) <$(git config --global user.email 2>/dev/null)>}
+
+say "repo $R (starter kit, existing files kept)"
+run mkdir -p "$R" "$H"
+if [ $DRY = 0 ]; then
+  cp -rn "$AS/starter-kit/." "$R/"; rm -f "$R/README.md.kit"
+  [ -f "$R/README.md" ] && cmp -s "$R/README.md" "$AS/starter-kit/README.md" && rm "$R/README.md"
+  for f in AGENTS.md docs/PLAN.md; do [ -f "$R/$f" ] && sed -i "s#@PROJECT@#$P#g; s#@HELDOUT@#$H#g; s#@COMMIT_IDENTITY@#$ID#g" "$R/$f"; done
+  [ -d "$R/.git" ] || { git -C "$R" init -q -b main; git -C "$R" add -A; git -C "$R" commit -qm "chore: starter kit"; }
+  ex="$R/.git/info/exclude"; mkdir -p "$(dirname "$ex")"
+  for e in /.codex/ /.claude/settings.local.json /.claude/skills/ /.claude/plugins/ /.openrig/ /.mcp.json /CLAUDE.local.md /.agents/skills/; do
+    grep -qxF "$e" "$ex" 2>/dev/null || echo "$e" >> "$ex"; done
+fi
+
+if [ $GITHUB = 1 ] && [ -n "$GH" ]; then
+  say "GitHub $GH/$P (private) + branch protection"
+  if ! git -C "$R" remote get-url origin >/dev/null 2>&1; then
+    # REST, not `gh repo create`: GraphQL hits the secondary rate limit while rigs are polling
+    run gh api -X POST user/repos -f name="$P" -F private=true >/dev/null
+    run git -C "$R" remote add origin "https://github.com/$GH/$P.git"
+    run git -C "$R" push -q -u origin main
+  fi
+  [ -x "$R/scripts/setup-github.sh" ] && run "$R/scripts/setup-github.sh" "$GH/$P"
+fi
+
+say "workspace $W"
+if [ ! -f "$W/project.yaml" ]; then run rig config init-workspace --root "$W" >/dev/null; fi
+if [ $DRY = 0 ]; then
+  sed -i "s/  - id: default/  - id: $RIG/" "$W/workspace.yaml"
+  grep -q '^sdlc:' "$W/project.yaml" || cat "$AS/rig/template/project-sdlc.yaml" >> "$W/project.yaml"
+  [ -f "$W/conventions.md" ] || printf '# %s conventions\n\nRepo rules: %s/AGENTS.md. Team rules: rig/CULTURE.md.\n' "$P" "$R" > "$W/conventions.md"
+  grep -qE '^ *- conventions.md' "$W/project.yaml" || sed -i 's/^  context: \[\]/  context:\n    - conventions.md/' "$W/project.yaml"
+  grep -qF "$W" "$U/workspace.yaml" 2>/dev/null || printf '  - id: %s\n    root: %s\n' "$RIG" "$W" >> "$U/workspace.yaml"
+fi
+changed=0
+for k in files.allowlist progress.scan_roots; do
+  c=$(rig config get $k 2>/dev/null || true)
+  case ",$c," in *",$RIG:$W,"*) ;; *) run rig config set $k "${c:+$c,}$RIG:$W" >/dev/null; changed=1 ;; esac
+done
+[ $changed = 1 ] && run systemctl --user restart openrig.service   # running rigs keep working (seats live in tmux)
+
+say "rig folder $W/rig ($TEAM)"
+run mkdir -p "$W/rig"
+if [ $DRY = 0 ]; then
+  for f in "$TEAM.yaml" CULTURE.md merge-sweep.watchdog.yaml daily-summary.watchdog.yaml; do
+    [ -f "$W/rig/$f" ] || cp "$AS/rig/template/$f" "$W/rig/$f"; done
+  sed -i "s#@RIG@#$RIG#g; s#@REPO@#$R#g; s#@WT@#$WT#g; s#@AGENT_STACK@#$AS#g; s#@LEAD_SEAT@#$LEAD#g; s#@MERGE_SEAT@#$MERGE#g" \
+    "$W/rig/$TEAM.yaml" "$W/rig/merge-sweep.watchdog.yaml" "$W/rig/daily-summary.watchdog.yaml"
+  grep -q "^## $P specifics" "$W/rig/CULTURE.md" || printf '\n## %s specifics\n- (status names, commit identity, repo procedures; standing owner approvals and delegations go here)\n' "$P" >> "$W/rig/CULTURE.md"
+fi
+
+say "worktrees $WT (one per seat)"
+run mkdir -p "$WT"
+if [ $DRY = 0 ]; then
+  for cwd in $(grep -oE 'cwd: *"?[^"]+' "$W/rig/$TEAM.yaml" | sed 's/cwd: *"\{0,1\}//'); do
+    seat=$(basename "$cwd"); [ -d "$cwd" ] && continue
+    case "$seat" in impl-*) git -C "$R" worktree add -q "$cwd" -b "agent/$seat" main ;; *) git -C "$R" worktree add -q --detach "$cwd" main ;; esac
+    [ $DEPS = 1 ] && [ -f "$cwd/package-lock.json" ] && (cd "$cwd" && npm ci --silent >/dev/null 2>&1 || echo "  npm ci failed in $seat (install later)")
+  done
+fi
+
+if [ $UP = 1 ]; then
+  say "launch rig $RIG"
+  run rig spec validate "$W/rig/$TEAM.yaml"
+  rig ps 2>/dev/null | grep -qE "^$RIG[[:space:]]" || run rig up "$W/rig/$TEAM.yaml"
+  active=$(rig watchdog list --json 2>/dev/null || echo '[]')
+  reg() { # reg <seat> <interval> <spec>: only when no such watchdog is active (duplicates waste turns)
+    echo "$active" | jq -e --arg s "$1@$RIG" --argjson i "$2" 'any(.[]; .state=="active" and .targetSession==$s and .intervalSeconds==$i)' >/dev/null \
+      || run rig watchdog register --policy periodic-reminder --spec "$3" --target-session "$1@$RIG" --interval-seconds "$2" --registered-by "$USER" >/dev/null; }
+  reg "$MERGE" 900 "$W/rig/merge-sweep.watchdog.yaml"
+  reg "$LEAD" 86400 "$W/rig/daily-summary.watchdog.yaml"
+fi
+
+say "check"
+[ $DRY = 1 ] || "$AS/bin/agent-project-check" "$P" || true
+cat <<EOF
+
+Next: write $R/docs/PLAN.md, commit it, then  rig send $LEAD@$RIG "Build docs/PLAN.md"
+The lead creates missions, slices (depends_on + Territory) and one wave map per mission after your plan approval.
+Re-run  agent-project-check $P  after that: every FAIL must be gone before builders are dispatched wide.
+EOF

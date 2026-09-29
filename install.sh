@@ -74,7 +74,7 @@ for f in agent-login cliproxy-healthcheck cliproxy-key openrig-healthcheck clipr
 place "$S/system/seat-bin-codex" "$L/seat-bin/codex" 755
 mkdir -p "$L/seat-tools"; place "$S/system/seat-tools-rig" "$L/seat-tools/rig" 755   # queue writes get the project tag + EC-3 worktree_path
 link "$L/bin/agent-login" "$B/agent-login"
-for f in claude-pool agent-heavy openrig-upgrade openrig-update; do link "$S/bin/$f" "$B/$f"; done
+for f in claude-pool agent-heavy openrig-upgrade openrig-update agent-project-new agent-project-check; do link "$S/bin/$f" "$B/$f"; done
 link "$S/proxy/status.py" "$B/agent-proxy-status"
 if [ $CHECK = 0 ] || mise where "node@$NODE_FOR_JEV" >/dev/null 2>&1; then
   launcher jev-mcp "$NODE_FOR_JEV" "$S/jev/bin/jev-mcp.js"
@@ -100,6 +100,8 @@ fi
 ok "~/.claude/settings.json: skipDangerousModePermissionPrompt"
 link "$S/skills/agent-stack" "$HOME/.claude/skills/agent-stack"
 link "$S/skills/agent-stack" "$HOME/.agents/skills/agent-stack"
+link "$S/skills/openrig-project-setup" "$HOME/.claude/skills/openrig-project-setup"
+link "$S/skills/openrig-project-setup" "$HOME/.agents/skills/openrig-project-setup"
 
 step "systemd user services"
 for u in "$S"/system/systemd/*.service "$S"/system/systemd/*.timer; do place "$u" "$HOME/.config/systemd/user/$(basename "$u")"; done
@@ -112,7 +114,8 @@ fi
 step "OpenRig $OPENRIG_VERSION"
 if [ $CHECK = 0 ]; then
   node22=$(mise where "node@$NODE_FOR_OPENRIG")/bin
-  printf '#!/usr/bin/env bash\nexport PATH="%s:$PATH"\nexec "%s/openrig/bin/rig" "$@"\n' "$node22" "$L" > "$B/rig"; chmod 755 "$B/rig"
+  # Inside a seat, queue create/handoff go through seat-tools/rig first (project tag + EC-3 worktree_path).
+  printf '#!/usr/bin/env bash\nif [ -n "${OPENRIG_NODE_ID:-}" ] && [ -z "${AGENT_STACK_RIG_HELPER:-}" ] && [ "${1:-}" = queue ] && [ -x "%s/seat-tools/rig" ]; then\n  case "${2:-}" in create|handoff|handoff-and-complete) exec "%s/seat-tools/rig" "$@" ;; esac\nfi\nexport PATH="%s:$PATH"\nexec "%s/openrig/bin/rig" "$@"\n' "$L" "$L" "$node22" "$L" > "$B/rig"; chmod 755 "$B/rig"
   if [ "$("$B/rig" --version 2>/dev/null | awk '{print $1}')" != "$OPENRIG_VERSION" ]; then "$S/bin/openrig-upgrade" "$OPENRIG_VERSION"; fi
   systemctl --user enable --now openrig.service >/dev/null 2>&1 || true
   for t in cliproxyapi-health cliproxy-usage openrig-health cliproxy-authwatch cliproxy-quotawatch openrig-update; do systemctl --user enable --now "$t.timer" >/dev/null 2>&1 || todo "$t.timer"; done

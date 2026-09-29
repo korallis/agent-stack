@@ -16,6 +16,7 @@ servers marked "latest" track upstream, the rest are pinned in `config/versions.
 | TOON CLI (`toon`) | latest (validated 4.1.1) | Compacts table-shaped JSON before it goes into prompts | `npm i -g @toon-format/cli` |
 | Neon CLI (`neon`) | latest (validated 6.3.0) | Neon database branches (one per PR), inspection, restore. Sign in once with `neon login` | `npm i -g neon` |
 | Playwright + Chromium | latest (validated 1.63.0) | Real browser for user-journey tests and hands-on QA | `npx playwright install chromium` |
+| `agent-project-new` / `agent-project-check` | this repo (`bin/`) | Set up a project the OpenRig way in one run; audit its wiring | install.sh links them into `~/.local/bin` |
 
 ## Plugins and skills (loaded into every seat)
 
@@ -24,6 +25,7 @@ servers marked "latest" track upstream, the rest are pinned in `config/versions.
 | Superpowers | Claude Code | 6.4.1 (`superpowers@claude-plugins-official`) | Plan → failing test → build → verify discipline, subagent-driven development, code-review skills |
 | Superpowers | Codex | `superpowers@openai-api-curated` | The same method for GPT seats |
 | TypeSafe skill | Claude Code plugin `typesafe@typesafe-ai` 0.5.7; Codex `~/.agents/skills/typesafe-ai` | 0.5.7 | How to use Jev decisions well |
+| openrig-project-setup skill | both (`skills/openrig-project-setup`, linked) | this repo | How to set up, audit and repair a project; the mistakes made before and what prevents them |
 | agent-stack skill | both (`skills/agent-stack`, linked) | this repo | How this setup works: seats, pool, Jev |
 | Neon skills (`neon`, `neon-postgres`, `neon-postgres-branches`, `neon-postgres-egress-optimizer`) | both (`~/.agents/skills`, linked into `~/.claude/skills`) | latest (`neon skills update`) | How to use Neon Postgres well: connections, migrations, branch-per-PR testing, cost |
 | OpenRig core skills (19: `mission-slice-sop`, `queue-handoff`, `seat-continuity-and-handover`, `claude-compaction-restore`, `openrig-skills`, ...) | both (symlinked from the OpenRig install; follow upgrades) | OpenRig 0.5.17 | Missions/slices/waves, handoffs, compaction and seat continuity. Seats would otherwise miss them: the rig specs' openrig-core plugin isn't loaded |

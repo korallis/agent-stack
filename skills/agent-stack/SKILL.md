@@ -26,6 +26,7 @@ semantic judgments, and **ordinary code** does arithmetic, scheduling, permissio
 | `jev-decide list` / `jev-decide <id> --json '{…}'` / MCP tool `jev_decide` | direct Jev decisions |
 
 ## Wiring a project the OpenRig way (checklist — each item was missed once)
+Set up with `agent-project-new`, verify with `agent-project-check`; details in the `openrig-project-setup` skill.
 Source of truth: `$OPENRIG_HOME/reference/` (sdlc-conventions.md, wave-sdlc.md, product-journey-sdlc.md,
 project-workspace.md) and the `mission-slice-sop` skill. Verify each point on disk, not from memory:
 1. Workspace `~/Projects/<P>-work`: project.yaml (with the agent-stack `sdlc:` + `git:` defaults from

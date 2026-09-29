@@ -1,0 +1,210 @@
+#!/usr/bin/env python3
+"""agent-project-check <Project|workspace-path> [--json]
+
+Checks that a project is wired the OpenRig way (OpenRig references: sdlc-conventions.md, wave-sdlc.md,
+product-journey-sdlc.md, project-workspace.md) plus the agent-stack conventions. Read-only.
+Each line is OK, WARN (advisory, fix soon) or FAIL (the project views or the team will misbehave).
+Exit code 1 when anything FAILs. The `openrig-project-setup` skill explains every check.
+"""
+import glob, json, os, re, subprocess, sys
+
+HOME = os.path.expanduser("~")
+arg = next((a for a in sys.argv[1:] if not a.startswith("--")), None)
+if not arg:
+    sys.exit(__doc__)
+W = os.path.abspath(arg if os.path.isdir(arg) and os.path.exists(os.path.join(arg, "project.yaml"))
+                    else os.path.join(HOME, "Projects", f"{arg}-work"))
+P = os.path.basename(W)[:-5] if W.endswith("-work") else os.path.basename(W)
+REPO, WT = os.path.join(HOME, "Projects", P), os.path.join(HOME, "Projects", f"{P}.worktrees")
+results = []
+
+
+def rep(level, what, detail=""):
+    results.append((level, what, detail))
+
+
+def sh(*cmd):
+    r = subprocess.run(cmd, capture_output=True, text=True)
+    return r.stdout if r.returncode == 0 else ""
+
+
+def read(p):
+    try:
+        return open(p).read()
+    except OSError:
+        return None
+
+
+def frontmatter(text):
+    m = re.match(r"^---\n(.*?)\n---\n", text or "", re.S)
+    fm = {}
+    for line in (m.group(1) if m else "").splitlines():
+        k, _, v = line.partition(":")
+        if _ and not line.startswith(" "):
+            fm[k.strip()] = v.strip()
+    return fm, (text[m.end():] if m else text or "")
+
+
+# ---- 1. workspace + catalog -------------------------------------------------------------------------
+if not os.path.isdir(W):
+    print(f"FAIL  workspace {W} does not exist (run agent-project-new)"); sys.exit(1)
+proj = read(f"{W}/project.yaml") or ""
+for f in ("project.yaml", "workspace.yaml", "SPEC.md", "missions"):
+    rep("OK" if os.path.exists(f"{W}/{f}") else "FAIL", f"workspace has {f}")
+rep("OK" if re.search(r"^sdlc:", proj, re.M) else "FAIL", "project.yaml declares sdlc defaults (rig/template/project-sdlc.yaml)")
+rep("OK" if re.search(r"^git:", proj, re.M) else "FAIL", "project.yaml declares the git strategy")
+rep("OK" if re.search(r"^\s*-\s*conventions\.md\s*$", proj, re.M) and os.path.exists(f"{W}/conventions.md") else "WARN",
+    "project.yaml install.context includes conventions.md")
+wsy = read(f"{W}/workspace.yaml") or ""
+pid = (re.search(r"^\s*-\s*id:\s*([\w.-]+)", wsy, re.M) or [None, None])[1]
+rep("OK" if pid and pid != "default" else "FAIL", f"workspace.yaml project id is set ({pid})")
+cat = read(f"{HOME}/Projects/openrig-workspace/workspace.yaml") or ""
+rep("OK" if W in cat else "FAIL", "listed in the umbrella catalog ~/Projects/openrig-workspace/workspace.yaml")
+for k in ("files.allowlist", "progress.scan_roots"):
+    rep("OK" if W in sh("rig", "config", "get", k) else "FAIL", f"{k} includes {W}")
+
+# ---- 2. rig ------------------------------------------------------------------------------------------
+specs = [s for s in glob.glob(f"{W}/rig/*.yaml") if re.search(r"^pods:", read(s) or "", re.M)]
+rig, cwds = None, []
+if specs:
+    specs.sort(key=lambda f: len(re.findall(r"cwd:", read(f) or "")), reverse=True)  # the running team is the largest spec
+    spec = read(specs[0])
+    rig = (re.search(r'^name:\s*"?([\w.-]+)"?', spec, re.M) or [None, None])[1]
+    cwds = re.findall(r'cwd:\s*"?([^"\n]+)"?', spec)
+    rep("OK", f"rig spec {os.path.basename(specs[0])} (rig {rig}, {len(cwds)} seats)")
+    missing = [c for c in cwds if not os.path.isdir(c)]
+    rep("OK" if not missing else "FAIL", "every seat has its worktree", ", ".join(map(os.path.basename, missing[:5])))
+    rep("OK" if os.path.exists(f"{W}/rig/CULTURE.md") else "FAIL", "rig/CULTURE.md present")
+    ps = sh("rig", "ps", "--json")
+    running = bool(rig) and (f'"{rig}"' in ps or re.search(rf"^{re.escape(rig)}\s", sh("rig", "ps"), re.M) is not None)
+    rep("OK" if running else "WARN", f"rig {rig} is running")
+    try:
+        wd = [j for j in json.loads(sh("rig", "watchdog", "list", "--json") or "[]")
+              if j.get("state") == "active" and (j.get("targetSession") or "").endswith(f"@{rig}")]
+    except json.JSONDecodeError:
+        wd = []
+    def is_timer(j):  # `rig queue block --wake-after` registers a periodic-reminder too; those are parked-row timers
+        spec = json.loads(sh("rig", "watchdog", "show", j["jobId"]) or "{}").get("specYaml", "")
+        return "Wake timer fired for parked qitem" in spec
+    wd = [j for j in wd if j.get("intervalSeconds") in (900, 86400) and not is_timer(j)]
+    merge = [j for j in wd if j.get("intervalSeconds", 0) <= 3600 and (j["targetSession"].startswith("integ-"))]
+    daily = [j for j in wd if j.get("intervalSeconds", 0) >= 43200 and j["targetSession"].startswith("coord-lead")]
+    rep("OK" if len(merge) == 1 else ("WARN" if not merge else "FAIL"), "one merge-sweep watchdog on the merge owner",
+        f"{len(merge)} active" if len(merge) != 1 else "")
+    rep("OK" if len(daily) == 1 else "WARN", "one daily-summary watchdog on the lead", f"{len(daily)} active" if len(daily) != 1 else "")
+else:
+    rep("FAIL", "no rig spec in <workspace>/rig/")
+excl = read(f"{REPO}/.git/info/exclude") or ""
+rep("OK" if all(x in excl for x in ("/.openrig/", "/CLAUDE.local.md")) else "WARN",
+    "repo .git/info/exclude hides OpenRig seat files")
+
+# ---- 3. missions + slices ----------------------------------------------------------------------------
+ids, specs_by_id, open_slices_by_mission = {}, {}, {}
+bad = {"sections": [], "depends_on": [], "territory": [], "status": [], "mission_files": [], "yaml_refs": []}
+for m in sorted(glob.glob(f"{W}/missions/*/")):
+    mn = os.path.basename(m.rstrip("/"))
+    for f in ("SPEC.md", "PROGRESS.md", "NOTES.md", "mission.yaml"):
+        if not os.path.exists(m + f):
+            bad["mission_files"].append(f"{mn}/{f}")
+    my = read(m + "mission.yaml") or ""
+    for ref in re.findall(r"ref:\s*(slices/[^\s]+)", my):
+        if not os.path.exists(m + ref):
+            bad["yaml_refs"].append(f"{mn}/{ref}")
+    for s in sorted(glob.glob(m + "slices/*/")):
+        sn = os.path.basename(s.rstrip("/"))
+        fm, body = frontmatter(read(s + "SPEC.md"))
+        sid = fm.get("id")
+        if sid:
+            ids.setdefault(sid, []).append(f"{mn}/{sn}")
+            specs_by_id[sid] = (mn, sn, fm)
+        for h in ("## Intent", "## Mini-requirements", "## Proof contract"):
+            if h not in body:
+                bad["sections"].append(f"{mn}/{sn}"); break
+        if "depends_on" not in fm:
+            bad["depends_on"].append(f"{mn}/{sn}")
+        st = fm.get("status", "")
+        if st not in ("done", "closed", "delivered", "abandoned"):
+            open_slices_by_mission.setdefault(mn, []).append(sn)
+            if "Territory:" not in body:
+                bad["territory"].append(f"{mn}/{sn}")
+        if st in ("", "placeholder"):
+            bad["status"].append(f"{mn}/{sn}")
+nslices = sum(len(v) for v in ids.values())
+dups = {k: v for k, v in ids.items() if len(v) > 1}
+rep("OK" if nslices else "WARN", f"{len(glob.glob(f'{W}/missions/*/'))} missions, {nslices} slices")
+rep("OK" if not dups else "FAIL", "slice ids are unique", str(list(dups.items())[:3]))
+unres = [f"{v[0]}/{v[1]}->{d}" for v in specs_by_id.values()
+         for d in json.loads(v[2].get("depends_on") or "[]") if d not in specs_by_id] if specs_by_id else []
+rep("OK" if not unres else "FAIL", "every depends_on resolves to a slice id", ", ".join(unres[:4]))
+for key, lvl, what in (("mission_files", "FAIL", "missions have SPEC/PROGRESS/NOTES/mission.yaml"),
+                       ("yaml_refs", "FAIL", "mission.yaml slice refs exist"),
+                       ("sections", "WARN", "slice SPEC.md has Intent / Mini-requirements / Proof contract"),
+                       ("depends_on", "FAIL", "slice SPEC.md frontmatter has depends_on (EC-1)"),
+                       ("territory", "WARN", "open slices declare a Territory: line (needed to form waves)"),
+                       ("status", "WARN", "slice status is set honestly (not placeholder)")):
+    rep("OK" if not bad[key] else lvl, what, f"{len(bad[key])}: " + ", ".join(bad[key][:4]) if bad[key] else "")
+
+# ---- 4. queue: wave maps + execution-data tags ------------------------------------------------------
+q = []
+try:
+    q = json.loads(sh("rig", "queue", "list", "-A", "-a", "--full", "--json", "--limit", "20000") or "[]")
+except json.JSONDecodeError:
+    rep("WARN", "could not read the queue (daemon down?)")
+mine = [r for r in q if rig and ((r.get("destinationSession") or "").endswith(f"@{rig}")
+                                 or (r.get("sourceSession") or "").endswith(f"@{rig}"))]
+maps = {}
+for r in mine:
+    tags = r.get("tags") or []
+    if "wave-map" in tags:
+        mb = re.search(r"```json\s*(\{.*?\})\s*```", r.get("body") or "", re.S)
+        try:
+            d = json.loads(mb.group(1)) if mb else None
+        except json.JSONDecodeError:
+            d = None
+        if d and d.get("format") == "wave-map-v1":
+            maps[d.get("mission")] = d
+        else:
+            rep("FAIL", f"wave-map row {r.get('qitemId')} has no valid ```json wave-map-v1 block")
+need = sorted(m for m, v in open_slices_by_mission.items() if v)
+nomap = [m for m in need if m not in maps]
+rep("OK" if not nomap else "FAIL", "every mission with open slices has a wave-map-v1 queue row (EC-2)",
+    f"missing: {', '.join(nomap)}" if nomap else f"{len(maps)} maps")
+for mn, d in maps.items():
+    known = {sn for (m2, sn, _) in specs_by_id.values() if m2 == mn}
+    unknown = [s for w in d.get("waves", []) for s in w.get("slices", []) if s not in known and s not in specs_by_id]
+    if unknown:
+        rep("FAIL", f"wave map {mn} names unknown slices", ", ".join(unknown[:4]))
+import datetime
+# rows are never rewritten: judge only rows created since the seat `rig` helper was installed (or the last 24h)
+helper = f"{HOME}/.local/share/agent-stack/seat-tools/rig"
+t0 = os.path.getmtime(helper) if os.path.exists(helper) else 0
+t0 = max(t0, (datetime.datetime.now(datetime.timezone.utc) - datetime.timedelta(hours=24)).timestamp())
+since = datetime.datetime.fromtimestamp(t0, datetime.timezone.utc).strftime("%Y-%m-%dT%H:%M:%S")
+recent = [r for r in mine if (r.get("tsCreated") or "") >= since]
+tagged = [r for r in recent if any(t.startswith("project:") for t in (r.get("tags") or []))]
+scoped = [r for r in recent if any(t.startswith(("mission:", "slice:")) for t in (r.get("tags") or []))]
+wtp = [r for r in recent if "worktree_path=" in (r.get("body") or "")]
+if recent:
+    pct = lambda a: f"{len(a)}/{len(recent)}"
+    rep("OK" if len(tagged) == len(recent) else "WARN", f"queue rows since {since[:16]}Z carry project:<id>", pct(tagged))
+    rep("OK" if len(scoped) >= 0.8 * len(recent) else "WARN", "queue rows carry mission:/slice: tags", pct(scoped))
+    rep("OK" if len(wtp) >= 0.8 * len(recent) else "WARN", "queue rows carry worktree_path= (EC-3)", pct(wtp))
+
+# ---- 5. machine: seat skills + seat tools -------------------------------------------------------------
+for d in (f"{HOME}/.claude/skills", f"{HOME}/.agents/skills"):
+    have = all(os.path.exists(f"{d}/{s}/SKILL.md") for s in ("mission-slice-sop", "queue-handoff", "openrig-project-setup"))
+    rep("OK" if have else "FAIL", f"{d}: mission-slice-sop, queue-handoff, openrig-project-setup (run install.sh)")
+rep("OK" if os.access(f"{HOME}/.local/share/agent-stack/seat-tools/rig", os.X_OK) else "FAIL",
+    "seat-tools/rig installed (adds project tag + worktree_path)")
+rep("OK" if "seat-tools" in (read(f"{HOME}/.config/agent-stack/env.sh") or "") else "FAIL",
+    "env.sh puts seat-tools first on seats' PATH")
+
+if "--json" in sys.argv:
+    print(json.dumps([{"level": l, "check": w, "detail": d} for l, w, d in results], indent=1))
+else:
+    print(f"== {P}  (workspace {W}, rig {rig})")
+    for l, w, d in results:
+        print(f"{l:<5} {w}" + (f"  [{d}]" if d else ""))
+    f = sum(1 for r in results if r[0] == "FAIL"); wn = sum(1 for r in results if r[0] == "WARN")
+    print(f"-- {f} FAIL, {wn} WARN")
+sys.exit(1 if any(r[0] == "FAIL" for r in results) else 0)

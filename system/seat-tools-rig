@@ -16,6 +16,7 @@ args = sys.argv[1:]
 
 
 def run_real(a):
+    os.environ["AGENT_STACK_RIG_HELPER"] = "1"  # the ~/.local/bin/rig launcher routes seat queue writes here; don't loop
     os.execv(REAL, [REAL] + a)
 
 

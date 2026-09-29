@@ -104,16 +104,30 @@ agent-login kimi kimi-a            # optional
 
 ## Start a project
 
-Follow `starter-kit/README.md`. In short: copy the starter kit into a new repo (it brings the locked-test folder,
-the CI checks that enforce it, and a Playwright setup), give the project its own workspace, copy
-`rig/template/full-stack.yaml`, create a folder (git worktree) per seat, and start the team with `rig up`. Then:
+One command sets up a project correctly, and a second checks it:
+
+```bash
+agent-project-new --name MyProject --rig myproj --github <your-github-user>   # repo, workspace, team, worktrees, GitHub
+agent-project-check MyProject                                                 # is everything wired the way OpenRig expects?
+```
+
+`agent-project-new` copies the starter kit into the repo (the locked-test folder, the CI checks that enforce it, a
+Playwright setup), creates a private GitHub repo with branch protection, gives the project its own OpenRig workspace
+with our build defaults (waves, review steps, merge to main), creates one git worktree per seat, starts the
+27-seat team and its reminders. It never overwrites existing files, so running it again repairs a project.
+`--dry-run` shows what it would do. Then write `docs/PLAN.md` and:
 
 ```bash
 rig send coord-lead-claude@<rig> "Build docs/PLAN.md"
 ```
 
+The lead has the architect turn the plan into features, missions, slices and **waves** (groups of slices that
+can be built at the same time without touching the same files). Run `agent-project-check` again once you have
+approved the feature list: nothing should say FAIL before the builders start. Agents doing this follow the
+`openrig-project-setup` skill, which also lists every mistake this setup has made before and what now prevents it.
+
 From then on you only hear from the team through desktop notifications: the feature list to approve, risky changes
-to OK, blockers, and the daily summary.
+to OK (unless you have given standing approval in the project's `rig/CULTURE.md`), blockers, and the daily summary.
 
 ## Everyday commands
 
@@ -122,6 +136,7 @@ rig ps                                   # which teams are running
 rig ps --nodes --rig <rig>               # what each seat in a team is doing
 rig send <seat>@<rig> "message"          # talk to a seat, e.g. the lead
 rig queue list -a -A                     # who owns which task
+agent-project-check <Project>            # is a project wired correctly (waves, slices, tags, skills)?
 rig down <rig> --snapshot                # stop a team (resume later with: rig up <rig>)
 agent-proxy-status                       # how the subscription pool is doing
 claude-pool                              # your own Claude Code session through the pool (incl. Kimi models)
@@ -192,6 +207,8 @@ with `agent-login` and the pool uses it straight away.
 | Codex activity `generation_mismatch` | shared Codex app-server daemon runs hooks with another seat's env (#69) | seat shim `--no-daemon` |
 | Kernel Claude seats exited at launch | bypass-mode warning defaults to "No, exit" | `skipDangerousModePermissionPrompt: true` |
 | Daemon crash on Node 24 (better-sqlite3 teardown) | native module ABI | OpenRig runs on Node 22 LTS |
+| Seats lacked OpenRig's own skills (mission/slice procedure, handoffs) | the specs' `openrig-core` plugin is not loaded; seats start without `--plugin-dir` | install.sh symlinks OpenRig's 19 core skills into both harnesses |
+| Project views missed most queue rows | rows lacked `project:<id>` and `worktree_path=` | the `rig` launcher sends seat `queue create/handoff` through `seat-tools/rig`, which adds both |
 
 After an OpenRig upgrade run `openrig-upgrade <version>` and re-check these.
 
