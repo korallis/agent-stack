@@ -1,0 +1,59 @@
+#!/usr/bin/env bash
+# Restart the OpenRig daemon without touching openrig.service or any seat (WO5; the openrig-upgrade skill's steps 6-7).
+#   openrig-daemon-cycle [--stop-only|--start-only] [--reason <text>]
+# 1. stop:  `rig daemon stop`, then verify that the daemon.json pid is gone AND nothing listens on the port any more
+#           (socket-level, `ss`; any HTTP answer, even an error, is still a listener). Otherwise exit 1. Never signal a PID.
+# 2. start: `rig daemon start` in its own transient scope (systemd-run --user --scope), using openrig.service's
+#           Environment, so the daemon is not inside the caller's cgroup (a seat's pane, or a oneshot service that
+#           kills what it leaves behind). Then `rig up kernel --existing` (a no-op when running), as the unit does at boot.
+# 3. verify: daemon.json names a new, running pid; that pid owns the listener (`ss -p`); and /healthz answers.
+#           Exit 0 only then.
+# Seats live in the tmux server (openrig-tmux.service), which none of this touches.
+set -uo pipefail
+STATE=${OPENRIG_HOME:-$HOME/.openrig}/daemon.json
+WAIT=${OPENRIG_CYCLE_WAIT:-30}
+do_stop=1 do_start=1 reason="manual"
+while [ $# -gt 0 ]; do case $1 in
+  --stop-only) do_start=0 ;; --start-only) do_stop=0 ;; --reason) reason=$2; shift ;;
+  *) echo "usage: openrig-daemon-cycle [--stop-only|--start-only] [--reason <text>]" >&2; exit 2 ;; esac; shift; done
+RIG=$(command -v rig) || { echo "openrig-daemon-cycle: rig not on PATH" >&2; exit 1; }  # one binary for stop and start
+say() { echo "openrig-daemon-cycle: $*"; logger -t openrig-daemon-cycle "$*" 2>/dev/null || true; }
+field() { jq -r ".$1 // empty" "$STATE" 2>/dev/null; }
+answers() { curl -fsS -m 3 -o /dev/null "http://127.0.0.1:$1/healthz" 2>/dev/null; }
+# Fail closed: if ss itself fails, the port counts as still listening (stop can't be proven) and as owned by nobody
+# (start can't be proven).
+listening() { local out; out=$(ss -Hltn "sport = :$1" 2>/dev/null) || return 0; [ -n "$out" ]; }
+owners() { local out; out=$(ss -Hltnp "sport = :$1" 2>/dev/null) || return 0; grep -o 'pid=[0-9]*' <<<"$out" | cut -d= -f2 | sort -u; }
+ss_note() { ss -Hltn "sport = :$1" >/dev/null 2>&1 || echo " (ss failed: listener $2)"; }
+command -v ss >/dev/null || { echo "openrig-daemon-cycle: needs ss (iproute2) to verify the listener" >&2; exit 1; }
+alive() { [ -n "$1" ] && kill -0 "$1" 2>/dev/null; }
+
+if [ $do_stop = 1 ]; then
+  pid=$(field pid); port=$(field port); port=${port:-7433}
+  say "stopping daemon pid=${pid:-unknown} port=$port ($reason)"
+  "$RIG" daemon stop || say "rig daemon stop exited $? (checking what remains)"
+  for _ in $(seq "$WAIT"); do alive "$pid" || listening "$port" || break; sleep 1; done
+  if alive "$pid" || listening "$port"; then
+    say "STOP INCOMPLETE: $(alive "$pid" && echo "pid $pid still running")$(listening "$port" && echo " port $port still has a listener (pid $(owners "$port" | paste -sd, -))")$(ss_note "$port" "state unknown"). Not signalling it; inspect and use the operator procedure (docs/UPGRADE.md)."
+    exit 1
+  fi
+  say "stopped: pid ${pid:-?} gone, port $port closed"
+fi
+
+if [ $do_start = 1 ]; then
+  env=()  # openrig.service's Environment= (PATH with the seat shim first, OPENRIG_YOLO, SHELL)
+  while IFS= read -r kv; do [ -n "$kv" ] && env+=("$kv"); done < <(systemctl --user show openrig.service -p Environment --value | tr ' ' '\n')
+  say "starting daemon in its own scope"
+  (cd "$HOME" && systemd-run --user --scope --collect --quiet --unit="openrig-daemon-$(date +%s)" \
+     --description="OpenRig daemon (openrig-daemon-cycle: $reason)" env "${env[@]}" "$RIG" daemon start) || { say "rig daemon start failed"; exit 1; }
+  old=${pid:-}; new="" port=""
+  for _ in $(seq "$WAIT"); do
+    new=$(field pid); port=$(field port)
+    if alive "$new" && [ "$new" != "$old" ] && [ -n "$port" ] && owners "$port" | grep -qx "$new" && answers "$port"; then break; fi
+    new=""; sleep 1
+  done
+  [ -n "$new" ] || { say "START FAILED: no new running daemon owns the listener and answers /healthz (daemon.json pid=$(field pid) port=$(field port); listener pid(s) $(owners "$(field port)" | paste -sd, -))$(ss_note "$(field port)" unverified)"; exit 1; }
+  "$RIG" up kernel --existing >/dev/null 2>&1 || say "rig up kernel --existing returned non-zero (kernel may need attention)"
+  say "running: pid $new owns port $port and answers /healthz; $("$RIG" --version 2>/dev/null)"
+fi
+exit 0

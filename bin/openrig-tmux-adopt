@@ -1,0 +1,61 @@
+#!/usr/bin/env bash
+# Move a RUNNING tmux server and its seats out of openrig.service without stopping any seat (WO5 migration).
+#   openrig-tmux-adopt [--apply] [--socket <name>] [--from <unit>]   (default: dry run, default socket, openrig.service)
+# Why: tmux created every pane scope with PartOf=<the unit its server was started in>, so `systemctl stop openrig.service`
+# stopped every seat (the 2026-09-29 16:30Z incident). A restart was harmless only because PartOf doesn't restart scopes.
+# What --apply does, each step checked before the next:
+#   1. adopt the server PID into a new transient scope, openrig-tmux.scope (RefuseManualStop). Panes created from now on
+#      get PartOf=openrig-tmux.scope;
+#   2. back up, then drop the PartOf=/Before=<from> lines from the persisted definitions of the existing pane scopes
+#      ($XDG_RUNTIME_DIR/systemd/transient/tmux-spawn-*.scope) whose server is this PID;
+#   3. `systemctl --user daemon-reload` (transient units are re-read from those files; running processes are untouched);
+#   4. verify: the server is in the new scope and no pane scope of this server is PartOf=<from> any more.
+# Nothing is signalled, stopped or restarted. After a reboot, openrig-tmux.service owns the server from the start.
+set -uo pipefail
+apply=0 sock=default from=openrig.service scope=openrig-tmux.scope
+while [ $# -gt 0 ]; do case $1 in
+  --apply) apply=1 ;; --socket) sock=$2; shift ;; --from) from=$2; shift ;; --scope) scope=$2; shift ;;
+  *) echo "usage: openrig-tmux-adopt [--apply] [--socket <name>] [--from <unit>]" >&2; exit 2 ;; esac; shift; done
+T=${XDG_RUNTIME_DIR:-/run/user/$(id -u)}/systemd/transient
+PROC=${AGENT_STACK_PROC:-/proc}  # tests point this at a fake process table
+say() { echo "openrig-tmux-adopt: $*"; }
+spid=$(tmux -L "$sock" display -p '#{pid}' 2>/dev/null)
+[ -n "$spid" ] || { say "no tmux server answers on socket '$sock'; nothing to do"; exit 0; }
+cg() { cut -d: -f3 "$PROC/$1/cgroup" 2>/dev/null | xargs -r basename; }
+panes() { grep -l "^Description=tmux child pane .* launched by process $spid$" "$T"/tmux-spawn-*.scope 2>/dev/null; }
+ondisk() { for f in $(panes); do grep -q "^PartOf=$from$" "$f" && echo "$f"; done; }   # persisted definitions still bound
+# systemd's LIVE view decides safety, never the files alone: after a failed daemon-reload the files can be edited while
+# the manager still holds PartOf=<from>. A pane scope whose PartOf can't be read counts as bound (fail closed).
+live() { LIVE_BOUND=0 LIVE_UNREAD=0; local f po
+  for f in $(panes); do
+    if ! po=$(systemctl --user show "$(basename "$f")" -p PartOf --value 2>/dev/null); then LIVE_UNREAD=$((LIVE_UNREAD + 1))
+    elif [ "$po" = "$from" ]; then LIVE_BOUND=$((LIVE_BOUND + 1)); fi
+  done; }
+safe() { live; [ "$(cg "$spid")" != "$from" ] && [ $LIVE_BOUND = 0 ] && [ $LIVE_UNREAD = 0 ]; }
+state() { live; echo "server pid $spid in $(cg "$spid"); $(panes | wc -l) pane scopes: $LIVE_BOUND live PartOf=$from, $LIVE_UNREAD unreadable, $(ondisk | wc -l) still bound on disk"; }
+
+say "$(state)"
+if safe; then say "already safe: nothing to do"; exit 0; fi
+if [ $apply = 0 ]; then say "dry run: re-run with --apply to adopt the server into $scope and unbind the pane scopes"; exit 0; fi
+
+if [ "$(cg "$spid")" = "$from" ]; then
+  busctl --user call org.freedesktop.systemd1 /org/freedesktop/systemd1 org.freedesktop.systemd1.Manager StartTransientUnit \
+    'ssa(sv)a(sa(sv))' "$scope" fail 3 PIDs au 1 "$spid" RefuseManualStop b true \
+    Description s "tmux server for OpenRig seats (adopted from $from)" 0 >/dev/null || { say "could not create $scope; nothing changed"; exit 1; }
+  for _ in 1 2 3 4 5; do [ "$(cg "$spid")" = "$scope" ] && break; sleep 0.5; done
+  [ "$(cg "$spid")" = "$scope" ] || { say "server is still in $(cg "$spid"); stopping before touching pane scopes"; exit 1; }
+  say "server $spid adopted into $scope"
+fi
+list=$(ondisk)
+if [ -n "$list" ]; then
+  bk="${OPENRIG_HOME:-$HOME/.openrig}/backups/tmux-adopt-$(date +%Y%m%d%H%M%S)"; mkdir -p "$bk" && cp -p $list "$bk/" || { say "backup failed; nothing edited"; exit 1; }
+  for f in $list; do sed -i "/^PartOf=$from$/d; /^Before=$from$/d" "$f"; done
+  say "unbound $(echo "$list" | wc -l) pane scope files from $from (backup $bk)"
+fi
+# Reload whenever the manager may still hold the old dependency, including a retry after an earlier failed reload.
+live
+if [ -n "$list" ] || [ $LIVE_BOUND != 0 ] || [ $LIVE_UNREAD != 0 ]; then
+  systemctl --user daemon-reload || { say "daemon-reload failed; re-run --apply to retry (the edited files stay edited)"; exit 1; }
+fi
+safe || { say "VERIFY FAILED: $(state). Not safe yet."; exit 1; }
+say "done: $(state). Stopping $from can no longer stop a seat."

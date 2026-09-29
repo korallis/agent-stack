@@ -107,10 +107,23 @@ binding) and `adopted` (compares with OpenRig's own build) — not project fault
   test any new watchdog on ONE seat first.
 - **Holding a SQLite write lock across slow work** (GitHub calls inside the transaction) crashed the daemon
   (SQLITE_BUSY). → collect first, write in one short transaction; never write the daemon DB while it's busy
-  with long work; restart with `systemctl --user restart openrig.service` if it happens (seats survive).
+  with long work; restart only the daemon with `openrig-daemon-cycle` if it happens. Never stop or restart `openrig.service` or
+  `openrig-tmux.service` while rigs run; seats live in the latter's tmux server.
 - **Swapping a seat on a running rig** with `rig import --materialize-only` left it unlaunchable. Change
   topology by editing the spec, `rig down --snapshot`, archive the old record, `rig up` the spec, then
   reroute queue items (`rig queue fallback`) and re-register watchdogs.
+
+## Team conventions every rig carries (rig/template/CULTURE.md)
+New projects get these from the template. `agent-project-check` WARNs when an existing rig's CULTURE.md lacks
+"Owner decisions"; copy the two sections in from the template.
+- **Owner decisions**: dated standing decisions, delegations and approvals. The lead checks them before asking the
+  owner and adds each new one there.
+- **Operating rules**:
+  - owner FYI rows close only after `deliveryOutcome=posted` (decision requests use `--human-intent decision` and stay open);
+  - review/QA scratch checkouts go under `~/Projects/<P>.worktrees/`, never `/tmp`, removed in a trap, and tests clean up their `mkdtemp` dirs;
+  - proof by catalog id `rig proof show|judge <project-id>:<mission>/slices/<slice>`;
+  - never prompt (below);
+  - the merge gate (cross-family review, live Jev act band, merge pinned to head; integrator role).
 
 ## Never prompt (every project, every machine)
 Claude and Codex seats never ask for permission. `agent-project-check` FAILs when any of this is missing, and

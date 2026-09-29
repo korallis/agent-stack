@@ -74,7 +74,7 @@ for f in agent-login cliproxy-healthcheck cliproxy-key openrig-healthcheck clipr
 place "$S/system/seat-bin-codex" "$L/seat-bin/codex" 755
 mkdir -p "$L/seat-tools"; place "$S/system/seat-tools-rig" "$L/seat-tools/rig" 755   # queue writes get the project tag + EC-3 worktree_path
 link "$L/bin/agent-login" "$B/agent-login"
-for f in claude-pool agent-heavy openrig-upgrade openrig-update agent-project-new agent-project-check agent-never-prompt-check agent-queue-backfill agent-refresh-guidance agent-project-repair agent-waves-sync; do link "$S/bin/$f" "$B/$f"; done
+for f in claude-pool agent-heavy openrig-upgrade openrig-update agent-project-new agent-project-check agent-never-prompt-check openrig-daemon-cycle openrig-tmux-adopt agent-queue-backfill agent-refresh-guidance agent-project-repair agent-waves-sync; do link "$S/bin/$f" "$B/$f"; done
 link "$S/proxy/status.py" "$B/agent-proxy-status"
 if [ $CHECK = 0 ] || mise where "node@$NODE_FOR_JEV" >/dev/null 2>&1; then
   launcher jev-mcp "$NODE_FOR_JEV" "$S/jev/bin/jev-mcp.js"
@@ -122,6 +122,8 @@ if [ $CHECK = 0 ]; then
   # Inside a seat, queue create/handoff go through seat-tools/rig first (project tag + EC-3 worktree_path).
   printf '#!/usr/bin/env bash\nif [ -n "${OPENRIG_NODE_ID:-}" ] && [ -z "${AGENT_STACK_RIG_HELPER:-}" ] && [ "${1:-}" = queue ] && [ -x "%s/seat-tools/rig" ]; then\n  case "${2:-}" in create|handoff|handoff-and-complete) exec "%s/seat-tools/rig" "$@" ;; esac\nfi\nexport PATH="%s:$PATH"\nexec "%s/openrig/bin/rig" "$@"\n' "$L" "$L" "$node22" "$L" > "$B/rig"; chmod 755 "$B/rig"
   if [ "$("$B/rig" --version 2>/dev/null | awk '{print $1}')" != "$OPENRIG_VERSION" ]; then "$S/bin/openrig-upgrade" "$OPENRIG_VERSION"; fi
+  # Seats' tmux server gets its own unit first (skips itself if a server already runs; bin/openrig-tmux-adopt moves that one).
+  systemctl --user enable --now openrig-tmux.service >/dev/null 2>&1 || todo "openrig-tmux.service"
   systemctl --user enable --now openrig.service >/dev/null 2>&1 || true
   for t in cliproxyapi-health cliproxy-usage openrig-health cliproxy-authwatch cliproxy-quotawatch openrig-update agent-repos-sync; do systemctl --user enable --now "$t.timer" >/dev/null 2>&1 || todo "$t.timer"; done
 fi
@@ -144,7 +146,7 @@ if [ -f "$U/workspace.yaml" ]; then ok "$U (catalog kept as is)"; elif [ $CHECK 
   mkdir -p "$U/missions" "$U/exhaust"; cp "$S/config/openrig-workspace/"{SPEC.md,workspace.yaml} "$U/"
   "$B/rig" config init-workspace --root "$U" >/dev/null 2>&1 || true
   for kv in "workspace.root $U" "workspace.slices_root $U/missions" "workspace.catalog_path $U/workspace.yaml" "files.allowlist workspace:$U" "progress.scan_roots workspace:$U"; do "$B/rig" config set $kv >/dev/null 2>&1 || true; done
-  systemctl --user restart openrig.service >/dev/null 2>&1 || true; ok "$U created; OpenRig points at it (add each project to its workspace.yaml)"; fi
+  "$S/bin/openrig-daemon-cycle" --reason "install.sh: new umbrella workspace" >/dev/null 2>&1 || todo "restart the OpenRig daemon: openrig-daemon-cycle"; ok "$U created; OpenRig points at it (add each project to its workspace.yaml)"; fi
 
 step "Agent tools: plugins, MCP servers, browsers"
 if [ $CHECK = 0 ]; then
@@ -178,7 +180,7 @@ cat <<EOF
    2. gh auth login
    3. Pool your subscriptions, one per account, each in a private browser window:
         agent-login claude claude-a     agent-login codex codex-a     agent-login kimi kimi-a
-   4. Paste your TypeSafe key into $SEC/typesafe.env (Jev), then: systemctl --user restart openrig.service
+   4. Paste your TypeSafe key into $SEC/typesafe.env (Jev), then: openrig-daemon-cycle
    5. Start a project: see starter-kit/README.md
    Re-run ./install.sh --check at any time to see what is missing.
 EOF

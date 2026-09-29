@@ -1,8 +1,8 @@
 [Unit]
-Description=Check for OpenRig upstream releases daily
+Description=Weekly OpenRig release check: raises an upgrade-window queue item for the operator
 [Timer]
-OnCalendar=*-*-* 04:30:00
-RandomizedDelaySec=30min
+OnCalendar=Mon *-*-* 09:07:00
+RandomizedDelaySec=15min
 Persistent=true
 [Install]
 WantedBy=timers.target

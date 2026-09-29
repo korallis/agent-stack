@@ -72,7 +72,8 @@ for k in files.allowlist progress.scan_roots; do
   c=$(rig config get $k 2>/dev/null || true)
   case ",$c," in *",$RIG:$W,"*) ;; *) run rig config set $k "${c:+$c,}$RIG:$W" >/dev/null; changed=1 ;; esac
 done
-[ $changed = 1 ] && run systemctl --user restart openrig.service   # running rigs keep working (seats live in tmux)
+# The daemon reads these roots at start: restart only the daemon (verified stop/start; seats live in openrig-tmux's server).
+[ $changed = 1 ] && run "$AS/bin/openrig-daemon-cycle" --reason "agent-project-new $NAME: new workspace roots"
 
 say "rig folder $W/rig ($TEAM)"
 run mkdir -p "$W/rig"
@@ -83,7 +84,7 @@ if [ $DRY = 0 ]; then
   [ -f "$W/rig/startup/context.md" ] || sed "s#@REPO@#$R#g; s#@WT@#$WT#g" "$AS/rig/template/startup/context.md" > "$W/rig/startup/context.md"
   sed -i "s#@RIG@#$RIG#g; s#@REPO@#$R#g; s#@WT@#$WT#g; s#@AGENT_STACK@#$AS#g; s#@LEAD_SEAT@#$LEAD#g; s#@MERGE_SEAT@#$MERGE#g" \
     "$W/rig/$TEAM.yaml" "$W/rig/merge-sweep.watchdog.yaml" "$W/rig/daily-summary.watchdog.yaml"
-  grep -q "^## $P specifics" "$W/rig/CULTURE.md" || printf '\n## %s specifics\n- (status names, commit identity, repo procedures; standing owner approvals and delegations go here)\n' "$P" >> "$W/rig/CULTURE.md"
+  grep -q "^## $P specifics" "$W/rig/CULTURE.md" || printf '\n## %s specifics\n- (status names, commit identity, repo procedures; owner decisions go in "Owner decisions" above)\n' "$P" >> "$W/rig/CULTURE.md"
 fi
 
 say "worktrees $WT (one per seat)"

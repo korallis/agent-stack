@@ -77,6 +77,9 @@ if specs:
     missing = [c for c in cwds if not os.path.isdir(c)]
     rep("OK" if not missing else "FAIL", "every seat has its worktree", ", ".join(map(os.path.basename, missing[:5])))
     rep("OK" if os.path.exists(f"{W}/rig/CULTURE.md") else "FAIL", "rig/CULTURE.md present")
+    lacks = [h for h in ("Owner decisions", "Operating rules") if not re.search(rf"^## {h}", read(f"{W}/rig/CULTURE.md") or "", re.M)]
+    rep("OK" if not lacks else "WARN", "CULTURE.md has the Owner decisions + Operating rules sections",
+        f"missing {', '.join(lacks)}: copy from agent-stack rig/template/CULTURE.md" if lacks else "")
     ps = sh("rig", "ps", "--json")
     running = bool(rig) and (f'"{rig}"' in ps or re.search(rf"^{re.escape(rig)}\s", sh("rig", "ps"), re.M) is not None)
     rep("OK" if running else "WARN", f"rig {rig} is running")

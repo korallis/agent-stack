@@ -61,7 +61,15 @@ project-workspace.md) and the `mission-slice-sop` skill. Verify each point on di
    The seat shim adds `-a never`, and `~/.codex/config.toml` has `approval_policy = "never"`. A seat stuck on
    "Would you like to run…?" means one of these is missing: run `agent-never-prompt-check --rig <rig>` and relaunch
    that seat.
-8. Only the rig LEAD is messaged; it relays. Owner delegations/standing approvals go into the rig CULTURE.md.
+8. Only the rig LEAD is messaged; it relays. Owner decisions, delegations and approvals are dated lines in the rig
+   CULTURE.md "Owner decisions" section: check it before asking the owner, and add every new decision there.
+9. Operating rules (template CULTURE.md, "Operating rules"):
+   - close owner FYI rows only after `deliveryOutcome=posted`;
+   - decision requests use `--human-intent decision`;
+   - scratch checkouts go under `~/Projects/<P>.worktrees/`, never `/tmp`, removed in a trap;
+   - judge proof as `rig proof judge <project-id>:<mission>/slices/<slice>`;
+   - merge = cross-family review + live Jev act band + merge pinned to head.
+10. OpenRig upgrades are operator windows (`docs/UPGRADE.md`), raised weekly by `openrig-update.timer`; never ad hoc. Owner delegations/standing approvals go into the rig CULTURE.md.
 
 ## Using Jev well
 - Only for decisions in `jev-decide list`, or new ones added to `~/Projects/agent-stack/config/decisions.yaml`

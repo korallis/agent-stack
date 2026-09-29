@@ -5,6 +5,7 @@ timestamped copies (`claude-settings.*.json`, `codex-config.*.toml`, `cpa-config
 
 ## Remove everything
 ```bash
+# (removes everything: `rig down` each project rig first; openrig-tmux.service refuses a manual stop and ends at logout)
 systemctl --user disable --now openrig.service openrig-health.timer cliproxyapi.service cliproxyapi-health.timer cliproxy-usage.timer
 rig down <each rig> --delete        # before stopping the daemon, if rigs are running
 rm ~/.config/systemd/user/{openrig,openrig-health,cliproxyapi,cliproxyapi-health,cliproxy-usage}.{service,timer}

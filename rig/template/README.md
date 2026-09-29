@@ -30,7 +30,7 @@ rig config init-workspace --root $W                 # does not change the global
 sed -i "s/  - id: default/  - id: $RIG/" $W/workspace.yaml
 for k in files.allowlist progress.scan_roots; do c=$(rig config get $k); rig config set $k "${c:+$c,}$RIG:$W"; done
 printf '  - id: %s\n    root: %s\n' "$RIG" "$W" >> ~/Projects/openrig-workspace/workspace.yaml   # list it in the all-projects catalog
-systemctl --user restart openrig.service     # picks up the new roots; running teams keep working (seats live in tmux)
+openrig-daemon-cycle                         # restarts only the daemon to pick up the new roots; seats are untouched
 #    seats find this workspace automatically: env.sh sets OPENRIG_WORK_ROOT=~/Projects/<Repo>-work for any seat
 #    running in ~/Projects/<Repo>.worktrees/<seat> (so keep those two names). Only if this is your very first
 #    project on a machine not set up by install.sh, create ~/Projects/openrig-workspace first (see config/openrig-workspace/)

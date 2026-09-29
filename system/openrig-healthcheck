@@ -1,5 +1,11 @@
 #!/usr/bin/env bash
-# Restart the OpenRig daemon if /healthz fails twice (agents in tmux are unaffected).
+# Restart the OpenRig daemon if /healthz fails twice. Seats are never touched: they live in openrig-tmux.service's tmux
+# server, and the daemon is cycled with openrig-daemon-cycle (rig daemon stop, verified gone, rig daemon start in its own
+# scope), never by stopping or restarting openrig.service.
+export PATH=$HOME/.local/bin:$HOME/.local/share/mise/shims:/usr/local/bin:/usr/bin:/bin
 for i in 1 2; do curl -fsS -m 5 -o /dev/null http://127.0.0.1:7433/healthz && exit 0; sleep 5; done
-logger -t openrig-healthcheck "healthz failed twice; restarting openrig.service"
-systemctl --user restart openrig.service
+logger -t openrig-healthcheck "healthz failed twice; cycling the daemon with openrig-daemon-cycle"
+out=$(openrig-daemon-cycle --reason "health check: healthz failed twice" 2>&1) && exit 0
+logger -t openrig-healthcheck "daemon cycle failed: $(tail -n1 <<<"$out")"
+notify-send --app-name="Agent stack" --urgency=critical "OpenRig daemon down and not restarted" "$(tail -n1 <<<"$out") (seats keep running; see docs/UPGRADE.md)" 2>/dev/null || true
+exit 1

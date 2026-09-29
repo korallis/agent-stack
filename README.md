@@ -142,7 +142,7 @@ agent-project-repair <Project> --apply   # fix anything agent-project-check flag
 rig down <rig> --snapshot                # stop a team (resume later with: rig up <rig>)
 agent-proxy-status                       # how the subscription pool is doing
 claude-pool                              # your own Claude Code session through the pool (incl. Kimi models)
-openrig-update --check                   # is OpenRig up to date?
+openrig-update --check                   # is OpenRig up to date? (+ are local patches ready for the new version)
 ```
 
 ## Several projects at once
@@ -178,7 +178,11 @@ with `agent-login` and the pool uses it straight away.
 ### Where things are
 
 - Secrets (0600, never in git): `~/.config/agent-stack/secrets/{cliproxy.env,typesafe.env}`; OAuth tokens in `~/.cli-proxy-api/*.json`.
-- Proxy config `~/.cli-proxy-api/config.yaml`; services `cliproxyapi`, `openrig` and timers `cliproxyapi-health`, `cliproxy-usage`, `openrig-health`, `cliproxy-authwatch` (alerts on repeated 401/403 for one account), `cliproxy-quotawatch` (warns at 80% of any 5-hour or weekly allowance, critical when a whole provider is past it), `openrig-update` (user units, linger on).
+- **Seats never depend on the daemon unit.** Every seat lives in the tmux server of `openrig-tmux.service`, not in
+  `openrig.service`. tmux ties each pane to the unit its server runs in, which is how `systemctl stop openrig.service`
+  once stopped every seat. Restart the daemon with `openrig-daemon-cycle` (the health check does too), never with
+  systemctl. `openrig-tmux-adopt` moves an older server out of `openrig.service` without stopping seats.
+- Proxy config `~/.cli-proxy-api/config.yaml`; services `cliproxyapi`, `openrig`, `openrig-tmux` and timers `cliproxyapi-health`, `cliproxy-usage`, `openrig-health`, `cliproxy-authwatch` (alerts on repeated 401/403 for one account), `cliproxy-quotawatch` (warns at 80% of any 5-hour or weekly allowance, critical when a whole provider is past it), `openrig-update` (weekly: raises an "upgrade window due" queue item for operator-agent@kernel; never upgrades by itself, see docs/UPGRADE.md) (user units, linger on).
 - Pinned versions: `config/versions.env`.
 - Jev decisions (single source of truth): `config/decisions.yaml`; evaluation: `eval/` (`node eval/run.js`); unit tests: `node --test 'test/*.test.js'`.
 - Decision log: `~/.local/state/agent-stack/jev.sqlite` + `jev-decisions.jsonl` (state hash only, no raw payloads).
