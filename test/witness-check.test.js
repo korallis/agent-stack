@@ -34,6 +34,17 @@ slice("m1", "07-g1", "G1", "status: building");
 slice("m1", "08-witness-account-setup", "G2", "status: building\nwitness: false"); // a feature, not a W slice
 slice("m1", "09-h1", "H1", "status: building");
 slice("m1", "10-close", "HW", "status: shaped\nwitness: true # the wave's witness");
+// opt-outs: only a non-empty text reason, and never for a wave with a ui: true member; w00 names get no free pass
+mission("m6", "active", [
+  { id: "w00ui", slices: ["U0"] },                                          // user-facing work in a "w00" wave
+  { id: "w10", slices: ["J1"], extra: "    no-witness: true\n" },          // not a reason
+  { id: "w11", slices: ["K1"], extra: "    no-witness: ''\n" },            // empty
+  { id: "w12", slices: ["L1"], extra: "    no-witness: '   '\n" },         // whitespace
+  { id: "w13", slices: ["N1"], extra: "    no-witness: docs only\n" },     // ui: true member refuses the opt-out
+]);
+slice("m6", "01-u0", "U0", "status: building\nui: true");
+for (const [d, id] of [["02-j1", "J1"], ["03-k1", "K1"], ["04-l1", "L1"]]) slice("m6", d, id, "status: building");
+slice("m6", "05-n1", "N1", "status: building\nui: true # a screen");
 // m2 shares global wave w02 (still unwitnessed) and witnesses w05 with a follow-on wave (mta layout)
 mission("m2", "active", [{ id: "w02", slices: ["E1"] }, { id: "w05", slices: ["F1"] }, { id: "w05w", slices: ["FW"] }]);
 slice("m2", "01-e1", "E1", "status: building"); slice("m2", "02-f1", "F1", "status: building");
@@ -52,7 +63,14 @@ test("WARN names exactly the open waves (global across missions) and wave-less m
   const w = JSON.parse(r.stdout).find(x => x.check.startsWith("every open wave ends with a W witness slice"));
   assert.ok(w, r.stdout.slice(0, 300) + r.stderr.slice(0, 300));
   assert.equal(w.level, "WARN");
-  assert.equal(w.detail, "missing in m3, w02, w06; copy agent-stack rig/template/witness-slice/");
+  assert.equal(w.detail, "missing in m3, w00ui, w02, w06, w10, w11…; copy agent-stack rig/template/witness-slice/");
+});
+
+test("the full unwitnessed set (untruncated) is exactly m3, w00ui, w02, w06, w10, w11, w12, w13", () => {
+  const r = spawnSync("python3", [join(repo, "bin/agent-project-check"), W, "--json"], { encoding: "utf8",
+    env: { PATH: `${bin}:${process.env.PATH}`, HOME: home, OPENRIG_URL: "http://127.0.0.1:9", AGENT_PROJECT_CHECK_FULL: "1" }, timeout: 60000 });
+  const w = JSON.parse(r.stdout).find(x => x.check.startsWith("every open wave ends with a W witness slice"));
+  assert.equal(w.detail, "missing in m3, w00ui, w02, w06, w10, w11, w12, w13; copy agent-stack rig/template/witness-slice/");
 });
 
 test("the W slice template carries the marker, the witness record and the required sections", () => {

@@ -6,9 +6,10 @@ These rules are binding for every seat. The rig culture (CULTURE.md) adds team r
 - The plan: `docs/PLAN.md` (written by the owner).
 - The feature list: `features.json` (produced by the architect, approved by the owner). A feature is done only when
   its locked acceptance journeys pass and the QA seat has used it by hand; then the lead sets `passes: true`.
-- A wave (and so a mission) is done only when its W witness slice records `agent-witnessed (YYYY-MM-DD, by <agent>,
-  <model>)`: a fresh agent used the deployed app end to end through the real UI, with evidence. Tests, merges and
-  deploys are not witnesses.
+- A wave with user-facing changes (and so a mission) is done only when its W witness slice records
+  `agent-witnessed (YYYY-MM-DD, by <agent>, <model>)`: a fresh agent used the deployed app end to end through the real
+  UI, with evidence. Tests, merges and deploys are not witnesses. Only a docs/infra-only wave may skip it, with
+  `no-witness: <reason>` on the wave in mission.yaml.
 - Progress log: `PROGRESS.md` (one line per merged feature). Daily summaries: `docs/summary/`.
 
 ## How to run it
