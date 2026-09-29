@@ -1,0 +1,33 @@
+#!/usr/bin/env bash
+# Re-apply local fixes that upstream OpenRig has not released yet. Called by openrig-upgrade after every install.
+# usage: openrig-apply-patches [package-dir]   (default: the installed @openrig/cli)
+# Patches live in patches/openrig/<version>/*.patch as -p1 diffs against the published package root, one per fix.
+# Each is dry-run first. An already-applied patch is skipped; one that doesn't apply is left out.
+# A missing or failed patch is warned about loudly (logger + notify) but never fails the install: OpenRig still runs
+# unpatched. When upstream releases a fix, delete that version's patch rather than carrying it forward.
+set -uo pipefail
+S=$(cd "$(dirname "$(readlink -f "$0")")/.." && pwd)
+PKG=${1:-$HOME/.local/share/agent-stack/openrig/lib/node_modules/@openrig/cli}
+note() { logger -t openrig-patches "$2" 2>/dev/null || true; notify-send --app-name="Agent stack" ${3:+--urgency=$3} "$1" "$2" 2>/dev/null || true; echo "$2"; }
+V=$(jq -r .version "$PKG/package.json" 2>/dev/null) || { note "OpenRig patches not applied" "No OpenRig package at $PKG" critical; exit 0; }
+D=$S/patches/openrig/$V
+shopt -s nullglob; patches=("$D"/*.patch); tracked=("$S"/patches/openrig/*/*.patch)
+if [ ${#patches[@]} -eq 0 ]; then
+  # Only worth a warning while local fixes are being carried for some version.
+  [ ${#tracked[@]} -gt 0 ] && note "OpenRig $V is unpatched" "No local patches for $V in $S/patches/openrig (have: $(cd "$S/patches/openrig" && ls -d */ | tr -d / | tr '\n' ' ')). Port them or confirm upstream fixed them." critical
+  exit 0
+fi
+applied=() skipped=() failed=()
+for p in "${patches[@]}"; do
+  n=$(basename "$p" .patch)
+  if patch -p1 -d "$PKG" --dry-run --forward --silent < "$p" >/dev/null 2>&1; then
+    patch -p1 -d "$PKG" --forward --silent --no-backup-if-mismatch < "$p" >/dev/null && applied+=("$n") || failed+=("$n")
+  elif patch -p1 -d "$PKG" --dry-run --reverse --silent < "$p" >/dev/null 2>&1; then
+    skipped+=("$n")   # already applied (reinstall of the same version keeps patched files)
+  else
+    failed+=("$n")
+  fi
+done
+echo "OpenRig $V patches: applied ${applied[*]:-none}; already applied ${skipped[*]:-none}"
+[ ${#failed[@]} -eq 0 ] || note "OpenRig $V patch failed" "Did not apply: ${failed[*]} (from $D). OpenRig runs without these fixes." critical
+exit 0
