@@ -127,8 +127,11 @@ for m in sorted(glob.glob(f"{W}/missions/*/")):
                 bad["sections"].append(f"{mn}/{sn}"); break
         if "depends_on" not in fm:
             bad["depends_on"].append(f"{mn}/{sn}")
-        if str(fm.get("witness", "")).lower() == "true" or re.search(r"(^|-)w(-|$)|witness", sn):
-            witness_missions.add(mn)  # a W witness slice: `witness: true`, or named like NN-w-<env>-witness
+        # A W witness slice: frontmatter `witness: true` (a YAML boolean; an explicit false wins over the name), or,
+        # when unset, the naming NN[-N…]-w-<…> (e.g. matilda-v2's 08-1-w-staging-witness).
+        flag = re.sub(r"\s+#.*$", "", str(fm.get("witness", ""))).strip().strip("'\"").lower()
+        if flag in ("true", "yes", "on") or (flag == "" and re.match(r"^\d+(?:-\d+)*-w-", sn)):
+            witness_missions.add(mn)
         st = fm.get("status", "")
         if st not in ("done", "closed", "delivered", "abandoned"):
             open_slices_by_mission.setdefault(mn, []).append(sn)
@@ -136,7 +139,14 @@ for m in sorted(glob.glob(f"{W}/missions/*/")):
                 bad["territory"].append(f"{mn}/{sn}")
         if st in ("", "placeholder"):
             bad["status"].append(f"{mn}/{sn}")
-no_witness = sorted(m for m in open_slices_by_mission if m not in witness_missions)
+CLOSED = ("done", "closed", "delivered", "abandoned", "archived", "complete", "completed")
+def mission_status(mdir):
+    """The mission's own status: mission.yaml metadata.status, else PROGRESS.md frontmatter status."""
+    y = re.search(r"^metadata:\s*\n(?:\s+.*\n)*?\s+status:\s*['\"]?([\w-]+)", read(mdir + "mission.yaml") or "", re.M)
+    return (y.group(1) if y else frontmatter(read(mdir + "PROGRESS.md"))[0].get("status", "")).strip().lower()
+open_missions = set(open_slices_by_mission) | {os.path.basename(m.rstrip("/")) for m in glob.glob(f"{W}/missions/*/")
+                                              if mission_status(m) not in ("",) + CLOSED}
+no_witness = sorted(m for m in open_missions if m not in witness_missions)
 rep("OK" if not no_witness else "WARN", "every open mission ends with a W witness slice (agent witness gate)",
     ("missing in " + ", ".join(no_witness[:5]) + "; copy agent-stack rig/template/witness-slice/") if no_witness else "")
 nslices = sum(len(v) for v in ids.values())
