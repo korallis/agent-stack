@@ -5,7 +5,8 @@
    "sh" until Codex draws its TUI; OpenRig's restore probe treats that as "returned_to_shell". Making
    Codex the terminal's foreground process group lets tmux report "codex" from the first instant.
 2. --no-daemon: the shared Codex app-server daemon runs hooks with the env of whichever seat started
-   it, so OpenRig activity hooks report the wrong seat/generation (openrig#69).
+   it, so OpenRig activity hooks report the wrong seat/generation (openrig#69). OpenRig >= 0.6 passes it
+   itself; the shim adds it only when absent (a repeated flag makes Codex exit).
 3. model_catalog_json: the proxy's Codex catalog with display_name = slug. Codex 0.157 footers show the
    display name ("GPT 6.0 Astra"); OpenRig's live-TUI matcher expects the slug ("  gpt-6-astra · …").
    Same models and capabilities; only the label changes.
@@ -89,4 +90,6 @@ chose = any(n in ("-a", "--ask-for-approval") or n in NO_PROMPT
             or (n in ("-c", "--config") and (v or "").split("=", 1)[0].strip() == "approval_policy") for n, v in options(args))
 if not chose:
     extra += ["-a", "never"]
-os.execv(real, [real, "--no-daemon", *extra, *args])
+# OpenRig >= 0.6 passes --no-daemon itself (upstream #69), and Codex refuses a repeated flag, so add it only when absent.
+nd = [] if any(n == "--no-daemon" for n, _ in options(args)) else ["--no-daemon"]
+os.execv(real, [real, *nd, *extra, *args])
