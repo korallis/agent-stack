@@ -1,0 +1,15 @@
+#!/usr/bin/env bash
+# Keep every catalogued project's shared checkout on origin/main (fast-forward only).
+# OpenRig's execution view judges "merged" with `git merge-base --is-ancestor <candidate> main`, and new worktrees
+# branch from main: a stale local main makes merged work look unmerged and new seats start on an old base.
+# Skips a repo that is dirty, not on main, or has diverged. Runs from agent-repos-sync.timer every 5 minutes.
+set -uo pipefail
+cat=${AGENT_CATALOG:-$HOME/Projects/openrig-workspace/workspace.yaml}
+[ -r "$cat" ] || exit 0
+grep -oE 'root: *[^ ]+' "$cat" | sed 's/root: *//' | while read -r w; do
+  r=${w%-work}; [ -d "$r/.git" ] || continue
+  git -C "$r" fetch -q origin main 2>/dev/null || continue
+  [ "$(git -C "$r" branch --show-current)" = main ] || { echo "$r: not on main, skipped"; continue; }
+  [ -z "$(git -C "$r" status --porcelain --untracked-files=no)" ] || { echo "$r: local changes, skipped"; continue; }
+  git -C "$r" merge -q --ff-only origin/main 2>/dev/null && echo "$r: main at $(git -C "$r" rev-parse --short HEAD)" || echo "$r: diverged from origin/main, skipped"
+done

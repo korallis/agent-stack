@@ -1,0 +1,6 @@
+[Unit]
+Description=Fast-forward each project's shared checkout to origin/main
+
+[Service]
+Type=oneshot
+ExecStart=%h/.local/share/agent-stack/bin/agent-repos-sync

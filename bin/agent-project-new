@@ -58,6 +58,11 @@ if [ ! -f "$W/project.yaml" ]; then run rig config init-workspace --root "$W" >/
 if [ $DRY = 0 ]; then
   sed -i "s/  - id: default/  - id: $RIG/" "$W/workspace.yaml"
   grep -q '^sdlc:' "$W/project.yaml" || cat "$AS/rig/template/project-sdlc.yaml" >> "$W/project.yaml"
+  grep -q '^metadata:' "$W/project.yaml" || sed -i "0,/^kind: project$/s//kind: project\nmetadata:\n  id: $RIG/" "$W/project.yaml"
+  if ! grep -q '^proofPolicy:' "$W/project.yaml"; then   # readiness is "legacy" in the TUI without it
+    j="integ-codex@$RIG, coord-lead-claude@$RIG"; for q in $(grep -oE 'qa-[a-z]+-[0-9]+' "$AS/rig/template/$TEAM.yaml" | sort -u); do j="$q@$RIG, $j"; done
+    printf '\n# Who may accept a slice'"'"'s Proof contract items (rig proof judge); readiness derives from their judgments.\nproofPolicy:\n  judges: [%s]\n' "$j" >> "$W/project.yaml"
+  fi
   [ -f "$W/conventions.md" ] || printf '# %s conventions\n\nRepo rules: %s/AGENTS.md. Team rules: rig/CULTURE.md.\n' "$P" "$R" > "$W/conventions.md"
   grep -qE '^ *- conventions.md' "$W/project.yaml" || sed -i 's/^  context: \[\]/  context:\n    - conventions.md/' "$W/project.yaml"
   grep -qF "$W" "$U/workspace.yaml" 2>/dev/null || printf '  - id: %s\n    root: %s\n' "$RIG" "$W" >> "$U/workspace.yaml"

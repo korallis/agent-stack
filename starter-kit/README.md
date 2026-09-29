@@ -59,9 +59,8 @@ rig watchdog register --policy periodic-reminder --spec $W/rig/daily-summary.wat
 rig send $LEAD@$RIG "Build docs/PLAN.md"
 
 # 6. once the lead has the feature list approved, check the wiring (see the agent-stack skill checklist):
-#    every mission has a wave-map row, slices have depends_on + Territory, queue rows carry project/mission/slice
-for m in $W/missions/*/; do rig scope audit --mission $(basename $m) --workspace $W; done
-rig view show execution --mission <m> --json | jq '.rows[0].sources.wave_map, [.rows[0].q1_lanes[].fragile_join]'
+#    waves in every mission.yaml, official metadata, proof policy; the check asks the daemon what the TUI shows
+agent-project-check $P        # repair anything it flags with: agent-project-repair $P --apply
 ```
 
 From then on you get a desktop notification when the feature list is ready for your approval, when a risky PR

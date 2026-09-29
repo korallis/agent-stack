@@ -6,7 +6,7 @@ product-journey-sdlc.md, project-workspace.md) plus the agent-stack conventions.
 Each line is OK, WARN (advisory, fix soon) or FAIL (the project views or the team will misbehave).
 Exit code 1 when anything FAILs. The `openrig-project-setup` skill explains every check.
 """
-import glob, json, os, re, subprocess, sys
+import collections, glob, json, os, re, subprocess, sys
 
 HOME = os.path.expanduser("~")
 arg = next((a for a in sys.argv[1:] if not a.startswith("--")), None)
@@ -58,6 +58,8 @@ rep("OK" if re.search(r"^\s*-\s*conventions\.md\s*$", proj, re.M) and os.path.ex
 wsy = read(f"{W}/workspace.yaml") or ""
 pid = (re.search(r"^\s*-\s*id:\s*([\w.-]+)", wsy, re.M) or [None, None])[1]
 rep("OK" if pid and pid != "default" else "FAIL", f"workspace.yaml project id is set ({pid})")
+rep("OK" if re.search(r"^metadata:", proj, re.M) else "FAIL", "project.yaml has metadata (official shape)")
+rep("OK" if re.search(r"^proofPolicy:\s*\n\s+judges:", proj, re.M) else "FAIL", "project.yaml proofPolicy.judges (else TUI readiness is 'legacy')")
 cat = read(f"{HOME}/Projects/openrig-workspace/workspace.yaml") or ""
 rep("OK" if W in cat else "FAIL", "listed in the umbrella catalog ~/Projects/openrig-workspace/workspace.yaml")
 for k in ("files.allowlist", "progress.scan_roots"):
@@ -165,10 +167,64 @@ for r in mine:
             maps[d.get("mission")] = d
         else:
             rep("FAIL", f"wave-map row {r.get('qitemId')} has no valid ```json wave-map-v1 block")
-need = sorted(m for m, v in open_slices_by_mission.items() if v)
-nomap = [m for m in need if m not in maps]
-rep("OK" if not nomap else "FAIL", "every mission with open slices has a wave-map-v1 queue row (EC-2)",
-    f"missing: {', '.join(nomap)}" if nomap else f"{len(maps)} maps")
+# Waves: the daemon's EXECUTION view (what the TUI shows) takes waves from mission.yaml `arrangement.waves`
+# (members = slice SPEC ids) whenever mission.yaml exists; the EC-2 queue row is only a legacy fallback.
+# So ask the daemon itself, exactly as the TUI does.
+import urllib.parse, urllib.request
+# Everything below asks the daemon the same questions the TUI asks (/api/scopes, /api/views/execution) and
+# fails on what the TUI would show as missing. Files that look right but the daemon can't read are the
+# failure mode this catches (it once missed that waves must live in mission.yaml, not queue rows).
+def api(path):
+    try:
+        return json.load(urllib.request.urlopen("http://127.0.0.1:7433" + path, timeout=30))
+    except Exception as e:
+        return {"__error__": e.__class__.__name__}
+pq = urllib.parse.urlencode({"project": pid or "", "projectRoot": W})
+sc = api(f"/api/scopes?detail=1&{pq}")
+if "__error__" in sc:
+    rep("FAIL", "daemon reachable for the project views", sc["__error__"])
+else:
+    mr = collections.Counter(m.get("readiness", {}).get("state") for m in sc.get("missions", []))
+    sr = collections.Counter(sl.get("readiness", {}).get("state") for m in sc.get("missions", []) for sl in m.get("slices", []))
+    issues = sorted({i for m in sc.get("missions", []) for i in m.get("readiness", {}).get("issues", [])})
+    rep("OK" if not (mr.get("unknown") or mr.get("legacy") or issues) else "FAIL",
+        "mission readiness derives (metadata + proofPolicy; not unknown/legacy)", f"{dict(mr)} {issues[:2]}" if issues or mr.get("unknown") or mr.get("legacy") else "")
+    rep("OK" if not (sr.get("unknown") or sr.get("legacy")) else "FAIL", "slice readiness derives (proofPolicy.judges set)", "" if not (sr.get("unknown") or sr.get("legacy")) else str(dict(sr)))
+noarr, gaps = [], collections.defaultdict(list)
+for mdir in sorted(glob.glob(f"{W}/missions/*/")):
+    mn = os.path.basename(mdir.rstrip("/"))
+    if not glob.glob(mdir + "slices/*/"):
+        continue
+    if not re.search(r"^arrangement:\s*\n(?:.*\n)*?\s+waves:", read(mdir + "mission.yaml") or "", re.M):
+        noarr.append(mn)
+    v = api(f"/api/views/execution?mission={urllib.parse.quote(mn)}&{pq}")
+    if "__error__" in v:
+        gaps["daemon"].append(mn); continue
+    row = (v.get("rows") or [{}])[0]
+    src = row.get("sources", {})
+    if "malformed" in json.dumps(src.get("arrangement", {})):
+        gaps["mission.yaml malformed"].append(mn)
+    care = row.get("q3_care") or []
+    if any(c.get("build_wave") in (None, "INDETERMINATE") for c in care):
+        gaps["no wave declared"].append(mn)
+    if any(c.get("planning_dial") in (None, "INDETERMINATE") for c in care):
+        gaps["no planning dial"].append(mn)
+    if any(c.get("review_model") in (None, "INDETERMINATE") for c in care):
+        gaps["wave without review_model"].append(mn)
+    if "no reachable repo" in json.dumps(src.get("git", {})):
+        gaps["no repo context (no worktree_path row)"].append(mn)
+    if any(l.get("fragile_join") for l in row.get("q1_lanes") or []):
+        gaps["in-progress rows without worktree_path"].append(mn)
+rep("OK" if not noarr else "FAIL", "every mission.yaml declares arrangement.waves (the daemon's wave authority)",
+    "run agent-project-repair --apply: " + ", ".join(noarr) if noarr else "")
+for key, lvl, label in (("daemon", "FAIL", "answers for every mission"),
+                        ("mission.yaml malformed", "FAIL", "reads every mission.yaml"),
+                        ("no wave declared", "FAIL", "every slice has a wave"),
+                        ("no planning dial", "WARN", "every slice has a planning dial (approved-spec-dial)"),
+                        ("wave without review_model", "WARN", "every wave has a review_model"),
+                        ("no repo context (no worktree_path row)", "WARN", "has a repo context (worktree_path rows)"),
+                        ("in-progress rows without worktree_path", "WARN", "no in-progress row lacks worktree_path")):
+    rep("OK" if not gaps[key] else lvl, f"TUI execution view {label}", f"{key}: " + ", ".join(gaps[key][:6]) if gaps[key] else "")
 for mn, d in maps.items():
     known = {sn for (m2, sn, _) in specs_by_id.values() if m2 == mn}
     unknown = [s for w in d.get("waves", []) for s in w.get("slices", []) if s not in known and s not in specs_by_id]
@@ -227,11 +283,20 @@ if specs:
             miss = [x for x in want if not os.path.exists(os.path.join(sd, x, "SKILL.md"))]
             if miss:
                 noskills.append(f"{seat}:{'/'.join(miss)}")
+    if not running:  # OpenRig writes instruction blocks and projects skills at launch
+        noblocks, stale, noskills = [], [], []
+        rep("WARN", "seat instructions and skills not checked: the rig is not running (rig up, then re-check)")
     rep("OK" if not noblocks else "FAIL", "every seat's instruction file has its OpenRig blocks",
         "run agent-refresh-guidance --apply: " + ", ".join(noblocks) if noblocks else "")
     rep("OK" if not stale else "WARN", "seat instructions carry the current CULTURE.md and startup files",
         "run agent-refresh-guidance --apply: " + ", ".join(stale[:6]) if stale else "")
     rep("OK" if not noskills else "WARN", "every seat has the skills its role declares", ", ".join(noskills[:6]))
+behind = subprocess.run(["git", "-C", REPO, "rev-list", "--count", "main..origin/main"], capture_output=True, text=True).stdout.strip()
+rep("OK" if behind in ("0", "") else ("WARN" if behind.isdigit() and int(behind) < 20 else "FAIL"),
+    "shared checkout's main is current (the daemon judges 'merged' against it; agent-repos-sync.timer)",
+    f"{behind} commits behind origin/main" if behind not in ("0", "") else "")
+tim = subprocess.run(["systemctl", "--user", "is-active", "agent-repos-sync.timer"], capture_output=True, text=True).stdout.strip()
+rep("OK" if tim == "active" else "FAIL", "agent-repos-sync.timer active (keeps every project's main current)")
 hook = read(f"{REPO}/.git/hooks/pre-commit") or ""
 rep("OK" if "OpenRig MANAGED BLOCK" in hook else "FAIL", "repo pre-commit hook refuses OpenRig seat blocks",
     "install system/git-hooks/pre-commit" if "OpenRig MANAGED BLOCK" not in hook else "")

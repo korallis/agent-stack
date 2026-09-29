@@ -45,3 +45,15 @@ fi
 if [ -n "${OPENRIG_NODE_ID:-}" ] && [ -d "$HOME/.local/share/agent-stack/seat-tools" ]; then
   case ":$PATH:" in *":$HOME/.local/share/agent-stack/seat-tools:"*) ;; *) export PATH="$HOME/.local/share/agent-stack/seat-tools:$PATH" ;; esac
 fi
+# Seats: use the Node major the project asks for (.node-version / .nvmrc in the worktree), newest installed
+# patch of it, ahead of the daemon's Node 22 and the global mise Node. Projects without the file are untouched.
+if [ -n "${OPENRIG_NODE_ID:-}" ]; then
+  for _f in .node-version .nvmrc; do
+    [ -f "$PWD/$_f" ] || continue
+    _maj=$(tr -d 'v \r\n' < "$PWD/$_f" | cut -d. -f1)
+    _b=$(ls -d "$HOME"/.local/share/mise/installs/node/"$_maj".*/bin 2>/dev/null | sort -V | tail -1)
+    if [ -n "$_maj" ] && [ -x "$_b/node" ] && [ "${PATH%%:*}" != "$_b" ]; then export PATH="$_b:$PATH"; fi
+    break
+  done
+  unset _f _maj _b
+fi

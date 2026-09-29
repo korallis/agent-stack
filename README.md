@@ -138,6 +138,7 @@ rig send <seat>@<rig> "message"          # talk to a seat, e.g. the lead
 rig queue list -a -A                     # who owns which task
 agent-project-check <Project>            # is a project wired correctly (waves, slices, tags, skills)?
 agent-refresh-guidance <Project> --apply # after editing a rig's CULTURE.md: update running seats' instructions
+agent-project-repair <Project> --apply   # fix anything agent-project-check flags
 rig down <rig> --snapshot                # stop a team (resume later with: rig up <rig>)
 agent-proxy-status                       # how the subscription pool is doing
 claude-pool                              # your own Claude Code session through the pool (incl. Kimi models)
@@ -212,6 +213,7 @@ with `agent-login` and the pool uses it straight away.
 | Project views missed most queue rows | rows lacked `project:<id>` and `worktree_path=` | the `rig` launcher sends seat `queue create/handoff` through `seat-tools/rig`, which adds both |
 | Running seats kept old team rules; two seats lost their OpenRig instructions | managed blocks are written at launch; a git reset/merge of AGENTS.md wipes them | `agent-refresh-guidance <P> --apply` refreshes/restores them; a repo pre-commit hook stops them being committed |
 | `rig spec audit`: no start-up context | team specs had no rig-level startup file | `rig/startup/context.md` (identity, environment, system check, skills) in every team spec |
+| TUI: "no wave declared", readiness unknown/legacy, merged work shown unmerged | waves in queue rows (ignored when mission.yaml exists); YAML without official `metadata:`; no proof policy; stale local `main` | `agent-project-repair <P> --apply`; `agent-repos-sync.timer`; `agent-project-check` now asks the daemon what the TUI shows |
 
 After an OpenRig upgrade run `openrig-upgrade <version>` and re-check these.
 

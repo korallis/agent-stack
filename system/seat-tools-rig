@@ -4,6 +4,7 @@
 For `rig queue create | handoff | handoff-and-complete` this adds what OpenRig's project views join on
 (sdlc-conventions.md, DISPATCH DATA; scoped-operating-posture.md), so no seat has to remember it:
   - a `project:<id>` tag (the id from the seat's workspace catalog, $OPENRIG_WORK_ROOT/workspace.yaml);
+  - from a builder or test-author seat (impl-*, tests-*): `candidate:<HEAD sha>` of its worktree, the commit it hands on;
   - EC-3: the body line `worktree_path=<path>` when the destination seat has a worktree
     (~/Projects/<P>.worktrees/<member>). A handoff that keeps the source body gets that body re-sent
     with the destination's line, so the baton always names where the new owner works.
@@ -58,6 +59,17 @@ try:
         tl = [t for t in (tags or "").split(",") if t]
         if not any(t.startswith("project:") for t in tl):
             set_opt("--tags", ",".join(tl + [f"project:{project}"]))
+
+    # built-rung evidence: a builder's or test author's handoff names the candidate commit it froze
+    # (OpenRig's execution ladder reads `candidate:<sha>` tags to derive built -> reviewed -> folded -> adopted)
+    me = os.environ.get("OPENRIG_SESSION_NAME", "")
+    if me.split("@")[0].startswith(("impl-", "tests-")):
+        _, tags = opt("--tags")
+        tl = [t for t in (tags or "").split(",") if t]
+        if not any(t.startswith("candidate:") for t in tl):
+            head = subprocess.run(["git", "rev-parse", "HEAD"], capture_output=True, text=True)
+            if head.returncode == 0 and head.stdout.strip():
+                set_opt("--tags", ",".join(tl + [f"candidate:{head.stdout.strip()}"]))
 
     # EC-3 worktree_path for the destination seat
     _, dest = opt("--to" if args[1] != "create" else "--destination")

@@ -1,0 +1,100 @@
+#!/usr/bin/env python3
+"""agent-waves-sync <Project> [--apply]
+
+Waves must live in each mission's mission.yaml as `arrangement.waves` (the OpenRig daemon's authority for the
+TUI EXECUTION view). When a mission.yaml exists — and every scaffolded mission has one — the daemon IGNORES
+the legacy EC-2 queue row (`format:wave-map-v1`) and shows "no wave declared". Wave members are slice SPEC
+ids (frontmatter `id:`), not directory names.
+
+This copies each mission's latest wave-map-v1 queue row (if any) into mission.yaml as arrangement.waves,
+translating slice directory names to SPEC ids, and leaves every other byte of mission.yaml alone.
+Missions that already have arrangement.waves are left untouched unless --force.
+Dry run unless --apply. Verify with agent-project-check (it reads the daemon's own execution view).
+"""
+import glob, json, os, re, sqlite3, sys
+
+H = os.path.expanduser("~")
+arg = next((a for a in sys.argv[1:] if not a.startswith("--")), None)
+if not arg:
+    sys.exit(__doc__)
+APPLY, FORCE = "--apply" in sys.argv, "--force" in sys.argv
+W = f"{H}/Projects/{arg}-work"
+pid = (re.search(r"^\s*-\s*id:\s*([\w.-]+)", open(f"{W}/workspace.yaml").read(), re.M) or [0, None])[1]
+db = sqlite3.connect(f"file:{H}/.openrig/openrig.sqlite?mode=ro", uri=True, timeout=30)
+BLOCK = re.compile(r"```json\s*(\{.*?\})\s*```", re.S)
+
+
+def spec_id(slice_dir):
+    t = open(os.path.join(slice_dir, "SPEC.md")).read()
+    m = re.search(r"^id:\s*(\S+)", t.split("---")[1], re.M)
+    return m.group(1) if m else None
+
+
+for mdir in sorted(glob.glob(f"{W}/missions/*/")):
+    m = os.path.basename(mdir.rstrip("/"))
+    my_path = os.path.join(mdir, "mission.yaml")
+    if not os.path.exists(my_path):
+        continue
+    my = open(my_path).read()
+    has = re.search(r"^arrangement:\s*\n(?:.*\n)*?\s+waves:", my, re.M)
+    if has and not FORCE:
+        print(f"{m}: arrangement.waves already present (use --force to replace)"); continue
+    ids = {}
+    for sd in glob.glob(os.path.join(mdir, "slices/*/")):
+        sid = spec_id(sd)
+        if sid:
+            ids[os.path.basename(sd.rstrip("/"))] = sid
+    rows = db.execute("SELECT qitem_id, body, tags FROM queue_items WHERE tags LIKE '%format:wave-map-v1%' "
+                      "AND tags LIKE ? ORDER BY ts_created DESC", (f'%"mission:{m}"%',)).fetchall()
+    rows = [r for r in rows if not pid or f"project:{pid}" in (r[2] or "") or "project:" not in (r[2] or "")]
+    waves = None
+    for qid, body, _ in rows:
+        b = BLOCK.search(body or "")
+        try:
+            d = json.loads(b.group(1)) if b else None
+        except json.JSONDecodeError:
+            d = None
+        if d and d.get("format") == "wave-map-v1" and isinstance(d.get("waves"), list):
+            waves, src = d["waves"], qid
+            break
+    if not waves:
+        waves, src = [], "none (delivered slices only)"
+    known = set(ids.values())
+    out, unknown = [], []
+    for w in waves:
+        members = []
+        for s in w.get("slices", []):
+            sid = s if s in known else ids.get(s)
+            (members.append(sid) if sid else unknown.append(s))
+        if members:
+            out.append((w["id"], members, w.get("review_model")))
+    # slices delivered before waves existed get their own wave, so nothing shows "no wave declared"
+    placed = {x for _, mem, _ in out for x in mem}
+    done = []
+    for sd in sorted(glob.glob(os.path.join(mdir, "slices/*/"))):
+        fm = open(os.path.join(sd, "SPEC.md")).read().split("---")[1]
+        st = (re.search(r"^status:\s*(\S+)", fm, re.M) or [0, ""])[1]
+        sid = ids.get(os.path.basename(sd.rstrip("/")))
+        if sid and sid not in placed and st in ("done", "delivered", "closed"):
+            done.append(sid)
+    if done:
+        out.insert(0, ("w00-delivered", done, "delivered-before-waves"))
+    if not out:
+        print(f"{m}: no wave map and nothing delivered; the lead must author its waves"); continue
+    lines = [f"# Waves (OpenRig wave-sdlc.md): slices that build in parallel in disjoint territories.",
+             f"# Members are slice SPEC ids. Synced from queue row {src} by agent-waves-sync.",
+             "arrangement:", "  waves:"]
+    for wid, members, rm in out:
+        lines.append(f"    - id: {json.dumps(wid)}")
+        lines.append(f"      slices: {json.dumps(members)}")
+        if rm:
+            lines.append(f"      review_model: {json.dumps(rm)}")
+    block = "\n".join(lines) + "\n"
+    if has:  # --force: replace the existing top-level arrangement block
+        my = re.sub(r"(?:^#.*\n)*^arrangement:\s*\n(?:^[ \t]+.*\n|^\s*\n)*", "", my, flags=re.M)
+    new = my.rstrip("\n") + "\n\n" + block
+    print(f"{m}: {len(out)} waves, {sum(len(x[1]) for x in out)} slices"
+          + (f"; UNKNOWN (skipped): {', '.join(unknown)}" if unknown else ""))
+    if APPLY:
+        open(my_path, "w").write(new)
+print("APPLIED" if APPLY else "DRY RUN")

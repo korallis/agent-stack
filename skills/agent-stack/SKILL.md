@@ -45,18 +45,17 @@ project-workspace.md) and the `mission-slice-sop` skill. Verify each point on di
 2. Slice SPEC frontmatter: unique `id`, honest `status`, `intent`, `depends_on` (inline JSON array; `[]` is a
    statement, absence is unknown); body `## Intent`, `## Mini-requirements`, `## Proof contract`; a `Territory:`
    line; `SOFT-AFTER: [ids] — reason` for shared files.
-3. WAVES: one queue row per mission tagged `wave-map,format:wave-map-v1`, body = one ```json block
-   `{"format":"wave-map-v1","mission":"<m>","waves":[{"id":"w01","slices":[...],"review_model":"..."}]}`.
-   Composition only. A wave review (two non-writer reviewers, different families, drift + CONTEXT-GAP/JUDGMENT-GAP)
-   fires once per wave on top of our per-PR checks.
+3. WAVES live in each mission.yaml `arrangement.waves` (members = slice SPEC ids); the daemon ignores
+   wave-map queue rows once mission.yaml exists. Missions/slices carry official `metadata:`; project.yaml
+   carries `proofPolicy.judges`; slices carry `approved-spec-dial`. A wave review (two non-writer reviewers,
+   different families; drift + CONTEXT-GAP/JUDGMENT-GAP) fires once per wave on top of per-PR checks.
 4. Queue rows: `--mission` and `--slice` on every create; `project:<id>` tag and the EC-3 body line
    `worktree_path=<path>` are added by `~/.local/share/agent-stack/seat-tools/rig` (seats have it first on PATH).
    Existing rows are never rewritten.
 5. Seats have OpenRig's own skills (mission-slice-sop, queue-handoff, compaction/continuity) as user-level
    symlinks — the specs' `shared:openrig-core` plugin is not loaded because seats start without --plugin-dir.
-6. Check: `rig scope audit --mission <m>` (advisory), the TUI Project view (every mission/slice/row placed),
-   `rig view show execution --mission <m> --json` (`wave_map` must not be INDETERMINATE; lanes must not be
-   `fragile_join`).
+6. Check with `agent-project-check <P>`: it asks the daemon exactly what the TUI shows. Verify through the
+   consumer, never through files alone. Repair with `agent-project-repair <P> --apply`.
 7. Only the rig LEAD is messaged; it relays. Owner delegations/standing approvals go into the rig CULTURE.md.
 
 ## Using Jev well

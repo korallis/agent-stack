@@ -22,15 +22,27 @@ These tools do the mechanical work; don't hand-build what they do:
 | Tool | Does |
 |---|---|
 | `agent-project-new --name <P> --rig <short> --github <user> [--team full-stack\|build\|core]` | Repo from the starter kit, held-out dir, private GitHub repo (REST) + protection, workspace with the agent-stack SDLC/wave/git defaults, umbrella catalog + allowlist + scan roots, rig folder, one worktree per seat, `.git/info/exclude`, `rig up`, merge-sweep + daily-summary watchdogs (never duplicated), then the check. Idempotent: re-run it to repair. `--dry-run` shows the plan. |
-| `agent-queue-backfill <P> [--apply]` | Adds `project:`, `slice:`/`mission:` tags and `worktree_path=` to a project's EXISTING queue rows (additive, after a DB backup). Use once when the check WARNs about untagged rows from before the seat helper. |
+| `agent-project-repair <P> [--apply]` | Brings an existing project up to what the daemon reads: `rig scope mission repair`, official `metadata:` blocks, `proofPolicy.judges`, `approved-spec-dial`, waves into mission.yaml, queue backfill, seat instruction refresh. Backs up the workspace first. |
+| `agent-waves-sync <P> [--apply] [--force]` | Copies each mission's wave map into mission.yaml `arrangement.waves` (SPEC ids); delivered slices get `w00-delivered`. |
+| `agent-queue-backfill <P> [--apply] [--candidates]` | Adds `project:`, `slice:`/`mission:` tags and `worktree_path=` to a project's EXISTING queue rows (additive, after a DB backup). Use once when the check WARNs about untagged rows from before the seat helper. `--candidates` adds `candidate:<PR head sha>` per built slice. Gathers everything first, then writes in ONE short transaction. |
 | `agent-refresh-guidance <P> [--apply]` | After editing the rig's `CULTURE.md` or `startup/*.md` on a running rig: refreshes those OpenRig managed blocks in every seat's instruction file, adds blocks for startup files added to the spec later, and restores a seat whose file lost all blocks. Then tell the lead to have seats re-read their instruction file. |
-| `agent-project-check <P>` | Read-only audit against OpenRig's references. FAIL = the team or the project views will misbehave; WARN = fix soon. Run it after setup, after the lead's planning, and whenever a rig looks idle. |
+| `agent-project-check <P>` | Read-only audit. Checks files AND asks the daemon every question the TUI asks (`/api/scopes`, `/api/views/execution` per mission): waves, readiness, planning dial, review model, repo context, lanes; plus rig doctor/spec audit, seats' blocks and skills, local main vs origin, timers, hooks. FAIL = the team or the TUI will misbehave. Run after setup, after planning, whenever the TUI looks wrong. |
 
 Sources of truth: `$OPENRIG_HOME/reference/` — `rig-spec.md`, `agent-spec.md`, `agent-startup-guide.md` (skills
 reach seats two ways: projected by the agent spec AND named in the role text; rig-level `startup/context.md`),
 `sdlc-conventions.md` (Part A, DISPATCH DATA EC-1..3),
 `wave-sdlc.md`, `product-journey-sdlc.md`, `project-workspace.md`, `planning-dial.md` — and the OpenRig skills
 `mission-slice-sop` and `queue-handoff`. Read those, not memory, when in doubt.
+
+## The audit principle (learned the hard way)
+Verify through the CONSUMER, not the convention. A doc can describe a format the daemon only uses as a
+fallback (waves as queue rows); a file can look right and still be ignored (mission.yaml without
+`metadata:`). The authority is what the daemon returns to the TUI: read the daemon code when a field is
+INDETERMINATE (`$L/openrig/lib/node_modules/@openrig/cli/daemon/dist/domain/execution-view.js`,
+`proof/judgments.js`, `review/*.js`) and compare with the official worked example
+(`rig context get skills/core/openrig-software-factory/references/worked-example.md`).
+Remaining INDETERMINATEs that are by design: `reviewed` in project views (review artifacts have no project
+binding) and `adopted` (compares with OpenRig's own build) — not project faults.
 
 ## The order
 1. `agent-project-new …` (machine prerequisites come from `~/Projects/agent-stack/install.sh`).
@@ -39,13 +51,14 @@ reach seats two ways: projected by the agent spec AND named in the role text; ri
    - `features.json` and one mission per area, slices under it (`rig scope …`), every slice SPEC.md with
      `intent`, honest `status`, `depends_on` (inline JSON array; `[]` is a statement), `## Intent`,
      `## Mini-requirements`, `## Proof contract`, a `Territory:` line, `SOFT-AFTER: [ids] — reason` on overlap;
-   - ONE wave-map queue row per mission: tags `wave-map,format:wave-map-v1`, body one ```json block
-     `{"format":"wave-map-v1","mission":"<m>","waves":[{"id":"w01","slices":[…],"review_model":"two-reviewer-cross-family"}]}`
-     — composition only; waves = slices that can build in parallel in disjoint territories; load-bearing
-     slices (auth, migrations, payments) get their own wave. A draft from dependency levels is a fine start;
-     territory overlap decides the final shape.
+   - waves in each mission.yaml `arrangement.waves` (members = slice SPEC ids): slices that build in
+     parallel in disjoint territories; load-bearing slices (auth, migrations, payments) get their own wave;
+     every new slice joins a wave when created. A draft from dependency levels is a fine start.
+   - official YAML shape: `metadata:` in project.yaml (id), mission.yaml (name, status), slice.yaml (id);
+     `approved-spec-dial:` in slice SPEC frontmatter; `proofPolicy.judges` in project.yaml.
 4. `agent-project-check <P>` — no FAIL before builders are dispatched wide.
-5. Build per wave; the wave review (two non-writer reviewers of different families; drift +
+5. QA and the merge owner `rig proof judge` each proof item after a pass (that is the TUI's readiness).
+6. Build per wave; the wave review (two non-writer reviewers of different families; drift +
    CONTEXT-GAP / JUDGMENT-GAP) fires once per wave on top of the per-PR checks.
 
 ## Mistakes this setup already made once (each is now prevented — keep it that way)
@@ -78,6 +91,23 @@ reach seats two ways: projected by the agent spec AND named in the role text; ri
   pre-commit hook (`system/git-hooks/pre-commit`, installed by agent-project-new) refuses commits containing them.
 - **Testing a git hook inside a live seat's worktree** committed that seat's staged file. Test hooks and
   scripts in a throwaway repo/project, never in a seat's worktree.
+- **Waves written where the daemon doesn't read them.** Queue wave-map rows (EC-2 in the conventions doc) are
+  IGNORED once a mission.yaml exists; the TUI said "no wave declared" while every file check passed. →
+  waves in mission.yaml `arrangement.waves` with SPEC ids; `agent-waves-sync`; the check asks the daemon.
+- **YAML without the official `metadata:` blocks** → mission readiness "unknown"; **no proofPolicy** → slice
+  readiness "legacy"; **no approved-spec-dial** → planning dial unknown. → `agent-project-repair`, setup defaults.
+- **Local `main` 100–200 commits behind origin** → the daemon (merge-base against main) showed merged work as
+  unmerged, and new worktrees started on an old base. → `agent-repos-sync.timer` fast-forwards every
+  project's shared checkout every 5 minutes; the check FAILs when main is behind.
+- **No built-commit evidence** (`candidate:<sha>`) → built/merged unknown. → seat `rig` tags builder/test-author
+  handoffs with HEAD; `agent-queue-backfill --candidates` for old slices.
+- **A context-usage-threshold watchdog on every seat** misfired on 46 seats at once: it measures transcript
+  FILE bytes, and long-lived seats (Codex compacts in place) have multi-MB transcripts regardless of live
+  context. Don't register it on running seats; use `rig ps --nodes --full` CTX and the lead's judgement, and
+  test any new watchdog on ONE seat first.
+- **Holding a SQLite write lock across slow work** (GitHub calls inside the transaction) crashed the daemon
+  (SQLITE_BUSY). → collect first, write in one short transaction; never write the daemon DB while it's busy
+  with long work; restart with `systemctl --user restart openrig.service` if it happens (seats survive).
 - **Swapping a seat on a running rig** with `rig import --materialize-only` left it unlaunchable. Change
   topology by editing the spec, `rig down --snapshot`, archive the old record, `rig up` the spec, then
   reroute queue items (`rig queue fallback`) and re-register watchdogs.

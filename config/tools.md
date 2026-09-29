@@ -16,7 +16,7 @@ servers marked "latest" track upstream, the rest are pinned in `config/versions.
 | TOON CLI (`toon`) | latest (validated 4.1.1) | Compacts table-shaped JSON before it goes into prompts | `npm i -g @toon-format/cli` |
 | Neon CLI (`neon`) | latest (validated 6.3.0) | Neon database branches (one per PR), inspection, restore. Sign in once with `neon login` | `npm i -g neon` |
 | Playwright + Chromium | latest (validated 1.63.0) | Real browser for user-journey tests and hands-on QA | `npx playwright install chromium` |
-| `agent-project-new` / `agent-project-check` / `agent-queue-backfill` / `agent-refresh-guidance` | this repo (`bin/`) | Set up a project the OpenRig way in one run; audit its wiring; tag old queue rows; push culture/startup changes into running seats | install.sh links them into `~/.local/bin` |
+| `agent-project-new` / `-check` / `-repair`, `agent-waves-sync`, `agent-queue-backfill`, `agent-refresh-guidance` | this repo (`bin/`) | Set up a project the OpenRig way; audit it against what the daemon/TUI reads; repair it; keep waves, queue rows and seat instructions right | install.sh links them into `~/.local/bin` |
 
 ## Plugins and skills (loaded into every seat)
 
@@ -55,6 +55,7 @@ servers marked "latest" track upstream, the rest are pinned in `config/versions.
 | `cliproxy-usage.timer` | Records each request's account, model, status and quota (no content) |
 | `cliproxy-authwatch.timer` | Alerts when one account keeps failing to sign in |
 | `cliproxy-quotawatch.timer` | Warns at 80% of any account's 5-hour or weekly allowance |
+| `agent-repos-sync.timer` | Fast-forwards every project's shared checkout to origin/main every 5 minutes (OpenRig judges 'merged' against it) |
 | `openrig-update.timer` | Upgrades OpenRig from upstream when no project team is running, with validation and rollback |
 
 ## Accounts you add yourself

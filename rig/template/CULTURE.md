@@ -77,9 +77,10 @@ over seats that have capacity; code decides anything exact (capacity, retry coun
 
 ## Projects, missions, slices and waves (OpenRig conventions)
 - Work lives in the project workspace (`$OPENRIG_WORK_ROOT`): project.yaml → missions/<m>/ (SPEC, PROGRESS, NOTES, mission.yaml) → slices/<s>/ (SPEC, PROGRESS, PROOF, proof/). Use the `mission-slice-sop` and `queue-handoff` skills; references in `$OPENRIG_HOME/reference/` (sdlc-conventions.md, wave-sdlc.md, product-journey-sdlc.md).
-- Waves: slices build in parallel in disjoint file territories; the merge owner merges serially; the independent wave review fires once per wave on top of the per-PR checks. Each mission has one `wave-map` queue row (format wave-map-v1) owned by the lead.
+- Waves: slices build in parallel in disjoint file territories; the merge owner merges serially; the independent wave review fires once per wave on top of the per-PR checks. Waves live in each mission.yaml `arrangement.waves` (members = slice SPEC ids), maintained by the lead; the TUI reads only that.
 - Every queue row names its mission and slice (`--mission`, `--slice`); the seat `rig` adds `project:<id>` and `worktree_path=`. Don't strip them.
-- End every turn by passing the ball (`rig queue handoff`) or recording why it is parked; never go idle holding work.
+- End every turn by passing the ball (`rig queue handoff`) or parking it WITH a wake (`rig queue block … --wake-after`); never go idle holding work.
+- Proof: QA and the merge owner accept each proof-contract item with `rig proof judge` once it is shown to work; readiness in the TUI comes only from those judgments.
 - Keep slice/mission status honest; the files serve the product, not the other way round.
 - Your AGENTS.md / CLAUDE.local.md carries OpenRig managed blocks (your instructions). Never discard them (`git checkout -- AGENTS.md`, `git restore .`, `git stash -u`, resets) and never commit them: stage your own lines with `git add -p`. A pre-commit hook refuses commits containing them.
 

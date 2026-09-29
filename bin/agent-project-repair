@@ -1,0 +1,75 @@
+#!/usr/bin/env bash
+# agent-project-repair <Project> [--apply]
+#
+# Brings an existing project's workspace up to what the OpenRig daemon (and so the TUI) actually reads,
+# not just what the conventions describe. Idempotent; dry run unless --apply; backs up the workspace first.
+#   1. `rig scope mission repair` for every mission (OpenRig's own frontmatter/PROGRESS conformance)
+#   2. metadata: blocks in project.yaml (id), mission.yaml (name, status), slice.yaml (id)
+#      — without mission metadata the daemon's mission readiness is "unknown"
+#   3. proofPolicy.judges in project.yaml (QA seats, merge owner, lead) — without it readiness is "legacy"
+#   4. approved-spec-dial: P1 on slices that have none (the planning-dial rung; architects raise it to P2/P3)
+#   5. waves into mission.yaml arrangement.waves (agent-waves-sync) — the TUI ignores wave-map queue rows
+#      whenever mission.yaml exists; delivered slices get their own wave
+#   6. queue backfill (project/slice tags, worktree_path) and seat instruction refresh
+# Then run agent-project-check <Project>, which probes every daemon view the TUI uses.
+set -euo pipefail
+AS=$(cd "$(dirname "$(readlink -f "$0")")/.." && pwd)
+P=${1:?usage: agent-project-repair <Project> [--apply]}; APPLY=0; [ "${2:-}" = --apply ] && APPLY=1
+W=$HOME/Projects/$P-work; [ -f "$W/project.yaml" ] || { echo "no workspace $W" >&2; exit 1; }
+SPEC=$(ls -S "$W"/rig/*.yaml 2>/dev/null | xargs grep -l '^pods:' | head -1)
+RIG=$(sed -n 's/^name: *"\{0,1\}\([A-Za-z0-9._-]*\).*/\1/p' "$SPEC" | head -1)
+MERGE=$(grep -oE 'integ-[a-z]+' "$SPEC" | head -1); LEAD=coord-lead-claude
+flag=""; [ $APPLY = 1 ] && flag=--apply
+if [ $APPLY = 1 ]; then
+  B=$HOME/.local/share/agent-stack/backups/workspaces-$(date +%Y%m%d-%H%M%S); mkdir -p "$B"
+  tar czf "$B/$P-work.tgz" --exclude="$P-work/exhaust" -C "$HOME/Projects" "$P-work"; echo "backup: $B/$P-work.tgz"
+fi
+
+echo "== 1. rig scope mission repair"
+for m in "$W"/missions/*/; do m=$(basename "$m")
+  if [ $APPLY = 1 ]; then rig scope --workspace "$W" mission repair "$m" --json >/dev/null 2>&1 || echo "  repair $m: failed (see rig scope mission repair $m)"; fi
+done
+
+echo "== 2-4. metadata, proofPolicy, planning dial"
+python3 - "$W" "$RIG" "$MERGE" "$LEAD" "$APPLY" <<'EOF'
+import glob, os, re, sys
+W, rig, merge, lead, apply = sys.argv[1], sys.argv[2], sys.argv[3], sys.argv[4], sys.argv[5] == "1"
+pid = re.search(r"^\s*-\s*id:\s*([\w.-]+)", open(f"{W}/workspace.yaml").read(), re.M).group(1)
+n = dict(metadata=0, policy=0, dial=0)
+def write(p, t):
+    if apply: open(p, "w").write(t)
+def meta(p, block):
+    t = open(p).read()
+    if re.search(r"^metadata:", t, re.M): return
+    t2 = re.sub(r"^(kind: \w+\n)", lambda m: m.group(1) + block, t, count=1, flags=re.M)
+    if t2 != t: n["metadata"] += 1; write(p, t2)
+meta(f"{W}/project.yaml", f"metadata:\n  id: {pid}\n")
+pj = open(f"{W}/project.yaml").read()
+if not re.search(r"^proofPolicy:", pj, re.M):
+    seats = sorted({s for s in re.findall(r"cwd:\s*\"?[^\"\n]*/((?:qa-[\w-]+))\"?", open(max(glob.glob(f"{W}/rig/*.yaml"), key=lambda f: open(f).read().count("cwd:"))).read())})
+    judges = [f"{s}@{rig}" for s in seats] + [f"{merge}@{rig}", f"{lead}@{rig}"]
+    n["policy"] += 1
+    write(f"{W}/project.yaml", pj.rstrip("\n") + "\n\n# Who may accept a slice's Proof contract items (rig proof judge); readiness derives from their judgments.\n"
+          f"proofPolicy:\n  judges: [{', '.join(judges)}]\n")
+for my in glob.glob(f"{W}/missions/*/mission.yaml"):
+    md = os.path.dirname(my); m = os.path.basename(md)
+    prog = open(f"{md}/PROGRESS.md").read() if os.path.exists(f"{md}/PROGRESS.md") else ""
+    st = (re.search(r"^status:\s*(\S+)", prog.split("---")[1], re.M) if prog.startswith("---") else None)
+    meta(my, f"metadata:\n  name: {m}\n  status: {st.group(1) if st else 'active'}\n")
+    for sd in glob.glob(f"{md}/slices/*/"):
+        s = os.path.basename(sd.rstrip("/"))
+        if os.path.exists(f"{sd}slice.yaml"): meta(f"{sd}slice.yaml", f"metadata:\n  id: {s}\n")
+        sp = f"{sd}SPEC.md"
+        if os.path.exists(sp):
+            t = open(sp).read()
+            mm = re.match(r"^---\n(.*?)\n---\n", t, re.S)
+            if mm and "approved-spec-dial:" not in mm.group(1):
+                n["dial"] += 1
+                write(sp, "---\n" + mm.group(1) + "\napproved-spec-dial: P1\n---\n" + t[mm.end():])
+print(f"  {'applied' if apply else 'would apply'}: {n}")
+EOF
+
+echo "== 5. waves -> mission.yaml";   "$AS/bin/agent-waves-sync" "$P" $flag | tail -3
+echo "== 6. queue backfill";          "$AS/bin/agent-queue-backfill" "$P" $flag | tail -1
+echo "== 6. seat instructions";       "$AS/bin/agent-refresh-guidance" "$P" $flag | tail -1
+[ $APPLY = 1 ] && echo "Now: agent-project-check $P" || echo "(dry run; re-run with --apply)"

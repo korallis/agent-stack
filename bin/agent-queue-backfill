@@ -5,7 +5,9 @@ Adds OpenRig execution-data tags to a project's EXISTING queue rows (new rows ge
   - project:<id> on every row of the project's rig;
   - slice:<dir> + mission:<m> when a row names exactly one slice (by slice dir, or by the id in the dir name,
     e.g. F-001 -> 01-f-001-..., T023 -> 02-t023);
-  - on open rows (pending / in-progress / blocked) the body line `worktree_path=<destination worktree>`.
+  - on open rows (pending / in-progress / blocked) the body line `worktree_path=<destination worktree>`;
+  - with --candidates: `candidate:<PR head sha>` on the newest row of each slice that has none, from the
+    implementation PR its rows name (pr:<n> tags or "PR #n"), so OpenRig's built/folded ladder can derive.
 Additive only: no tag is removed, no body text is changed except that appended line. OpenRig's CLI can't
 edit tags, so this writes the daemon's SQLite directly after a `.backup` into
 ~/.local/share/agent-stack/backups/. Dry run unless --apply.
@@ -42,6 +44,8 @@ db.execute("PRAGMA busy_timeout=30000")
 rows = db.execute("select qitem_id, tags, body, state, destination_session from queue_items "
                   "where destination_session like ? or source_session like ?", (f"%@{rig}", f"%@{rig}")).fetchall()
 st = dict(rig=rig, project=pid, rows=len(rows), add_project=0, add_slice=0, add_worktree=0)
+updates = {}  # qitem_id -> [tags, body]; written in ONE short transaction at the end (the daemon shares this DB:
+              # a write lock held across slow work, e.g. GitHub calls, makes the daemon crash with SQLITE_BUSY)
 for qid, tags, body, state, dest in rows:
     tl = json.loads(tags) if tags else []
     new = list(tl)
@@ -61,8 +65,46 @@ for qid, tags, body, state, dest in rows:
         wt = f"{WT}/{dest.split('@')[0]}"
         if os.path.isdir(wt):
             nb = body.rstrip("\n") + f"\n\nworktree_path={wt}\n"; st["add_worktree"] += 1
-    if APPLY and (new != tl or nb != body):
-        db.execute("update queue_items set tags=?, body=? where qitem_id=?", (json.dumps(new), nb, qid))
-if APPLY:
-    db.commit()
+    if new != tl or nb != body:
+        updates[qid] = [new, nb]
+if "--candidates" in sys.argv:
+    remote = subprocess.run(["git", "-C", f"{H}/Projects/{arg}", "remote", "get-url", "origin"], capture_output=True, text=True).stdout.strip()
+    repo = re.sub(r"(\.git)?$", "", re.sub(r"^.*github\.com[:/]", "", remote)) if remote else None
+    by_slice = {}
+    for qid, tags, body, state, dest in db.execute("select qitem_id, tags, body, state, destination_session from queue_items "
+                                                   "where destination_session like ? or source_session like ? order by ts_created",
+                                                   (f"%@{rig}", f"%@{rig}")).fetchall():
+        tl = json.loads(tags) if tags else []
+        sl = next((t[6:] for t in tl if t.startswith("slice:")), None)
+        if sl:
+            by_slice.setdefault(sl, []).append((qid, tl, body or ""))
+    pr_cache, st["add_candidate"] = {}, 0
+    def pr(n):
+        if n not in pr_cache:
+            r = subprocess.run(["gh", "api", f"repos/{repo}/pulls/{n}", "--jq", "[.head.sha,.head.ref]|@tsv"], capture_output=True, text=True)
+            pr_cache[n] = r.stdout.strip().split("\t") if r.returncode == 0 and r.stdout.strip() else None
+        return pr_cache[n]
+    for sl, rws in by_slice.items():
+        if any(t.startswith("candidate:") for _, tl, _ in rws for t in tl) or not repo:
+            continue
+        nums = []
+        for _, tl, body in rws:
+            nums += [int(t[3:]) for t in tl if re.fullmatch(r"pr:\d+", t)] + [int(x) for x in re.findall(r"\bPR #(\d+)", body)]
+        best = None
+        for n in sorted(set(nums), reverse=True):
+            info = pr(n)
+            if info and len(info) == 2 and not info[1].startswith("tests/"):
+                best = info[0]; break
+        if best:
+            qid, tl, body = rws[-1]
+            st["add_candidate"] += 1
+            cur = updates.get(qid, [tl, body])
+            updates[qid] = [cur[0] + [f"candidate:{best}"], cur[1]]
+if APPLY and updates:
+    db.close()
+    db = sqlite3.connect(DB, timeout=30)
+    db.execute("PRAGMA busy_timeout=30000")
+    with db:  # one short write transaction
+        for qid, (tl, body) in updates.items():
+            db.execute("update queue_items set tags=?, body=? where qitem_id=?", (json.dumps(tl), body, qid))
 print(("APPLIED " if APPLY else "DRY RUN ") + json.dumps(st))
