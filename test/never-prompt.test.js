@@ -45,6 +45,17 @@ test("shim: a caller's own approval choice is kept, never duplicated", () => {
   assert.ok(!launch("--dangerously-bypass-approvals-and-sandbox").includes("-a"));
 });
 
+test("shim: no -a next to a no-prompt mode Codex refuses to combine with it (--yolo, --approve-for-me)", () => {
+  for (const mode of ["--yolo", "--approve-for-me", "--dangerously-bypass-approvals-and-sandbox"]) assert.ok(!launch(mode).includes("-a"), mode);
+  assert.ok(!launch("-c", 'approval_policy="on-request"').includes("-a"), "a -c approval override is the caller's choice");
+});
+
+test("shim: prompt text and option values are never read as an approval choice", () => {
+  assert.deepEqual(approval(launch("--", "-ask about this code")), ["never"]);
+  assert.deepEqual(approval(launch("-m", "-a-model", "fix it")), ["never"]);
+  assert.deepEqual(approval(launch("-c", "model=\"-a\"")), ["never"]);
+});
+
 // ---- system/codex-never-prompt ------------------------------------------------------------------------
 const fixer = join(repo, "system/codex-never-prompt");
 const fix = (file, ...flags) => spawnSync("python3", [fixer, ...flags, file], { encoding: "utf8" });
@@ -85,6 +96,13 @@ test("fixer: missing keys are added before the first table; unreadable TOML is l
   assert.equal(fs.readFileSync(bad, "utf8"), "model = \n");
 });
 
+test("fixer: a valid config without a final newline gets the keys on their own lines", () => {
+  const file = join(root, "c4/config.toml"); write(file, 'model = "m"');
+  const r = fix(file);
+  assert.equal(r.status, 0, r.stdout);
+  assert.equal(fs.readFileSync(file, "utf8"), 'model = "m"\napproval_policy = "never"\nsandbox_mode = "danger-full-access"\n');
+});
+
 // ---- bin/agent-never-prompt-check -----------------------------------------------------------------------
 const chk = join(repo, "bin/agent-never-prompt-check");
 function machine({ approval = "never", sandbox = "danger-full-access", claude = "bypassPermissions", shimText = '["-a", "never"]' } = {}) {
@@ -96,9 +114,11 @@ function machine({ approval = "never", sandbox = "danger-full-access", claude = 
   fs.mkdirSync(join(h, "proc"));
   return h;
 }
-function proc(h, pid, args, session) {
+function proc(h, pid, args, session, { cwd, env = {} } = {}) {
   write(join(h, "proc", String(pid), "cmdline"), args.join("\0") + "\0");
-  write(join(h, "proc", String(pid), "environ"), `PATH=/bin\0OPENRIG_SESSION_NAME=${session}\0`);
+  const vars = { PATH: "/bin", OPENRIG_SESSION_NAME: session, ...env };
+  write(join(h, "proc", String(pid), "environ"), Object.entries(vars).map(([k, v]) => `${k}=${v}\0`).join(""));
+  if (cwd) fs.symlinkSync(cwd, join(h, "proc", String(pid), "cwd"));
 }
 function runCheck(h, ...args) {
   const r = spawnSync("python3", [chk, "--json", ...args], { env: { PATH: process.env.PATH, HOME: h, AGENT_STACK_PROC: join(h, "proc") }, encoding: "utf8" });
@@ -134,4 +154,33 @@ test("check: live Codex seats of the rig must run with approval never (flag, pro
   assert.equal(live.level, "FAIL");
   assert.match(live.check, /\(3 running\)/);
   assert.match(live.detail, /^qa-codex-3@r: relaunch/);
+});
+
+test("check: explicit settings on the command line decide, in every spelling Codex accepts", () => {
+  const h = machine(); // global config says never
+  proc(h, 30, [CODEX, "--no-daemon", "-aon-request"], "a@r");
+  proc(h, 31, [CODEX, "--no-daemon", "-c", 'approval_policy="on-request"'], "b@r");
+  proc(h, 32, [CODEX, "--no-daemon", "--config=approval_policy='untrusted'"], "c@r");
+  proc(h, 33, [CODEX, "--no-daemon", "--yolo"], "d@r");
+  proc(h, 34, [CODEX, "--no-daemon", "--approve-for-me"], "e@r");
+  proc(h, 35, [CODEX, "--no-daemon", "--", "-aon-request is just prompt text"], "f@r");
+  proc(h, 36, [CODEX, "--no-daemon", "-a", "never", "-c", 'approval_policy="on-request"'], "g@r");
+  const live = runCheck(h, "--rig", "r").rows.find(x => x.check.startsWith("live Codex seats of r"));
+  assert.equal(live.detail, "a@r, b@r, c@r, g@r: relaunch them once the shim and config are installed");
+});
+
+test("check: profile (-p or -c profile=), project config, CODEX_HOME and --ignore-user-config are resolved", () => {
+  const h = machine(); // global config says never
+  write(join(h, ".codex/pool-ask.config.toml"), 'approval_policy = "on-request"\n');
+  const project = join(h, "work/p"); write(join(h, "work/.codex/config.toml"), 'approval_policy = "on-request"\n'); fs.mkdirSync(project, { recursive: true });
+  const other = join(h, "other-codex-home"); write(join(other, "config.toml"), 'approval_policy = "on-request"\n');
+  proc(h, 40, [CODEX, "--no-daemon", "-p", "pool-ask"], "a@r");
+  proc(h, 41, [CODEX, "--no-daemon", "-c", "profile=pool-ask"], "b@r");
+  proc(h, 42, [CODEX, "--no-daemon"], "c@r", { cwd: project });
+  proc(h, 43, [CODEX, "--no-daemon"], "d@r", { env: { CODEX_HOME: other } });
+  proc(h, 44, [CODEX, "--no-daemon", "--ignore-user-config"], "e@r");
+  proc(h, 45, [CODEX, "--no-daemon", "-p", "pool-x"], "f@r"); // profile says never
+  proc(h, 46, [CODEX, "--no-daemon", "-a", "never"], "g@r", { cwd: project }); // flag outranks the project file
+  const live = runCheck(h, "--rig", "r").rows.find(x => x.check.startsWith("live Codex seats of r"));
+  assert.equal(live.detail, "a@r, b@r, c@r, d@r, e@r: relaunch them once the shim and config are installed");
 });

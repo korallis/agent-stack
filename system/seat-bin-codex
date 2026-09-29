@@ -11,7 +11,7 @@
    Same models and capabilities; only the label changes.
 4. -a never: seats never stop for approval. OpenRig's builtin:yolo gives Codex only `-s danger-full-access`, so
    without this a seat still asks "Would you like to run the following command?" whenever ~/.codex/config.toml
-   (or a profile) says on-request. Kept if the caller already chose an approval policy or the full bypass.
+   (or a profile) says on-request. Kept if the caller already chose an approval policy or a no-prompt mode.
 """
 import os, signal, sys
 
@@ -46,10 +46,44 @@ except Exception:
 extra = ["-c", f'model_catalog_json="{catalog}"'] if os.path.exists(catalog) else []
 # Seats talk only to the local proxy: no analytics, feedback upload or update checks.
 extra += ["-c", "analytics.enabled=false", "-c", "feedback.enabled=false", "-c", "check_for_update_on_startup=false"]
-# Seats never prompt for approval, whatever the user's config or profile says.
+# Codex options that take a value (codex 0.158 --help for the top level, resume, fork and exec).
+VALUE_OPTS = {"-a", "--ask-for-approval", "--add-dir", "-C", "--cd", "-c", "--config", "--color", "--disable", "--enable",
+              "-i", "--image", "--local-provider", "-m", "--model", "-o", "--output-last-message", "--output-schema",
+              "-p", "--profile", "--remote", "--remote-auth-token-env", "-s", "--sandbox", "--thread-source"}
+# Codex refuses -a next to these; each already means "no approval prompt to a human".
+NO_PROMPT = {"--dangerously-bypass-approvals-and-sandbox", "--yolo", "--approve-for-me"}
+
+
+def options(args):
+    """(name, value) for each option Codex will parse: stops at `--`, skips option values and positionals."""
+    i = 0
+    while i < len(args):
+        a = args[i]
+        i += 1
+        if a == "--":
+            return
+        if a.startswith("--"):
+            name, eq, value = a.partition("=")
+            if not eq and name in VALUE_OPTS and i < len(args):
+                value, i = args[i], i + 1
+            yield name, (value if eq or name in VALUE_OPTS else None)
+        elif a.startswith("-") and len(a) > 1:
+            name = a[:2]
+            if name in VALUE_OPTS:
+                if len(a) > 2:
+                    yield name, a[2:]
+                elif i < len(args):
+                    yield name, args[i]
+                    i += 1
+            else:
+                yield name, None
+
+
+# Seats never prompt for approval, whatever the user's config or profile says. A caller's own choice (-a, a
+# -c approval_policy override, or a no-prompt mode Codex won't combine with -a) is kept as it is.
 args = sys.argv[1:]
-chose = any(a in ("-a", "--ask-for-approval", "--dangerously-bypass-approvals-and-sandbox") or a.startswith("--ask-for-approval=")
-            or (a.startswith("-a") and len(a) > 2 and not a.startswith("--")) for a in args)
+chose = any(n in ("-a", "--ask-for-approval") or n in NO_PROMPT
+            or (n in ("-c", "--config") and (v or "").split("=", 1)[0].strip() == "approval_policy") for n, v in options(args))
 if not chose:
     extra += ["-a", "never"]
 os.execv(real, [real, "--no-daemon", *extra, *args])

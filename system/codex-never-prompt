@@ -37,12 +37,17 @@ for key, value in wrong.items():
     if at is not None:
         lines[at] = f'{key} = "{value}"\n'
     else:
+        if end and not lines[end - 1].endswith("\n"):
+            lines[end - 1] += "\n"  # a last line without a newline would run into the new key
         lines.insert(end, f'{key} = "{value}"\n')
         end += 1
 new = "".join(lines)
 if not new.endswith("\n"):
     new += "\n"
-parsed = tomllib.loads(new)
+try:
+    parsed = tomllib.loads(new)
+except tomllib.TOMLDecodeError as e:
+    done(False, f"in-place edit would not parse ({e}); file left unchanged")
 if any(parsed.get(k) != v for k, v in WANT.items()) or {k: v for k, v in parsed.items() if k not in WANT} != {k: v for k, v in current.items() if k not in WANT}:
     done(False, "in-place edit did not produce the expected config; file left unchanged")
 backup = f"{path}.bak-{time.strftime('%Y%m%d%H%M%S')}"
