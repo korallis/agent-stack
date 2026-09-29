@@ -18,7 +18,7 @@ fs.writeFileSync(join(home, ".local/bin/rig"), `#!/usr/bin/env python3
 import json, os, sys
 a = sys.argv[1:]
 if a[:2] == ["queue", "show"]:
-    print(os.environ.get("FAKE_SHOW", "{}")); sys.exit(0)
+    print(os.environ.get("FAKE_SHOW", "{}")); sys.exit(int(os.environ.get("FAKE_SHOW_EXIT", "0")))
 stdin = sys.stdin.read() if "-" in a and "--body-file" in a else None
 open(os.environ["FAKE_LOG"], "a").write(json.dumps({"argv": a, "stdin": stdin}) + "\\n")
 sys.exit(int(os.environ.get("FAKE_EXIT", "0")))
@@ -35,12 +35,12 @@ function worktree(member, branch) {
 const elsewhere = join(root, "other-repo");
 fs.mkdirSync(elsewhere); g(elsewhere, "init", "-q"); g(elsewhere, "-c", "user.email=t@t", "-c", "user.name=t", "commit", "-q", "--allow-empty", "-m", "x");
 
-function run(argv, { seat = "coord-lead@r", source = null, cwd = root, exit = 0, input } = {}) {
+function run(argv, { seat = "coord-lead@r", source = null, cwd = root, exit = 0, input, showExit = 0 } = {}) {
   fs.rmSync(log, { force: true });
   const r = spawnSync("python3", [helper, ...argv], {
     cwd, input, encoding: "utf8",
     env: { PATH: process.env.PATH, HOME: home, TMPDIR: tmpdir, OPENRIG_WORK_ROOT: work, OPENRIG_SESSION_NAME: seat,
-      FAKE_LOG: log, FAKE_EXIT: String(exit), FAKE_SHOW: JSON.stringify(source ?? {}) },
+      FAKE_LOG: log, FAKE_EXIT: String(exit), FAKE_SHOW_EXIT: String(showExit), FAKE_SHOW: JSON.stringify(source ?? {}) },
   });
   const calls = fs.existsSync(log) ? fs.readFileSync(log, "utf8").trim().split("\n").map(l => JSON.parse(l)) : [];
   const call = calls.at(-1);
@@ -64,6 +64,17 @@ test("A: caller --tags still carries the source mission:/slice: unless the calle
   assert.deepEqual(r2.tags, ["slice:02-t002", "mission:m0", "project:p"]);
 });
 
+test("A: the qitem id is found wherever it sits among the options", () => {
+  const r = run(["queue", "handoff", "--to", "qa@r", "--note", "n", "q1"], { source: row(["mission:m0", "slice:01-t001"]) });
+  assert.deepEqual(r.tags, ["mission:m0", "slice:01-t001", "project:p"]);
+});
+
+test("A: when the source row can't be read, no --tags is sent, so OpenRig still inherits the source's tags", () => {
+  const r = run(["queue", "handoff", "q1", "--to", "qa@r"], { source: row(["mission:m0"]), showExit: 1 });
+  assert.equal(r.tags, null);
+  assert.match(r.stderr, /could not read q1/);
+});
+
 test("B: a handoff keeps the source row's candidate instead of reading whatever HEAD is checked out", () => {
   const { dir } = worktree("impl-a", "slice-01-t001");
   const r = run(["queue", "handoff", "q1", "--to", "qa@r"], { seat: "impl-a@r", cwd: dir, source: row(["slice:01-t001", "candidate:abc123"]) });
@@ -80,6 +91,9 @@ test("B: HEAD becomes the candidate only in the seat's own worktree on the row's
   const wrongSlice = run(["queue", "handoff", "q1", "--to", "qa@r"], { seat: "impl-b@r", cwd: dir, source: row(["slice:02-t002"]) });
   assert.ok(!wrongSlice.tags.some(t => t.startsWith("candidate:")));
   assert.match(wrongSlice.stderr, /not slice 02-t002/);
+  const lookalike = worktree("impl-c", "feat/01-t0010-other");
+  const near = run(["queue", "handoff", "q1", "--to", "qa@r"], { seat: "impl-c@r", cwd: lookalike.dir, source: row(["slice:01-t001"]) });
+  assert.ok(!near.tags.some(t => t.startsWith("candidate:")), "01-t0010 is not slice 01-t001");
   const create = run(["queue", "create", "--destination", "qa@r", "--body", "x"], { seat: "impl-b@r", cwd: dir });
   assert.ok(create.tags.includes(`candidate:${sha}`));
 });

@@ -83,18 +83,44 @@ def has(tl, prefix):
     return any(t.startswith(prefix) for t in tl)
 
 
+# rig queue handoff / handoff-and-complete options that take a value (the rest are boolean)
+VALUE_FLAGS = {"--body", "--body-file", "--evidence-ref", "--from", "--gate", "--host", "--note", "--priority",
+               "--summary", "--tags", "--target-repo", "--tier", "--to"}
+
+
+def positional():
+    """The qitem id wherever it sits among the options (`handoff q1 --to x` or `handoff --to x q1`)."""
+    skip = False
+    for a in args[2:]:
+        if skip:
+            skip = False
+        elif a.startswith("-"):
+            skip = a in VALUE_FLAGS
+        else:
+            return a
+    return None
+
+
+def names_slice(branch, slice_id):
+    """The branch names the slice as a whole token: feat/01-t001-login names 01-t001, feat/01-t0010 does not."""
+    return re.search(rf"(?<![A-Za-z0-9]){re.escape(slice_id)}(?![A-Za-z0-9])", branch) is not None
+
+
 stdin_body = None
 try:
     handoff = args[1] != "create"
     source = None  # the row being handed off, read once (its tags and, when needed, its body)
-    if handoff and len(args) > 2 and not args[2].startswith("-"):
-        out = subprocess.run([REAL, "queue", "show", args[2], "--full", "--json"], capture_output=True, text=True)
+    qid = positional() if handoff else None
+    if qid:
+        out = subprocess.run([REAL, "queue", "show", qid, "--full", "--json"], capture_output=True, text=True)
         source = json.loads(out.stdout) if out.returncode == 0 else None
-        if source is None:
-            note(f"could not read {args[2]}; its tags are not carried forward")
     source_tags = [t for t in (source or {}).get("tags") or [] if isinstance(t, str) and t]
 
     _, given = opt("--tags")
+    # Without the source's tags, any --tags we add would replace them; leave --tags off so OpenRig inherits them.
+    leave_tags = handoff and source is None and given is None
+    if leave_tags:
+        note(f"could not read {qid or 'the source row'}; leaving tags to OpenRig's own carry-forward (no project:/candidate: added)")
     tl = [t for t in (given or "").split(",") if t]
     if handoff and source_tags:
         if given is None:
@@ -122,14 +148,14 @@ try:
             added += kept
         elif not own or not top or os.path.realpath(top) != os.path.realpath(own):
             note(f"no candidate: tag. Run this from your own worktree ({own or 'none found'}) to record the commit you hand on")
-        elif slice_id and slice_id not in branch:
+        elif slice_id and not names_slice(branch, slice_id):
             note(f"no candidate: tag. Branch {branch or '?'} is not slice {slice_id}'s branch")
         else:
             sha = git("rev-parse", "HEAD")
             if sha:
                 added.append(f"candidate:{sha}")
 
-    if added or (handoff and source_tags and tl != [t for t in (given or "").split(",") if t]):
+    if not leave_tags and (added or (handoff and source_tags and tl != [t for t in (given or "").split(",") if t])):
         set_opt("--tags", ",".join(tl + added))
 
     # EC-3 worktree_path for the destination seat
