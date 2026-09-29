@@ -55,7 +55,8 @@ NO_PROMPT = {"--dangerously-bypass-approvals-and-sandbox", "--yolo", "--approve-
 
 
 def options(args):
-    """(name, value) for each option Codex will parse: stops at `--`, skips option values and positionals."""
+    """(name, value) for each option Codex will parse, and (None, word) for each positional (subcommand, ids, prompt).
+    Stops at `--`; option values are never mistaken for options."""
     i = 0
     while i < len(args):
         a = args[i]
@@ -77,6 +78,8 @@ def options(args):
                     i += 1
             else:
                 yield name, None
+        else:
+            yield None, a
 
 
 # Seats never prompt for approval, whatever the user's config or profile says. A caller's own choice (-a, a

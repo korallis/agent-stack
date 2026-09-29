@@ -72,11 +72,13 @@ VALUE_OPTS = {"-a", "--ask-for-approval", "--add-dir", "-C", "--cd", "-c", "--co
               "-i", "--image", "--local-provider", "-m", "--model", "-o", "--output-last-message", "--output-schema",
               "-p", "--profile", "--remote", "--remote-auth-token-env", "-s", "--sandbox", "--thread-source"}
 # Codex refuses -a next to these; each already means "no approval prompt to a human".
+HELPERS = {"app-server", "mcp-server"}  # background servers a seat's Codex starts; they never show a prompt
 NO_PROMPT = {"--dangerously-bypass-approvals-and-sandbox", "--yolo", "--approve-for-me"}
 
 
 def options(args):
-    """(name, value) for each option Codex will parse: stops at `--`, skips option values and positionals."""
+    """(name, value) for each option Codex will parse, and (None, word) for each positional (subcommand, ids, prompt).
+    Stops at `--`; option values are never mistaken for options."""
     i = 0
     while i < len(args):
         a = args[i]
@@ -98,6 +100,8 @@ def options(args):
                     i += 1
             else:
                 yield name, None
+        else:
+            yield None, a
 
 
 def setting(value, key):
@@ -145,8 +149,9 @@ if rig:
     seats = {}
     for pid in (d for d in os.listdir(PROC) if d.isdigit()):
         args = [a.decode(errors="replace") for a in (read(f"{PROC}/{pid}/cmdline", True) or b"").split(b"\0") if a]
-        if not args or os.path.basename(args[0]) != "codex" or "app-server" in args:
-            continue  # only the seat's own codex process, not its helpers
+        sub = next((v for n, v in options(args[1:]) if n is None), None)  # Codex's actual subcommand, not prompt text
+        if not args or os.path.basename(args[0]) != "codex" or sub in HELPERS:
+            continue  # only the seat's own codex process, not its helper servers
         env = dict(e.decode(errors="replace").split("=", 1) for e in (read(f"{PROC}/{pid}/environ", True) or b"").split(b"\0") if b"=" in e)
         session = env.get("OPENRIG_SESSION_NAME", "")
         if session.endswith(f"@{rig}"):
@@ -154,7 +159,7 @@ if rig:
                 cwd = os.readlink(f"{PROC}/{pid}/cwd")
             except OSError:
                 cwd = None
-            seats[session] = seats.get(session, False) or approval_never(args[1:], env, cwd)
+            seats[session] = seats.get(session, True) and approval_never(args[1:], env, cwd)  # every process must be
     bad = sorted(s for s, ok in seats.items() if not ok)
     rep(not bad, f"live Codex seats of {rig} run with approval never ({len(seats)} running)",
         ", ".join(bad) + ": relaunch them once the shim and config are installed")

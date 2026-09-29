@@ -184,3 +184,16 @@ test("check: profile (-p or -c profile=), project config, CODEX_HOME and --ignor
   const live = runCheck(h, "--rig", "r").rows.find(x => x.check.startsWith("live Codex seats of r"));
   assert.equal(live.detail, "a@r, b@r, c@r, d@r, e@r: relaunch them once the shim and config are installed");
 });
+
+test("check: every Codex process of a seat must be never; helpers are recognised by their real subcommand", () => {
+  const h = machine({ approval: "on-request" });
+  proc(h, 50, [CODEX, "--no-daemon", "-a", "never"], "a@r");
+  proc(h, 51, [CODEX, "--no-daemon", "-a", "on-request"], "a@r");              // same seat, second process prompts
+  proc(h, 52, [CODEX, "--no-daemon", "-a", "on-request", "--", "app-server"], "b@r"); // prompt text, not a subcommand
+  proc(h, 53, [CODEX, "app-server", "daemon"], "c@r");                         // real helper: skipped
+  proc(h, 54, [CODEX, "-c", "x=1", "mcp-server"], "c@r");                       // real helper after an option value
+  proc(h, 55, [CODEX, "--no-daemon", "-a", "never"], "c@r");
+  const live = runCheck(h, "--rig", "r").rows.find(x => x.check.startsWith("live Codex seats of r"));
+  assert.match(live.check, /\(3 running\)/);
+  assert.equal(live.detail, "a@r, b@r: relaunch them once the shim and config are installed");
+});
