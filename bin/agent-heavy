@@ -5,7 +5,8 @@
 #   - concurrency slots (flock)            build: 2 at once, browser: 2 at once
 #   - cgroup limits via systemd-run --user build: 8 CPUs / 16G RAM, browser: 4 CPUs / 8G RAM
 #   - a max runtime per job (RuntimeMaxSec) build: 45min, browser: 30min; the job is stopped at the limit, so a hung or
-#                                          endless job can't hold a slot; it then exits 124 (as timeout(1)).
+#                                          endless job can't hold a slot; it then exits 124 (as timeout(1)) and logs
+#                                          the stop (journalctl -t agent-heavy).
 #                                          --max-runtime <N|Ns|Nmin|Nh> per call.
 # It is for jobs that finish. Long-lived servers (npm start / start:* / dev / serve / preview, next start|dev, vite,
 # serve, http-server) are refused: run them outside agent-heavy (Playwright's webServer starts its own inside the test
@@ -150,6 +151,10 @@ while :; do
       fi
       if [[ $timed_out == 1 ]]; then
         systemctl --user reset-failed "$unit.scope" 2>/dev/null || true
+        # findable later with `journalctl -t agent-heavy`, like a kernel OOM kill
+        logger -t agent-heavy "stopped at the $class max runtime: seat=${OPENRIG_SESSION_NAME:-$USER} class=$class" \
+          "slot=$i runtime=$(( $(date +%s) - start ))s max=$max cwd=$PWD cmd=$(printf '%s ' "$@" | tr '\n' ' ' | sed 's/ $//')" \
+          2>/dev/null || true
         echo "[agent-heavy] stopped: reached the $class max runtime ($max). Split the job, run a focused subset, or pass" \
              "--max-runtime if it genuinely needs longer." >&2
         exit 124   # as timeout(1): never a success, whatever the job returned when it was stopped
