@@ -1,0 +1,137 @@
+--- a/daemon/dist/domain/session-transport.js
++++ b/daemon/dist/domain/session-transport.js
+@@ -100,6 +100,90 @@
+         return null;
+     return truncateEvidence(priorTrimmed);
+ }
++const SGR = /\x1b\[([0-9;]*)m/g;
++const stripAnsi = (text) => text.replace(/\x1b\[[0-9;?]*[A-Za-z]/g, "");
++/** Apply one SGR parameter list to the dim flag. Extended-colour arguments (38/48/58 followed by 5;n or 2;r;g;b)
++ *  are consumed whole, so the "2" of a truecolour or palette colour is never read as "dim". */
++function applySgr(params, dim) {
++    const codes = (params || "0").split(";");
++    for (let i = 0; i < codes.length; i++) {
++        const code = codes[i];
++        if (code === "38" || code === "48" || code === "58") {
++            i += codes[i + 1] === "5" ? 2 : codes[i + 1] === "2" ? 4 : 0;
++            continue;
++        }
++        if (code === "2")
++            dim = true;
++        else if (code === "" || code === "0" || code === "22")
++            dim = false;
++    }
++    return dim;
++}
++/** True when every visible character of an ANSI line segment is rendered dim (SGR 2), as Codex draws its
++ *  composer placeholder. A typed draft is normal weight, so it never qualifies. */
++function allVisibleTextDim(segment) {
++    let dim = false, last = 0;
++    for (const m of segment.matchAll(SGR)) {
++        if (segment.slice(last, m.index).trim().length > 0 && !dim)
++            return false;
++        dim = applySgr(m[1] ?? "", dim);
++        last = m.index + m[0].length;
++    }
++    return segment.slice(last).trim().length === 0 || dim;
++}
++/** A recognised Codex footer line, by its styling, which typed text never has: the coloured
++ *  `<model> <effort> · <cwd> · <task>` status line, or the `? for shortcuts` hint with its bold `?`. */
++function isCodexFooterLine(ansiLine, plainLine) {
++    const colouredStatus = /^\S+(?: \S+)? · \S/.test(plainLine) && /\x1b\[(?:[0-9;]*;)?38;[25];/.test(ansiLine);
++    const shortcutsHint = /\x1b\[1m\?\x1b\[0m for shortcuts/.test(ansiLine);
++    return colouredStatus || shortcutsHint;
++}
++/**
++ * Codex >= 0.158 idle composer: the last `›`/`❯` prompt line near the bottom whose text is empty or only the
++ * DIM placeholder ("Ask Codex to do anything"), with nothing under it but blank lines and at most three
++ * RECOGNISED footer lines. Any other line below the composer (before or after a blank) is part of a draft. Codex draws the same composer and footer DURING a turn, so this
++ * counts only when no mid-work, permission or selection pattern appears ANYWHERE in the capture. Needs an ANSI capture
++ * (`capture-pane -e`) to tell a placeholder from a typed draft. Returns the evidence line, or null.
++ */
++export function idleComposerEvidence(ansiContent) {
++    const lines = ansiContent.split("\n").map((line) => line.replace(/\s+$/, ""));
++    const plain = lines.map((line) => stripAnsi(line).trim());
++    while (plain.length && plain[plain.length - 1] === "") {
++        plain.pop();
++        lines.pop();
++    }
++    // The whole capture, not a recent window: Codex's "Working (… esc to interrupt)" status line sits above the
++    // composer at a varying distance (queued or incoming message blocks can come in between). A stray match in
++    // history only withholds an idle verdict, the safe direction.
++    const everything = plain.join("\n");
++    if (MID_WORK_PATTERNS.some((pattern) => pattern.test(everything)))
++        return null;
++    if (PERMISSION_PROMPT_PATTERNS.some((pattern) => pattern.test(everything)))
++        return null;
++    let at = -1;
++    for (let i = plain.length - 1; i >= 0; i--) {
++        if (/^[❯›](\s|$)/.test(plain[i])) {
++            at = i;
++            break;
++        }
++    }
++    if (at < 0)
++        return null;
++    let footerLines = 0;
++    for (let i = at + 1; i < plain.length; i++) {
++        if (plain[i] === "")
++            continue;
++        if (!isCodexFooterLine(lines[i], plain[i]))
++            return null; // draft text, not footer
++        if (++footerLines > 3)
++            return null;
++    }
++    if (/^[❯›]\s*\d+\.\s/.test(plain[at]))
++        return null; // a numbered selection, not the composer
++    const ansi = lines[at];
++    const afterPrompt = ansi.slice(ansi.search(/[❯›]/) + 1);
++    return allVisibleTextDim(afterPrompt) ? truncateEvidence(plain[at]) : null;
++}
+ export function classifyPaneActivity(paneContent) {
+     const lastNonBlank = trimPaneLines(paneContent);
+     if (lastNonBlank.length === 0) {
+--- a/daemon/dist/adapters/tmux.js
++++ b/daemon/dist/adapters/tmux.js
+@@ -699,6 +699,16 @@
+             return null;
+         }
+     }
++    /** Like capturePaneContent, but keeps SGR escapes (`-e`) so a dim placeholder can be told from typed text. */
++    async capturePaneContentAnsi(paneId, lines = 20) {
++        try {
++            const output = await this.exec(`tmux capture-pane -e -p -t ${shellQuote(paneId)} -S -${lines}`);
++            return output || null;
++        }
++        catch {
++            return null;
++        }
++    }
+     /**
+      * Capture the currently VISIBLE pane screen (no scrollback). Returns null if
+      * unavailable. The live-terminal seed (OPR.0.4.0.38) must use the visible
+--- a/daemon/dist/domain/seat-structural-activity-service.js
++++ b/daemon/dist/domain/seat-structural-activity-service.js
+@@ -1,4 +1,4 @@
+-import { classifyPaneActivity } from "./session-transport.js";
++import { classifyPaneActivity, idleComposerEvidence } from "./session-transport.js";
+ export const DEFAULT_STRUCTURAL_POLL_INTERVAL_MS = 1000;
+ // A cached observation is authoritative only while CURRENT. Past this window with no fresh capture — a
+ // tmux/capture outage, a stalled poller, or a same-name occupant transition — the READ refuses it and
+@@ -68,7 +68,15 @@
+             this.latestBySession.delete(sessionName);
+             return null;
+         }
+-        const c = classifyPaneActivity(content);
++        let c = classifyPaneActivity(content);
++        // Codex >= 0.158 draws a dim placeholder in its composer, which the plain-text signatures can't see; only when
++        // nothing else classified the pane, re-read it with SGR escapes and look for an idle composer.
++        if (c.state === "unknown" && this.tmuxAdapter.capturePaneContentAnsi) {
++            const ansi = await this.tmuxAdapter.capturePaneContentAnsi(sessionName, this.captureLines).catch(() => null);
++            const evidence = ansi ? idleComposerEvidence(ansi) : null;
++            if (evidence)
++                c = { state: "agent_idle", reason: "idle_composer", evidence };
++        }
+         const obs = {
+             state: c.state,
+             reason: c.reason,
