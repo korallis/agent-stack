@@ -56,7 +56,12 @@ project-workspace.md) and the `mission-slice-sop` skill. Verify each point on di
    symlinks — the specs' `shared:openrig-core` plugin is not loaded because seats start without --plugin-dir.
 6. Check with `agent-project-check <P>`: it asks the daemon exactly what the TUI shows. Verify through the
    consumer, never through files alone. Repair with `agent-project-repair <P> --apply`.
-7. Only the rig LEAD is messaged; it relays. Owner delegations/standing approvals go into the rig CULTURE.md.
+7. Never prompt: every Claude/Codex seat runs with no permission prompts. The RigSpec must carry
+   `permission_policy: builtin:yolo`. Codex additionally needs approval `never`, because yolo only sets its sandbox.
+   The seat shim adds `-a never`, and `~/.codex/config.toml` has `approval_policy = "never"`. A seat stuck on
+   "Would you like to run…?" means one of these is missing: run `agent-never-prompt-check --rig <rig>` and relaunch
+   that seat.
+8. Only the rig LEAD is messaged; it relays. Owner delegations/standing approvals go into the rig CULTURE.md.
 
 ## Using Jev well
 - Only for decisions in `jev-decide list`, or new ones added to `~/Projects/agent-stack/config/decisions.yaml`

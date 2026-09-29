@@ -194,9 +194,18 @@ with `agent-login` and the pool uses it straight away.
 - **Codex seats:** global `~/.codex/config.toml` (pool provider, key via `auth.command`) plus the seat-only shim
   `~/.local/share/agent-stack/seat-bin/codex` (first on the OpenRig daemon's PATH): `--no-daemon`, slug display names,
   analytics/update checks off, and makes Codex the terminal foreground group.
-- **YOLO:** `permission_policy: builtin:yolo` in each RigSpec you write and in all 13 built-in presets (re-applied by `openrig-upgrade`) (OpenRig ignores the
-  ambient `OPENRIG_YOLO`). `skipDangerousModePermissionPrompt` in `~/.claude/settings.json` stops the bypass warning
-  dialog from exiting seats.
+- **Never prompt (YOLO):** every Claude and Codex agent runs without permission prompts, on every project and machine.
+  - RigSpecs carry `permission_policy: builtin:yolo`: each one you write, and all 13 built-in presets (re-applied by
+    `openrig-upgrade`). OpenRig ignores the ambient `OPENRIG_YOLO`. That gives Claude seats `--dangerously-skip-permissions`.
+  - It gives Codex seats only a sandbox (`-s danger-full-access`), not an approval policy. So Codex also needs approval
+    `never`, or seats stop at "Would you like to run the following command?". The seat shim adds `-a never` to every
+    Codex seat launch, and `~/.codex/config.toml` (plus the `pool-*` profiles) sets `approval_policy = "never"`,
+    `sandbox_mode = "danger-full-access"` for everything else. `install.sh` fixes those two keys in place in an existing
+    config (backup first).
+  - `~/.claude/settings.json` sets `permissions.defaultMode = "bypassPermissions"` for every Claude session.
+    `skipDangerousModePermissionPrompt` stops the bypass warning dialog from exiting seats.
+  - Verify on a new machine or project with `agent-never-prompt-check [--rig <rig> --spec <rig.yaml>]`
+    (`agent-project-check` runs it too). Relaunch Codex seats that report FAIL.
 - **Jev:** MCP server `jev` registered at user scope in both harnesses (runs outside the Codex sandbox); `TYPESAFE_API_KEY`
   exported in shells; skills `typesafe-ai` and `agent-stack` in both harnesses.
 

@@ -1,0 +1,172 @@
+#!/usr/bin/env python3
+"""agent-never-prompt-check [--rig <name>] [--spec <rig.yaml>] [--json]
+
+Verifies that Claude and Codex agents never stop to ask for permission. Read-only. Checks:
+  - Codex global config: ~/.codex/config.toml has approval_policy = "never" and sandbox_mode = "danger-full-access";
+  - Claude: ~/.claude/settings.json has permissions.defaultMode = "bypassPermissions" (+ skipDangerousModePermissionPrompt);
+  - the seat shim (~/.local/share/agent-stack/seat-bin/codex) adds `-a never` to every Codex seat launch;
+  - --spec: the RigSpec carries `permission_policy: builtin:yolo`;
+  - --rig: every live Codex seat of that rig runs with approval "never" (or another no-prompt mode). Resolved the
+    way Codex does: command-line flags and -c overrides, then its profile, then a project .codex/config.toml, then
+    the user config ($CODEX_HOME). A seat whose policy can't be shown to be "never" FAILs.
+Each line is OK or FAIL. The exit code is 1 when anything FAILs. agent-project-check runs this for its project.
+"""
+import json, os, re, sys, tomllib
+
+HOME = os.path.expanduser("~")
+PROC = os.environ.get("AGENT_STACK_PROC", "/proc")  # tests point this at a fake process table
+argv = sys.argv[1:]
+
+
+def arg(name):
+    return argv[argv.index(name) + 1] if name in argv and argv.index(name) + 1 < len(argv) else None
+
+
+def toml(p):
+    try:
+        with open(p, "rb") as f:
+            return tomllib.load(f)
+    except (OSError, tomllib.TOMLDecodeError):
+        return None
+
+
+def read(p, binary=False):
+    try:
+        with open(p, "rb" if binary else "r") as f:
+            return f.read()
+    except OSError:
+        return None
+
+
+results = []
+
+
+def rep(ok, what, detail=""):
+    results.append(("OK" if ok else "FAIL", what, "" if ok else detail))
+
+
+cx = toml(f"{HOME}/.codex/config.toml") or {}
+rep(cx.get("approval_policy") == "never" and cx.get("sandbox_mode") == "danger-full-access",
+    "Codex config: approval_policy = never, sandbox_mode = danger-full-access (~/.codex/config.toml)",
+    f"now {cx.get('approval_policy', 'unset')} / {cx.get('sandbox_mode', 'unset')}; run install.sh (system/codex-never-prompt)")
+try:
+    cl = json.loads(read(f"{HOME}/.claude/settings.json") or "{}")
+except json.JSONDecodeError:
+    cl = {}
+rep((cl.get("permissions") or {}).get("defaultMode") == "bypassPermissions" and cl.get("skipDangerousModePermissionPrompt") is True,
+    "Claude: permissions.defaultMode = bypassPermissions, skipDangerousModePermissionPrompt (~/.claude/settings.json)",
+    f"defaultMode now {(cl.get('permissions') or {}).get('defaultMode', 'unset')}; run install.sh")
+shim = read(f"{HOME}/.local/share/agent-stack/seat-bin/codex") or ""
+rep('"-a", "never"' in shim, "seat shim adds -a never to Codex seats (~/.local/share/agent-stack/seat-bin/codex)",
+    "run install.sh to place system/seat-bin-codex")
+
+spec = arg("--spec")
+if spec:
+    rep(re.search(r"^permission_policy:\s*builtin:yolo\s*$", read(spec) or "", re.M) is not None,
+        f"RigSpec {os.path.basename(spec)} has permission_policy: builtin:yolo",
+        "add it at the top level (rig policy apply yolo --spec <file>)")
+
+
+# Codex options that take a value (codex 0.158 --help for the top level, resume, fork and exec).
+VALUE_OPTS = {"-a", "--ask-for-approval", "--add-dir", "-C", "--cd", "-c", "--config", "--color", "--disable", "--enable",
+              "-i", "--image", "--local-provider", "-m", "--model", "-o", "--output-last-message", "--output-schema",
+              "-p", "--profile", "--remote", "--remote-auth-token-env", "-s", "--sandbox", "--thread-source"}
+# Codex refuses -a next to these; each already means "no approval prompt to a human".
+HELPERS = {"app-server", "mcp-server"}  # background servers a seat's Codex starts; they never show a prompt
+NO_PROMPT = {"--dangerously-bypass-approvals-and-sandbox", "--yolo", "--approve-for-me"}
+
+
+def options(args):
+    """(name, value) for each option Codex will parse, and (None, word) for each positional (subcommand, ids, prompt).
+    Stops at `--`; option values are never mistaken for options."""
+    i = 0
+    while i < len(args):
+        a = args[i]
+        i += 1
+        if a == "--":
+            return
+        if a.startswith("--"):
+            name, eq, value = a.partition("=")
+            if not eq and name in VALUE_OPTS and i < len(args):
+                value, i = args[i], i + 1
+            yield name, (value if eq or name in VALUE_OPTS else None)
+        elif a.startswith("-") and len(a) > 1:
+            name = a[:2]
+            if name in VALUE_OPTS:
+                if len(a) > 2:
+                    yield name, a[2:]
+                elif i < len(args):
+                    yield name, args[i]
+                    i += 1
+            else:
+                yield name, None
+        else:
+            yield None, a
+
+
+def setting(value, key):
+    """The value of a `-c key=value` override for `key` (TOML-parsed, like Codex), else None."""
+    k, eq, raw = (value or "").partition("=")
+    if not eq or k.strip() != key:
+        return None
+    try:
+        return tomllib.loads(f"v = {raw}")["v"]
+    except tomllib.TOMLDecodeError:
+        return raw.strip()
+
+
+def approval_never(args, env, cwd):
+    """Whether a Codex command line runs with approval "never" (or another no-prompt mode). Precedence as in Codex:
+    command-line flags and -c overrides, then the selected profile, then a project .codex/config.toml, then the user
+    config ($CODEX_HOME). Anything that can't be shown to be "never" counts as prompting."""
+    opts = list(options(args))
+    if any(n in NO_PROMPT for n, _ in opts):
+        return True
+    explicit = [v for n, v in opts if n in ("-a", "--ask-for-approval")]
+    explicit += [x for n, v in opts if n in ("-c", "--config") for x in [setting(v, "approval_policy")] if x is not None]
+    if explicit:
+        return all(x == "never" for x in explicit)
+    home = env.get("CODEX_HOME") or f"{HOME}/.codex"
+    user = {} if any(n == "--ignore-user-config" for n, _ in opts) else (toml(f"{home}/config.toml") or {})
+    profile = next((v for n, v in reversed(opts) if n in ("-p", "--profile")), None) \
+        or next((x for n, v in reversed(opts) if n in ("-c", "--config") for x in [setting(v, "profile")] if x), None) \
+        or user.get("profile")
+    if profile:
+        p = toml(f"{home}/{profile}.config.toml") or (user.get("profiles") or {}).get(profile) or {}
+        if "approval_policy" in p:
+            return p["approval_policy"] == "never"
+    d = cwd
+    while d and d != "/":  # a project's own .codex/config.toml outranks the user config
+        f = os.path.join(d, ".codex", "config.toml")
+        if os.path.realpath(f) != os.path.realpath(f"{home}/config.toml") and "approval_policy" in (toml(f) or {}):
+            return toml(f)["approval_policy"] == "never"
+        d = os.path.dirname(d)
+    return user.get("approval_policy") == "never"
+
+
+rig = arg("--rig")
+if rig:
+    seats = {}
+    for pid in (d for d in os.listdir(PROC) if d.isdigit()):
+        args = [a.decode(errors="replace") for a in (read(f"{PROC}/{pid}/cmdline", True) or b"").split(b"\0") if a]
+        sub = next((v for n, v in options(args[1:]) if n is None), None)  # Codex's actual subcommand, not prompt text
+        if not args or os.path.basename(args[0]) != "codex" or sub in HELPERS:
+            continue  # only the seat's own codex process, not its helper servers
+        env = dict(e.decode(errors="replace").split("=", 1) for e in (read(f"{PROC}/{pid}/environ", True) or b"").split(b"\0") if b"=" in e)
+        session = env.get("OPENRIG_SESSION_NAME", "")
+        if session.endswith(f"@{rig}"):
+            try:
+                cwd = os.readlink(f"{PROC}/{pid}/cwd")
+            except OSError:
+                cwd = None
+            seats[session] = seats.get(session, True) and approval_never(args[1:], env, cwd)  # every process must be
+    bad = sorted(s for s, ok in seats.items() if not ok)
+    rep(not bad, f"live Codex seats of {rig} run with approval never ({len(seats)} running)",
+        ", ".join(bad) + ": relaunch them once the shim and config are installed")
+
+if "--json" in argv:
+    print(json.dumps([{"level": l, "check": w, "detail": d} for l, w, d in results], indent=1))
+else:
+    for l, w, d in results:
+        print(f"{l:<5} {w}" + (f"  [{d}]" if d else ""))
+sys.exit(1 if any(r[0] == "FAIL" for r in results) else 0)

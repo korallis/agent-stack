@@ -26,7 +26,7 @@ These tools do the mechanical work; don't hand-build what they do:
 | `agent-waves-sync <P> [--apply] [--force]` | Copies each mission's wave map into mission.yaml `arrangement.waves` (SPEC ids); delivered slices get `w00-delivered`. |
 | `agent-queue-backfill <P> [--apply] [--candidates]` | Adds `project:`, `slice:`/`mission:` tags and `worktree_path=` to a project's EXISTING queue rows (additive, after a DB backup). Use once when the check WARNs about untagged rows from before the seat helper. `--candidates` adds `candidate:<PR head sha>` per built slice. Gathers everything first, then writes in ONE short transaction. |
 | `agent-refresh-guidance <P> [--apply]` | After editing the rig's `CULTURE.md` or `startup/*.md` on a running rig: refreshes those OpenRig managed blocks in every seat's instruction file, adds blocks for startup files added to the spec later, and restores a seat whose file lost all blocks. Then tell the lead to have seats re-read their instruction file. |
-| `agent-project-check <P>` | Read-only audit. Checks files AND asks the daemon every question the TUI asks (`/api/scopes`, `/api/views/execution` per mission): waves, readiness, planning dial, review model, repo context, lanes; plus rig doctor/spec audit, seats' blocks and skills, local main vs origin, timers, hooks. FAIL = the team or the TUI will misbehave. Run after setup, after planning, whenever the TUI looks wrong. |
+| `agent-project-check <P>` | Read-only audit. Checks files AND asks the daemon every question the TUI asks (`/api/scopes`, `/api/views/execution` per mission): waves, readiness, planning dial, review model, repo context, lanes; plus rig doctor/spec audit, seats' blocks and skills, local main vs origin, timers, hooks, never-prompt (`agent-never-prompt-check`). FAIL = the team or the TUI will misbehave. Run after setup, after planning, whenever the TUI looks wrong. |
 
 Sources of truth: `$OPENRIG_HOME/reference/` — `rig-spec.md`, `agent-spec.md`, `agent-startup-guide.md` (skills
 reach seats two ways: projected by the agent spec AND named in the role text; rig-level `startup/context.md`),
@@ -111,6 +111,16 @@ binding) and `adopted` (compares with OpenRig's own build) — not project fault
 - **Swapping a seat on a running rig** with `rig import --materialize-only` left it unlaunchable. Change
   topology by editing the spec, `rig down --snapshot`, archive the old record, `rig up` the spec, then
   reroute queue items (`rig queue fallback`) and re-register watchdogs.
+
+## Never prompt (every project, every machine)
+Claude and Codex seats never ask for permission. `agent-project-check` FAILs when any of this is missing, and
+`agent-never-prompt-check [--rig R --spec F]` checks it on its own, e.g. on a fresh machine:
+- the RigSpec has top-level `permission_policy: builtin:yolo` (`rig/template/*` do; `rig policy apply yolo --spec F`);
+- Codex: yolo gives only `-s danger-full-access`, so approval must be `never` too. The seat shim
+  (`seat-bin/codex`) adds `-a never`; `~/.codex/config.toml` and `pool-*` profiles say `approval_policy = "never"`,
+  `sandbox_mode = "danger-full-access"` (`install.sh` sets them in an existing config);
+- Claude: `~/.claude/settings.json` `permissions.defaultMode = "bypassPermissions"` + `skipDangerousModePermissionPrompt`.
+A live Codex seat that FAILs was launched before the fix: relaunch it.
 
 ## OpenRig's own checks (agent-project-check runs them; run by hand when changing specs)
 `rig doctor --spec <rig.yaml>` (live seats match the spec), `rig spec validate` + `rig spec audit` (authoring;

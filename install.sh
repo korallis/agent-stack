@@ -74,7 +74,7 @@ for f in agent-login cliproxy-healthcheck cliproxy-key openrig-healthcheck clipr
 place "$S/system/seat-bin-codex" "$L/seat-bin/codex" 755
 mkdir -p "$L/seat-tools"; place "$S/system/seat-tools-rig" "$L/seat-tools/rig" 755   # queue writes get the project tag + EC-3 worktree_path
 link "$L/bin/agent-login" "$B/agent-login"
-for f in claude-pool agent-heavy openrig-upgrade openrig-update agent-project-new agent-project-check agent-queue-backfill agent-refresh-guidance agent-project-repair agent-waves-sync; do link "$S/bin/$f" "$B/$f"; done
+for f in claude-pool agent-heavy openrig-upgrade openrig-update agent-project-new agent-project-check agent-never-prompt-check agent-queue-backfill agent-refresh-guidance agent-project-repair agent-waves-sync; do link "$S/bin/$f" "$B/$f"; done
 link "$S/proxy/status.py" "$B/agent-proxy-status"
 if [ $CHECK = 0 ] || mise where "node@$NODE_FOR_JEV" >/dev/null 2>&1; then
   launcher jev-mcp "$NODE_FOR_JEV" "$S/jev/bin/jev-mcp.js"
@@ -91,13 +91,18 @@ link "$S/config/claude-proxy-settings.json" "$C/claude-proxy-settings.json"
 if grep -qF '.config/agent-stack/env.sh' "$HOME/.bashrc" 2>/dev/null; then ok "~/.bashrc sources env.sh"; elif [ $CHECK = 1 ]; then todo "~/.bashrc hook"; else
   backup "$HOME/.bashrc"; { printf '# agent-stack (before the interactive guard so OpenRig seats get it too)\n[ -r "$HOME/.config/agent-stack/env.sh" ] && . "$HOME/.config/agent-stack/env.sh"\n\n'; cat "$HOME/.bashrc" 2>/dev/null; } > "$HOME/.bashrc.new" && mv "$HOME/.bashrc.new" "$HOME/.bashrc"; ok "~/.bashrc now sources env.sh"; fi
 if [ -s "$HOME/.codex/config.toml" ]; then ok "$HOME/.codex/config.toml (kept; Codex adds machine-specific trust entries. Compare with system/codex/config.toml)"
+  # Never prompt, even in a kept config: set the two top-level keys in place (backup first); --check only reports.
+  if msg=$("$S/system/codex-never-prompt" $([ $CHECK = 1 ] && echo --check) "$HOME/.codex/config.toml"); then ok "$msg"; else todo "$msg"; fi
 elif [ $CHECK = 1 ]; then todo "$HOME/.codex/config.toml"; else place "$S/system/codex/config.toml" "$HOME/.codex/config.toml" 600; fi
 for p in pool-deep pool-impl pool-review; do place "$S/system/codex/$p.config.toml" "$HOME/.codex/$p.config.toml" 600; done
 if [ $CHECK = 0 ]; then
   mkdir -p "$HOME/.claude"; [ -f "$HOME/.claude/settings.json" ] || echo '{}' > "$HOME/.claude/settings.json"
-  tmp=$(mktemp); jq -s '.[0] * {skipDangerousModePermissionPrompt: true}' "$HOME/.claude/settings.json" > "$tmp" && mv "$tmp" "$HOME/.claude/settings.json"
+  # Claude never asks for permission: seats already get --dangerously-skip-permissions from builtin:yolo; this makes it the
+  # default for every Claude session too, and skipDangerousModePermissionPrompt stops the bypass warning from exiting seats.
+  tmp=$(mktemp); jq -s '.[0] * {skipDangerousModePermissionPrompt: true, permissions: ((.[0].permissions // {}) + {defaultMode: "bypassPermissions"})}' "$HOME/.claude/settings.json" > "$tmp" && mv "$tmp" "$HOME/.claude/settings.json"
 fi
-ok "~/.claude/settings.json: skipDangerousModePermissionPrompt"
+if jq -e '.skipDangerousModePermissionPrompt == true and .permissions.defaultMode == "bypassPermissions"' "$HOME/.claude/settings.json" >/dev/null 2>&1; then
+  ok "~/.claude/settings.json: bypassPermissions + skipDangerousModePermissionPrompt"; else todo "~/.claude/settings.json: bypassPermissions + skipDangerousModePermissionPrompt"; fi
 link "$S/skills/agent-stack" "$HOME/.claude/skills/agent-stack"
 link "$S/skills/agent-stack" "$HOME/.agents/skills/agent-stack"
 link "$S/skills/openrig-project-setup" "$HOME/.claude/skills/openrig-project-setup"
