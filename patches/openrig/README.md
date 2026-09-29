@@ -7,13 +7,14 @@ all. A missing or failed patch gets a logger + desktop warning, and OpenRig keep
 Each patch is a `-p1` unified diff against the published `@openrig/cli@<version>` package root (`dist/`,
 `daemon/dist/`), one per upstream issue.
 
-Patches exist for 0.5.17, 0.6.0 and 0.6.1 (134 is 0.6.1 only).
+Patches exist for 0.5.17, 0.6.0 and 0.6.1 (134 and 135 are 0.6.1 only).
 
 | Patch | Upstream | Fix | Drop it when |
 |---|---|---|---|
 | `131-canonical-local-sender` | issue #131, PR #135 (merged 2026-09-29 as a09388aa, after v0.6.1) | The daemon strips its own `@<selfHostId>` from a sender, so a claim under load no longer fails `claim_destination_mismatch` | at the first release that contains PR #135 |
 | `132-project-scoped-proof` | issue #132, PR #136 (open) | `rig proof show/judge` accept `--project <id>` or `<id>:<scope>`, resolved through `workspace.yaml` | at the first release that contains PR #136 |
 | `134-guard-target-binding-first` | 0.6.1 regression, fix on korallis/openrig `local-patch-0.6.1` b9e88657 (not yet upstream) | `resolveGuardTarget` prefers the node whose binding (tmux session or pane) matches, so unbound nodes of ARCHIVED same-name rigs no longer make live seats ambiguous ("Cannot establish managed input target impl-codex-1@hc") | at the first release that contains an upstream fix |
+| `135-codex-idle-composer` | 0.6.1 only; fix on korallis/openrig `local-patch-0.6.1` d94b0cbf (not yet upstream) | Idle Codex 0.158 seats read activity "unknown" once their last hook is 5 min old: the pane classifier now recognises the idle composer (dim placeholder or empty `›`) through an ANSI capture, only when no mid-work pattern is present | at the first release that recognises the Codex >= 0.158 idle composer |
 
 (Issues and PRs are in mvschwarz/openrig. To check a release: `git merge-base --is-ancestor <merge-sha> v<version>` in an openrig clone.)
 
