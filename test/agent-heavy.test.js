@@ -3,7 +3,7 @@
 // enforces RuntimeMaxSec with `timeout`); the slot locks live in a throwaway XDG_RUNTIME_DIR.
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import { spawnSync } from "node:child_process";
+import { spawn, spawnSync } from "node:child_process";
 import * as fs from "node:fs";
 import { join, dirname } from "node:path";
 import { fileURLToPath } from "node:url";
@@ -127,4 +127,45 @@ test("the seat rules say servers stay outside agent-heavy and jobs have a max ru
   assert.match(rules, /max runtime \(45min build, 30min browser/);
   const agents = fs.readFileSync(join(repo, "starter-kit/AGENTS.md"), "utf8");
   assert.match(agents, /`npm run start:test`, run directly and never inside agent-heavy/);
+});
+
+// ---- agent-heavy status (read-only: who holds each slot) ------------------------------------------------------------
+const status = (...args) => spawnSync(join(repo, "bin/agent-heavy"), ["status", ...args], { encoding: "utf8",
+  env: { PATH: `${bin}:/usr/bin:/bin`, XDG_RUNTIME_DIR: root, USER: "t" } });
+const until = async (pred, ms = 5000) => { const t = Date.now(); while (!pred()) { if (Date.now() - t > ms) return false; await new Promise(r => setTimeout(r, 50)); } return true; };
+
+test("status: every slot free when nothing runs; a bad class is a usage error", () => {
+  const r = status();
+  assert.equal(r.status, 0, r.stderr);
+  assert.equal(r.stdout, "build 1/2  free\nbuild 2/2  free\nbrowser 1/2  free\nbrowser 2/2  free\n");
+  assert.equal(status("browser").stdout, "browser 1/2  free\nbrowser 2/2  free\n");
+  assert.equal(status("gpu").status, 2);
+});
+
+test("status: a running job shows its seat, cwd, command, age and remaining runtime; the slot frees when it ends", async () => {
+  const cwd = fs.mkdtempSync(join(root, "seat-cwd-"));
+  const job = spawn(join(repo, "bin/agent-heavy"), ["build", "--max-runtime", "10m", "--", "sleep", "3"], { cwd,
+    env: { PATH: `${bin}:/usr/bin:/bin`, XDG_RUNTIME_DIR: root, USER: "t", OPENRIG_SESSION_NAME: "impl-1@proj" }, stdio: "ignore" });
+  const done = new Promise(r => job.on("exit", r));
+  assert.ok(await until(() => /held/.test(status("build").stdout)), "the slot shows as held");
+  const line = status("build").stdout.split("\n").find(l => l.includes("held"));
+  assert.match(line, /^build 1\/2  held  seat=impl-1@proj  age=0m0[0-9]s  remaining=(10m00s|9m5[0-9]s)  cwd=\S+seat-cwd-\S+  cmd=sleep 3$/);
+  assert.match(status("build").stdout, /^build 2\/2  free$/m);
+  await done;
+  assert.equal(status("build").stdout, "build 1/2  free\nbuild 2/2  free\n", "free again after the job");
+  assert.equal(fs.existsSync(join(root, "agent-heavy/build.1.holder")), false, "the holder file is removed");
+});
+
+test("status: a slot held by an older agent-heavy (no holder file) is described from /proc; a stale holder file is ignored", async () => {
+  const dir = join(root, "agent-heavy"); fs.mkdirSync(dir, { recursive: true });
+  // a stale holder file from a run that died without cleaning up must not describe the new holder
+  fs.writeFileSync(join(dir, "browser.2.holder"), "pid=1\nseat=ghost\ncwd=/\nstart=0\nmax=60\ncmd=old\n");
+  const old = spawn("bash", ["-c", 'exec 9>"$L"; flock 9; sleep 30; true', "/opt/old/agent-heavy", "browser", "--", "npx", "playwright", "test"],
+    { env: { PATH: "/usr/bin:/bin", L: join(dir, "browser.2.lock"), OPENRIG_SESSION_NAME: "qa@proj" }, stdio: "ignore" });
+  try {
+    assert.ok(await until(() => /held/.test(status("browser").stdout)));
+    const line = status("browser").stdout.split("\n").find(l => l.includes("held"));
+    assert.match(line, new RegExp(`^browser 2/2  held  seat=qa@proj  age=0m0[0-9]s  remaining=unknown \\(older agent-heavy\\)  cwd=\\S+  cmd=npx playwright test  pid=${old.pid}$`));
+    assert.doesNotMatch(line, /ghost/);
+  } finally { old.kill(); fs.rmSync(join(dir, "browser.2.holder"), { force: true }); }
 });
