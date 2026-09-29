@@ -1,11 +1,11 @@
 ---
 id: <SLICE SPEC ID>
-slice: <NN>-w-<env>-witness
+slice: <NN>-<wave id>-witness   # e.g. 11-w02-witness; name ends in "witness"
 mission: <mission>
 status: shaped
 created: <YYYY-MM-DD>
-intent: "A fresh agent walks this mission's features end to end through the real UI on <env>, closing the mission gate"
-depends_on: [<every other slice id of this mission>]
+intent: "A fresh agent walks this wave's features end to end through the real UI on <env>, gating the next wave"
+depends_on: [<every other slice id of this wave>]
 witness: true
 approved-spec-dial: P1
 ui: true
@@ -13,14 +13,15 @@ implementer_family: n/a (deploy + fresh witness agent)
 test_family: n/a
 ---
 
-# Slice <NN> — <mission> W: deploy to <env> and agent witness
+# Slice <NN> — <wave id> W: deploy to <env> and agent witness
 
 ## Intent
-Close the mission: a FRESH agent, one that built, reviewed or tested none of it, uses the deployed product like its real
-user and confirms each promised journey works. The next mission (or wave) does not start until this slice is
-`agent-witnessed`. Tests, merges and deploys are not witnesses.
+Close the wave: a FRESH agent, one that built, reviewed or tested none of it, uses the deployed product like its real
+user and confirms each of this wave's promised journeys works. The next wave does not start until this slice is
+`agent-witnessed`; in the mission's last wave it is also the mission gate. Tests, merges and deploys are not witnesses.
+Add it as the last member of its wave in mission.yaml (or as its own follow-on wave `<wave id>w`).
 
-Territory: `<status ledger, e.g. PHASE_STATUS.md or features.json>`, `docs/witnesses/<mission>.md` (new). No source code.
+Territory: `<status ledger, e.g. PHASE_STATUS.md or features.json>`, `docs/witnesses/<wave id>.md` (new). No source code.
 
 ## Mini-requirements
 
@@ -38,6 +39,6 @@ Evidence: screenshots or video per step, stored where the project allows. Sensit
 PRs or the queue; the repo record holds counts, IDs, pass/fail and redacted regions only.
 
 ## Proof contract
-- [ ] `docs/witnesses/<mission>.md`: deployed commit, witness agent + model, per-step result, evidence pointers.
-- [ ] The mission's rows in the status ledger read `agent-witnessed (YYYY-MM-DD, by <agent>, <model>)`.
+- [ ] `docs/witnesses/<wave id>.md`: deployed commit, witness agent + model, per-step result, evidence pointers.
+- [ ] The wave's rows in the status ledger read `agent-witnessed (YYYY-MM-DD, by <agent>, <model>)`.
 - [ ] Every failed step became a fix slice (or a recorded owner decision) before the witness is repeated.

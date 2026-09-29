@@ -104,7 +104,16 @@ rep("OK" if all(x in excl for x in ("/.openrig/", "/CLAUDE.local.md")) else "WAR
     "repo .git/info/exclude hides OpenRig seat files")
 
 # ---- 3. missions + slices ----------------------------------------------------------------------------
-ids, specs_by_id, open_slices_by_mission, witness_missions = {}, {}, {}, set()
+ids, specs_by_id, open_slices_by_mission, witness_missions, witness_ids = {}, {}, {}, set(), set()
+def is_witness_slice(slug, fm):
+    """A W witness slice: frontmatter `witness:` as a YAML boolean (inline comment stripped; an explicit false wins),
+    or, when unset, a name with a w/wNN token that ends in 'witness' (11-w02-witness, 07-m1-w-witness, 08-1-w-staging-witness)."""
+    flag = re.sub(r"\s+#.*$", "", str(fm.get("witness", ""))).strip().strip("'\"").lower()
+    if flag in ("true", "yes", "on"):
+        return True
+    if flag in ("false", "no", "off"):
+        return False
+    return bool(re.search(r"(^|-)w\d*(-|$)", slug)) and slug.endswith("witness")
 bad = {"sections": [], "depends_on": [], "territory": [], "status": [], "mission_files": [], "yaml_refs": []}
 for m in sorted(glob.glob(f"{W}/missions/*/")):
     mn = os.path.basename(m.rstrip("/"))
@@ -127,11 +136,10 @@ for m in sorted(glob.glob(f"{W}/missions/*/")):
                 bad["sections"].append(f"{mn}/{sn}"); break
         if "depends_on" not in fm:
             bad["depends_on"].append(f"{mn}/{sn}")
-        # A W witness slice: frontmatter `witness: true` (a YAML boolean; an explicit false wins over the name), or,
-        # when unset, the naming NN[-N…]-w-<…> (e.g. matilda-v2's 08-1-w-staging-witness).
-        flag = re.sub(r"\s+#.*$", "", str(fm.get("witness", ""))).strip().strip("'\"").lower()
-        if flag in ("true", "yes", "on") or (flag == "" and re.match(r"^\d+(?:-\d+)*-w-", sn)):
+        if is_witness_slice(sn, fm):
             witness_missions.add(mn)
+            if sid:
+                witness_ids.add(sid)
         st = fm.get("status", "")
         if st not in ("done", "closed", "delivered", "abandoned"):
             open_slices_by_mission.setdefault(mn, []).append(sn)
@@ -146,9 +154,36 @@ def mission_status(mdir):
     return (y.group(1) if y else frontmatter(read(mdir + "PROGRESS.md"))[0].get("status", "")).strip().lower()
 open_missions = set(open_slices_by_mission) | {os.path.basename(m.rstrip("/")) for m in glob.glob(f"{W}/missions/*/")
                                               if mission_status(m) not in ("",) + CLOSED}
-no_witness = sorted(m for m in open_missions if m not in witness_missions)
-rep("OK" if not no_witness else "WARN", "every open mission ends with a W witness slice (agent witness gate)",
-    ("missing in " + ", ".join(no_witness[:5]) + "; copy agent-stack rig/template/witness-slice/") if no_witness else "")
+# Per wave: every wave ends with a W slice witnessing its features and gating the next wave, unless the wave says
+# `no-witness: <reason>` (docs/infra only). Wave ids are global: each mission.yaml lists its own slices of a shared
+# wave, so members are merged across missions. A wave is witnessed by a W slice among its members, or by a follow-on
+# wave `<id>w` holding one (the mta layout). Only waves with open slices are judged: a finished wave can no longer be
+# gated. Waves delivered before waves existed are exempt. A mission without waves needs one W slice of its own.
+import yaml as _yaml
+waves, unwitnessed = {}, []
+done_ids = {sid for sid, (_, _, f) in specs_by_id.items() if f.get("status", "") in ("done", "closed", "delivered", "abandoned")}
+for mdir in sorted(glob.glob(f"{W}/missions/*/")):
+    mn = os.path.basename(mdir.rstrip("/"))
+    try:
+        mw = ((_yaml.safe_load(read(mdir + "mission.yaml") or "") or {}).get("arrangement") or {}).get("waves") or []
+    except _yaml.YAMLError:
+        mw = []
+    if not mw and mn in open_missions and mn not in witness_missions:
+        unwitnessed.append(mn)
+    for wave in mw:
+        w = waves.setdefault(str(wave.get("id", "?")), {"slices": set(), "skip": False})
+        w["slices"] |= {str(x) for x in (wave.get("slices") or [])}
+        w["skip"] |= bool(wave.get("no-witness")) or wave.get("review_model") == "delivered-before-waves"
+for wid, w in sorted(waves.items()):
+    if wid.startswith("w00") or w["skip"] or wid.endswith("w") and w["slices"] & witness_ids:
+        continue
+    if not (w["slices"] - done_ids - witness_ids):
+        continue  # finished (or only its own witness left)
+    follow = waves.get(wid + "w", {"slices": set()})["slices"]
+    if not (w["slices"] & witness_ids or follow & witness_ids):
+        unwitnessed.append(wid)
+rep("OK" if not unwitnessed else "WARN", "every open wave ends with a W witness slice (or says no-witness: <reason>)",
+    ("missing in " + ", ".join(unwitnessed[:6]) + ("…" if len(unwitnessed) > 6 else "") + "; copy agent-stack rig/template/witness-slice/") if unwitnessed else "")
 nslices = sum(len(v) for v in ids.values())
 dups = {k: v for k, v in ids.items() if len(v) > 1}
 rep("OK" if nslices else "WARN", f"{len(glob.glob(f'{W}/missions/*/'))} missions, {nslices} slices")

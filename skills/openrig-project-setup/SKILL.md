@@ -128,10 +128,11 @@ New projects get these from the template. `agent-project-check` WARNs when an ex
 ## Agent witness (default for every project)
 Done = acceptance tests + a FRESH agent witnessing the feature end to end through the real UI on the deployed
 environment, recorded as `agent-witnessed (YYYY-MM-DD, by <agent>, <model>)` with evidence. Tests, merges and deploys
-are not witnesses. Each mission ends with a W witness slice: copy `rig/template/witness-slice/` into
-`missions/<m>/slices/<NN>-w-<env>-witness/`. It has frontmatter `witness: true` and depends on all the mission's
-slices, sits in the mission's last wave, and gates the next mission or wave. `agent-project-check` WARNs when an open
-mission has none.
+are not witnesses. Every wave with user-facing slices ends with a W witness slice: copy `rig/template/witness-slice/`
+into `missions/<m>/slices/<NN>-<wave>-witness/` (`witness: true`, depends on the wave's slices) as the wave's last
+member (or its own follow-on wave `<wave>w`). It gates the next wave; the mission's last-wave W is also the mission
+gate. A docs/infra-only wave says `no-witness: <reason>` in mission.yaml instead. `agent-project-check` WARNs for each
+open wave without one (wave ids are global, so members are merged across missions).
 
 ## Never prompt (every project, every machine)
 Claude and Codex seats never ask for permission. `agent-project-check` FAILs when any of this is missing, and

@@ -50,8 +50,10 @@ adds every new owner decision here the day it is made. A decision recorded here 
 - Done also needs an AGENT WITNESS: a fresh agent (one that built, reviewed or tested none of it) walks the feature end
   to end through the real UI on the deployed environment and records `agent-witnessed (YYYY-MM-DD, by <agent>, <model>)`
   with evidence. Tests, merges and deploys are not witnesses.
-- Every mission ends with a W witness slice (template: agent-stack `rig/template/witness-slice/`, frontmatter
-  `witness: true`, depends on all the mission's slices) in its own last wave. It gates the next mission or wave.
+- Every wave with user-facing slices ends with a W witness slice (template: agent-stack `rig/template/witness-slice/`,
+  `witness: true`, depends on that wave's slices) that witnesses the wave's features and gates the next wave. The
+  mission's last wave W doubles as the mission gate. A docs/infra-only wave may skip it with an explicit
+  `no-witness: <reason>` on the wave in mission.yaml.
 
 ## Search and context
 - Search with `rg` (content) and `rg --files` / `fd` (file names). Never `grep -r` or `find` for searching.

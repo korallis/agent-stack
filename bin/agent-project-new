@@ -115,6 +115,6 @@ cat <<EOF
 
 Next: write $R/docs/PLAN.md, commit it, then  rig send $LEAD@$RIG "Build docs/PLAN.md"
 The lead creates missions, slices (depends_on + Territory) and one wave map per mission after your plan approval;
-every mission ends with a W witness slice (copy $AS/rig/template/witness-slice/).
+every wave with user-facing slices ends with a W witness slice (copy $AS/rig/template/witness-slice/).
 Re-run  agent-project-check $P  after that: every FAIL must be gone before builders are dispatched wide.
 EOF
