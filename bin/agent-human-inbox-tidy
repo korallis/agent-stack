@@ -4,9 +4,10 @@
 The stuck sweep pages about any pending row left unclaimed for an hour. A human can't claim, so an FYI to the owner
 (lee@external) that the sender forgot to close came back as an alarm. Runs every 5 minutes (agent-human-inbox-tidy.timer).
 For each PENDING row addressed to a *@external human:
-  - delivered (deliveryOutcome=posted) and informational (humanIntent unset or "update") -> close it done/no-follow-on
+  - delivered (deliveryOutcome=posted) and explicitly informational (humanIntent=update) -> close it done/no-follow-on
     with the note "informational; auto-closed after posting". The post already happened, so closing cancels nothing.
-  - a decision request (humanIntent=decision) -> LEFT ALONE. Its Slack reply closes it only while it is pending: parking or
+  - a decision request (humanIntent=decision), or humanIntent UNSET, which OpenRig treats as a legacy decision
+    ("omission retains legacy decision behavior") -> LEFT ALONE. Its Slack reply closes it only while it is pending: parking or
     claiming it makes the reply a no-op (proven against the gateway's own resolver). Findings about unanswered
     decisions go to the asking seat (OpenRig patch 133).
   - not posted yet, or delivery failed -> left alone, so a real delivery problem still surfaces.
@@ -47,7 +48,7 @@ for r in pending:
     if not dest.endswith("@external"):
         continue
     intent, outcome = r.get("humanIntent"), r.get("deliveryOutcome")
-    if outcome == "posted" and intent in (None, "update"):
+    if outcome == "posted" and intent == "update":
         if DRY:
             log(f"would close {r['qitemId']} -> {dest} ({r.get('summary') or ''})")
         else:
@@ -60,4 +61,4 @@ for r in pending:
         closed += 1
     else:
         kept += 1
-print(f"{'would close' if DRY else 'closed'} {closed}; left {kept} (decision requests or not yet posted)")
+print(f"{'would close' if DRY else 'closed'} {closed}; left {kept} (decisions, unset intent, or not yet posted)")

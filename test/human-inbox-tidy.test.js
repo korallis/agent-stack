@@ -34,29 +34,30 @@ function run(args = [], env = {}) {
   return { ...r, calls: fs.existsSync(calls) ? fs.readFileSync(calls, "utf8").trim().split("\n") : [] };
 }
 
-test("closes only posted informational rows to the owner; decisions, unsent/failed and agent rows are untouched", () => {
+test("closes only posted rows marked humanIntent=update; unset intent (a legacy decision), decisions, unsent/failed and agent rows are untouched", () => {
   const r = run();
   assert.equal(r.status, 0, r.stderr);
   assert.deepEqual(r.calls, [
-    "rig queue update fyi --state done --closure-reason no-follow-on --note informational; auto-closed after posting (agent-human-inbox-tidy)",
     "rig queue update quiet --state done --closure-reason no-follow-on --note informational; auto-closed after posting (agent-human-inbox-tidy)",
   ]);
-  assert.match(r.stdout, /closed 2; left 4/);
+  assert.match(r.stdout, /closed 1; left 5/);
 });
 
 test("--dry-run writes nothing", () => {
   const r = run(["--dry-run"]);
   assert.deepEqual(r.calls, []);
-  assert.match(r.stdout, /would close fyi[\s\S]*would close quiet[\s\S]*would close 2; left 4/);
+  assert.match(r.stdout, /would close quiet[\s\S]*would close 1; left 5/);
+  assert.doesNotMatch(r.stdout, /would close fyi/);
 });
 
 test("an unreadable queue exits 1 without writing; one failed close is logged and the rest continue", () => {
   const down = run([], { FAIL_LIST: "1" });
   assert.equal(down.status, 1);
   assert.deepEqual(down.calls, []);
-  const partial = run([], { FAIL_ID: "fyi" });
+  fs.writeFileSync(list, JSON.stringify([row("a", "lee@external", "update", "posted"), row("b", "lee@external", "update", "posted")]));
+  const partial = run([], { FAIL_ID: "a" });
   assert.equal(partial.status, 0);
-  assert.match(partial.stdout, /could not close fyi[\s\S]*closed quiet/);
+  assert.match(partial.stdout, /could not close a[\s\S]*closed b/);
 });
 
 test("the timer runs every 5 minutes as its own queue identity", () => {

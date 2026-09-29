@@ -22,8 +22,9 @@ adds every new owner decision here the day it is made. A decision recorded here 
 - (none yet)
 
 ## Operating rules (binding)
-- Human FYIs: an informational row to the owner (lee@external) is closed automatically once Slack has posted it
-  (`agent-human-inbox-tidy`, every 5 minutes); don't reopen it. Decision requests use `--human-intent decision` and
+- Human FYIs: send an informational row to the owner (lee@external) with `--human-intent update`. It is closed
+  automatically once Slack has posted it (`agent-human-inbox-tidy`, every 5 minutes); don't reopen it. A row without
+  `--human-intent` counts as a decision and stays open. Decision requests use `--human-intent decision` and
   stay pending until answered: the owner's Slack reply closes a pending row, and parking or claiming it breaks that.
 - Scratch checkouts for review or QA go under `~/Projects/<P>.worktrees/`, never `/tmp`, and are removed in a
   `finally`/`trap`. Test suites remove every `mkdtemp` directory they create.

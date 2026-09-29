@@ -119,7 +119,7 @@ New projects get these from the template. `agent-project-check` WARNs when an ex
 - **Owner decisions**: dated standing decisions, delegations and approvals. The lead checks them before asking the
   owner and adds each new one there.
 - **Operating rules**:
-  - owner FYI rows are auto-closed once posted (`agent-human-inbox-tidy`); decision requests use `--human-intent decision` and stay pending (never parked or claimed: the Slack reply closes only a pending row);
+  - owner FYIs use `--human-intent update` and are auto-closed once posted (`agent-human-inbox-tidy`; an unset intent counts as a decision); decision requests use `--human-intent decision` and stay pending (never parked or claimed: the Slack reply closes only a pending row);
   - review/QA scratch checkouts go under `~/Projects/<P>.worktrees/`, never `/tmp`, removed in a trap, and tests clean up their `mkdtemp` dirs;
   - proof by catalog id `rig proof show|judge <project-id>:<mission>/slices/<slice>`;
   - never prompt (below);
