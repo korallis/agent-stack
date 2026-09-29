@@ -13,10 +13,21 @@ const root = fs.mkdtempSync(join(fs.existsSync("/tmp/claude-1000") ? "/tmp/claud
 process.on("exit", () => fs.rmSync(root, { recursive: true, force: true }));
 const bin = join(root, "bin"), calls = join(root, "calls");
 fs.mkdirSync(bin);
+// Like systemd: at RuntimeMaxSec the scope is stopped (SIGTERM), its Result becomes "timeout" (as `systemctl show` then
+// reports), and systemd-run returns whatever the job itself returned, which can be 0 if it traps TERM.
 fs.writeFileSync(join(bin, "systemd-run"), `#!/usr/bin/env bash
 printf '%s\\n' "systemd-run $*" >> "${calls}"
-max=""; while [ "$1" != "--" ]; do case $1 in RuntimeMaxSec=*) max=\${1#RuntimeMaxSec=};; esac; shift; done; shift
-exec timeout "$max" "$@"
+max=""; unit=""; while [ "$1" != "--" ]; do case $1 in RuntimeMaxSec=*) max=\${1#RuntimeMaxSec=};; --unit=*) unit=\${1#--unit=};; esac; shift; done; shift
+t0=$(date +%s); timeout --preserve-status "$max" "$@"; rc=$?
+[ $(( $(date +%s) - t0 )) -ge "$max" ] && echo timeout > "${root}/result-$unit.scope"
+exit $rc
+`, { mode: 0o755 });
+fs.writeFileSync(join(bin, "systemctl"), `#!/usr/bin/env bash
+printf '%s\\n' "systemctl $*" >> "${calls}"
+case "$*" in
+  "--user show -p Result --value "*) f="${root}/result-\${@: -1}"; [ -f "$f" ] && cat "$f" || echo success ;;
+  "--user reset-failed "*) rm -f "${root}/result-\${@: -1}" ;;
+esac
 `, { mode: 0o755 });
 
 const heavy = (args, env = {}) => {
@@ -33,6 +44,11 @@ test("obvious servers are refused before taking a slot, with a clear message", (
     ["pnpm", "exec", "next", "start"], ["next", "dev"], ["./node_modules/.bin/next", "start"], ["vite"],
     ["npx", "vite", "--port", "3000"], ["vite", "preview"], ["npx", "serve", "dist"], ["http-server", "."],
     ["PORT=3001", "npm", "run", "start:test"], ["env", "PORT=3001", "next", "start"],
+    // QA round 1: options before the script or binary, and versioned packages
+    ["npm", "--prefix", "app", "run", "start:test"], ["npm", "run", "--silent", "dev"], ["pnpm", "--filter", "web", "dev"],
+    ["pnpm", "-F", "web", "run", "start"], ["npm", "-w", "packages/web", "start"], ["npx", "next@latest", "start"],
+    ["npx", "-p", "vite", "vite"], ["pnpm", "dlx", "serve", "dist"], ["yarn", "workspace", "web", "dev"],
+    ["env", "-u", "NODE_ENV", "npm", "start"], ["env", "-i", "PATH=/usr/bin", "npm", "run", "dev"],
   ]) {
     const r = heavy(["build", "--", ...cmd]);
     assert.equal(r.status, 2, cmd.join(" "));
@@ -44,7 +60,10 @@ test("obvious servers are refused before taking a slot, with a clear message", (
 test("finite jobs still run: tests, builds, tsc, eslint, playwright, next build, vite build", () => {
   for (const cmd of [["npm", "test"], ["npm", "run", "build"], ["npm", "run", "test:unit"], ["npx", "tsc", "--noEmit"],
     ["npx", "eslint", "."], ["npx", "playwright", "test"], ["next", "build"], ["npx", "vite", "build"], ["pnpm", "run", "lint"],
-    ["npm", "run", "startup-check"], ["vitest", "run"]]) {
+    ["npm", "run", "startup-check"], ["vitest", "run"],
+    // QA round 1: vite builds and version probes are finite
+    ["vite", "--mode", "production", "build"], ["vite", "--version"], ["npx", "vite", "-v"], ["next", "--version"],
+    ["npm", "--prefix", "app", "run", "build"], ["pnpm", "--filter", "web", "test"]]) {
     const stubbed = join(bin, cmd[0] === "npx" ? "npx" : cmd[0]);
     if (!fs.existsSync(stubbed)) fs.writeFileSync(stubbed, "#!/bin/sh\nexit 0\n", { mode: 0o755 });
     const r = heavy(["build", "--", ...cmd]);
@@ -71,12 +90,13 @@ test("every job gets a max runtime: 45min build, 30min browser, configurable, an
   assert.equal(heavy(["build", "--max-runtime", "0", "--", "true"]).status, 2);
 });
 
-test("a job that hits the max runtime is stopped, says so, and frees its slot", () => {
+test("a job that hits the max runtime is stopped, says so, exits 124 and frees its slot", () => {
   const t0 = Date.now();
   const r = heavy(["build", "--max-runtime", "1", "--", "sleep", "30"]);
   assert.ok(Date.now() - t0 < 10000, "stopped at the limit, not after the job");
-  assert.notEqual(r.status, 0);
+  assert.equal(r.status, 124);
   assert.match(r.stderr, /stopped: reached the build max runtime \(1\)/);
+  assert.match(r.c, /^systemctl --user reset-failed agent-heavy-build-\d+-\d+\.scope$/m, "the failed scope is cleared");
   // the slot is free again: two quick jobs run back to back without waiting
   assert.equal(heavy(["build", "--wait", "1", "--", "true"]).status, 0);
   assert.equal(heavy(["build", "--wait", "1", "--", "true"]).status, 0);
@@ -84,6 +104,21 @@ test("a job that hits the max runtime is stopped, says so, and frees its slot", 
   const fail = heavy(["build", "--", "false"]);
   assert.equal(fail.status, 1);
   assert.doesNotMatch(fail.stderr, /max runtime/);
+});
+
+test("QA round 1: a job that traps SIGTERM and exits 0 when stopped is still reported as stopped (never a success)", () => {
+  const r = heavy(["build", "--max-runtime", "1", "--", "bash", "-c", "trap 'exit 0' TERM; sleep 30 & wait"]);
+  assert.equal(r.status, 124, r.stderr);
+  assert.match(r.stderr, /stopped: reached the build max runtime \(1\)/);
+});
+
+test("if systemd can't report the scope's result, the elapsed time decides", () => {
+  const sc = fs.readFileSync(join(bin, "systemctl"), "utf8");
+  fs.writeFileSync(join(bin, "systemctl"), "#!/bin/sh\nexit 1\n", { mode: 0o755 });
+  try {
+    assert.equal(heavy(["build", "--max-runtime", "1", "--", "bash", "-c", "trap 'exit 0' TERM; sleep 30 & wait"]).status, 124);
+    assert.equal(heavy(["build", "--max-runtime", "5", "--", "true"]).status, 0);
+  } finally { fs.writeFileSync(join(bin, "systemctl"), sc, { mode: 0o755 }); }
 });
 
 test("the seat rules say servers stay outside agent-heavy and jobs have a max runtime", () => {

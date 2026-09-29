@@ -4,7 +4,8 @@
 #   - concurrency slots (flock)            build: 2 at once, browser: 2 at once
 #   - cgroup limits via systemd-run --user build: 8 CPUs / 16G RAM, browser: 4 CPUs / 8G RAM
 #   - a max runtime per job (RuntimeMaxSec) build: 45min, browser: 30min; the job is stopped at the limit, so a hung or
-#                                          endless job can't hold a slot. --max-runtime <N|Ns|Nmin|Nh> per call.
+#                                          endless job can't hold a slot; it then exits 124 (as timeout(1)).
+#                                          --max-runtime <N|Ns|Nmin|Nh> per call.
 # It is for jobs that finish. Long-lived servers (npm start / start:* / dev / serve / preview, next start|dev, vite,
 # serve, http-server) are refused: run them outside agent-heavy (Playwright's webServer starts its own inside the test
 # run). --allow-long lifts that refusal for a bounded job that only looks like a server; the max runtime still applies.
@@ -31,24 +32,36 @@ secs() { [[ $1 =~ ^([0-9]+)(s|m|min|h)?$ ]] || return 1
 max_s=$(secs "$max") && [[ $max_s -gt 0 ]] || { echo "agent-heavy: bad max runtime '$max' (use N, Ns, Nmin or Nh)" >&2; exit 2; }
 
 # Is this an obvious long-lived server? (Only the obvious forms: package-manager scripts and well-known server CLIs.)
-server_bin() { local name=${1##*/} sub=${2:-}
+# Options are skipped, including those that take a value (npm --prefix app, pnpm --filter web, npx -p pkg).
+takes_value() { [[ $1 =~ ^(--prefix|-C|--dir|--cwd|--filter|-F|--workspace|-w|--package|-p|--call|-c|--mode|-m|--config|--port|--base)$ ]]; }
+server_bin() { local name=${1##*/}; shift; name=${name%@*}; [[ -n $name ]] || return 1
+  local a
   case $name in
-    next) [[ $sub == start || $sub == dev ]] ;;
-    vite) [[ $sub != build && $sub != optimize ]] ;;   # bare `vite`, `vite dev|serve|preview`, `vite --port …`
-    serve|http-server|live-server) true ;;
-    *) false ;;
+    next) for a in "$@"; do [[ $a == -* ]] && continue; [[ $a == start || $a == dev ]]; return; done; return 1 ;;
+    vite) for a in "$@"; do [[ $a =~ ^(build|optimize|-v|--version|-h|--help)$ ]] && return 1; done; return 0 ;;
+    serve|http-server|live-server) for a in "$@"; do [[ $a =~ ^(-v|--version|-h|--help)$ ]] && return 1; done; return 0 ;;
+    *) return 1 ;;
   esac; }
 server() { local a=("$@") i=0
-  while [[ $i -lt ${#a[@]} && ( ${a[i]} == env || ${a[i]} =~ ^[A-Za-z_][A-Za-z0-9_]*= ) ]]; do i=$((i + 1)); done
+  while [[ $i -lt ${#a[@]} ]]; do   # env, its options (-u NAME, -C DIR, -i, --) and VAR=value assignments
+    case ${a[i]} in
+      env|-i|--ignore-environment|-0|--null|--) i=$((i + 1)) ;;
+      -u|--unset|-C|--chdir) i=$((i + 2)) ;;
+      -u*|--unset=*|-C*|--chdir=*) i=$((i + 1)) ;;
+      *) [[ ${a[i]} =~ ^[A-Za-z_][A-Za-z0-9_]*= ]] && i=$((i + 1)) || break ;;
+    esac
+  done
   local c=${a[i]##*/}; i=$((i + 1))
+  skip_opts() { while [[ ${a[i]:-} == -* ]]; do takes_value "${a[i]}" && [[ ${a[i]} != *=* ]] && i=$((i + 1)); i=$((i + 1)); done; }
   case $c in
     npm|pnpm|yarn|bun)
-      [[ $c == pnpm && ${a[i]:-} == exec ]] && { server_bin "${a[@]:i+1}"; return; }
-      [[ $c == yarn && ${a[i]:-} == exec ]] && { server_bin "${a[@]:i+1}"; return; }
-      [[ ${a[i]:-} == run || ${a[i]:-} == run-script ]] && i=$((i + 1))
+      skip_opts
+      [[ $c == yarn && ${a[i]:-} == workspace ]] && { i=$((i + 2)); skip_opts; }   # yarn workspace <name> <script>
+      if [[ ${a[i]:-} == exec || ${a[i]:-} == x || ${a[i]:-} == dlx ]]; then i=$((i + 1)); skip_opts; server_bin "${a[@]:i}"; return; fi
+      [[ ${a[i]:-} == run || ${a[i]:-} == run-script ]] && { i=$((i + 1)); skip_opts; }
       [[ ${a[i]:-} =~ ^(start|dev|serve|preview)(:.*)?$ ]] ;;
-    npx|bunx) while [[ ${a[i]:-} == -* ]]; do i=$((i + 1)); done; server_bin "${a[@]:i}" ;;
-    *) server_bin "$c" "${a[i]:-}" ;;
+    npx|bunx) skip_opts; server_bin "${a[@]:i}" ;;
+    *) server_bin "$c" "${a[@]:i}" ;;
   esac; }
 if [[ $allow_long == 0 ]] && server "$@"; then
   echo "agent-heavy: '$*' looks like a long-lived server. Run servers outside agent-heavy: a server never finishes, so it" \
@@ -64,12 +77,21 @@ while :; do
     exec {fd}>"$dir/$class.$i.lock"
     if flock -n "$fd"; then
       echo "[agent-heavy] $class slot $i/$slots (cpu=$cpu mem=$mem max=$max) seat=${OPENRIG_SESSION_NAME:-$USER}" >&2
-      start=$(date +%s) rc=0
+      unit="agent-heavy-$class-$i-$$" start=$(date +%s) rc=0
       systemd-run --user --scope --quiet -p CPUQuota="$cpu" -p MemoryMax="$mem" -p MemorySwapMax=0 -p RuntimeMaxSec="$max_s" \
-        --unit="agent-heavy-$class-$i-$$" -- "$@" || rc=$?
-      if [[ $rc -ne 0 && $(( $(date +%s) - start )) -ge $max_s ]]; then
+        --unit="$unit" -- "$@" || rc=$?
+      # Stopped at the limit? Ask systemd (Result=timeout) rather than trust the exit code: a job that traps SIGTERM
+      # can exit 0. If systemd can't say, the elapsed time decides.
+      if result=$(systemctl --user show -p Result --value "$unit.scope" 2>/dev/null); then
+        [[ $result == timeout ]] && timed_out=1 || timed_out=0
+      else
+        [[ $(( $(date +%s) - start )) -ge $max_s ]] && timed_out=1 || timed_out=0
+      fi
+      if [[ $timed_out == 1 ]]; then
+        systemctl --user reset-failed "$unit.scope" 2>/dev/null || true
         echo "[agent-heavy] stopped: reached the $class max runtime ($max). Split the job, run a focused subset, or pass" \
              "--max-runtime if it genuinely needs longer." >&2
+        exit 124   # as timeout(1): never a success, whatever the job returned when it was stopped
       fi
       exit $rc
     fi
