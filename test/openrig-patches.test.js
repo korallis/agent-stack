@@ -61,6 +61,55 @@ test("a version with no patches warns loudly while local fixes are carried, and 
   assert.equal(read(dir, "dist/a.js"), "const x = 1;\nexport const y = x;\n");
 });
 
+// Two patches on one file where the second rewrites what the first produced (b -> B1 -> B2): once the second is
+// applied, the first's reverse no longer matches the live file on its own (no fuzz bridges it). It must still count as
+// applied, not "did not apply". 0.6.1's 135 and 136 overlap like this.
+const overlapDir = join(tmp, "stack/patches/openrig/1.1.0");
+fs.mkdirSync(overlapDir, { recursive: true });
+const base11 = "a\nb\nc\nd\ne\n";
+fs.writeFileSync(join(overlapDir, "010-first.patch"), "--- a/dist/s.js\n+++ b/dist/s.js\n@@ -1,4 +1,4 @@\n a\n-b\n+B1\n c\n d\n");
+fs.writeFileSync(join(overlapDir, "020-second.patch"), "--- a/dist/s.js\n+++ b/dist/s.js\n@@ -1,3 +1,3 @@\n a\n-B1\n+B2\n c\n");
+
+test("overlapping patches: both apply, and a rerun reports both already applied with no warning", () => {
+  const dir = pkg("1.1.0", { "dist/s.js": base11 });
+  const first = run(dir);
+  assert.match(first.out, /applied 010-first 020-second; already applied none/);
+  assert.equal(read(dir, "dist/s.js"), "a\nB2\nc\nd\ne\n");
+  // the per-patch check alone fails here: 010's reverse needs "B1", which 020 rewrote
+  assert.throws(() => execFileSync("patch", ["-p1", "-d", dir, "--dry-run", "--reverse", "--forward", "--silent", "-i", join(overlapDir, "010-first.patch")], { stdio: "ignore" }));
+  const again = run(dir);
+  assert.match(again.out, /applied none; already applied 010-first 020-second/);
+  assert.equal(again.warnings, "", "no false 'Did not apply' alert");
+  assert.equal(read(dir, "dist/s.js"), "a\nB2\nc\nd\ne\n");
+});
+
+test("overlapping patches: with only the first applied, the second is applied on top", () => {
+  const dir = pkg("1.1.0", { "dist/s.js": "a\nB1\nc\nd\ne\n" });
+  const { out, warnings } = run(dir);
+  assert.match(out, /applied 020-second; already applied 010-first/);
+  assert.equal(warnings, "");
+  assert.equal(read(dir, "dist/s.js"), "a\nB2\nc\nd\ne\n");
+});
+
+test("a hand-edited file reports what no longer fits, and nothing is counted applied by mistake", () => {
+  const dir = pkg("1.1.0", { "dist/s.js": "a\nB9\nc\nd\ne\n" });
+  const { out, warnings } = run(dir);
+  assert.match(out, /applied none; already applied none/);
+  assert.match(warnings, /Did not apply: 010-first 020-second/);
+  assert.equal(read(dir, "dist/s.js"), "a\nB9\nc\nd\ne\n");
+});
+
+test("with a terminal attached, an unapplied patch is never taken for applied (-R is paired with -N)", () => {
+  // GNU patch without -N answers "Unreversed patch detected! Ignore -R?" with yes when it has a tty, so a fresh package
+  // would read as fully patched. script(1) gives the run a pseudo-terminal.
+  const dir = pkg("1.1.0", { "dist/s.js": base11 });
+  fs.rmSync(join(tmp, "warnings"), { force: true });
+  const cmd = `PATH=${tmp}/stubs:$PATH ${join(tmp, "stack/bin/openrig-apply-patches")} ${dir}`;
+  const out = execFileSync("script", ["-qec", cmd, "/dev/null"], { encoding: "utf8" });
+  assert.match(out, /applied 010-first 020-second; already applied none/);
+  assert.equal(read(dir, "dist/s.js"), "a\nB2\nc\nd\ne\n");
+});
+
 test("every shipped patch is a -p1 diff against the package's dist trees", () => {
   const root = join(repo, "patches/openrig");
   const patches = fs.existsSync(root) ? fs.readdirSync(root, { withFileTypes: true }).filter(v => v.isDirectory()).flatMap(v => fs.readdirSync(join(root, v.name)).map(p => join(root, v.name, p))) : [];
