@@ -188,7 +188,7 @@ with `agent-login` and the pool uses it straight away.
   then only alerts.
 - **Heavy runs:** every seat runs tsc, eslint, tests, builds and Playwright through `agent-heavy build|browser -- <cmd>`
   (2 slots, capped CPU and RAM, max runtime 45min build / 30min browser). It refuses long-lived servers (`npm start`,
-  `start:*`, `dev`, `next start`, `vite`), which run outside it. The rig template's CULTURE.md makes it binding, and `agent-project-check` WARNs when a
+  `start:*`, `dev`, `next start`, `vite`), which run outside it. `agent-heavy status` shows who holds each slot. The rig template's CULTURE.md makes it binding, and `agent-project-check` WARNs when a
   project's conventions lack it.
 - **Seats never depend on the daemon unit.** Every seat lives in the tmux server of `openrig-tmux.service`, not in
   `openrig.service`. tmux ties each pane to the unit its server runs in, which is how `systemctl stop openrig.service`

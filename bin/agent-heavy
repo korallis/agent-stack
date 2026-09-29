@@ -1,5 +1,6 @@
 #!/usr/bin/env bash
 # agent-heavy <build|browser> [--wait SECONDS] [--max-runtime SPAN] [--allow-long] -- <command...>
+# agent-heavy status [build|browser]   who holds each slot: seat, cwd, command, age, remaining runtime (read-only)
 # Runs a heavy build or browser test under a SHARED machine budget so 24 agents cannot starve the host:
 #   - concurrency slots (flock)            build: 2 at once, browser: 2 at once
 #   - cgroup limits via systemd-run --user build: 8 CPUs / 16G RAM, browser: 4 CPUs / 8G RAM
@@ -11,6 +12,62 @@
 # run). --allow-long lifts that refusal for a bounded job that only looks like a server; the max runtime still applies.
 # Budgets are ordinary code/config, never a model decision. Override with AGENT_HEAVY_<CLASS>_{SLOTS,CPU,MEM,MAX_RUNTIME}.
 set -euo pipefail
+dir=${XDG_RUNTIME_DIR:-/tmp}/agent-heavy
+PROC=${AGENT_HEAVY_PROC:-/proc}
+dur() { local t=$1; ((t >= 3600)) && printf '%dh%02dm' $((t / 3600)) $((t % 3600 / 60)) || printf '%dm%02ds' $((t / 60)) $((t % 60)); }
+
+# status: read-only; never takes a lock. A slot's lock is identified by device:inode (so a symlinked runtime dir or any
+# other path to it still matches). It is held when /proc/locks has a FLOCK on that identity, and its holders are the
+# processes whose open file actually carries the lock: /proc/<pid>/fdinfo/<fd> lists it only on the locked open file
+# (the agent-heavy that took the slot and the job that inherited the fd), never on another fd that merely opened the
+# file. (/proc/locks's own pid is only the short-lived `flock` helper.) What can't be observed is reported as unknown,
+# never as free.
+if [[ ${1:-} == status ]]; then
+  case ${2:-} in "") classes="build browser";; build|browser) classes=$2;; *) echo "usage: agent-heavy status [build|browser]" >&2; exit 2;; esac
+  now=$(date +%s)
+  locks=$(cat "$PROC/locks" 2>/dev/null) || locks=""
+  [[ -n $locks || -r $PROC/locks ]] && table=1 || table=0
+  for c in $classes; do
+    [[ $c == build ]] && n=${AGENT_HEAVY_BUILD_SLOTS:-2} || n=${AGENT_HEAVY_BROWSER_SLOTS:-2}
+    for i in $(seq 1 "$n"); do
+      lock=$dir/$c.$i.lock holder=$dir/$c.$i.holder pid=""
+      [[ -e $lock ]] || { echo "$c $i/$n  free"; continue; }
+      [[ $table == 1 ]] || { echo "$c $i/$n  unknown (cannot read $PROC/locks)"; continue; }
+      read -r maj min ino < <(stat -L -c '%Hd %Ld %i' "$lock")
+      id=$(printf '%02x:%02x:%s' "$maj" "$min" "$ino")
+      if ! awk -v id="$id" '$2 == "FLOCK" && $6 == id { f = 1 } END { exit !f }' <<<"$locks"; then
+        echo "$c $i/$n  free"; continue
+      fi
+      pids=$(grep -l -E "^lock:.*[[:space:]]FLOCK[[:space:]].*[[:space:]]$id[[:space:]]" "$PROC"/[0-9]*/fdinfo/* 2>/dev/null \
+        | awk -F/ '{print $(NF - 2)}' | sort -un || true)
+      if [[ -z $pids ]]; then echo "$c $i/$n  held  owner unknown (lock $id is held but no holder is visible)"; continue; fi
+      hp=$(sed -n 's/^pid=//p' "$holder" 2>/dev/null || true)
+      if [[ -n $hp ]] && grep -qx "$hp" <<<"$pids"; then
+        get() { sed -n "s/^$1=//p" "$holder"; }
+        age=$((now - $(get start))) max=$(get max)
+        rem=$((max - age)); ((rem < 0)) && rem=0
+        echo "$c $i/$n  held  seat=$(get seat)  age=$(dur $age)  remaining=$(dur $rem)  cwd=$(get cwd)  cmd=$(get cmd)"
+        continue
+      fi
+      # no holder file for this run (an older agent-heavy): prefer the agent-heavy process, else the holder that took the
+      # lock, i.e. the one whose parent is not itself a holder (children only inherited the fd)
+      for p in $pids; do grep -qa agent-heavy "$PROC/$p/cmdline" 2>/dev/null && { pid=$p; break; }; done
+      if [[ -z $pid ]]; then
+        for p in $pids; do
+          pp=$(awk '{print $4}' 2>/dev/null < "$PROC/$p/stat" || true)   # ppid (comm has no spaces for these)
+          grep -qx "${pp:-x}" <<<"$pids" || { pid=$p; break; }
+        done
+      fi
+      pid=${pid:-$(head -n1 <<<"$pids")}
+      seat=$(tr '\0' '\n' 2>/dev/null < "$PROC/$pid/environ" | sed -n 's/^OPENRIG_SESSION_NAME=//p' || true)
+      cmd=$(tr '\0' ' ' 2>/dev/null < "$PROC/$pid/cmdline" | sed 's/^.* -- //; s/ $//' || true)
+      age=$(ps -o etimes= -p "$pid" 2>/dev/null | tr -d ' ' || true)
+      echo "$c $i/$n  held  seat=${seat:-unknown}  age=${age:+$(dur "$age")}  remaining=unknown (no holder record)  cwd=$(readlink "$PROC/$pid/cwd" 2>/dev/null || true)  cmd=${cmd:-unknown}  pid=$pid"
+    done
+  done
+  exit 0
+fi
+
 usage="usage: agent-heavy <build|browser> [--wait S] [--max-runtime SPAN] [--allow-long] -- cmd..."
 class=${1:?$usage}; shift
 wait_s=1800 max="" allow_long=0
@@ -70,7 +127,7 @@ if [[ $allow_long == 0 ]] && server "$@"; then
   exit 2
 fi
 
-dir=${XDG_RUNTIME_DIR:-/tmp}/agent-heavy; mkdir -p "$dir"
+mkdir -p "$dir"
 deadline=$(( $(date +%s) + wait_s ))
 while :; do
   for i in $(seq 1 "$slots"); do
@@ -78,6 +135,10 @@ while :; do
     if flock -n "$fd"; then
       echo "[agent-heavy] $class slot $i/$slots (cpu=$cpu mem=$mem max=$max) seat=${OPENRIG_SESSION_NAME:-$USER}" >&2
       unit="agent-heavy-$class-$i-$$" start=$(date +%s) rc=0
+      holder=$dir/$class.$i.holder   # for `agent-heavy status`; cmd last, since it may hold anything
+      printf 'pid=%s\nseat=%s\ncwd=%s\nstart=%s\nmax=%s\ncmd=%s\n' "$$" "${OPENRIG_SESSION_NAME:-$USER}" "$PWD" "$start" "$max_s" \
+        "$(printf '%s ' "$@" | tr '\n' ' ' | sed 's/ $//')" > "$holder"
+      trap 'rm -f "$holder"' EXIT
       systemd-run --user --scope --quiet -p CPUQuota="$cpu" -p MemoryMax="$mem" -p MemorySwapMax=0 -p RuntimeMaxSec="$max_s" \
         --unit="$unit" -- "$@" || rc=$?
       # Stopped at the limit? Ask systemd (Result=timeout) rather than trust the exit code: a job that traps SIGTERM
