@@ -8,23 +8,38 @@ S=$(cd "$(dirname "$(readlink -f "$0")")/../.." && pwd)
 id=$$; SOCK=lab-$id; TU=lab-tmux-$id; DU=lab-daemon-$id; work=$(mktemp -d "$HOME/.cache/seats-survive.XXXX")
 fails=0; ok() { echo "PASS $*"; }; bad() { echo "FAIL $*"; fails=$((fails + 1)); }
 cleanup() { tmux -L $SOCK kill-server 2>/dev/null; systemctl --user stop $DU.service 2>/dev/null
-  [ -f "$work/home/daemon.json" ] && kill "$(jq -r .pid "$work/home/daemon.json")" 2>/dev/null; rm -rf "$work"; }
+  systemctl --user reset-failed $DU.service 2>/dev/null; [ -f "$work/home/daemon.json" ] && kill "$(jq -r .pid "$work/home/daemon.json")" 2>/dev/null; rm -rf "$work"; }
 trap cleanup EXIT
 panes() { tmux -L $SOCK list-panes -a -F '#{pane_pid}' 2>/dev/null | while read p; do kill -0 "$p" 2>/dev/null && echo "$p"; done | wc -l; }
 server() { tmux -L $SOCK display -p '#{pid}' 2>/dev/null; }
 partofs() { for s in $(systemctl --user list-units --type=scope --no-legend 'tmux-spawn-*' | awk '{print $1}'); do
   [[ "$(systemctl --user show "$s" -p Description --value)" == *"by process $(server)" ]] && systemctl --user show "$s" -p PartOf --value; done | sort -u; }
 
+# 0. Baseline WITHOUT the fix, on a unit shaped like the old openrig.service (Type=oneshot, RemainAfterExit, KillMode=process,
+#    ExecStop, tmux server started from ExecStart): documents what PartOf does on THIS systemd. Not relied on by the fix.
+B=lab-oldshape-$id; BS=$SOCK-old
+systemd-run --user --quiet --unit=$B -p Type=oneshot -p RemainAfterExit=yes -p KillMode=process -p ExecStop=/bin/true \
+  sh -c "for s in a b; do tmux -L $BS has-session -t \$s 2>/dev/null || tmux -L $BS new-session -d -s \$s 'sleep infinity'; done"
+sleep 1; bp() { tmux -L $BS list-panes -a -F '#{pane_pid}' 2>/dev/null | while read p; do kill -0 "$p" 2>/dev/null && echo "$p"; done | sort | tr '\n' ' '; }
+before=$(bp); for i in 1 2 3; do systemctl --user restart $B.service; done; sleep 1.5
+echo "INFO baseline (old shape, $(systemctl --version | head -1 | cut -d' ' -f1-2)): 3 restarts -> panes $([ "$(bp)" = "$before" ] && echo "unchanged" || echo "CHANGED ($before -> $(bp))"); result $(systemctl --user show $B.service -p Result --value)"
+systemctl --user stop $B.service; sleep 1.5
+echo "INFO baseline (old shape): stop -> panes $([ -z "$(bp)" ] && echo "ALL KILLED (the incident)" || echo "alive: $(bp)")"
+tmux -L $BS kill-server 2>/dev/null; systemctl --user reset-failed $B.service 2>/dev/null
+
 # the tmux unit, with openrig-tmux.service's semantics (condition, refuse manual stop, foreground server)
 cond="if tmux -L $SOCK show -gv exit-empty >/dev/null 2>&1; then exit 1; fi"
 systemd-run --user --quiet --unit=$TU --collect -p RefuseManualStop=yes -p "ExecCondition=/bin/sh -c '$cond'" tmux -L $SOCK -D
-# the daemon unit, with openrig.service's semantics: KillMode=process, wants the tmux unit, creates seats as a client
-systemd-run --user --quiet --unit=$DU --collect -p KillMode=process -p Wants=$TU.service -p After=$TU.service \
-  sh -c "tmux -L $SOCK new-session -d -s seat-a 'sleep infinity'; tmux -L $SOCK new-session -d -s seat-b 'sleep infinity'; exec sleep infinity"
+# the daemon unit, shaped like openrig.service (Type=oneshot, RemainAfterExit, KillMode=process, ExecStop), wants the
+# tmux unit, and creates seats only as a tmux client
+systemd-run --user --quiet --unit=$DU -p Type=oneshot -p RemainAfterExit=yes -p KillMode=process -p ExecStop=/bin/true \
+  -p Wants=$TU.service -p After=$TU.service \
+  sh -c "for s in seat-a seat-b; do tmux -L $SOCK has-session -t \$s 2>/dev/null || tmux -L $SOCK new-session -d -s \$s 'sleep infinity'; done"
 sleep 1.5
 [ "$(panes)" = 2 ] && ok "2 seats running" || bad "seats not started ($(panes))"
 [ "$(partofs)" = "$TU.service" ] && ok "pane scopes are PartOf=$TU.service (not the daemon unit)" || bad "pane PartOf: $(partofs)"
-systemctl --user restart $DU.service; sleep 1.5; [ "$(panes)" = 2 ] && ok "daemon unit restart: seats alive" || bad "restart killed seats"
+for i in 1 2 3; do systemctl --user restart $DU.service; done; sleep 1.5
+[ "$(panes)" = 2 ] && [ "$(systemctl --user show $DU.service -p Result --value)" = success ] && ok "daemon unit restart x3: seats alive" || bad "restart killed seats or failed"
 systemctl --user stop $DU.service; sleep 1.5; [ "$(panes)" = 2 ] && ok "daemon unit STOP: seats alive" || bad "stop killed seats"
 systemd-run --user --quiet --unit=$TU-second --collect -p "ExecCondition=/bin/sh -c '$cond'" tmux -L $SOCK -D 2>/dev/null; sleep 1
 [ "$(systemctl --user show $TU-second.service -p Result --value 2>/dev/null)" != "exit-code" ] && [ "$(panes)" = 2 ] && ok "a second tmux unit skips an existing server" || bad "second tmux unit disturbed the server"
