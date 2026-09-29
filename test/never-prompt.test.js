@@ -56,6 +56,14 @@ test("shim: prompt text and option values are never read as an approval choice",
   assert.deepEqual(approval(launch("-c", "model=\"-a\"")), ["never"]);
 });
 
+test("shim: --no-daemon exactly once, whether or not OpenRig already passed it (Codex rejects a repeat)", () => {
+  const count = argv => argv.filter(a => a === "--no-daemon").length;
+  assert.equal(count(launch("-s", "danger-full-access")), 1);
+  assert.equal(count(launch("--no-daemon", "-s", "danger-full-access")), 1);
+  assert.equal(count(launch("resume", "0199-abc", "--no-daemon")), 1);
+  assert.equal(count(launch("--", "--no-daemon")), 2, "a prompt word after -- is not the option; the shim still adds its own");
+});
+
 // ---- system/codex-never-prompt ------------------------------------------------------------------------
 const fixer = join(repo, "system/codex-never-prompt");
 const fix = (file, ...flags) => spawnSync("python3", [fixer, ...flags, file], { encoding: "utf8" });

@@ -7,13 +7,14 @@ all. A missing or failed patch gets a logger + desktop warning, and OpenRig keep
 Each patch is a `-p1` unified diff against the published `@openrig/cli@<version>` package root (`dist/`,
 `daemon/dist/`), one per upstream issue.
 
-Patches exist for 0.5.17, 0.6.0 and 0.6.1.
+Patches exist for 0.5.17, 0.6.0 and 0.6.1 (134 is 0.6.1 only).
 
 | Patch | Upstream | Fix | Drop it when |
 |---|---|---|---|
 | `131-canonical-local-sender` | issue #131, PR #135 (merged 2026-09-29 as a09388aa, after v0.6.1) | The daemon strips its own `@<selfHostId>` from a sender, so a claim under load no longer fails `claim_destination_mismatch` | at the first release that contains PR #135 |
 | `132-project-scoped-proof` | issue #132, PR #136 (open) | `rig proof show/judge` accept `--project <id>` or `<id>:<scope>`, resolved through `workspace.yaml` | at the first release that contains PR #136 |
 | `133-unclaimed-human-routes-to-source` | 0.6.1 only; fix on korallis/openrig `local-patch-0.6.1` 31dc9076 (not yet upstream) | The stuck sweep sends an "unclaimed-obligation" finding for a row addressed to a human (`*@external` or a human seat) to the row's source seat instead of paging the human about their own inbox | at the first release that contains an upstream fix |
+| `134-guard-target-binding-first` | 0.6.1 regression, fix on korallis/openrig `local-patch-0.6.1` b9e88657 (not yet upstream) | `resolveGuardTarget` prefers the node whose binding (tmux session or pane) matches, so unbound nodes of ARCHIVED same-name rigs no longer make live seats ambiguous ("Cannot establish managed input target impl-codex-1@hc") | at the first release that contains an upstream fix |
 
 (Issues and PRs are in mvschwarz/openrig. To check a release: `git merge-base --is-ancestor <merge-sha> v<version>` in an openrig clone.)
 
