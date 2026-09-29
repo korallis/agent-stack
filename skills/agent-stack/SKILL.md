@@ -64,8 +64,10 @@ project-workspace.md) and the `mission-slice-sop` skill. Verify each point on di
 8. Only the rig LEAD is messaged; it relays. Owner decisions, delegations and approvals are dated lines in the rig
    CULTURE.md "Owner decisions" section: check it before asking the owner, and add every new decision there.
 9. Operating rules (template CULTURE.md, "Operating rules"):
-   - close owner FYI rows only after `deliveryOutcome=posted`;
-   - decision requests use `--human-intent decision`;
+   - send owner FYIs with `--human-intent update`: they are closed automatically once posted (`agent-human-inbox-tidy`,
+     every 5 min), so don't reopen them. A row without `--human-intent` counts as a decision and is not auto-closed;
+   - decision requests use `--human-intent decision` and stay pending: Lee's Slack reply closes them, and parking or
+     claiming one makes that reply a no-op;
    - scratch checkouts go under `~/Projects/<P>.worktrees/`, never `/tmp`, removed in a trap;
    - judge proof as `rig proof judge <project-id>:<mission>/slices/<slice>`;
    - merge = cross-family review + live Jev act band + merge pinned to head.
