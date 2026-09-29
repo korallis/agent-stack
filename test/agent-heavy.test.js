@@ -30,6 +30,9 @@ case "$*" in
 esac
 `, { mode: 0o755 });
 
+// logger is faked too: a stop at the cap is logged for journalctl, and nothing reaches the real journal from tests
+fs.writeFileSync(join(bin, "logger"), `#!/usr/bin/env bash\nprintf '%s\\n' "logger $*" >> "${calls}"\n`, { mode: 0o755 });
+
 const heavy = (args, env = {}) => {
   fs.rmSync(calls, { force: true });
   const r = spawnSync(join(repo, "bin/agent-heavy"), args, { encoding: "utf8",
@@ -202,4 +205,17 @@ test("status: an unreadable lock table is unknown, and a lock held with no visib
   assert.match(status("browser", { AGENT_HEAVY_PROC: fake }).stdout, /^browser 1\/2  held  owner unknown \(lock \S+ is held but no holder is visible\)$/m);
   fs.writeFileSync(join(fake, "locks"), "");
   assert.match(status("browser", { AGENT_HEAVY_PROC: fake }).stdout, /^browser 1\/2  free$/m, "a readable table without the lock: free");
+});
+
+test("a stop at the runtime cap is logged with seat, class, cwd, command and runtime; nothing else is logged", () => {
+  const cwd = fs.mkdtempSync(join(root, "log-cwd-"));
+  fs.rmSync(calls, { force: true });
+  const r = spawnSync(join(repo, "bin/agent-heavy"), ["build", "--max-runtime", "1", "--", "sleep", "30"], { encoding: "utf8", cwd,
+    env: { PATH: `${bin}:/usr/bin:/bin`, XDG_RUNTIME_DIR: root, USER: "t", OPENRIG_SESSION_NAME: "impl-2@proj", CALLS: calls } });
+  assert.equal(r.status, 124);
+  const c = fs.readFileSync(calls, "utf8");
+  assert.match(c, new RegExp(`^logger -t agent-heavy stopped at the build max runtime: seat=impl-2@proj class=build slot=\\d runtime=[1-3]s max=1 cwd=${cwd.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")} cmd=sleep 30$`, "m"));
+  for (const args of [["build", "--", "true"], ["build", "--", "false"], ["build", "--", "npm", "start"]]) {
+    assert.doesNotMatch(heavy(args).c, /^logger/m, args.join(" "));
+  }
 });
