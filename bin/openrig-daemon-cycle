@@ -20,8 +20,11 @@ RIG=$(command -v rig) || { echo "openrig-daemon-cycle: rig not on PATH" >&2; exi
 say() { echo "openrig-daemon-cycle: $*"; logger -t openrig-daemon-cycle "$*" 2>/dev/null || true; }
 field() { jq -r ".$1 // empty" "$STATE" 2>/dev/null; }
 answers() { curl -fsS -m 3 -o /dev/null "http://127.0.0.1:$1/healthz" 2>/dev/null; }
-listening() { [ -n "$(ss -Hltn "sport = :$1" 2>/dev/null)" ]; }                   # any TCP listener on the port
-owners() { ss -Hltnp "sport = :$1" 2>/dev/null | grep -o 'pid=[0-9]*' | cut -d= -f2 | sort -u; }
+# Fail closed: if ss itself fails, the port counts as still listening (stop can't be proven) and as owned by nobody
+# (start can't be proven).
+listening() { local out; out=$(ss -Hltn "sport = :$1" 2>/dev/null) || return 0; [ -n "$out" ]; }
+owners() { local out; out=$(ss -Hltnp "sport = :$1" 2>/dev/null) || return 0; grep -o 'pid=[0-9]*' <<<"$out" | cut -d= -f2 | sort -u; }
+ss_note() { ss -Hltn "sport = :$1" >/dev/null 2>&1 || echo " (ss failed: listener $2)"; }
 command -v ss >/dev/null || { echo "openrig-daemon-cycle: needs ss (iproute2) to verify the listener" >&2; exit 1; }
 alive() { [ -n "$1" ] && kill -0 "$1" 2>/dev/null; }
 
@@ -31,7 +34,7 @@ if [ $do_stop = 1 ]; then
   "$RIG" daemon stop || say "rig daemon stop exited $? (checking what remains)"
   for _ in $(seq "$WAIT"); do alive "$pid" || listening "$port" || break; sleep 1; done
   if alive "$pid" || listening "$port"; then
-    say "STOP INCOMPLETE: $(alive "$pid" && echo "pid $pid still running")$(listening "$port" && echo " port $port still has a listener (pid $(owners "$port" | paste -sd, -))"). Not signalling it; inspect and use the operator procedure (docs/UPGRADE.md)."
+    say "STOP INCOMPLETE: $(alive "$pid" && echo "pid $pid still running")$(listening "$port" && echo " port $port still has a listener (pid $(owners "$port" | paste -sd, -))")$(ss_note "$port" "state unknown"). Not signalling it; inspect and use the operator procedure (docs/UPGRADE.md)."
     exit 1
   fi
   say "stopped: pid ${pid:-?} gone, port $port closed"
@@ -49,7 +52,7 @@ if [ $do_start = 1 ]; then
     if alive "$new" && [ "$new" != "$old" ] && [ -n "$port" ] && owners "$port" | grep -qx "$new" && answers "$port"; then break; fi
     new=""; sleep 1
   done
-  [ -n "$new" ] || { say "START FAILED: no new running daemon owns the listener and answers /healthz (daemon.json pid=$(field pid) port=$(field port); listener pid(s) $(owners "$(field port)" | paste -sd, -))"; exit 1; }
+  [ -n "$new" ] || { say "START FAILED: no new running daemon owns the listener and answers /healthz (daemon.json pid=$(field pid) port=$(field port); listener pid(s) $(owners "$(field port)" | paste -sd, -))$(ss_note "$(field port)" unverified)"; exit 1; }
   "$RIG" up kernel --existing >/dev/null 2>&1 || say "rig up kernel --existing returned non-zero (kernel may need attention)"
   say "running: pid $new owns port $port and answers /healthz; $("$RIG" --version 2>/dev/null)"
 fi

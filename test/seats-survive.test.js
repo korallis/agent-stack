@@ -92,6 +92,16 @@ test("daemon-cycle: a stale pid is not 'stopped' while any listener remains, eve
   assert.match(r.stdout, /STOP INCOMPLETE:  port 7999 still has a listener \(pid 4242\)\. Not signalling it/);
 });
 
+test("daemon-cycle: an ss failure fails closed on both stop and start (exit 1)", () => {
+  for (const args of [["--stop-only"], ["--start-only"]]) {
+    const w = cycleWorld();
+    write(join(w.bin, "ss"), `#!/usr/bin/env bash\nprintf '%s\\n' "ss $*" >> "$CALLS"\nexit 1\n`, 0o755);
+    const r = cycle(w, ...args);
+    assert.equal(r.status, 1, `${args}: ${r.stdout}`);
+    assert.match(r.stdout, /ss failed: listener (state unknown|unverified)/);
+  }
+});
+
 // ---- openrig-healthcheck -------------------------------------------------------------------------------
 function health({ healthy, cycleOk = true }) {
   const dir = fs.mkdtempSync(join(root, "health-")), bin = join(dir, ".local/bin");
@@ -124,8 +134,14 @@ function adoptWorld() {
   write(join(proc, "500/cgroup"), "0::/user.slice/app.slice/openrig.service\n");
   stub(bin, "tmux", "echo 500");
   stub(bin, "busctl", `echo "0::/user.slice/app.slice/openrig-tmux.scope" > ${proc}/500/cgroup`);
-  stub(bin, "systemctl", `if [ "$2" = show ]; then grep -h '^PartOf=' ${T}/"$3" | cut -d= -f2; fi; exit 0`);
-  return { dir, bin, T, proc };
+  const live = join(dir, "live"); fs.mkdirSync(live);
+  for (const u of ["a", "b", "c"]) fs.writeFileSync(join(live, `tmux-spawn-${u}.scope`), "openrig.service\n");
+  stub(bin, "systemctl", `case "$2" in
+  show) cat "${live}/$3" ;;
+  daemon-reload) [ -f "${dir}/reload-fails" ] && exit 1
+    for f in ${T}/tmux-spawn-*.scope; do (grep -h '^PartOf=' "$f" | cut -d= -f2) > "${live}/$(basename "$f")"; done ;;
+esac; exit 0`);
+  return { dir, bin, T, proc, live };
 }
 const adopt = (w, ...args) => spawnSync(join(repo, "bin/openrig-tmux-adopt"), args, { encoding: "utf8",
   env: { PATH: `${w.bin}:/usr/bin:/bin`, HOME: w.dir, OPENRIG_HOME: join(w.dir, "orhome"), XDG_RUNTIME_DIR: join(w.dir, "run"), AGENT_STACK_PROC: w.proc, CALLS: join(w.dir, "calls") } });
@@ -135,7 +151,7 @@ test("adopt: dry run changes nothing; --apply adopts the server, unbinds only it
   const before = fs.readFileSync(join(w.T, "tmux-spawn-a.scope"), "utf8");
   const dry = adopt(w);
   assert.equal(dry.status, 0);
-  assert.match(dry.stdout, /server pid 500 in openrig\.service; 2 pane scopes, 2 of them PartOf=openrig\.service[\s\S]*dry run/);
+  assert.match(dry.stdout, /server pid 500 in openrig\.service; 2 pane scopes: 2 live PartOf=openrig\.service, 0 unreadable, 2 still bound on disk[\s\S]*dry run/);
   assert.equal(calls(w.dir).match(/^(busctl|systemctl --user daemon-reload)/m), null);
   const r = adopt(w, "--apply");
   assert.equal(r.status, 0, r.stdout);
@@ -145,18 +161,34 @@ test("adopt: dry run changes nothing; --apply adopts the server, unbinds only it
   assert.match(fs.readFileSync(join(w.T, "tmux-spawn-c.scope"), "utf8"), /PartOf=openrig\.service/, "other servers' panes untouched");
   const [bk] = fs.readdirSync(join(w.dir, "orhome/backups"));
   assert.equal(fs.readFileSync(join(w.dir, "orhome/backups", bk, "tmux-spawn-a.scope"), "utf8"), before);
-  assert.match(r.stdout, /done: server in openrig-tmux\.scope; no pane scope is PartOf=openrig\.service/);
+  assert.match(r.stdout, /done: server pid 500 in openrig-tmux\.scope; 2 pane scopes: 0 live PartOf=openrig\.service, 0 unreadable, 0 still bound on disk/);
   assert.match(adopt(w).stdout, /already safe: nothing to do/);
   assert.doesNotMatch(calls(w.dir), /systemctl --user (stop|restart|kill)|^kill /m);
 });
 
-test("adopt: an unreadable live PartOf fails closed (exit 1), never 'done'", () => {
+test("adopt: an unreadable live PartOf fails closed (exit 1), never 'done' or 'already safe'", () => {
   const w = adoptWorld();
   write(join(w.bin, "systemctl"), `#!/usr/bin/env bash\nprintf '%s\\n' "systemctl $*" >> "$CALLS"\n[ "$2" = show ] && exit 1; exit 0\n`, 0o755);
   const r = adopt(w, "--apply");
   assert.equal(r.status, 1);
-  assert.match(r.stdout, /VERIFY FAILED: .* 2 could not be read\. Not safe yet\./);
-  assert.doesNotMatch(r.stdout, /done:/);
+  assert.match(r.stdout, /VERIFY FAILED: .* 2 unreadable.*Not safe yet\./);
+  assert.doesNotMatch(r.stdout + adopt(w).stdout, /done:|already safe/);
+});
+
+test("adopt: after a failed daemon-reload the live dependency still decides; a re-run of --apply reloads and finishes", () => {
+  const w = adoptWorld();
+  fs.writeFileSync(join(w.dir, "reload-fails"), "");
+  const first = adopt(w, "--apply");
+  assert.equal(first.status, 1);
+  assert.match(first.stdout, /daemon-reload failed; re-run --apply to retry/);
+  const dry = adopt(w); // files are already edited and the server moved, but the manager still holds PartOf
+  assert.doesNotMatch(dry.stdout, /already safe/);
+  assert.match(dry.stdout, /2 live PartOf=openrig\.service, 0 unreadable, 0 still bound on disk[\s\S]*dry run/);
+  fs.rmSync(join(w.dir, "reload-fails"));
+  const retry = adopt(w, "--apply");
+  assert.equal(retry.status, 0, retry.stdout);
+  assert.match(retry.stdout, /done: .*0 live PartOf=openrig\.service, 0 unreadable/);
+  assert.match(adopt(w).stdout, /already safe/);
 });
 
 // ---- units and the no-stop/restart rule ------------------------------------------------------------------

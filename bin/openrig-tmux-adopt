@@ -23,9 +23,19 @@ spid=$(tmux -L "$sock" display -p '#{pid}' 2>/dev/null)
 [ -n "$spid" ] || { say "no tmux server answers on socket '$sock'; nothing to do"; exit 0; }
 cg() { cut -d: -f3 "$PROC/$1/cgroup" 2>/dev/null | xargs -r basename; }
 panes() { grep -l "^Description=tmux child pane .* launched by process $spid$" "$T"/tmux-spawn-*.scope 2>/dev/null; }
-bound() { for f in $(panes); do grep -q "^PartOf=$from$" "$f" && echo "$f"; done; }
-say "server pid $spid in $(cg "$spid"); $(panes | wc -l) pane scopes, $(bound | wc -l) of them PartOf=$from"
-if [ "$(cg "$spid")" != "$from" ] && [ -z "$(bound)" ]; then say "already safe: nothing to do"; exit 0; fi
+ondisk() { for f in $(panes); do grep -q "^PartOf=$from$" "$f" && echo "$f"; done; }   # persisted definitions still bound
+# systemd's LIVE view decides safety, never the files alone: after a failed daemon-reload the files can be edited while
+# the manager still holds PartOf=<from>. A pane scope whose PartOf can't be read counts as bound (fail closed).
+live() { LIVE_BOUND=0 LIVE_UNREAD=0; local f po
+  for f in $(panes); do
+    if ! po=$(systemctl --user show "$(basename "$f")" -p PartOf --value 2>/dev/null); then LIVE_UNREAD=$((LIVE_UNREAD + 1))
+    elif [ "$po" = "$from" ]; then LIVE_BOUND=$((LIVE_BOUND + 1)); fi
+  done; }
+safe() { live; [ "$(cg "$spid")" != "$from" ] && [ $LIVE_BOUND = 0 ] && [ $LIVE_UNREAD = 0 ]; }
+state() { live; echo "server pid $spid in $(cg "$spid"); $(panes | wc -l) pane scopes: $LIVE_BOUND live PartOf=$from, $LIVE_UNREAD unreadable, $(ondisk | wc -l) still bound on disk"; }
+
+say "$(state)"
+if safe; then say "already safe: nothing to do"; exit 0; fi
 if [ $apply = 0 ]; then say "dry run: re-run with --apply to adopt the server into $scope and unbind the pane scopes"; exit 0; fi
 
 if [ "$(cg "$spid")" = "$from" ]; then
@@ -36,20 +46,16 @@ if [ "$(cg "$spid")" = "$from" ]; then
   [ "$(cg "$spid")" = "$scope" ] || { say "server is still in $(cg "$spid"); stopping before touching pane scopes"; exit 1; }
   say "server $spid adopted into $scope"
 fi
-list=$(bound)
+list=$(ondisk)
 if [ -n "$list" ]; then
   bk="${OPENRIG_HOME:-$HOME/.openrig}/backups/tmux-adopt-$(date +%Y%m%d%H%M%S)"; mkdir -p "$bk" && cp -p $list "$bk/" || { say "backup failed; nothing edited"; exit 1; }
   for f in $list; do sed -i "/^PartOf=$from$/d; /^Before=$from$/d" "$f"; done
-  systemctl --user daemon-reload || { say "daemon-reload failed (pane files backed up in $bk)"; exit 1; }
-  say "unbound $(echo "$list" | wc -l) pane scopes from $from (backup $bk)"
+  say "unbound $(echo "$list" | wc -l) pane scope files from $from (backup $bk)"
 fi
-# Verify against systemd's live view; a pane scope whose PartOf can't be read counts as still bound (fail closed).
-left=0 unread=0
-for f in $(panes); do
-  u=$(basename "$f")
-  if ! po=$(systemctl --user show "$u" -p PartOf --value 2>/dev/null); then unread=$((unread + 1)); continue; fi
-  [ "$po" = "$from" ] && left=$((left + 1))
-done
-[ "$(cg "$spid")" != "$from" ] && [ $left = 0 ] && [ $unread = 0 ] || {
-  say "VERIFY FAILED: server in $(cg "$spid"); $left pane scopes still PartOf=$from; $unread could not be read. Not safe yet."; exit 1; }
-say "done: server in $(cg "$spid"); no pane scope is PartOf=$from. Stopping $from can no longer stop a seat."
+# Reload whenever the manager may still hold the old dependency, including a retry after an earlier failed reload.
+live
+if [ -n "$list" ] || [ $LIVE_BOUND != 0 ] || [ $LIVE_UNREAD != 0 ]; then
+  systemctl --user daemon-reload || { say "daemon-reload failed; re-run --apply to retry (the edited files stay edited)"; exit 1; }
+fi
+safe || { say "VERIFY FAILED: $(state). Not safe yet."; exit 1; }
+say "done: $(state). Stopping $from can no longer stop a seat."
