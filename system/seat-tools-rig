@@ -4,21 +4,30 @@
 For `rig queue create | handoff | handoff-and-complete` this adds what OpenRig's project views join on
 (sdlc-conventions.md, DISPATCH DATA; scoped-operating-posture.md), so no seat has to remember it:
   - a `project:<id>` tag (the id from the seat's workspace catalog, $OPENRIG_WORK_ROOT/workspace.yaml);
-  - from a builder or test-author seat (impl-*, tests-*): `candidate:<HEAD sha>` of its worktree, the commit it hands on;
+  - on a handoff, the source row's tags. OpenRig replaces rather than merges tags whenever --tags is given, so without
+    --tags the successor keeps every source tag, and with --tags it still keeps the source's mission:/slice:
+    (unless the caller set their own);
+  - from a builder or test-author seat (impl-*, tests-*): `candidate:<sha>`, the commit it hands on. A handoff keeps
+    the source row's candidate. Otherwise HEAD is used only when run inside the seat's own worktree
+    (~/Projects/<P>.worktrees/<member>) whose branch names the row's slice (when one is known). Otherwise it's
+    skipped with a note, never guessed;
   - EC-3: the body line `worktree_path=<path>` when the destination seat has a worktree
     (~/Projects/<P>.worktrees/<member>). A handoff that keeps the source body gets that body re-sent
     with the destination's line, so the baton always names where the new owner works.
 Anything already present is left alone. Every other command passes through untouched.
+A rewritten body is piped to rig on stdin (--body-file -), so nothing is left behind in /tmp.
 """
-import json, os, re, subprocess, sys, tempfile
+import json, os, re, subprocess, sys
 
 REAL = os.path.expanduser("~/.local/bin/rig")
 args = sys.argv[1:]
 
 
-def run_real(a):
+def run_real(a, stdin_text=None):
     os.environ["AGENT_STACK_RIG_HELPER"] = "1"  # the ~/.local/bin/rig launcher routes seat queue writes here; don't loop
-    os.execv(REAL, [REAL] + a)
+    if stdin_text is None:
+        os.execv(REAL, [REAL] + a)
+    sys.exit(subprocess.run([REAL] + a, input=stdin_text, text=True).returncode)
 
 
 if len(args) < 2 or args[0] != "queue" or args[1] not in ("create", "handoff", "handoff-and-complete"):
@@ -52,32 +61,80 @@ def set_opt(name, value):
         args[i] = f"{name}={value}"
 
 
+def worktree_of(member):
+    """~/Projects/<P>.worktrees/<member> for a work root ~/Projects/<P>-work, if it exists."""
+    base = os.path.basename(work.rstrip("/"))
+    if not member or not base.endswith("-work"):
+        return None
+    cand = os.path.join(os.path.dirname(work.rstrip("/")), base[:-5] + ".worktrees", member)
+    return cand if os.path.isdir(cand) else None
+
+
+def git(*a):
+    r = subprocess.run(["git", *a], capture_output=True, text=True)
+    return r.stdout.strip() if r.returncode == 0 else ""
+
+
+def note(msg):
+    print(f"(seat rig helper: {msg})", file=sys.stderr)
+
+
+def has(tl, prefix):
+    return any(t.startswith(prefix) for t in tl)
+
+
+stdin_body = None
 try:
+    handoff = args[1] != "create"
+    source = None  # the row being handed off, read once (its tags and, when needed, its body)
+    if handoff and len(args) > 2 and not args[2].startswith("-"):
+        out = subprocess.run([REAL, "queue", "show", args[2], "--full", "--json"], capture_output=True, text=True)
+        source = json.loads(out.stdout) if out.returncode == 0 else None
+        if source is None:
+            note(f"could not read {args[2]}; its tags are not carried forward")
+    source_tags = [t for t in (source or {}).get("tags") or [] if isinstance(t, str) and t]
+
+    _, given = opt("--tags")
+    tl = [t for t in (given or "").split(",") if t]
+    if handoff and source_tags:
+        if given is None:
+            tl = list(source_tags)
+        else:
+            for prefix in ("mission:", "slice:"):
+                if not has(tl, prefix):
+                    tl += [t for t in source_tags if t.startswith(prefix)]
+    added = []
+
     # project tag
-    if project:
-        _, tags = opt("--tags")
-        tl = [t for t in (tags or "").split(",") if t]
-        if not any(t.startswith("project:") for t in tl):
-            set_opt("--tags", ",".join(tl + [f"project:{project}"]))
+    if project and not has(tl, "project:"):
+        added.append(f"project:{project}")
 
     # built-rung evidence: a builder's or test author's handoff names the candidate commit it froze
     # (OpenRig's execution ladder reads `candidate:<sha>` tags to derive built -> reviewed -> folded -> adopted)
-    me = os.environ.get("OPENRIG_SESSION_NAME", "")
-    if me.split("@")[0].startswith(("impl-", "tests-")):
-        _, tags = opt("--tags")
-        tl = [t for t in (tags or "").split(",") if t]
-        if not any(t.startswith("candidate:") for t in tl):
-            head = subprocess.run(["git", "rev-parse", "HEAD"], capture_output=True, text=True)
-            if head.returncode == 0 and head.stdout.strip():
-                set_opt("--tags", ",".join(tl + [f"candidate:{head.stdout.strip()}"]))
+    me = os.environ.get("OPENRIG_SESSION_NAME", "").split("@")[0]
+    if me.startswith(("impl-", "tests-")) and not has(tl, "candidate:"):
+        kept = [t for t in source_tags if t.startswith("candidate:")]
+        own = worktree_of(me)
+        top = git("rev-parse", "--show-toplevel")
+        slice_id = next((t.split(":", 1)[1] for t in tl + source_tags if t.startswith("slice:")), None)
+        branch = git("rev-parse", "--abbrev-ref", "HEAD")
+        if kept:
+            added += kept
+        elif not own or not top or os.path.realpath(top) != os.path.realpath(own):
+            note(f"no candidate: tag. Run this from your own worktree ({own or 'none found'}) to record the commit you hand on")
+        elif slice_id and slice_id not in branch:
+            note(f"no candidate: tag. Branch {branch or '?'} is not slice {slice_id}'s branch")
+        else:
+            sha = git("rev-parse", "HEAD")
+            if sha:
+                added.append(f"candidate:{sha}")
+
+    if added or (handoff and source_tags and tl != [t for t in (given or "").split(",") if t]):
+        set_opt("--tags", ",".join(tl + added))
 
     # EC-3 worktree_path for the destination seat
-    _, dest = opt("--to" if args[1] != "create" else "--destination")
-    wt = None
-    base = os.path.basename(work.rstrip("/"))
-    if dest and base.endswith("-work"):
-        cand = os.path.join(os.path.dirname(work.rstrip("/")), base[:-5] + ".worktrees", dest.split("@")[0])
-        wt = cand if os.path.isdir(cand) else None
+    _, dest = opt("--to" if handoff else "--destination")
+    wt = worktree_of(dest.split("@")[0]) if dest else None
     if wt:
         line = f"worktree_path={wt}"
         bi, body = opt("--body")
@@ -87,20 +144,18 @@ try:
             text = sys.stdin.read() if body == "-" else body
         elif bfile is not None:
             text = sys.stdin.read() if bfile == "-" else open(bfile).read()
-        elif args[1] != "create" and len(args) > 2 and not args[2].startswith("-"):
-            out = subprocess.run([REAL, "queue", "show", args[2], "--full", "--json"], capture_output=True, text=True)
-            text = json.loads(out.stdout).get("body") if out.returncode == 0 else None
+        elif source is not None:
+            text = source.get("body")
         if text is not None:  # always re-materialise: a pipe/stdin body can only be read once
             if not re.search(r"^worktree_path=", text, re.M):
                 text = text.rstrip("\n") + "\n\n" + line + "\n"
-            fd, path = tempfile.mkstemp(prefix="rig-body-", suffix=".md")
-            os.write(fd, text.encode()); os.close(fd)
             for flag in ("--body", "--body-file"):
                 i, _ = opt(flag)
                 if i is not None:
                     del args[i:i + (2 if args[i] == flag else 1)]
-            args.extend(["--body-file", path])
+            args.extend(["--body-file", "-"])
+            stdin_body = text
 except Exception as e:  # never block a queue write because of the helper
     print(f"(seat rig helper skipped: {e})", file=sys.stderr)
 
-run_real(args)
+run_real(args, stdin_body)
