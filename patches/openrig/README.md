@@ -7,10 +7,14 @@ all. A missing or failed patch gets a logger + desktop warning, and OpenRig keep
 Each patch is a `-p1` unified diff against the published `@openrig/cli@<version>` package root (`dist/`,
 `daemon/dist/`), one per upstream issue.
 
-| Patch | Upstream | Fix |
-|---|---|---|
-| `131-canonical-local-sender` | mvschwarz/openrig#131 | The daemon strips its own `@<selfHostId>` from a sender, so a claim under load no longer fails `claim_destination_mismatch` |
-| `132-project-scoped-proof` | mvschwarz/openrig#132 | `rig proof show/judge` accept `--project <id>` or `<id>:<scope>`, resolved through `workspace.yaml` |
+Patches exist for 0.5.17, 0.6.0 and 0.6.1.
+
+| Patch | Upstream | Fix | Drop it when |
+|---|---|---|---|
+| `131-canonical-local-sender` | issue #131, PR #135 (merged 2026-09-29 as a09388aa, after v0.6.1) | The daemon strips its own `@<selfHostId>` from a sender, so a claim under load no longer fails `claim_destination_mismatch` | at the first release that contains PR #135 |
+| `132-project-scoped-proof` | issue #132, PR #136 (open) | `rig proof show/judge` accept `--project <id>` or `<id>:<scope>`, resolved through `workspace.yaml` | at the first release that contains PR #136 |
+
+(Issues and PRs are in mvschwarz/openrig. To check a release: `git merge-base --is-ancestor <merge-sha> v<version>` in an openrig clone.)
 
 Check what is applied: `grep -c canonicalSenderSession ~/.local/share/agent-stack/openrig/lib/node_modules/@openrig/cli/daemon/dist/routes/require-sender-identity.js`
 (non-zero = #131 is in). Undo: `patch -p1 -R -d <package> < <patch>`.
