@@ -79,3 +79,31 @@ test("the W slice template carries the marker, the witness record and the requir
   assert.match(spec, /agent-witnessed \(YYYY-MM-DD, by <agent>, <model>\)/);
   assert.match(spec, /## Intent[\s\S]*Territory:[\s\S]*## Mini-requirements[\s\S]*## Proof contract/);
 });
+
+// Heavy runs (2026-09-29: load 101 on 32 cores from parallel suites stalled the OpenRig daemon).
+test("agent-project-check WARNs when the conventions don't require agent-heavy, OK once CULTURE.md does", () => {
+  const check = () => JSON.parse(spawnSync("python3", [join(repo, "bin/agent-project-check"), W, "--json"], { encoding: "utf8",
+    env: { PATH: `${bin}:${process.env.PATH}`, HOME: home, OPENRIG_URL: "http://127.0.0.1:9" }, timeout: 60000 }).stdout)
+    .find(x => x.check.startsWith("conventions require agent-heavy"));
+  const before = check();
+  assert.equal(before.level, "WARN");
+  assert.match(before.detail, /rig\/template\/CULTURE\.md/);
+  write(join(W, "rig/CULTURE.md"), fs.readFileSync(join(repo, "rig/template/CULTURE.md"), "utf8"));
+  try { assert.equal(check().level, "OK"); } finally { fs.rmSync(join(W, "rig"), { recursive: true, force: true }); }
+});
+
+test("templates require agent-heavy for heavy runs and forbid pattern pkill", () => {
+  const culture = fs.readFileSync(join(repo, "rig/template/CULTURE.md"), "utf8");
+  const rules = culture.split(/^## /m).find(s => s.startsWith("Operating rules"));
+  assert.match(rules, /`agent-heavy build -- <cmd>`/);
+  assert.match(rules, /`agent-heavy browser -- <cmd>`/);
+  assert.match(rules, /Never `pkill -f`\/`killall` by a pattern/);
+  const agents = fs.readFileSync(join(repo, "starter-kit/AGENTS.md"), "utf8");
+  for (const cmd of ["agent-heavy build -- npm test", "agent-heavy browser -- npx playwright test"]) assert.ok(agents.includes(cmd), cmd);
+  assert.doesNotMatch(agents, /`npx playwright test`/, "no bare playwright run left in How to run");
+  for (const role of ["implementer", "qa", "test-author", "integrator", "lead"]) {
+    const t = fs.readFileSync(join(repo, `rig/template/agents/${role}/guidance/role.md`), "utf8");
+    assert.match(t, /agent-heavy (build|browser) --/, role);
+    assert.doesNotMatch(t, /(?<!-- )`npx playwright test/, `${role}: bare playwright run`);
+  }
+});

@@ -5,7 +5,8 @@
 #           (socket-level, `ss`; any HTTP answer, even an error, is still a listener). Otherwise exit 1. Never signal a PID.
 # 2. start: `rig daemon start` in its own transient scope (systemd-run --user --scope), using openrig.service's
 #           Environment, so the daemon is not inside the caller's cgroup (a seat's pane, or a oneshot service that
-#           kills what it leaves behind). Then `rig up kernel --existing` (a no-op when running), as the unit does at boot.
+#           kills what it leaves behind), at CPUWeight=1000 so load can't starve it.
+#           Then `rig up kernel --existing` (a no-op when running), as the unit does at boot.
 # 3. verify: daemon.json names a new, running pid; that pid owns the listener (`ss -p`); and /healthz answers.
 #           Exit 0 only then.
 # Seats live in the tmux server (openrig-tmux.service), which none of this touches.
@@ -48,7 +49,9 @@ if [ $do_start = 1 ]; then
   # the daemon then uses config.json (install.sh sets 15s / 400 lines).
   unset_env=(-u OPENRIG_TRANSCRIPTS_LINES -u OPENRIG_TRANSCRIPTS_POLL_INTERVAL_SECONDS -u RIGGED_TRANSCRIPTS_LINES -u RIGGED_TRANSCRIPTS_POLL_INTERVAL_SECONDS)
   say "starting daemon in its own scope"
-  (cd "$HOME" && systemd-run --user --scope --collect --quiet --unit="openrig-daemon-$(date +%s)" \
+  # CPUWeight 1000 (default 100): a burst of builds/tests can't starve the daemon. IOWeight only takes effect if the
+  # user manager has the io controller delegated (it doesn't by default; docs/UPGRADE.md).
+  (cd "$HOME" && systemd-run --user --scope --collect --quiet --unit="openrig-daemon-$(date +%s)" --property=CPUWeight=1000 --property=IOWeight=1000 \
      --description="OpenRig daemon (openrig-daemon-cycle: $reason)" env "${unset_env[@]}" "${env[@]}" "$RIG" daemon start) || { say "rig daemon start failed"; exit 1; }
   old=${pid:-}; new="" port=""
   for _ in $(seq "$WAIT"); do

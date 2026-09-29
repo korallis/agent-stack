@@ -2,22 +2,48 @@
 # Restart the OpenRig daemon if /healthz keeps failing. Seats are never touched: they live in openrig-tmux.service's tmux
 # server, and the daemon is cycled with openrig-daemon-cycle (rig daemon stop, verified gone, rig daemon start in its own
 # scope), never by stopping or restarting openrig.service.
-# Load-tolerant (hot-tune 2026-09-29 after a restart loop): a busy daemon answers slowly, and a fresh one is flooded by
-# every seat reconnecting, so a short timeout turned load into repeated restarts. 3 misses at 15s each, and no second
-# cycle within COOLDOWN seconds of the last one (alert instead).
+# Load-tolerant (2026-09-29, after a restart loop): a busy daemon answers slowly, and a fresh one is flooded by every
+# seat reconnecting, so a short timeout turned load into repeated restarts. So: 3 misses at 15s each, 10s apart, and
+# after a cycle a COOLDOWN in which a merely SLOW daemon is left alone (alert only). A HUNG daemon is cycled even inside
+# the cooldown; hung means either of:
+#   - its listener's accept queue is at least QUEUE_PCT% of the backlog (ss Recv-Q vs Send-Q): nothing is being accepted;
+#   - its main thread used no CPU across the probe window (stuck in a syscall, e.g. a pipe read that never returns).
+# Every cycle here counts toward a cap of MAX_CYCLES per WINDOW seconds; past it, alert only.
 export PATH=$HOME/.local/bin:$HOME/.local/share/mise/shims:/usr/local/bin:/usr/bin:/bin
-COOLDOWN=600
-stamp=${OPENRIG_HOME:-$HOME/.openrig}/state/healthcheck-last-cycle
-for i in 1 2 3; do curl -fsS -m 15 -o /dev/null http://127.0.0.1:7433/healthz && exit 0; [ $i -lt 3 ] && sleep 10; done
-last=$(cat "$stamp" 2>/dev/null || echo 0); now=$(date +%s)
-if [ $((now - last)) -lt $COOLDOWN ]; then
-  logger -t openrig-healthcheck "healthz failed 3x but the daemon was cycled $((now - last))s ago; not cycling again (cooldown ${COOLDOWN}s)"
-  notify-send --app-name="Agent stack" --urgency=critical "OpenRig daemon unresponsive" "Cycled $((now - last))s ago and still failing; not restarting again inside the cooldown. Check load (rig status)." 2>/dev/null || true
+COOLDOWN=600 MAX_CYCLES=3 WINDOW=1800 QUEUE_PCT=80 PORT=7433
+state=${OPENRIG_HOME:-$HOME/.openrig}
+stamp=$state/state/healthcheck-last-cycle history=$state/state/healthcheck-cycles
+PROC=${AGENT_STACK_PROC:-/proc}  # tests point this at a fake process table
+alert() { logger -t openrig-healthcheck "$1"; notify-send --app-name="Agent stack" --urgency=critical "$2" "$3" 2>/dev/null || true; }
+pid=$(jq -r '.pid // empty' "$state/daemon.json" 2>/dev/null)
+# utime+stime of the main thread (fields 14 and 15; counted after "pid (comm) " because comm may hold spaces)
+ticks() { [ -n "$pid" ] && sed 's/^.*) //' "$PROC/$pid/task/$pid/stat" 2>/dev/null | awk '{print $12 + $13}'; }
+before=$(ticks)
+for i in 1 2 3; do curl -fsS -m 15 -o /dev/null "http://127.0.0.1:$PORT/healthz" && exit 0; [ $i -lt 3 ] && sleep 10; done
+after=$(ticks)
+
+hung=""
+full=$(ss -Hltn "sport = :$PORT" 2>/dev/null | awk -v pct="$QUEUE_PCT" '$3 > 0 && $2 * 100 >= $3 * pct {print $2 "/" $3; exit}')
+[ -n "$full" ] && hung="accept queue $full"
+[ -n "$before" ] && [ "$before" = "$after" ] && hung="${hung:+$hung, }main thread made no progress (pid $pid)"
+
+now=$(date +%s) last=$(cat "$stamp" 2>/dev/null || echo 0)
+recent=$(awk -v t=$((now - WINDOW)) '$1 > t' "$history" 2>/dev/null | wc -l)
+if [ $((now - last)) -lt $COOLDOWN ] && [ -z "$hung" ]; then
+  alert "healthz failed 3x but the daemon was cycled $((now - last))s ago and is slow, not hung; not cycling again (cooldown ${COOLDOWN}s)" \
+    "OpenRig daemon unresponsive" "Cycled $((now - last))s ago and still failing, but still accepting; not restarting inside the cooldown. Check load (rig status)."
   exit 1
 fi
+if [ "$recent" -ge $MAX_CYCLES ]; then
+  alert "healthz failed 3x${hung:+ (hung: $hung)}; already cycled $recent times in ${WINDOW}s; not cycling again (cap $MAX_CYCLES)" \
+    "OpenRig daemon keeps failing" "Cycled $recent times in $((WINDOW / 60)) min and still failing${hung:+ ($hung)}. Not restarting again; needs a look (load, rig status)."
+  exit 1
+fi
+reason="health check: healthz failed 3x${hung:+; hung: $hung}"
 mkdir -p "$(dirname "$stamp")"; echo "$now" > "$stamp"
-logger -t openrig-healthcheck "healthz failed 3x; cycling the daemon with openrig-daemon-cycle"
-out=$(openrig-daemon-cycle --reason "health check: healthz failed 3x" 2>&1) && exit 0
+{ awk -v t=$((now - WINDOW)) '$1 > t' "$history" 2>/dev/null; echo "$now"; } > "$history.new" && mv "$history.new" "$history"
+logger -t openrig-healthcheck "$reason; cycling the daemon with openrig-daemon-cycle"
+out=$(openrig-daemon-cycle --reason "$reason" 2>&1) && exit 0
 logger -t openrig-healthcheck "daemon cycle failed: $(tail -n1 <<<"$out")"
 notify-send --app-name="Agent stack" --urgency=critical "OpenRig daemon down and not restarted" "$(tail -n1 <<<"$out") (seats keep running; see docs/UPGRADE.md)" 2>/dev/null || true
 exit 1

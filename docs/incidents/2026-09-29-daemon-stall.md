@@ -4,8 +4,9 @@ Read-only. Nothing on the live host was changed.
 
 ## Answer
 There is **no synchronous call site behind it**. The main thread was saturated, not stopped, by the fork cost of
-**asynchronous** child processes: tmux `capture-pane` for transcript rotation, plus `ps` and tmux calls from the other
-probes. On Linux, libuv's `uv_spawn` forks, and the parent then does a blocking `read()` on a CLOEXEC pipe until the
+**asynchronous** child processes: tmux captures and reads plus `ps` from the daemon's background sweeps. By the
+operator's profile, 96% of daemon CPU was in `child_process.spawn`: structural poll 30%, identity reconciler 27%,
+seat-activity 19%, transcripts 16%. On Linux, libuv's `uv_spawn` forks, and the parent then does a blocking `read()` on a CLOEXEC pipe until the
 child has exec'd. That is `anon_pipe_read`, and it happens for `execFile`/`spawn` too, not only `*Sync`. The fork's
 cost grows with the parent's RSS, and more so under swap.
 
@@ -39,6 +40,53 @@ cost grows with the parent's RSS, and more so under swap.
    - None fired slowly in the window. A Node repro confirms that `*Sync` with a timeout returns at the timeout even if
      a grandchild holds the pipe.
 
+## Operator CPU profile and the follow-up fix (patch 136)
+- The operator's 19:05Z CPU profile of the daemon: **96% in `child_process.spawn`** (via the tmux adapter).
+  - structural activity poll: 30%, including patch 135's ANSI re-capture at 7.6%;
+  - seat identity reconciler: 27%;
+  - seat-activity (window_activity) sampler: 19%;
+  - transcript rotation: 16%.
+- So transcripts alone were not the cause: the stall recurred at 19:03Z with transcripts already at 400/15.
+- The operator hot-patched the live dist (backups `~/.local/share/agent-stack/backups/*.pre-interval`):
+  - `DEFAULT_STRUCTURAL_POLL_INTERVAL_MS` 1000 → 5000;
+  - `DEFAULT_STRUCTURAL_STALE_MS` 5000 → 25000;
+  - `DEFAULT_IDENTITY_POLL_INTERVAL_MS` 5000 → 15000.
+  Daemon load went from **100% to 25–31%**. The seat-activity sampler (1s, feeds the debounce windows) was left alone
+  on purpose.
+- Spawns per sweep, for scale:
+  - the structural sweep captures every running seat (a second, ANSI capture for unclassified Codex panes);
+  - the identity sweep runs `tmux list-sessions`, two whole-host `ps` snapshots, and tmux pane pid/command reads per
+    seat: ~200 spawns on an 87-seat host.
+- **The identity sweep had no single-flight guard** (`setInterval(() => void reconcileAll())`). Once `ps` took longer
+  than the interval under load (26.5s at 18:44Z in the slow-ops log), sweeps overlapped and multiplied the spawns.
+- Patch 136 (0.6.1; source korallis/openrig `local-patch-0.6.1` 9674d254) carries the three values and adds the
+  single-flight guard. A failed sweep releases the guard, and its rejection still surfaces exactly as before.
+
+What else depended on the old cadence (audited in the 0.6.1 source):
+- The structural cache has one reader, `attachAgentActivity` (the `rig ps` / sessions ACTIVITY column).
+  - It is consulted only when no fresh positive hook exists, and live window motion still upgrades it to running.
+  - A verdict is refreshed every 5s. The 25s stale window matters only if the poller stops, and it keeps its old 5x
+    ratio to the poll.
+- Patch 135's idle-composer path runs inside the same sweep, so it now updates every 5s too: an idle Codex seat may read
+  "running" for up to ~5s after it stops.
+- The seat-activity arbitration (`HOOK_AUTHORITY_WINDOW_MS` 15s, `CROSS_RUNG_CONTRADICTION_WINDOW_MS` 10s, idle debounce
+  2 ticks / 2.5s) reads the hook and window-sampling rungs only. These are fed by hooks and the unchanged 1Hz sampler,
+  never by the structural cache.
+- The identity verdicts have no freshness window. Nothing reads them on a timer, so 15s only delays noticing a
+  squatted or dead pane by up to 10s more.
+- Tests: `packages/daemon/test/poll-cadence.test.ts`, plus the structural, identity, activity and idle-composer suites
+  (52/52). The full daemon suite has 72 pre-existing failures on this host. With the patch there were 77. The 5 extra
+  are timing-sensitive tests run under load 60+: 4 pass when rerun on their own, and the fifth fails the same way in
+  the baseline.
+
+Deploying 136 on the live, hand-patched install:
+1. Restore the two `*.pre-interval` backups over `daemon/dist/domain/seat-{structural-activity-service,identity-reconciler}.js`.
+   They equal the 0.6.1 tarball plus 131–135.
+2. Run `openrig-apply-patches`. As is, 136 would be reported failed, because neither forward nor reverse applies over
+   the hand edit.
+3. `openrig-daemon-cycle` to load the single-flight guard.
+Simulated on a copy of the live files: the result is byte-identical to a fresh install with 131–136.
+
 ## Live finding: the 15s/400 tune was undone
 - `rig daemon start` resolves `transcripts.*` env-first, then `config.json`, and **re-exports the result**
   (`dist/daemon-lifecycle.js:310`, `commands/daemon.js:196`).
@@ -50,6 +98,24 @@ cost grows with the parent's RSS, and more so under swap.
 - The healthcheck's own cycles run under systemd, with a clean environment, so they were not affected.
 - Fix (this PR): `openrig-daemon-cycle` starts the daemon with the four transcript variables unset (`env -u`), so
   `config.json` (400/15, set by install.sh) wins.
+
+## Load from outside the daemon (19:20Z)
+Host load reached 101 on 32 cores. The biggest consumers were full daemon vitest runs from openrig-fix (mine) plus
+MTA's tsc/eslint/vitest across worktrees. That starved the daemon again. Changes in this PR:
+- the daemon runs at `CPUWeight=1000` (`openrig-daemon-cycle`'s scope and `openrig.service`). IOWeight is set too, but
+  the user manager here delegates only `cpu memory pids`, so it takes effect only after the root step in docs/UPGRADE.md;
+- every seat's rules (rig template CULTURE, starter-kit AGENTS, role guidance, skills) now require
+  `agent-heavy build|browser --` for heavy runs and forbid pattern `pkill`; `agent-project-check` WARNs when a
+  project's conventions lack the rule.
+
+## Health check: slow versus hung
+The 600s cooldown left a genuinely stalled daemon stalled (repeated cooldown skips 19:05–19:22Z). The health check now
+cycles inside the cooldown when the daemon is hung:
+- the listener's accept queue is at least 80% of the backlog; or
+- its main thread gained no CPU time across the ~50s of probes.
+
+A daemon that is merely slow (still accepting, main thread busy) still waits the cooldown out. At most 3 health-check
+cycles in 30 minutes, then alerts only.
 
 ## Upstream issue (recommended), draft
 **Title:** Transcript rotation saturates the daemon event loop at scale (spawn cost ~ RSS); transcript config leaks into seat env
@@ -67,5 +133,13 @@ cost grows with the parent's RSS, and more so under swap.
 2. `rig daemon start` exports resolved `OPENRIG_TRANSCRIPTS_*` into the daemon's environment. That environment reaches
    every seat, so a restart launched from a seat pins the old values over `config.json`. Suggest not exporting defaults,
    or not propagating these variables to seat processes.
-3. Minor: `skill-catalog.js` git `execFileSync` calls have no timeout; give them the same bound as the other sync
+3. The background sweeps' cadence is too aggressive for large fleets. The structural activity poll captures every seat
+   every 1s. The seat identity reconciler runs about 200 tmux/ps spawns every 5s, with no single-flight, so slow `ps`
+   stacks sweeps. Proposals:
+   - scale the cadence with fleet size, or batch the reads into one tmux call (`list-panes -a -F` covers pane
+     pid/command for every seat at once);
+   - add single-flight to the identity sweep;
+   - skip the ANSI re-capture when the plain capture is unchanged.
+   Operator profile: 96% of daemon CPU in `child_process.spawn`; load 100% → 25–31% with 5s/25s/15s.
+4. Minor: `skill-catalog.js` git `execFileSync` calls have no timeout; give them the same bound as the other sync
    sites.
