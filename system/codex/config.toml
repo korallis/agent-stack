@@ -36,6 +36,11 @@ command = "@HOME@/.local/bin/jev-mcp"
 # Jev decisions are advisory and read-only; pre-approve so non-interactive/rig Codex seats can call them.
 default_tools_approval_mode = "approve"
 
+[mcp_servers.Neon]
+# Neon MCP (OAuth: Codex asks for Neon sign-in on first use). Agents prefer the neon CLI.
+type = "http"
+url = "https://mcp.neon.tech/mcp"
+
 # Real browser for hands-on QA and user-journey checks.
 [mcp_servers.playwright]
 command = "npx"

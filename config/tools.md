@@ -14,6 +14,7 @@ servers marked "latest" track upstream, the rest are pinned in `config/versions.
 | Node.js | 26.8.2 global, 22 for OpenRig, 24 for Jev | Runtimes | mise |
 | ripgrep, fd | system packages (validated 15.2.0, 10.5.0) | Fast, `.gitignore`-aware search for agents | your package manager |
 | TOON CLI (`toon`) | latest (validated 4.1.1) | Compacts table-shaped JSON before it goes into prompts | `npm i -g @toon-format/cli` |
+| Neon CLI (`neon`) | latest (validated 6.3.0) | Neon database branches (one per PR), inspection, restore. Sign in once with `neon login` | `npm i -g neon` |
 | Playwright + Chromium | latest (validated 1.63.0) | Real browser for user-journey tests and hands-on QA | `npx playwright install chromium` |
 
 ## Plugins and skills (loaded into every seat)
@@ -24,6 +25,7 @@ servers marked "latest" track upstream, the rest are pinned in `config/versions.
 | Superpowers | Codex | `superpowers@openai-api-curated` | The same method for GPT seats |
 | TypeSafe skill | Claude Code plugin `typesafe@typesafe-ai` 0.5.7; Codex `~/.agents/skills/typesafe-ai` | 0.5.7 | How to use Jev decisions well |
 | agent-stack skill | both (`skills/agent-stack`, linked) | this repo | How this setup works: seats, pool, Jev |
+| Neon skills (`neon`, `neon-postgres`, `neon-postgres-branches`, `neon-postgres-egress-optimizer`) | both (`~/.agents/skills`, linked into `~/.claude/skills`) | latest (`neon skills update`) | How to use Neon Postgres well: connections, migrations, branch-per-PR testing, cost |
 | openrig-skills | both (copied from the OpenRig install) | OpenRig 0.5.17 | Operating OpenRig: recovery, handover, queue triage |
 
 ## MCP servers (tools the agents can call)
@@ -32,6 +34,7 @@ servers marked "latest" track upstream, the rest are pinned in `config/versions.
 |---|---|---|
 | `jev` | Claude Code (user scope) and Codex | Typed decisions: routing, triage, merge gate (`jev/`, needs a TypeSafe key) |
 | `playwright` | Claude Code (user scope) and Codex | Drives a real headless browser: QA seats use the app like a person |
+| `Neon` | Claude Code (user scope) and Codex | Neon's hosted MCP (OAuth). Optional: agents use the `neon` CLI first |
 
 ## Background services (systemd user units)
 
@@ -47,5 +50,5 @@ servers marked "latest" track upstream, the rest are pinned in `config/versions.
 
 ## Accounts you add yourself
 
-`gh auth login`, one `agent-login claude|codex|kimi <label>` per subscription, and a TypeSafe key in
+`gh auth login`, `neon login`, one `agent-login claude|codex|kimi <label>` per subscription, and a TypeSafe key in
 `~/.config/agent-stack/secrets/typesafe.env`. None of these are ever stored in this repo.

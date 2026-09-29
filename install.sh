@@ -143,11 +143,18 @@ if [ $CHECK = 0 ]; then
   [ -n "$cr" ] && pw+=(--executable-path "$cr")   # use the system browser (Playwright's default Chrome channel is often absent on Linux)
   claude mcp get playwright >/dev/null 2>&1 || claude mcp add --scope user playwright -- "${pw[@]}" >/dev/null
   command -v toon >/dev/null || npm install -g @toon-format/cli >/dev/null 2>&1
+  # Neon: CLI (preferred by agents), the Postgres/branching skills, and the OAuth MCP server for Claude Code.
+  # Codex's Neon MCP entry comes from system/codex/config.toml (neon's own installer would rewrite that file).
+  command -v neon >/dev/null || npm install -g neon >/dev/null 2>&1
+  command -v neon >/dev/null && neon skills --global -y -a claude-code -a codex \
+    -s neon -s neon-postgres -s neon-postgres-branches -s neon-postgres-egress-optimizer >/dev/null 2>&1 || todo "neon skills"
+  claude mcp get Neon >/dev/null 2>&1 || claude mcp add --scope user --transport http Neon https://mcp.neon.tech/mcp >/dev/null
   npx -y playwright@latest install chromium >/dev/null 2>&1 || todo "playwright chromium"
 fi
 claude plugin list 2>/dev/null | grep -q superpowers && ok "Superpowers (Claude Code)" || todo "Superpowers (Claude Code)"
 codex plugin list 2>/dev/null | grep -q "superpowers.*installed" && ok "Superpowers (Codex)" || todo "Superpowers (Codex)"
 command -v toon >/dev/null && ok "toon CLI" || todo "toon CLI"
+command -v neon >/dev/null && ok "Neon CLI + skills" || todo "Neon CLI (npm i -g neon; then neon login)"
 
 step "Next, by hand (logins cannot be scripted)"
 cat <<EOF
