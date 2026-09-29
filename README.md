@@ -137,6 +137,7 @@ rig ps --nodes --rig <rig>               # what each seat in a team is doing
 rig send <seat>@<rig> "message"          # talk to a seat, e.g. the lead
 rig queue list -a -A                     # who owns which task
 agent-project-check <Project>            # is a project wired correctly (waves, slices, tags, skills)?
+agent-refresh-guidance <Project> --apply # after editing a rig's CULTURE.md: update running seats' instructions
 rig down <rig> --snapshot                # stop a team (resume later with: rig up <rig>)
 agent-proxy-status                       # how the subscription pool is doing
 claude-pool                              # your own Claude Code session through the pool (incl. Kimi models)
@@ -209,6 +210,8 @@ with `agent-login` and the pool uses it straight away.
 | Daemon crash on Node 24 (better-sqlite3 teardown) | native module ABI | OpenRig runs on Node 22 LTS |
 | Seats lacked OpenRig's own skills (mission/slice procedure, handoffs) | the specs' `openrig-core` plugin is not loaded; seats start without `--plugin-dir` | install.sh symlinks OpenRig's 19 core skills into both harnesses |
 | Project views missed most queue rows | rows lacked `project:<id>` and `worktree_path=` | the `rig` launcher sends seat `queue create/handoff` through `seat-tools/rig`, which adds both |
+| Running seats kept old team rules; two seats lost their OpenRig instructions | managed blocks are written at launch; a git reset/merge of AGENTS.md wipes them | `agent-refresh-guidance <P> --apply` refreshes/restores them; a repo pre-commit hook stops them being committed |
+| `rig spec audit`: no start-up context | team specs had no rig-level startup file | `rig/startup/context.md` (identity, environment, system check, skills) in every team spec |
 
 After an OpenRig upgrade run `openrig-upgrade <version>` and re-check these.
 

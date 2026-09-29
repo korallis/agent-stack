@@ -192,6 +192,50 @@ if recent:
     rep("OK" if len(scoped) >= 0.8 * len(recent) else "WARN", "queue rows carry mission:/slice: tags", pct(scoped))
     rep("OK" if len(wtp) >= 0.8 * len(recent) else "WARN", "queue rows carry worktree_path= (EC-3)", pct(wtp))
 
+# ---- 5b. seats: spec audit, live conformance, instruction blocks, role skills, commit guard ----------------
+if specs:
+    import yaml
+    sp = specs[0]
+    au = subprocess.run(["rig", "spec", "audit", sp], capture_output=True, text=True).stdout
+    rep("OK" if "audit clean" in au else "WARN", "rig spec audit (OpenRig authoring check) is clean",
+        au.strip().splitlines()[1].strip() if "audit clean" not in au and len(au.strip().splitlines()) > 1 else "")
+    if running:
+        dc = subprocess.run(["rig", "doctor", "--spec", sp], capture_output=True, text=True).stdout
+        rep("OK" if "[OK] spec_live_conformance" in dc else "FAIL", "running rig matches its spec (rig doctor --spec)")
+    d = yaml.safe_load(read(sp))
+    culture = (read(f"{W}/rig/CULTURE.md") or "").strip()
+    cfile = ((d.get("managed_blocks") or {}).get("claude-code")) or "CLAUDE.md"
+    startup_md = [os.path.basename(f["path"]) for f in ((d.get("startup") or {}).get("files") or [])
+                  if f.get("delivery_hint") == "guidance_merge"]
+    noblocks, stale, noskills = [], [], []
+    for pod in d.get("pods", []):
+        for mem in pod.get("members", []):
+            cwd, rt = mem.get("cwd"), mem.get("runtime")
+            seat = os.path.basename(cwd or "")
+            f = os.path.join(cwd or "", "AGENTS.md" if rt == "codex" else cfile)
+            txt = read(f) or ""
+            if "OpenRig MANAGED BLOCK" not in txt:
+                noblocks.append(seat); continue
+            m = re.search(r"BEGIN OpenRig MANAGED BLOCK: CULTURE\.md -->\n(.*?)\n<!-- END", txt, re.S)
+            if (m and m.group(1).strip() != culture) or any(f"MANAGED BLOCK: {n}" not in txt for n in startup_md):
+                stale.append(seat)
+            ref = (mem.get("agent_ref") or "").replace("path:", "")
+            ay = yaml.safe_load(read(os.path.join(ref, "agent.yaml")) or "{}") or {}
+            prof = (ay.get("profiles") or {}).get(mem.get("profile") or "default") or {}
+            want = [x.split(":")[-1] for x in ((prof.get("uses") or {}).get("skills") or [])]
+            sd = os.path.join(cwd or "", ".agents/skills" if rt == "codex" else ".claude/skills")
+            miss = [x for x in want if not os.path.exists(os.path.join(sd, x, "SKILL.md"))]
+            if miss:
+                noskills.append(f"{seat}:{'/'.join(miss)}")
+    rep("OK" if not noblocks else "FAIL", "every seat's instruction file has its OpenRig blocks",
+        "run agent-refresh-guidance --apply: " + ", ".join(noblocks) if noblocks else "")
+    rep("OK" if not stale else "WARN", "seat instructions carry the current CULTURE.md and startup files",
+        "run agent-refresh-guidance --apply: " + ", ".join(stale[:6]) if stale else "")
+    rep("OK" if not noskills else "WARN", "every seat has the skills its role declares", ", ".join(noskills[:6]))
+hook = read(f"{REPO}/.git/hooks/pre-commit") or ""
+rep("OK" if "OpenRig MANAGED BLOCK" in hook else "FAIL", "repo pre-commit hook refuses OpenRig seat blocks",
+    "install system/git-hooks/pre-commit" if "OpenRig MANAGED BLOCK" not in hook else "")
+
 # ---- 5. machine: seat skills + seat tools -------------------------------------------------------------
 for d in (f"{HOME}/.claude/skills", f"{HOME}/.agents/skills"):
     have = all(os.path.exists(f"{d}/{s}/SKILL.md") for s in ("mission-slice-sop", "queue-handoff", "openrig-project-setup"))

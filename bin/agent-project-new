@@ -37,6 +37,7 @@ if [ $DRY = 0 ]; then
   for f in AGENTS.md docs/PLAN.md; do [ -f "$R/$f" ] && sed -i "s#@PROJECT@#$P#g; s#@HELDOUT@#$H#g; s#@COMMIT_IDENTITY@#$ID#g" "$R/$f"; done
   [ -d "$R/.git" ] || { git -C "$R" init -q -b main; git -C "$R" add -A; git -C "$R" commit -qm "chore: starter kit"; }
   ex="$R/.git/info/exclude"; mkdir -p "$(dirname "$ex")"
+  install -m 755 "$AS/system/git-hooks/pre-commit" "$R/.git/hooks/pre-commit"   # never commit OpenRig seat blocks
   for e in /.codex/ /.claude/settings.local.json /.claude/skills/ /.claude/plugins/ /.openrig/ /.mcp.json /CLAUDE.local.md /.agents/skills/; do
     grep -qxF "$e" "$ex" 2>/dev/null || echo "$e" >> "$ex"; done
 fi
@@ -73,6 +74,8 @@ run mkdir -p "$W/rig"
 if [ $DRY = 0 ]; then
   for f in "$TEAM.yaml" CULTURE.md merge-sweep.watchdog.yaml daily-summary.watchdog.yaml; do
     [ -f "$W/rig/$f" ] || cp "$AS/rig/template/$f" "$W/rig/$f"; done
+  mkdir -p "$W/rig/startup"
+  [ -f "$W/rig/startup/context.md" ] || sed "s#@REPO@#$R#g; s#@WT@#$WT#g" "$AS/rig/template/startup/context.md" > "$W/rig/startup/context.md"
   sed -i "s#@RIG@#$RIG#g; s#@REPO@#$R#g; s#@WT@#$WT#g; s#@AGENT_STACK@#$AS#g; s#@LEAD_SEAT@#$LEAD#g; s#@MERGE_SEAT@#$MERGE#g" \
     "$W/rig/$TEAM.yaml" "$W/rig/merge-sweep.watchdog.yaml" "$W/rig/daily-summary.watchdog.yaml"
   grep -q "^## $P specifics" "$W/rig/CULTURE.md" || printf '\n## %s specifics\n- (status names, commit identity, repo procedures; standing owner approvals and delegations go here)\n' "$P" >> "$W/rig/CULTURE.md"

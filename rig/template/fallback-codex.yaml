@@ -19,6 +19,13 @@ workspace:
       kind: project
   default_repo: "@RIG@"
 
+startup:
+  files:
+    - path: startup/context.md   # identity, environment, system check, skills to load (rig spec audit: startup context)
+      delivery_hint: guidance_merge
+      required: true
+  actions: []
+
 pods:
   - id: coord
     label: "Coordination"

@@ -12,7 +12,7 @@ imports:
 profiles:
   default:
     uses:
-      skills: [systematic-debugging, verification-before-completion]
+      skills: [systematic-debugging, verification-before-completion, dogfood]
       guidance: []
       subagents: []
       plugins: [shared:openrig-core]

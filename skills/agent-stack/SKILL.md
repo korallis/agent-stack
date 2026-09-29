@@ -6,6 +6,14 @@ description: >
   recovery, heavy builds), when a bounded semantic decision (classify, select from a candidate list,
   rubric score, yes/no check) could replace a general model call, or when planning where TypeSafe/Jev
   belongs inside an application being built.
+metadata:
+  openrig:
+    owner: agent-stack
+    source_ref: https://github.com/korallis/agent-stack/tree/main/skills/agent-stack
+    version: "2026-09-29"
+    stage: shipped
+    last_verified: "2026-09-29"
+    source_evidence: "install.sh --check and agent-project-check on MTA and HC-Prime; OpenRig 0.5.17 references"
 ---
 
 # Agent stack

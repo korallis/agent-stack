@@ -5,19 +5,30 @@ description: >
   starter kit, workspace (project.yaml, missions, slices), rig, worktrees, wave maps, queue tagging and the
   seat skills. Use when starting a new project or rig, adding a project, when a rig looks idle or its TUI
   Project view is empty/wrong, when waves or missions seem missing, or before dispatching builders wide.
+metadata:
+  openrig:
+    owner: agent-stack
+    source_ref: https://github.com/korallis/agent-stack/tree/main/skills/openrig-project-setup
+    version: "2026-09-29"
+    stage: shipped
+    last_verified: "2026-09-29"
+    source_evidence: "agent-project-check MTA / HC-Prime: 0 FAIL 0 WARN; rig spec audit clean; rig doctor --spec conformance OK; OpenRig 0.5.17 references"
 ---
 
 # OpenRig project setup (agent-stack)
 
-Two tools do the mechanical work; don't hand-build what they do:
+These tools do the mechanical work; don't hand-build what they do:
 
 | Tool | Does |
 |---|---|
 | `agent-project-new --name <P> --rig <short> --github <user> [--team full-stack\|build\|core]` | Repo from the starter kit, held-out dir, private GitHub repo (REST) + protection, workspace with the agent-stack SDLC/wave/git defaults, umbrella catalog + allowlist + scan roots, rig folder, one worktree per seat, `.git/info/exclude`, `rig up`, merge-sweep + daily-summary watchdogs (never duplicated), then the check. Idempotent: re-run it to repair. `--dry-run` shows the plan. |
 | `agent-queue-backfill <P> [--apply]` | Adds `project:`, `slice:`/`mission:` tags and `worktree_path=` to a project's EXISTING queue rows (additive, after a DB backup). Use once when the check WARNs about untagged rows from before the seat helper. |
+| `agent-refresh-guidance <P> [--apply]` | After editing the rig's `CULTURE.md` or `startup/*.md` on a running rig: refreshes those OpenRig managed blocks in every seat's instruction file, adds blocks for startup files added to the spec later, and restores a seat whose file lost all blocks. Then tell the lead to have seats re-read their instruction file. |
 | `agent-project-check <P>` | Read-only audit against OpenRig's references. FAIL = the team or the project views will misbehave; WARN = fix soon. Run it after setup, after the lead's planning, and whenever a rig looks idle. |
 
-Sources of truth: `$OPENRIG_HOME/reference/` — `sdlc-conventions.md` (Part A, DISPATCH DATA EC-1..3),
+Sources of truth: `$OPENRIG_HOME/reference/` — `rig-spec.md`, `agent-spec.md`, `agent-startup-guide.md` (skills
+reach seats two ways: projected by the agent spec AND named in the role text; rig-level `startup/context.md`),
+`sdlc-conventions.md` (Part A, DISPATCH DATA EC-1..3),
 `wave-sdlc.md`, `product-journey-sdlc.md`, `project-workspace.md`, `planning-dial.md` — and the OpenRig skills
 `mission-slice-sop` and `queue-handoff`. Read those, not memory, when in doubt.
 
@@ -56,9 +67,27 @@ Sources of truth: `$OPENRIG_HOME/reference/` — `sdlc-conventions.md` (Part A, 
   config; **GitHub GraphQL burst limits** with 27 seats → REST for repo creation, ≥60 s polling.
 - **Duplicate watchdogs** (a seat re-registering the merge sweep) → setup registers only when absent; the
   check FAILs on more than one merge sweep. Parked-row wake timers (`rig queue block --wake-after`) are fine.
+- **No rig-level startup context** (`rig spec audit` finding) → `rig/startup/context.md` (identity, environment,
+  system check, skills to load) declared as a rig `startup.files` guidance_merge entry in every team spec.
+- **Role text never named the role's skills** (the startup guide's belt-and-suspenders rule) → every role.md
+  starts with "Skills to load: …"; the architect also has requirements-writer / ui-mockup / plan-review, QA dogfood.
+- **Running seats kept launch-time rules** after CULTURE.md changed, and **two seats lost every OpenRig block**
+  (a git reset/merge of AGENTS.md wipes them). → `agent-refresh-guidance --apply`; culture rule "never discard
+  or commit managed blocks"; check FAILs on a seat without blocks.
+- **Codex seats' blocks live in the tracked AGENTS.md** (OpenRig always uses it for Codex) → the repo
+  pre-commit hook (`system/git-hooks/pre-commit`, installed by agent-project-new) refuses commits containing them.
+- **Testing a git hook inside a live seat's worktree** committed that seat's staged file. Test hooks and
+  scripts in a throwaway repo/project, never in a seat's worktree.
 - **Swapping a seat on a running rig** with `rig import --materialize-only` left it unlaunchable. Change
   topology by editing the spec, `rig down --snapshot`, archive the old record, `rig up` the spec, then
   reroute queue items (`rig queue fallback`) and re-register watchdogs.
+
+## OpenRig's own checks (agent-project-check runs them; run by hand when changing specs)
+`rig doctor --spec <rig.yaml>` (live seats match the spec), `rig spec validate` + `rig spec audit` (authoring;
+must be clean), `rig agent validate <agent.yaml>` for every role, `rig skill audit` (provenance; our own skills
+carry `metadata.openrig`). Spec changes reach running seats only on relaunch/restore — use
+`agent-refresh-guidance` for culture/startup text, copy newly declared role skills into the seat's
+`.claude/skills` / `.agents/skills` (the managed catalog `rig skill loadout` needs is not set up here).
 
 ## Existing project that looks wrong
 Run `agent-project-check <P>`, fix FAILs top-down (re-running `agent-project-new` with the same name/rig

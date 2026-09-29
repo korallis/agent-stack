@@ -81,4 +81,5 @@ over seats that have capacity; code decides anything exact (capacity, retry coun
 - Every queue row names its mission and slice (`--mission`, `--slice`); the seat `rig` adds `project:<id>` and `worktree_path=`. Don't strip them.
 - End every turn by passing the ball (`rig queue handoff`) or recording why it is parked; never go idle holding work.
 - Keep slice/mission status honest; the files serve the product, not the other way round.
+- Your AGENTS.md / CLAUDE.local.md carries OpenRig managed blocks (your instructions). Never discard them (`git checkout -- AGENTS.md`, `git restore .`, `git stash -u`, resets) and never commit them: stage your own lines with `git add -p`. A pre-commit hook refuses commits containing them.
 

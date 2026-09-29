@@ -16,7 +16,7 @@ servers marked "latest" track upstream, the rest are pinned in `config/versions.
 | TOON CLI (`toon`) | latest (validated 4.1.1) | Compacts table-shaped JSON before it goes into prompts | `npm i -g @toon-format/cli` |
 | Neon CLI (`neon`) | latest (validated 6.3.0) | Neon database branches (one per PR), inspection, restore. Sign in once with `neon login` | `npm i -g neon` |
 | Playwright + Chromium | latest (validated 1.63.0) | Real browser for user-journey tests and hands-on QA | `npx playwright install chromium` |
-| `agent-project-new` / `agent-project-check` / `agent-queue-backfill` | this repo (`bin/`) | Set up a project the OpenRig way in one run; audit its wiring; tag old queue rows | install.sh links them into `~/.local/bin` |
+| `agent-project-new` / `agent-project-check` / `agent-queue-backfill` / `agent-refresh-guidance` | this repo (`bin/`) | Set up a project the OpenRig way in one run; audit its wiring; tag old queue rows; push culture/startup changes into running seats | install.sh links them into `~/.local/bin` |
 
 ## Plugins and skills (loaded into every seat)
 
@@ -38,7 +38,12 @@ servers marked "latest" track upstream, the rest are pinned in `config/versions.
 | `playwright` | Claude Code (user scope) and Codex | Drives a real headless browser: QA seats use the app like a person |
 | `Neon` | Claude Code (user scope) and Codex | Neon's hosted MCP (OAuth). Optional: agents use the `neon` CLI first |
 
-| `seat-tools/rig` (not MCP) | seats | : every `rig queue create/handoff` gets the `project:<id>` tag and the `worktree_path=` line OpenRig's project views join on |
+## Helpers (seats and repos)
+
+| Helper | Where | What it does |
+|---|---|---|
+| `seat-tools/rig` | seats (via the `rig` launcher) | Every `rig queue create/handoff` gets the `project:<id>` tag and the `worktree_path=` line OpenRig's project views join on |
+| `pre-commit` git hook | each project repo (installed by agent-project-new) | Refuses commits containing OpenRig seat instruction blocks (`system/git-hooks/pre-commit`) |
 
 ## Background services (systemd user units)
 

@@ -1,0 +1,73 @@
+#!/usr/bin/env python3
+"""agent-refresh-guidance <Project> [--apply]
+
+OpenRig writes CULTURE.md and the rig's startup files into each seat's instruction file (CLAUDE.local.md for
+Claude seats with managed_blocks, CLAUDE.md otherwise; AGENTS.md for Codex) as
+`<!-- BEGIN OpenRig MANAGED BLOCK: <name> -->` blocks at launch. Edits to the rig folder after launch don't
+reach running seats until a relaunch or restore. This refreshes the content of every existing block whose source
+file is in <workspace>/rig/ (CULTURE.md, startup/*.md), and adds blocks for rig-level guidance_merge startup
+files added to the spec after launch, so compactions and restarts load the current text.
+A seat whose file lost all its blocks (a git reset/checkout of AGENTS.md) gets them back from a sibling seat.
+Only block contents change; blocks OpenRig ships itself (CULTURE-default.md, openrig-*.md) are left alone.
+Running sessions still need to re-read the file: tell the lead ("re-read CLAUDE.local.md / AGENTS.md").
+Dry run unless --apply.
+"""
+import glob, os, re, sys
+
+H = os.path.expanduser("~")
+arg = next((a for a in sys.argv[1:] if not a.startswith("--")), None)
+if not arg:
+    sys.exit(__doc__)
+APPLY = "--apply" in sys.argv
+W = f"{H}/Projects/{arg}-work"
+specs = sorted(glob.glob(f"{W}/rig/*.yaml"), key=lambda f: open(f).read().count("cwd:"), reverse=True)
+spec = open(specs[0]).read()
+cwds = re.findall(r'cwd:\s*"?([^"\n]+)"?', spec)
+claude_file = (re.search(r"managed_blocks:\s*\n\s*claude-code:\s*(\S+)", spec) or [0, "CLAUDE.md"])[1]
+sources = {os.path.basename(p): p for p in glob.glob(f"{W}/rig/*.md") + glob.glob(f"{W}/rig/startup/*.md")}
+def blocks_of(text):
+    return "".join(re.findall(r"<!-- BEGIN OpenRig MANAGED BLOCK: \S+ -->.*?<!-- END OpenRig MANAGED BLOCK: \S+ -->\n?", text, re.S))
+
+# a seat whose file lost every block (a git reset/checkout/merge of AGENTS.md) gets them back from a sibling
+# seat with the same instruction file; blocks are identical across seats of one runtime in a rig
+donor = {}
+for cwd in cwds:
+    for fn in (claude_file, "AGENTS.md"):
+        p = os.path.join(cwd, fn)
+        if fn not in donor and os.path.exists(p) and "OpenRig MANAGED BLOCK" in open(p).read():
+            donor[fn] = blocks_of(open(p).read())
+restored = []
+
+changed = total = 0
+for cwd in cwds:
+    for fn in (claude_file, "AGENTS.md"):
+        path = os.path.join(cwd, fn)
+        if not os.path.exists(path):
+            continue
+        text = open(path).read()
+        new = text
+        seat_is_codex = not os.path.exists(os.path.join(cwd, claude_file))
+        if "OpenRig MANAGED BLOCK" not in text and fn == ("AGENTS.md" if seat_is_codex else claude_file) and fn in donor:
+            new = text.rstrip("\n") + "\n\n" + donor[fn]
+            restored.append(os.path.basename(cwd))
+        present = re.findall(r"<!-- BEGIN OpenRig MANAGED BLOCK: (\S+) -->", text)
+        if present:  # add blocks for rig-level guidance_merge startup files that arrived after launch
+            for rel in re.findall(r"-\s*path:\s*(\S+\.md)[^\n]*\n\s*delivery_hint:\s*guidance_merge", spec):
+                name = os.path.basename(rel)
+                if name in sources and name not in present:
+                    new = new.rstrip("\n") + f"\n\n<!-- BEGIN OpenRig MANAGED BLOCK: {name} -->\n\n<!-- END OpenRig MANAGED BLOCK: {name} -->\n"
+        for name in re.findall(r"<!-- BEGIN OpenRig MANAGED BLOCK: (\S+) -->", new):
+            if name not in sources:
+                continue
+            body = open(sources[name]).read().strip("\n")
+            pat = re.compile(rf"(<!-- BEGIN OpenRig MANAGED BLOCK: {re.escape(name)} -->\n)(.*?)(\n<!-- END OpenRig MANAGED BLOCK: {re.escape(name)} -->)", re.S)
+            new = pat.sub(lambda m: m.group(1) + body + m.group(3), new)
+        total += 1
+        if new != text:
+            changed += 1
+            if APPLY:
+                open(path, "w").write(new)
+if restored:
+    print("restored lost blocks for:", ", ".join(restored))
+print(f"{'APPLIED' if APPLY else 'DRY RUN'}: {changed}/{total} seat instruction files {'updated' if APPLY else 'would change'} "
+      f"(sources: {', '.join(sorted(sources))})")

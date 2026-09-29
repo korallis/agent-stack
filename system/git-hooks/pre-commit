@@ -1,0 +1,11 @@
+#!/usr/bin/env bash
+# agent-stack: refuse commits that carry OpenRig's per-seat instructions. OpenRig writes managed blocks into
+# each seat's AGENTS.md (Codex) / CLAUDE.md; they belong to the seat, never to the product repo.
+bad=$(git diff --cached --name-only --diff-filter=ACM | while read -r f; do
+  git show ":$f" 2>/dev/null | grep -q 'OpenRig MANAGED BLOCK' && echo "$f"; done)
+if [ -n "$bad" ]; then
+  echo "pre-commit: these staged files contain OpenRig MANAGED BLOCK sections (seat instructions):" >&2
+  echo "$bad" | sed 's/^/  /' >&2
+  echo "Stage only your own lines (git add -p) or drop the file (git restore --staged <file>)." >&2
+  exit 1
+fi
