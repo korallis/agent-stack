@@ -16,7 +16,7 @@ servers marked "latest" track upstream, the rest are pinned in `config/versions.
 | TOON CLI (`toon`) | latest (validated 4.1.1) | Compacts table-shaped JSON before it goes into prompts | `npm i -g @toon-format/cli` |
 | Neon CLI (`neon`) | latest (validated 6.3.0) | Neon database branches (one per PR), inspection, restore. Sign in once with `neon login` | `npm i -g neon` |
 | Playwright + Chromium | latest (validated 1.63.0) | Real browser for user-journey tests and hands-on QA | `npx playwright install chromium` |
-| `agent-project-new` / `agent-project-check` | this repo (`bin/`) | Set up a project the OpenRig way in one run; audit its wiring | install.sh links them into `~/.local/bin` |
+| `agent-project-new` / `agent-project-check` / `agent-queue-backfill` | this repo (`bin/`) | Set up a project the OpenRig way in one run; audit its wiring; tag old queue rows | install.sh links them into `~/.local/bin` |
 
 ## Plugins and skills (loaded into every seat)
 

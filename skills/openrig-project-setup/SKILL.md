@@ -14,6 +14,7 @@ Two tools do the mechanical work; don't hand-build what they do:
 | Tool | Does |
 |---|---|
 | `agent-project-new --name <P> --rig <short> --github <user> [--team full-stack\|build\|core]` | Repo from the starter kit, held-out dir, private GitHub repo (REST) + protection, workspace with the agent-stack SDLC/wave/git defaults, umbrella catalog + allowlist + scan roots, rig folder, one worktree per seat, `.git/info/exclude`, `rig up`, merge-sweep + daily-summary watchdogs (never duplicated), then the check. Idempotent: re-run it to repair. `--dry-run` shows the plan. |
+| `agent-queue-backfill <P> [--apply]` | Adds `project:`, `slice:`/`mission:` tags and `worktree_path=` to a project's EXISTING queue rows (additive, after a DB backup). Use once when the check WARNs about untagged rows from before the seat helper. |
 | `agent-project-check <P>` | Read-only audit against OpenRig's references. FAIL = the team or the project views will misbehave; WARN = fix soon. Run it after setup, after the lead's planning, and whenever a rig looks idle. |
 
 Sources of truth: `$OPENRIG_HOME/reference/` — `sdlc-conventions.md` (Part A, DISPATCH DATA EC-1..3),
@@ -44,7 +45,7 @@ Sources of truth: `$OPENRIG_HOME/reference/` — `sdlc-conventions.md` (Part A, 
   symlinks all core skills into `~/.claude/skills` and `~/.agents/skills`; the check FAILs without them.
 - **Queue rows the project views couldn't place:** no `project:<id>` tag, no `worktree_path=` (EC-3). → the
   `rig` launcher routes seat `queue create/handoff` through `seat-tools/rig`, which adds both. Still pass
-  `--mission` and `--slice` yourself. Old rows are never rewritten.
+  `--mission` and `--slice` yourself. Old rows: `agent-queue-backfill <P> --apply` (additive).
 - **Stale status** (slices left `placeholder`/`shaped` after delivery) and an **empty leftover mission**. →
   lead role step 7; check WARNs.
 - **No SDLC/git declaration** in project.yaml. → `rig/template/project-sdlc.yaml` appended by the setup.

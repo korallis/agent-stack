@@ -1,0 +1,68 @@
+#!/usr/bin/env python3
+"""agent-queue-backfill <Project> [--apply]
+
+Adds OpenRig execution-data tags to a project's EXISTING queue rows (new rows get them from seat-tools/rig):
+  - project:<id> on every row of the project's rig;
+  - slice:<dir> + mission:<m> when a row names exactly one slice (by slice dir, or by the id in the dir name,
+    e.g. F-001 -> 01-f-001-..., T023 -> 02-t023);
+  - on open rows (pending / in-progress / blocked) the body line `worktree_path=<destination worktree>`.
+Additive only: no tag is removed, no body text is changed except that appended line. OpenRig's CLI can't
+edit tags, so this writes the daemon's SQLite directly after a `.backup` into
+~/.local/share/agent-stack/backups/. Dry run unless --apply.
+"""
+import datetime, glob, json, os, re, sqlite3, subprocess, sys
+
+H = os.path.expanduser("~")
+arg = next((a for a in sys.argv[1:] if not a.startswith("--")), None)
+if not arg:
+    sys.exit(__doc__)
+APPLY = "--apply" in sys.argv
+W = os.path.join(H, "Projects", f"{arg}-work")
+WT = os.path.join(H, "Projects", f"{arg}.worktrees")
+pid = (re.search(r"^\s*-\s*id:\s*([\w.-]+)", open(f"{W}/workspace.yaml").read(), re.M) or [0, None])[1]
+specs = sorted(glob.glob(f"{W}/rig/*.yaml"), key=lambda f: open(f).read().count("cwd:"), reverse=True)
+rig = re.search(r'^name:\s*"?([\w.-]+)', open(specs[0]).read(), re.M).group(1)
+
+idx, slice_mission = {}, {}
+for d in glob.glob(f"{W}/missions/*/slices/*/"):
+    m, s = d.rstrip("/").split("/")[-3], d.rstrip("/").split("/")[-1]
+    slice_mission[s] = m
+    k = re.match(r"\d+-([a-z]+-?\d{2,3})", s)
+    if k:
+        idx[k.group(1).replace("-", "")] = s
+
+DB = f"{H}/.openrig/openrig.sqlite"
+if APPLY:
+    b = f"{H}/.local/share/agent-stack/backups/openrig-sqlite-{datetime.datetime.now():%Y%m%d-%H%M%S}.sqlite"
+    os.makedirs(os.path.dirname(b), exist_ok=True)
+    subprocess.run(["sqlite3", DB, f".backup '{b}'"], check=True)
+    print("backup:", b)
+db = sqlite3.connect(DB, timeout=30)
+db.execute("PRAGMA busy_timeout=30000")
+rows = db.execute("select qitem_id, tags, body, state, destination_session from queue_items "
+                  "where destination_session like ? or source_session like ?", (f"%@{rig}", f"%@{rig}")).fetchall()
+st = dict(rig=rig, project=pid, rows=len(rows), add_project=0, add_slice=0, add_worktree=0)
+for qid, tags, body, state, dest in rows:
+    tl = json.loads(tags) if tags else []
+    new = list(tl)
+    if pid and not any(t.startswith("project:") for t in new):
+        new.append(f"project:{pid}"); st["add_project"] += 1
+    if not any(t.startswith("slice:") for t in new):
+        named = {s for s in slice_mission if s in body}
+        if not named:
+            ids = {re.sub(r"[^a-z0-9]", "", x.lower()) for x in re.findall(r"\b[A-Z]{1,2}-?\d{2,3}\b", body)}
+            named = {idx[k] for k in ids if k in idx}
+        if len(named) == 1:
+            s = named.pop(); new.append(f"slice:{s}"); st["add_slice"] += 1
+            if not any(t.startswith("mission:") for t in new):
+                new.append(f"mission:{slice_mission[s]}")
+    nb = body
+    if state in ("pending", "in-progress", "blocked") and "worktree_path=" not in body:
+        wt = f"{WT}/{dest.split('@')[0]}"
+        if os.path.isdir(wt):
+            nb = body.rstrip("\n") + f"\n\nworktree_path={wt}\n"; st["add_worktree"] += 1
+    if APPLY and (new != tl or nb != body):
+        db.execute("update queue_items set tags=?, body=? where qitem_id=?", (json.dumps(new), nb, qid))
+if APPLY:
+    db.commit()
+print(("APPLIED " if APPLY else "DRY RUN ") + json.dumps(st))

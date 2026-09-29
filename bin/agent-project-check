@@ -180,7 +180,9 @@ helper = f"{HOME}/.local/share/agent-stack/seat-tools/rig"
 t0 = os.path.getmtime(helper) if os.path.exists(helper) else 0
 t0 = max(t0, (datetime.datetime.now(datetime.timezone.utc) - datetime.timedelta(hours=24)).timestamp())
 since = datetime.datetime.fromtimestamp(t0, datetime.timezone.utc).strftime("%Y-%m-%dT%H:%M:%S")
-recent = [r for r in mine if (r.get("tsCreated") or "") >= since]
+recent = [r for r in mine if (r.get("tsCreated") or "") >= since
+          and not (r.get("qitemId") or "").startswith("qitem-recovery-")  # daemon-made findings, not batons
+          and not any(t in ("stuck-sweep-finding", "wake-escalation", "wave-map") for t in (r.get("tags") or []))]
 tagged = [r for r in recent if any(t.startswith("project:") for t in (r.get("tags") or []))]
 scoped = [r for r in recent if any(t.startswith(("mission:", "slice:")) for t in (r.get("tags") or []))]
 wtp = [r for r in recent if "worktree_path=" in (r.get("body") or "")]
