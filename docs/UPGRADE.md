@@ -37,28 +37,37 @@ cp -a "$P" "$P.rollback-$(rig --version | awk '{print $1}')"          # the exac
 ```
 Stop if the integrity check fails.
 
-## 3. Install the target and restart once
+## 3. Install and patch, without restarting
 ```bash
-openrig-upgrade "$V" 2>&1 | tee ~/openrig-upgrade-$V/upgrade.log
+openrig-upgrade --no-restart "$V" > ~/openrig-upgrade-$V/install.log 2>&1; echo "exit $?"
 ```
-In order, it runs `npm install` of `$V`, the local patches (`bin/openrig-apply-patches`), and the YOLO presets and
-shared-agent link. It records `OPENRIG_VERSION=$V`, then restarts through `systemctl --user restart openrig.service`,
-whose `ExecStartPost` re-attaches the kernel rig with `--existing`. Seats in tmux keep running.
+This runs `npm install` of `$V` into `$P`, the local patches (`bin/openrig-apply-patches`), the YOLO presets and the
+shared-agent link. It then records `OPENRIG_VERSION`.
+- It exits 1 before touching anything else when the installed package is not `$V`.
+- The daemon is not restarted, but its files on disk have changed, so keep the time until step 5 short.
+- **Stop on a non-zero exit.** Read `install.log`, then roll back the prefix (below). No restart has happened yet.
 
-## 4. Observe
-Check one surface at a time:
+## 4. Observe the installed files (one surface at a time)
 ```bash
-grep "patches:" ~/openrig-upgrade-$V/upgrade.log   # "applied …" / "already applied …"; a warning = that fix is missing
+jq -r .version "$P/lib/node_modules/@openrig/cli/package.json"           # must be $V
+grep "patches:" ~/openrig-upgrade-$V/install.log                         # "applied …" / "already applied …"
+grep -c canonicalSenderSession "$P/lib/node_modules/@openrig/cli/daemon/dist/routes/require-sender-identity.js"  # >0 while #131 is carried
+```
+A patch warning means that fix is missing in `$V`. Decide now, before the restart, whether to roll back the prefix or
+run without the fix (`patches/openrig/README.md`).
+
+## 5. One controlled restart, then observe the daemon
+```bash
+systemctl --user restart openrig.service; echo "exit $?"   # ExecStartPost re-attaches the kernel rig with --existing
 systemctl --user status openrig.service --no-pager
 rig --version; rig daemon status
 curl -fsS http://127.0.0.1:7433/healthz | jq '{version, selfHostId}'
 sqlite3 ~/.openrig/openrig.sqlite 'PRAGMA integrity_check'
 ```
-Stop if the process path, listener or version is not the target, or the database check fails; then roll back (below).
-A patch warning means that fix is missing in `$V`. Decide whether to roll back or run without it
-(`patches/openrig/README.md`).
+Seats in tmux keep running. Stop and roll back (below) if the restart fails, if the process path, listener or version
+is not the target, or if the database check fails.
 
-## 5. Managed plugins: plan first
+## 6. Managed plugins: plan first
 ```bash
 node "$SKILL_DIR/scripts/refresh-managed-plugin.mjs" \
   --ancestor "$P.rollback-<old>/lib/node_modules/@openrig/cli/daemon/assets/plugins/openrig-core" \
@@ -67,7 +76,7 @@ node "$SKILL_DIR/scripts/refresh-managed-plugin.mjs" \
 ```
 Apply with `--apply-safe` only when the classifications make sense. Resolve locally modified paths one at a time.
 
-## 6. Verify seats and specs, then a canary
+## 7. Verify seats and specs, then a canary
 ```bash
 rig ps --nodes -A --json > ~/openrig-upgrade-$V/nodes-after.json      # compare with nodes-before.json
 openrig-update --validate                                              # every rig/template spec on the new version
@@ -79,9 +88,13 @@ agent-project-check <P>                                                # for eac
 - Tell the leads the window is over.
 
 ## Rollback
-Prefer starting the previous runtime against the same database:
+Stopped at step 3 or 4, with no restart yet: `rm -rf "$P" && mv "$P.rollback-<old>" "$P"`, restore
+`OPENRIG_VERSION=<old>` in `config/versions.env`, and check `jq -r .version` shows `<old>`. The daemon never left the old
+code, so it needs no restart.
+
+After the restart, prefer starting the previous runtime against the same database:
 `systemctl --user stop openrig.service`, `rm -rf "$P" && mv "$P.rollback-<old>" "$P"`, restore `OPENRIG_VERSION=<old>`
-in `config/versions.env`, then `systemctl --user start openrig.service`. Repeat the step 4 and 6 observations.
+in `config/versions.env`, then `systemctl --user start openrig.service`. Repeat the step 5 and 7 observations.
 
 Restore `openrig-before.sqlite` only when a migration or corruption finding requires it; a degraded view is not that proof.
 
