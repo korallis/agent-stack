@@ -2,7 +2,8 @@
 # Re-apply local fixes that upstream OpenRig has not released yet. Called by openrig-upgrade after every install.
 # usage: openrig-apply-patches [package-dir]   (default: the installed @openrig/cli)
 # Patches live in patches/openrig/<version>/*.patch as -p1 diffs against the published package root, one per fix.
-# Each is dry-run first. An already-applied patch is skipped; one that doesn't apply is left out.
+# Each is dry-run first. An already-applied patch is skipped (judged for the ordered stack, so patches that edit the
+# same file are recognised); one that doesn't apply is left out.
 # A missing or failed patch is warned about loudly (logger + notify) but never fails the install: OpenRig still runs
 # unpatched. When upstream releases a fix, delete that version's patch rather than carrying it forward.
 set -uo pipefail
@@ -18,12 +19,29 @@ if [ ${#patches[@]} -eq 0 ]; then
   exit 0
 fi
 applied=() skipped=() failed=()
+# Which patches are already in? Judge the ORDERED STACK, not each patch alone: two patches may edit the same file, and
+# once the later one is applied the earlier one's reverse no longer matches the live file, so it would look missing.
+# On a scratch copy of the files the patches touch, peel the patches off newest first: a patch whose reverse applies
+# there is in, and is reversed there so the patches below it see their own context again.
+# -R is always paired with -N: without it GNU patch, when it has a terminal, answers "Unreversed patch detected! Ignore
+# -R?" with yes and dry-runs the patch FORWARD, so an unapplied patch would pass as applied.
+scratch=$(mktemp -d); trap 'rm -rf "$scratch"' EXIT
+sed -n 's#^+++ b/\([^[:space:]]*\).*#\1#p' "${patches[@]}" | sort -u | while read -r f; do
+  [ -f "$PKG/$f" ] && mkdir -p "$scratch/$(dirname "$f")" && cp -p "$PKG/$f" "$scratch/$f"
+done
+declare -A present=()
+for (( k = ${#patches[@]} - 1; k >= 0; k-- )); do
+  p=${patches[k]}
+  if patch -p1 -d "$scratch" --dry-run --reverse --forward --silent < "$p" >/dev/null 2>&1; then
+    patch -p1 -d "$scratch" --reverse --forward --silent --no-backup-if-mismatch < "$p" >/dev/null 2>&1 && present[$p]=1
+  fi
+done
 for p in "${patches[@]}"; do
   n=$(basename "$p" .patch)
-  if patch -p1 -d "$PKG" --dry-run --forward --silent < "$p" >/dev/null 2>&1; then
-    patch -p1 -d "$PKG" --forward --silent --no-backup-if-mismatch < "$p" >/dev/null && applied+=("$n") || failed+=("$n")
-  elif patch -p1 -d "$PKG" --dry-run --reverse --silent < "$p" >/dev/null 2>&1; then
+  if [ -n "${present[$p]:-}" ]; then
     skipped+=("$n")   # already applied (reinstall of the same version keeps patched files)
+  elif patch -p1 -d "$PKG" --dry-run --forward --silent < "$p" >/dev/null 2>&1; then
+    patch -p1 -d "$PKG" --forward --silent --no-backup-if-mismatch < "$p" >/dev/null && applied+=("$n") || failed+=("$n")
   else
     failed+=("$n")
   fi
