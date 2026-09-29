@@ -150,6 +150,15 @@ test("adopt: dry run changes nothing; --apply adopts the server, unbinds only it
   assert.doesNotMatch(calls(w.dir), /systemctl --user (stop|restart|kill)|^kill /m);
 });
 
+test("adopt: an unreadable live PartOf fails closed (exit 1), never 'done'", () => {
+  const w = adoptWorld();
+  write(join(w.bin, "systemctl"), `#!/usr/bin/env bash\nprintf '%s\\n' "systemctl $*" >> "$CALLS"\n[ "$2" = show ] && exit 1; exit 0\n`, 0o755);
+  const r = adopt(w, "--apply");
+  assert.equal(r.status, 1);
+  assert.match(r.stdout, /VERIFY FAILED: .* 2 could not be read\. Not safe yet\./);
+  assert.doesNotMatch(r.stdout, /done:/);
+});
+
 // ---- units and the no-stop/restart rule ------------------------------------------------------------------
 test("units: seats' tmux server has its own guarded unit with openrig.service's environment", () => {
   const tmux = fs.readFileSync(join(repo, "system/systemd/openrig-tmux.service"), "utf8");

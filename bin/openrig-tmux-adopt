@@ -43,7 +43,13 @@ if [ -n "$list" ]; then
   systemctl --user daemon-reload || { say "daemon-reload failed (pane files backed up in $bk)"; exit 1; }
   say "unbound $(echo "$list" | wc -l) pane scopes from $from (backup $bk)"
 fi
-left=0
-for f in $(panes); do u=$(basename "$f"); [ "$(systemctl --user show "$u" -p PartOf --value 2>/dev/null)" = "$from" ] && left=$((left + 1)); done
-[ "$(cg "$spid")" != "$from" ] && [ $left = 0 ] || { say "VERIFY FAILED: server in $(cg "$spid"), $left pane scopes still PartOf=$from"; exit 1; }
+# Verify against systemd's live view; a pane scope whose PartOf can't be read counts as still bound (fail closed).
+left=0 unread=0
+for f in $(panes); do
+  u=$(basename "$f")
+  if ! po=$(systemctl --user show "$u" -p PartOf --value 2>/dev/null); then unread=$((unread + 1)); continue; fi
+  [ "$po" = "$from" ] && left=$((left + 1))
+done
+[ "$(cg "$spid")" != "$from" ] && [ $left = 0 ] && [ $unread = 0 ] || {
+  say "VERIFY FAILED: server in $(cg "$spid"); $left pane scopes still PartOf=$from; $unread could not be read. Not safe yet."; exit 1; }
 say "done: server in $(cg "$spid"); no pane scope is PartOf=$from. Stopping $from can no longer stop a seat."
