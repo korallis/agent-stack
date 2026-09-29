@@ -14,11 +14,12 @@ These rules are binding for every seat. The rig culture (CULTURE.md) adds team r
 
 ## How to run it
 - Install: `npm ci`
-- Start for tests: `npm run start:test` (must serve the app on `$PORT` with test data; Playwright sets PORT to your
+- Start for tests: `npm run start:test`, run directly and never inside agent-heavy, because a server holds its slot
+  forever (must serve the app on `$PORT` with test data; Playwright sets PORT to your
   seat's own `E2E_PORT`, so parallel seats never share a server)
 - Heavy runs go through the machine's shared budget (binding for every seat): `agent-heavy build -- <cmd>` for tsc,
   eslint, `npm test`, `next build` and full suites; `agent-heavy browser -- <cmd>` for Playwright. Prefer the focused
-  run (your files, your feature's journeys) over the full suite.
+  run (your files, your feature's journeys) over the full suite. Servers stay outside agent-heavy (it refuses them).
 - Unit tests (optional, never proof of done): `agent-heavy build -- npm test`
 - Acceptance journeys: `agent-heavy browser -- npx playwright test` (desktop and phone)
 - Held-out journeys (merge owner only): `E2E_TEST_DIR=@HELDOUT@ agent-heavy browser -- npx playwright test`

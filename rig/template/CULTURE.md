@@ -30,6 +30,9 @@ adds every new owner decision here the day it is made. A decision recorded here 
   test suite in `agent-heavy build -- <cmd>` (`agent-heavy browser -- <cmd>` for Playwright and other browser tests). It
   holds a shared slot (2 at once, capped CPU and RAM) so a burst of seats can't starve the host or the OpenRig daemon.
   Prefer the focused run (the files or journeys you touched) over the full suite; run the full suite once, at the end.
+  Never wrap a server (`npm start`, `npm run start:*|dev|serve|preview`, `next start|dev`, `vite`): it never finishes and
+  would hold a shared slot. agent-heavy refuses it; run it outside and wrap only the tests that use it. Jobs are stopped
+  at a max runtime (45min build, 30min browser; `--max-runtime` to raise it).
 - Never `pkill -f`/`killall` by a pattern: it also matches other seats' command lines. Stop your own processes by PID
   (`pgrep -f` narrowed by cwd or parent PID, then `kill <pid>`).
 - Scratch checkouts for review or QA go under `~/Projects/<P>.worktrees/`, never `/tmp`, and are removed in a
