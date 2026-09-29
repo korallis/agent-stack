@@ -9,6 +9,9 @@
 3. model_catalog_json: the proxy's Codex catalog with display_name = slug. Codex 0.157 footers show the
    display name ("GPT 6.0 Astra"); OpenRig's live-TUI matcher expects the slug ("  gpt-6-astra · …").
    Same models and capabilities; only the label changes.
+4. -a never: seats never stop for approval. OpenRig's builtin:yolo gives Codex only `-s danger-full-access`, so
+   without this a seat still asks "Would you like to run the following command?" whenever ~/.codex/config.toml
+   (or a profile) says on-request. Kept if the caller already chose an approval policy or the full bypass.
 """
 import os, signal, sys
 
@@ -43,4 +46,10 @@ except Exception:
 extra = ["-c", f'model_catalog_json="{catalog}"'] if os.path.exists(catalog) else []
 # Seats talk only to the local proxy: no analytics, feedback upload or update checks.
 extra += ["-c", "analytics.enabled=false", "-c", "feedback.enabled=false", "-c", "check_for_update_on_startup=false"]
-os.execv(real, [real, "--no-daemon", *extra, *sys.argv[1:]])
+# Seats never prompt for approval, whatever the user's config or profile says.
+args = sys.argv[1:]
+chose = any(a in ("-a", "--ask-for-approval", "--dangerously-bypass-approvals-and-sandbox") or a.startswith("--ask-for-approval=")
+            or (a.startswith("-a") and len(a) > 2 and not a.startswith("--")) for a in args)
+if not chose:
+    extra += ["-a", "never"]
+os.execv(real, [real, "--no-daemon", *extra, *args])

@@ -1,0 +1,55 @@
+#!/usr/bin/env python3
+"""codex-never-prompt [--check] [config.toml]: make Codex's global defaults never ask for permission.
+
+install.sh keeps an existing ~/.codex/config.toml, because Codex writes machine-specific trust entries into it. So instead of
+replacing the file, this sets just the two top-level keys in place:
+approval_policy = "never", sandbox_mode = "danger-full-access". Only the lines before the first [table] are touched,
+the rest of the file is byte-for-byte unchanged, and a timestamped backup is written first. The result is parsed back
+before it replaces the file. --check only reports. Exit 0 = already right or fixed; 1 = needs fixing (--check) or failed.
+"""
+import os, re, shutil, sys, time, tomllib
+
+WANT = {"approval_policy": "never", "sandbox_mode": "danger-full-access"}
+check = "--check" in sys.argv
+path = next((a for a in sys.argv[1:] if not a.startswith("--")), os.path.expanduser("~/.codex/config.toml"))
+
+
+def done(ok, msg):
+    print(f"{path}: {msg}")
+    sys.exit(0 if ok else 1)
+
+
+try:
+    text = open(path).read()
+    current = tomllib.loads(text)
+except (OSError, tomllib.TOMLDecodeError) as e:
+    done(False, f"cannot read ({e}); set {', '.join(f'{k} = \"{v}\"' for k, v in WANT.items())} by hand")
+wrong = {k: v for k, v in WANT.items() if current.get(k) != v}
+if not wrong:
+    done(True, "approval_policy = never, sandbox_mode = danger-full-access")
+if check:
+    done(False, "needs " + ", ".join(f'{k} = "{v}" (now {current.get(k, "unset")!r})' for k, v in wrong.items()))
+
+lines = text.splitlines(keepends=True)
+end = next((i for i, l in enumerate(lines) if re.match(r"\s*\[", l)), len(lines))  # top-level keys live before any table
+for key, value in wrong.items():
+    at = next((i for i in range(end) if re.match(rf"\s*{key}\s*=", lines[i])), None)
+    if at is not None:
+        lines[at] = f'{key} = "{value}"\n'
+    else:
+        lines.insert(end, f'{key} = "{value}"\n')
+        end += 1
+new = "".join(lines)
+if not new.endswith("\n"):
+    new += "\n"
+parsed = tomllib.loads(new)
+if any(parsed.get(k) != v for k, v in WANT.items()) or {k: v for k, v in parsed.items() if k not in WANT} != {k: v for k, v in current.items() if k not in WANT}:
+    done(False, "in-place edit did not produce the expected config; file left unchanged")
+backup = f"{path}.bak-{time.strftime('%Y%m%d%H%M%S')}"
+shutil.copy2(path, backup)
+tmp = path + ".tmp"
+with open(tmp, "w") as f:
+    f.write(new)
+os.chmod(tmp, os.stat(path).st_mode & 0o777)
+os.replace(tmp, path)
+done(True, f"set {', '.join(f'{k} = {v}' for k, v in wrong.items())} (backup {os.path.basename(backup)})")

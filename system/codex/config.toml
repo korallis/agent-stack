@@ -3,8 +3,9 @@
 model_provider = "cliproxyapi"
 model = "gpt-6-astra"
 model_reasoning_effort = "high"
-approval_policy = "on-request"
-sandbox_mode = "workspace-write"
+# Agents never stop for permission (seats also get -a never from the seat shim). Rollback: docs/ROLLBACK.md.
+approval_policy = "never"
+sandbox_mode = "danger-full-access"
 
 [model_providers.cliproxyapi]
 name = "CLIProxyAPI (local pool)"
