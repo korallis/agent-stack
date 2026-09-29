@@ -128,6 +128,12 @@ if [ $CHECK = 0 ]; then
   for t in cliproxyapi-health cliproxy-usage openrig-health cliproxy-authwatch cliproxy-quotawatch openrig-update agent-repos-sync agent-human-inbox-tidy; do systemctl --user enable --now "$t.timer" >/dev/null 2>&1 || todo "$t.timer"; done
 fi
 "$B/rig" --version >/dev/null 2>&1 && ok "rig $("$B/rig" --version | awk '{print $1}')" || todo "OpenRig not installed"
+# Transcript capture defaults: every 15s, 400 lines. The shipped 2s/1000 lines across ~90 seats starved the daemon.
+for kv in "transcripts.poll_interval_seconds 15" "transcripts.lines 400"; do
+  set -- $kv
+  if [ "$(env -u OPENRIG_TRANSCRIPTS_LINES -u OPENRIG_TRANSCRIPTS_POLL_INTERVAL_SECONDS "$B/rig" config get "$1" 2>/dev/null)" = "$2" ]; then ok "$1 = $2"
+  elif [ $CHECK = 1 ]; then todo "$1 should be $2"; else "$B/rig" config set "$1" "$2" >/dev/null 2>&1 && ok "$1 = $2 (set)" || todo "$1 = $2"; fi
+done
 # OpenRig's own seat skills (mission-slice-sop, queue-handoff, compaction/continuity, ...). The rig specs name the
 # openrig-core plugin, but seats are launched without --plugin-dir, so they only get these as user-level skills.
 # Symlinks follow OpenRig upgrades.

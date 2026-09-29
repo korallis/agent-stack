@@ -178,6 +178,9 @@ with `agent-login` and the pool uses it straight away.
 ### Where things are
 
 - Secrets (0600, never in git): `~/.config/agent-stack/secrets/{cliproxy.env,typesafe.env}`; OAuth tokens in `~/.cli-proxy-api/*.json`.
+- **Transcript capture:** every 15 seconds, 400 lines (`transcripts.poll_interval_seconds`, `transcripts.lines`; set by
+  `install.sh`). OpenRig's 2s/1000-line default across ~90 seats kept the daemon's event loop busy. `openrig-daemon-cycle`
+  starts the daemon without the `OPENRIG_TRANSCRIPTS_*` overrides that seats inherit from tmux.
 - **Seats never depend on the daemon unit.** Every seat lives in the tmux server of `openrig-tmux.service`, not in
   `openrig.service`. tmux ties each pane to the unit its server runs in, which is how `systemctl stop openrig.service`
   once stopped every seat. Restart the daemon with `openrig-daemon-cycle` (the health check does too), never with

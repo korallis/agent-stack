@@ -43,9 +43,13 @@ fi
 if [ $do_start = 1 ]; then
   env=()  # openrig.service's Environment= (PATH with the seat shim first, OPENRIG_YOLO, SHELL)
   while IFS= read -r kv; do [ -n "$kv" ] && env+=("$kv"); done < <(systemctl --user show openrig.service -p Environment --value | tr ' ' '\n')
+  # Seats inherit OPENRIG_TRANSCRIPTS_LINES / _POLL_INTERVAL_SECONDS from the tmux global env, and env overrides
+  # config.json, so a daemon started from a seat ran ~43 captures/s of 1000 lines (the 2026-09-29 outage). Drop them;
+  # the daemon then uses config.json (install.sh sets 15s / 400 lines).
+  unset_env=(-u OPENRIG_TRANSCRIPTS_LINES -u OPENRIG_TRANSCRIPTS_POLL_INTERVAL_SECONDS -u RIGGED_TRANSCRIPTS_LINES -u RIGGED_TRANSCRIPTS_POLL_INTERVAL_SECONDS)
   say "starting daemon in its own scope"
   (cd "$HOME" && systemd-run --user --scope --collect --quiet --unit="openrig-daemon-$(date +%s)" \
-     --description="OpenRig daemon (openrig-daemon-cycle: $reason)" env "${env[@]}" "$RIG" daemon start) || { say "rig daemon start failed"; exit 1; }
+     --description="OpenRig daemon (openrig-daemon-cycle: $reason)" env "${unset_env[@]}" "${env[@]}" "$RIG" daemon start) || { say "rig daemon start failed"; exit 1; }
   old=${pid:-}; new="" port=""
   for _ in $(seq "$WAIT"); do
     new=$(field pid); port=$(field port)

@@ -53,11 +53,21 @@ test("daemon-cycle: verified stop, start in its own scope with openrig.service's
   assert.equal(r.status, 0, r.stdout + r.stderr);
   const c = calls(w.dir);
   assert.match(c, /^rig daemon stop$/m);
-  assert.match(c, /^systemd-run --user --scope --collect --quiet --unit=openrig-daemon-\d+ --description=OpenRig daemon \(openrig-daemon-cycle: t\) env OPENRIG_YOLO=1 PATH=\S+ SHELL=\/bin\/bash \/\S+\/rig daemon start$/m);
+  assert.match(c, /^systemd-run --user --scope --collect --quiet --unit=openrig-daemon-\d+ --description=OpenRig daemon \(openrig-daemon-cycle: t\) env -u OPENRIG_TRANSCRIPTS_LINES -u OPENRIG_TRANSCRIPTS_POLL_INTERVAL_SECONDS -u RIGGED_TRANSCRIPTS_LINES -u RIGGED_TRANSCRIPTS_POLL_INTERVAL_SECONDS OPENRIG_YOLO=1 PATH=\S+ SHELL=\/bin\/bash \/\S+\/rig daemon start$/m);
   assert.match(c, /^rig up kernel --existing$/m);
   assert.doesNotMatch(c, /systemctl --user (stop|restart|start)/);
   assert.notEqual(JSON.parse(fs.readFileSync(join(w.home, "daemon.json"))).pid, w.daemon);
   assert.equal(running(w.daemon), false, "the old daemon is gone");
+});
+
+test("daemon-cycle: the daemon starts without the OPENRIG_TRANSCRIPTS_* overrides seats inherit from tmux", () => {
+  const w = cycleWorld();
+  write(join(w.bin, "rig"), fs.readFileSync(join(w.bin, "rig"), "utf8").replace('"daemon start")', '"daemon start") env | grep -E "TRANSCRIPTS_(LINES|POLL)" > "${OPENRIG_HOME}/start-env";'));
+  const r = spawnSync(join(repo, "bin/openrig-daemon-cycle"), ["--start-only"], { encoding: "utf8", env: {
+    PATH: `${w.bin}:/usr/bin:/bin`, HOME: w.dir, OPENRIG_HOME: w.home, OPENRIG_CYCLE_WAIT: "2", CALLS: join(w.dir, "calls"),
+    OPENRIG_TRANSCRIPTS_LINES: "1000", OPENRIG_TRANSCRIPTS_POLL_INTERVAL_SECONDS: "2", RIGGED_TRANSCRIPTS_LINES: "1000" } });
+  assert.equal(r.status, 0, r.stdout + r.stderr);
+  assert.equal(fs.readFileSync(join(w.home, "start-env"), "utf8"), "", "no transcript override reached the daemon");
 });
 
 test("daemon-cycle: if the old daemon is still there after stop, it neither signals it nor starts another (exit 1)", () => {
@@ -103,26 +113,43 @@ test("daemon-cycle: an ss failure fails closed on both stop and start (exit 1)",
 });
 
 // ---- openrig-healthcheck -------------------------------------------------------------------------------
-function health({ healthy, cycleOk = true }) {
-  const dir = fs.mkdtempSync(join(root, "health-")), bin = join(dir, ".local/bin");
+function health({ healthy, cycleOk = true, lastCycleAgo = null, dir = fs.mkdtempSync(join(root, "health-")) }) {
+  const bin = join(dir, ".local/bin"), stamp = join(dir, ".openrig/state/healthcheck-last-cycle");
   stub(bin, "curl", healthy ? "exit 0" : "exit 7");
   stub(bin, "openrig-daemon-cycle", cycleOk ? 'echo "openrig-daemon-cycle: running"' : 'echo "openrig-daemon-cycle: STOP INCOMPLETE: pid 1 still running"; exit 1');
   for (const t of ["systemctl", "notify-send", "logger", "sleep"]) stub(bin, t, "exit 0");
+  if (lastCycleAgo !== null) write(stamp, String(Math.floor(Date.now() / 1000) - lastCycleAgo));
+  fs.rmSync(join(dir, "calls"), { force: true });
   const r = spawnSync(join(repo, "system/openrig-healthcheck"), [], { encoding: "utf8", env: { PATH: "/usr/bin:/bin", HOME: dir, CALLS: join(dir, "calls") } });
-  return { status: r.status, c: calls(dir) };
+  return { status: r.status, c: calls(dir), dir, stamp: fs.existsSync(stamp) ? Number(fs.readFileSync(stamp, "utf8")) : null };
 }
 
-test("healthcheck: healthy does nothing; unhealthy cycles only the daemon; a failed cycle alerts; never systemctl", () => {
+test("healthcheck: healthy does nothing; 3 slow misses cycle only the daemon and stamp it; a failed cycle alerts; never systemctl", () => {
   const ok = health({ healthy: true });
   assert.equal(ok.status, 0);
   assert.doesNotMatch(ok.c, /openrig-daemon-cycle/);
   const sick = health({ healthy: false });
   assert.equal(sick.status, 0);
-  assert.match(sick.c, /^openrig-daemon-cycle --reason health check: healthz failed twice$/m);
+  assert.equal(sick.c.match(/^curl -fsS -m 15 /gm)?.length, 3, "three probes, 15s each");
+  assert.equal(sick.c.match(/^sleep 10$/gm)?.length, 2, "10s apart");
+  assert.match(sick.c, /^openrig-daemon-cycle --reason health check: healthz failed 3x$/m);
+  assert.ok(Math.abs(sick.stamp - Date.now() / 1000) < 60, "cycle time stamped");
   const stuck = health({ healthy: false, cycleOk: false });
   assert.equal(stuck.status, 1);
   assert.match(stuck.c, /^notify-send --app-name=Agent stack --urgency=critical OpenRig daemon down and not restarted openrig-daemon-cycle: STOP INCOMPLETE/m);
   for (const r of [ok, sick, stuck]) assert.doesNotMatch(r.c, /^systemctl/m);
+});
+
+test("healthcheck: inside the 600s cooldown it alerts instead of cycling again (no restart loop); after it, it cycles", () => {
+  const recent = health({ healthy: false, lastCycleAgo: 120 });
+  assert.equal(recent.status, 1);
+  assert.doesNotMatch(recent.c, /openrig-daemon-cycle/);
+  assert.match(recent.c, /^logger -t openrig-healthcheck healthz failed 3x but the daemon was cycled 1[12][0-9]s ago; not cycling again \(cooldown 600s\)$/m);
+  assert.match(recent.c, /^notify-send .*--urgency=critical OpenRig daemon unresponsive/m);
+  const old = health({ healthy: false, lastCycleAgo: 900 });
+  assert.equal(old.status, 0);
+  assert.match(old.c, /^openrig-daemon-cycle --reason /m);
+  assert.ok(Math.abs(old.stamp - Date.now() / 1000) < 60, "stamp refreshed");
 });
 
 // ---- openrig-tmux-adopt ---------------------------------------------------------------------------------
