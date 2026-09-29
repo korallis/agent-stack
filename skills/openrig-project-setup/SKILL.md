@@ -107,7 +107,8 @@ binding) and `adopted` (compares with OpenRig's own build) — not project fault
   test any new watchdog on ONE seat first.
 - **Holding a SQLite write lock across slow work** (GitHub calls inside the transaction) crashed the daemon
   (SQLITE_BUSY). → collect first, write in one short transaction; never write the daemon DB while it's busy
-  with long work; restart with `systemctl --user restart openrig.service` if it happens (seats survive).
+  with long work; restart only the daemon with `openrig-daemon-cycle` if it happens. Never stop or restart `openrig.service` or
+  `openrig-tmux.service` while rigs run; seats live in the latter's tmux server.
 - **Swapping a seat on a running rig** with `rig import --materialize-only` left it unlaunchable. Change
   topology by editing the spec, `rig down --snapshot`, archive the old record, `rig up` the spec, then
   reroute queue items (`rig queue fallback`) and re-register watchdogs.

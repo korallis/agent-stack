@@ -11,13 +11,19 @@ below `$SKILL_DIR`). Its rule applies throughout: **one mutation at a time, then
 Seats live in tmux and survive a daemon restart. Never use `rig down` as part of an upgrade.
 
 Paths: install prefix `P=~/.local/share/agent-stack/openrig`, package `$P/lib/node_modules/@openrig/cli`, state
-`~/.openrig` (database `~/.openrig/openrig.sqlite`), service `openrig.service`, target version `V`.
+`~/.openrig` (database `~/.openrig/openrig.sqlite`), daemon unit `openrig.service`, seats' tmux server
+`openrig-tmux.service`, target version `V`.
 
 ## 0. Before the window
 - Read the release notes (`https://github.com/mvschwarz/openrig/releases/tag/v$V`) and the queue item's patch line.
   - "patches present? no", while the installed version carries patches: port them first (`patches/openrig/README.md`),
     or confirm upstream fixed them.
 - Tell the rig leads the window time, and ask builders to finish or park their current step.
+
+## Preflight: seats must not depend on openrig.service
+`openrig-tmux-adopt` (dry run) must print "already safe", meaning the tmux server is not in `openrig.service` and no pane
+scope is `PartOf=openrig.service`. If it doesn't, run `openrig-tmux-adopt --apply` (nothing is stopped) and re-check.
+Don't continue until it is safe (the 2026-09-29 incident).
 
 ## 1. Census and snapshots
 ```bash
@@ -56,16 +62,21 @@ grep -c canonicalSenderSession "$P/lib/node_modules/@openrig/cli/daemon/dist/rou
 A patch warning means that fix is missing in `$V`. Decide now, before the restart, whether to roll back the prefix or
 run without the fix (`patches/openrig/README.md`).
 
-## 5. One controlled restart, then observe the daemon
+## 5. Restart only the daemon, then observe it
 ```bash
-systemctl --user restart openrig.service; echo "exit $?"   # ExecStartPost re-attaches the kernel rig with --existing
-systemctl --user status openrig.service --no-pager
+openrig-daemon-cycle --reason "upgrade to $V"; echo "exit $?"
 rig --version; rig daemon status
 curl -fsS http://127.0.0.1:7433/healthz | jq '{version, selfHostId}'
 sqlite3 ~/.openrig/openrig.sqlite 'PRAGMA integrity_check'
 ```
-Seats in tmux keep running. Stop and roll back (below) if the restart fails, if the process path, listener or version
-is not the target, or if the database check fails.
+`openrig-daemon-cycle` runs `rig daemon stop` and verifies that the old PID is gone and the port is closed; it never
+signals anything. It then runs `rig daemon start` in its own scope with `openrig.service`'s environment and waits for
+`/healthz`, then runs `rig up kernel --existing`. **Never** `systemctl stop|restart openrig.service` or
+`openrig-tmux.service` while rigs run.
+- Exit 1 at "STOP INCOMPLETE": the old daemon is still there. Inspect it (the skill's stop rules); don't signal a PID.
+- Exit 1 at "START FAILED": roll back the prefix (below) and run `openrig-daemon-cycle --start-only`.
+
+Stop and roll back if the version or listener is not the target, or if the database check fails.
 
 ## 6. Managed plugins: plan first
 ```bash
@@ -93,8 +104,8 @@ Stopped at step 3 or 4, with no restart yet: `rm -rf "$P" && mv "$P.rollback-<ol
 code, so it needs no restart.
 
 After the restart, prefer starting the previous runtime against the same database:
-`systemctl --user stop openrig.service`, `rm -rf "$P" && mv "$P.rollback-<old>" "$P"`, restore `OPENRIG_VERSION=<old>`
-in `config/versions.env`, then `systemctl --user start openrig.service`. Repeat the step 5 and 7 observations.
+`openrig-daemon-cycle --stop-only`, `rm -rf "$P" && mv "$P.rollback-<old>" "$P"`, restore `OPENRIG_VERSION=<old>` in
+`config/versions.env`, then `openrig-daemon-cycle --start-only`. Repeat the step 5 and 7 observations.
 
 Restore `openrig-before.sqlite` only when a migration or corruption finding requires it; a degraded view is not that proof.
 

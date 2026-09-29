@@ -72,7 +72,8 @@ for k in files.allowlist progress.scan_roots; do
   c=$(rig config get $k 2>/dev/null || true)
   case ",$c," in *",$RIG:$W,"*) ;; *) run rig config set $k "${c:+$c,}$RIG:$W" >/dev/null; changed=1 ;; esac
 done
-[ $changed = 1 ] && run systemctl --user restart openrig.service   # running rigs keep working (seats live in tmux)
+# The daemon reads these roots at start: restart only the daemon (verified stop/start; seats live in openrig-tmux's server).
+[ $changed = 1 ] && run "$AS/bin/openrig-daemon-cycle" --reason "agent-project-new $NAME: new workspace roots"
 
 say "rig folder $W/rig ($TEAM)"
 run mkdir -p "$W/rig"

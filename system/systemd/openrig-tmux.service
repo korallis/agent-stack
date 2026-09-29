@@ -1,0 +1,23 @@
+[Unit]
+Description=tmux server for OpenRig seats (every seat lives here; never stop this while rigs run)
+# tmux gives each pane a scope with PartOf=<the unit its server runs in>. Stopping that unit stops every pane.
+# Running the server here, not inside openrig.service, means a daemon stop/restart can never reach a seat.
+# RefuseManualStop guards against an accidental `systemctl stop`; logout/shutdown still stop it.
+RefuseManualStop=yes
+
+[Service]
+Type=simple
+# Keep in step with openrig.service: seats inherit this environment (PATH puts the Codex seat shim first).
+Environment=OPENRIG_YOLO=1
+Environment=PATH=%h/.local/share/agent-stack/seat-bin:%h/.local/bin:%h/.local/share/mise/shims:/usr/local/bin:/usr/bin:/bin
+Environment=SHELL=/bin/bash
+WorkingDirectory=%h
+# A server already on the default socket (e.g. one started before this unit existed) is left alone: skip, don't fail.
+# Move it here without stopping seats with bin/openrig-tmux-adopt.
+ExecCondition=/bin/sh -c 'if tmux show -gv exit-empty >/dev/null 2>&1; then echo "a tmux server already runs on the default socket; leaving it alone (see openrig-tmux-adopt)"; exit 1; fi'
+# -D: stay in the foreground, and keep running with zero sessions.
+ExecStart=/usr/bin/tmux -D
+Restart=no
+
+[Install]
+WantedBy=default.target

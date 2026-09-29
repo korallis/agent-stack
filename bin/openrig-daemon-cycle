@@ -1,0 +1,48 @@
+#!/usr/bin/env bash
+# Restart the OpenRig daemon without touching openrig.service or any seat (WO5; the openrig-upgrade skill's steps 6-7).
+#   openrig-daemon-cycle [--stop-only|--start-only] [--reason <text>]
+# 1. stop:  `rig daemon stop`, then verify that the daemon.json pid is gone AND the port no longer answers /healthz.
+#           If either remains, stop here (exit 1). Never signal a PID.
+# 2. start: `rig daemon start` in its own transient scope (systemd-run --user --scope), using openrig.service's
+#           Environment, so the daemon is not inside the caller's cgroup (a seat's pane, or a oneshot service that
+#           kills what it leaves behind). Then `rig up kernel --existing` (a no-op when running), as the unit does at boot.
+# 3. verify: /healthz answers with a new pid in daemon.json. Exit 0 only then.
+# Seats live in the tmux server (openrig-tmux.service), which none of this touches.
+set -uo pipefail
+STATE=${OPENRIG_HOME:-$HOME/.openrig}/daemon.json
+WAIT=${OPENRIG_CYCLE_WAIT:-30}
+do_stop=1 do_start=1 reason="manual"
+while [ $# -gt 0 ]; do case $1 in
+  --stop-only) do_start=0 ;; --start-only) do_stop=0 ;; --reason) reason=$2; shift ;;
+  *) echo "usage: openrig-daemon-cycle [--stop-only|--start-only] [--reason <text>]" >&2; exit 2 ;; esac; shift; done
+RIG=$(command -v rig) || { echo "openrig-daemon-cycle: rig not on PATH" >&2; exit 1; }  # one binary for stop and start
+say() { echo "openrig-daemon-cycle: $*"; logger -t openrig-daemon-cycle "$*" 2>/dev/null || true; }
+field() { jq -r ".$1 // empty" "$STATE" 2>/dev/null; }
+answers() { curl -fsS -m 3 -o /dev/null "http://127.0.0.1:$1/healthz" 2>/dev/null; }
+alive() { [ -n "$1" ] && kill -0 "$1" 2>/dev/null; }
+
+if [ $do_stop = 1 ]; then
+  pid=$(field pid); port=$(field port); port=${port:-7433}
+  say "stopping daemon pid=${pid:-unknown} port=$port ($reason)"
+  "$RIG" daemon stop || say "rig daemon stop exited $? (checking what remains)"
+  for _ in $(seq "$WAIT"); do alive "$pid" || answers "$port" || break; sleep 1; done
+  if alive "$pid" || answers "$port"; then
+    say "STOP INCOMPLETE: $(alive "$pid" && echo "pid $pid still running")$(answers "$port" && echo " port $port still answers"). Not signalling it; inspect and use the operator procedure (docs/UPGRADE.md)."
+    exit 1
+  fi
+  say "stopped: pid ${pid:-?} gone, port $port closed"
+fi
+
+if [ $do_start = 1 ]; then
+  env=()  # openrig.service's Environment= (PATH with the seat shim first, OPENRIG_YOLO, SHELL)
+  while IFS= read -r kv; do [ -n "$kv" ] && env+=("$kv"); done < <(systemctl --user show openrig.service -p Environment --value | tr ' ' '\n')
+  say "starting daemon in its own scope"
+  (cd "$HOME" && systemd-run --user --scope --collect --quiet --unit="openrig-daemon-$(date +%s)" \
+     --description="OpenRig daemon (openrig-daemon-cycle: $reason)" env "${env[@]}" "$RIG" daemon start) || { say "rig daemon start failed"; exit 1; }
+  port=$(field port); port=${port:-7433}
+  for _ in $(seq "$WAIT"); do answers "$port" && break; sleep 1; done
+  answers "$port" || { say "START FAILED: port $port does not answer /healthz"; exit 1; }
+  "$RIG" up kernel --existing >/dev/null 2>&1 || say "rig up kernel --existing returned non-zero (kernel may need attention)"
+  say "running: pid $(field pid), port $port, $("$RIG" --version 2>/dev/null)"
+fi
+exit 0

@@ -1,7 +1,9 @@
 [Unit]
 Description=OpenRig daemon + kernel rig (project rigs are started manually with `rig up`)
-After=cliproxyapi.service network-online.target
-Wants=cliproxyapi.service
+After=cliproxyapi.service network-online.target openrig-tmux.service
+# Seats live in the tmux server of openrig-tmux.service, which starts first. The daemon only talks to it as a client,
+# so stopping or restarting this unit never reaches a seat. Stopping openrig-tmux does not stop this unit either.
+Wants=cliproxyapi.service openrig-tmux.service
 
 [Service]
 Type=oneshot
@@ -14,7 +16,8 @@ ExecStart=%h/.local/bin/rig daemon start
 # Bring back OpenRig's own kernel rig after a reboot (no-op if it is already running).
 ExecStartPost=-%h/.local/bin/rig up kernel --existing
 ExecStop=%h/.local/bin/rig daemon stop
-# Agents live in tmux sessions; never kill them when this unit stops/restarts.
+# Leave any stray process (e.g. a tmux server started here before openrig-tmux.service existed) alone on stop.
+# That alone does not protect seats: their pane scopes are PartOf= whichever unit runs the tmux server.
 KillMode=process
 TimeoutStartSec=300
 
