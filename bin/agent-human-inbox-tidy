@@ -1,0 +1,63 @@
+#!/usr/bin/env python3
+"""agent-human-inbox-tidy [--dry-run]: close informational rows in the owner's inbox once Slack has posted them.
+
+The stuck sweep pages about any pending row left unclaimed for an hour. A human can't claim, so an FYI to the owner
+(lee@external) that the sender forgot to close came back as an alarm. Runs every 5 minutes (agent-human-inbox-tidy.timer).
+For each PENDING row addressed to a *@external human:
+  - delivered (deliveryOutcome=posted) and informational (humanIntent unset or "update") -> close it done/no-follow-on
+    with the note "informational; auto-closed after posting". The post already happened, so closing cancels nothing.
+  - a decision request (humanIntent=decision) -> LEFT ALONE. Its Slack reply closes it only while it is pending: parking or
+    claiming it makes the reply a no-op (proven against the gateway's own resolver). Findings about unanswered
+    decisions go to the asking seat (OpenRig patch 133).
+  - not posted yet, or delivery failed -> left alone, so a real delivery problem still surfaces.
+Never touches other rows. Uses the rig queue CLI only (no SQL). Idempotent. Logs each close via logger.
+"""
+import json, subprocess, sys
+
+DRY = "--dry-run" in sys.argv
+NOTE = "informational; auto-closed after posting (agent-human-inbox-tidy)"
+
+
+def log(msg):
+    print(msg)
+    subprocess.run(["logger", "-t", "agent-human-inbox-tidy", msg], check=False)
+
+
+def rig(*args):
+    r = subprocess.run(["rig", *args], capture_output=True, text=True)
+    if r.returncode != 0:
+        raise RuntimeError(f"rig {' '.join(args[:3])} failed: {(r.stderr or r.stdout).strip()[:200]}")
+    return r.stdout
+
+
+def rows():
+    out = rig("queue", "list", "-A", "--state", "pending", "--full", "--json", "--limit", "5000")
+    data = json.JSONDecoder().raw_decode(out.lstrip())[0]  # tolerate trailing notices after the JSON
+    return data if isinstance(data, list) else data.get("items", [])
+
+
+try:
+    pending = rows()
+except (RuntimeError, ValueError) as e:
+    log(f"could not read the queue: {e}")
+    sys.exit(1)
+closed = kept = 0
+for r in pending:
+    dest = str(r.get("destinationSession") or "")
+    if not dest.endswith("@external"):
+        continue
+    intent, outcome = r.get("humanIntent"), r.get("deliveryOutcome")
+    if outcome == "posted" and intent in (None, "update"):
+        if DRY:
+            log(f"would close {r['qitemId']} -> {dest} ({r.get('summary') or ''})")
+        else:
+            try:
+                rig("queue", "update", r["qitemId"], "--state", "done", "--closure-reason", "no-follow-on", "--note", NOTE)
+                log(f"closed {r['qitemId']} -> {dest}: informational, posted")
+            except RuntimeError as e:
+                log(f"could not close {r['qitemId']}: {e}")
+                continue
+        closed += 1
+    else:
+        kept += 1
+print(f"{'would close' if DRY else 'closed'} {closed}; left {kept} (decision requests or not yet posted)")

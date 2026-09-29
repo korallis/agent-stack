@@ -1,0 +1,25 @@
+--- a/daemon/dist/domain/queue-stuck-sweep.js
++++ b/daemon/dist/domain/queue-stuck-sweep.js
+@@ -23,6 +23,7 @@
+ // share one contract instead of two guesses. S03 owns park/wake honesty: state=blocked rows
+ // legitimately wait and are never findings.
+ import { defaultResolveOrchestrator } from "./queue-owner.js";
++import { parseSessionName } from "./session-name.js";
+ import { deriveCrossHostSuccessorId } from "./queue-repository.js";
+ import { stalledPickupFinding } from "./queue-pickup.js";
+ import { SettingsStore } from "./user-settings/settings-store.js";
+@@ -332,10 +333,13 @@
+                 continue;
+             if (hasLiveLadder(deps.db, row.qitemId))
+                 continue;
++            // A human destination (external address or human seat) can't claim, so paging the human about
++            // their own inbox is noise; the seat that asked them owns chasing or closing the row.
++            const toHuman = ["external", "human"].includes(parseSessionName(row.destinationSession).kind);
+             candidates.push({
+                 kind: "unclaimed-obligation",
+                 row,
+-                route: resolveOrch(row.destinationSession) ?? row.destinationSession,
++                route: toHuman && row.sourceSession ? row.sourceSession : resolveOrch(row.destinationSession) ?? row.destinationSession,
+                 ageMinutes: minutesSince(actionableAt, now),
+                 evidenceAt: actionableAt,
+                 why: `actionable with a destination and unclaimed for ${minutesSince(actionableAt, now)} min (threshold ${ageMinutes})`,
