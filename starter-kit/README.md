@@ -43,6 +43,7 @@ cp ~/Projects/agent-stack/rig/template/{full-stack.yaml,CULTURE.md,merge-sweep.w
 sed -i "s#@RIG@#$RIG#g; s#@REPO@#$R#g; s#@WT@#$WT#g; s#@AGENT_STACK@#$HOME/Projects/agent-stack#g; s#@LEAD_SEAT@#$LEAD#g; s#@MERGE_SEAT@#$MERGE#g" full-stack.yaml merge-sweep.watchdog.yaml daily-summary.watchdog.yaml
 #    own workspace (other projects keep running) + one worktree per seat:
 rig config init-workspace --root $W && sed -i "s/  - id: default/  - id: $RIG/" $W/workspace.yaml
+cat ~/Projects/agent-stack/rig/template/project-sdlc.yaml >> $W/project.yaml   # SDLC + wave model + git defaults
 for k in files.allowlist progress.scan_roots; do c=$(rig config get $k); rig config set $k "${c:+$c,}$RIG:$W"; done
 printf '  - id: %s\n    root: %s\n' "$RIG" "$W" >> ~/Projects/openrig-workspace/workspace.yaml && systemctl --user restart openrig.service
 #    worktrees: see ~/Projects/agent-stack/rig/template/README.md (keep the $P.worktrees / $P-work names:
@@ -53,6 +54,11 @@ rig watchdog register --policy periodic-reminder --spec $W/rig/daily-summary.wat
 
 # 5. write docs/PLAN.md, commit it, then:
 rig send $LEAD@$RIG "Build docs/PLAN.md"
+
+# 6. once the lead has the feature list approved, check the wiring (see the agent-stack skill checklist):
+#    every mission has a wave-map row, slices have depends_on + Territory, queue rows carry project/mission/slice
+for m in $W/missions/*/; do rig scope audit --mission $(basename $m) --workspace $W; done
+rig view show execution --mission <m> --json | jq '.rows[0].sources.wave_map, [.rows[0].q1_lanes[].fragile_join]'
 ```
 
 From then on you get a desktop notification when the feature list is ready for your approval, when a risky PR

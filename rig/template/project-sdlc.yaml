@@ -1,0 +1,38 @@
+
+# ---- agent-stack defaults (appended to the workspace's project.yaml by the project setup) ----
+# Address map, not an enforcement engine (OpenRig product-journey-sdlc.md, "Composition rules").
+# Missions inherit these; a mission.yaml or slice.yaml may narrow them for named work.
+sdlc:
+  catalog:
+    root: installed                     # $OPENRIG_HOME/reference
+    address: product-journey-sdlc.md#component-catalog
+  build_model:
+    address: wave-sdlc.md               # slices build in parallel in disjoint territories; review per wave
+    wave_map: queue row tagged wave-map + format:wave-map-v1, one per mission (sdlc-conventions.md, EC-2)
+  components:
+    - id: journey.choose                # the architect turns the plan into features + slices
+      owner: architect
+    - id: journey.probe                 # locked acceptance journeys, written before the feature exists
+      owner: test-author
+    - id: build.minimal-gap
+      owner: implementer
+    - id: qa.public-journey             # hands-on QA as a person, screenshots on the PR
+      owner: qa
+    - id: review.scope-maintainability  # per PR: other model family (owner requirement); per wave: drift review
+      owner: reviewer
+    - id: integrate.one-outcome         # one merge owner, serial merges
+      owner: integrator
+    - id: runtime.adopt                 # only when a deploy/migration is part of the outcome
+      owner: integrator
+      admission: outcome needs installed-runtime or migration proof
+  edges:
+    - { from: journey.choose, to: journey.probe }
+    - { from: journey.probe, to: build.minimal-gap }
+    - { from: build.minimal-gap, to: qa.public-journey }
+    - { from: qa.public-journey, to: review.scope-maintainability }
+    - { from: review.scope-maintainability, to: integrate.one-outcome }
+    - { from: integrate.one-outcome, to: runtime.adopt, when: outcome needs runtime proof }
+git:
+  integration_truth: main               # continuous integration to main: each PR merges when its gates are green
+  base: main
+  reconcile: every merge (no release branch); merge announcements are rebase triggers for open candidates

@@ -72,6 +72,7 @@ step "Helper scripts"
 mkdir -p "$L/bin" "$L/seat-bin" "$B"
 for f in agent-login cliproxy-healthcheck cliproxy-key openrig-healthcheck cliproxy-authwatch cliproxy-quotawatch; do place "$S/system/$f" "$L/bin/$f" 755; done
 place "$S/system/seat-bin-codex" "$L/seat-bin/codex" 755
+mkdir -p "$L/seat-tools"; place "$S/system/seat-tools-rig" "$L/seat-tools/rig" 755   # queue writes get the project tag + EC-3 worktree_path
 link "$L/bin/agent-login" "$B/agent-login"
 for f in claude-pool agent-heavy openrig-upgrade openrig-update; do link "$S/bin/$f" "$B/$f"; done
 link "$S/proxy/status.py" "$B/agent-proxy-status"
@@ -117,9 +118,16 @@ if [ $CHECK = 0 ]; then
   for t in cliproxyapi-health cliproxy-usage openrig-health cliproxy-authwatch cliproxy-quotawatch openrig-update; do systemctl --user enable --now "$t.timer" >/dev/null 2>&1 || todo "$t.timer"; done
 fi
 "$B/rig" --version >/dev/null 2>&1 && ok "rig $("$B/rig" --version | awk '{print $1}')" || todo "OpenRig not installed"
+# OpenRig's own seat skills (mission-slice-sop, queue-handoff, compaction/continuity, ...). The rig specs name the
+# openrig-core plugin, but seats are launched without --plugin-dir, so they only get these as user-level skills.
+# Symlinks follow OpenRig upgrades.
+orsk=$L/openrig/lib/node_modules/@openrig/cli/daemon/assets/plugins/openrig-core/skills
 for d in "$HOME/.claude/skills" "$HOME/.agents/skills"; do
-  src=$L/openrig/lib/node_modules/@openrig/cli/daemon/assets/plugins/openrig-core/skills/openrig-skills
-  [ -d "$src" ] && { [ -d "$d/openrig-skills" ] && ok "$d/openrig-skills" || { [ $CHECK = 1 ] && todo "$d/openrig-skills" || { mkdir -p "$d"; cp -r "$src" "$d/"; ok "$d/openrig-skills"; }; }; }
+  [ -d "$orsk" ] || { todo "OpenRig core skills (install OpenRig first)"; break; }
+  missing=0; for s in "$orsk"/*/; do s=$(basename "$s"); [ -L "$d/$s" ] || missing=1; done
+  if [ $missing = 0 ]; then ok "$d: OpenRig core skills"
+  elif [ $CHECK = 1 ]; then todo "$d: OpenRig core skills"
+  else mkdir -p "$d"; for s in "$orsk"/*/; do s=$(basename "$s"); [ -e "$d/$s" ] && [ ! -L "$d/$s" ] && { mkdir -p "$L/backups/skills"; mv "$d/$s" "$L/backups/skills/$(basename "$(dirname "$d")")-$s-$(date +%Y%m%d%H%M%S)"; }; ln -sfn "$orsk/$s" "$d/$s"; done; ok "$d: OpenRig core skills"; fi
 done
 
 step "OpenRig multi-project catalog"

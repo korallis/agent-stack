@@ -41,3 +41,7 @@ if [ -n "${OPENRIG_NODE_ID:-}" ] && [ -z "${OPENRIG_WORK_ROOT:-}" ]; then
       unset _p ;;
   esac
 fi
+# Seats: seat tools (a `rig` that adds the project tag + worktree to queue writes) come first on PATH.
+if [ -n "${OPENRIG_NODE_ID:-}" ] && [ -d "$HOME/.local/share/agent-stack/seat-tools" ]; then
+  case ":$PATH:" in *":$HOME/.local/share/agent-stack/seat-tools:"*) ;; *) export PATH="$HOME/.local/share/agent-stack/seat-tools:$PATH" ;; esac
+fi

@@ -25,6 +25,31 @@ semantic judgments, and **ordinary code** does arithmetic, scheduling, permissio
 | `agent-proxy-status [--recent N]` | pool health per account; routing log |
 | `jev-decide list` / `jev-decide <id> --json '{…}'` / MCP tool `jev_decide` | direct Jev decisions |
 
+## Wiring a project the OpenRig way (checklist — each item was missed once)
+Source of truth: `$OPENRIG_HOME/reference/` (sdlc-conventions.md, wave-sdlc.md, product-journey-sdlc.md,
+project-workspace.md) and the `mission-slice-sop` skill. Verify each point on disk, not from memory:
+1. Workspace `~/Projects/<P>-work`: project.yaml (with the agent-stack `sdlc:` + `git:` defaults from
+   `rig/template/project-sdlc.yaml`), workspace.yaml (`projects: [{id, root: .}]`), SPEC.md, conventions.md,
+   missions/<m>/{SPEC,PROGRESS,NOTES}.md + mission.yaml, slices/<s>/{SPEC,PROGRESS,PROOF}.md + proof/ + slice.yaml.
+   The project is listed in the umbrella catalog `~/Projects/openrig-workspace/workspace.yaml` and in
+   `files.allowlist` / `progress.scan_roots`.
+2. Slice SPEC frontmatter: unique `id`, honest `status`, `intent`, `depends_on` (inline JSON array; `[]` is a
+   statement, absence is unknown); body `## Intent`, `## Mini-requirements`, `## Proof contract`; a `Territory:`
+   line; `SOFT-AFTER: [ids] — reason` for shared files.
+3. WAVES: one queue row per mission tagged `wave-map,format:wave-map-v1`, body = one ```json block
+   `{"format":"wave-map-v1","mission":"<m>","waves":[{"id":"w01","slices":[...],"review_model":"..."}]}`.
+   Composition only. A wave review (two non-writer reviewers, different families, drift + CONTEXT-GAP/JUDGMENT-GAP)
+   fires once per wave on top of our per-PR checks.
+4. Queue rows: `--mission` and `--slice` on every create; `project:<id>` tag and the EC-3 body line
+   `worktree_path=<path>` are added by `~/.local/share/agent-stack/seat-tools/rig` (seats have it first on PATH).
+   Existing rows are never rewritten.
+5. Seats have OpenRig's own skills (mission-slice-sop, queue-handoff, compaction/continuity) as user-level
+   symlinks — the specs' `shared:openrig-core` plugin is not loaded because seats start without --plugin-dir.
+6. Check: `rig scope audit --mission <m>` (advisory), the TUI Project view (every mission/slice/row placed),
+   `rig view show execution --mission <m> --json` (`wave_map` must not be INDETERMINATE; lanes must not be
+   `fragile_join`).
+7. Only the rig LEAD is messaged; it relays. Owner delegations/standing approvals go into the rig CULTURE.md.
+
 ## Using Jev well
 - Only for decisions in `jev-decide list`, or new ones added to `~/Projects/agent-stack/config/decisions.yaml`
   (versioned; thresholds tuned with `node eval/run.js`).

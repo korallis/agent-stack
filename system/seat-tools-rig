@@ -1,0 +1,93 @@
+#!/usr/bin/env python3
+"""OpenRig seats only (first on the seats' PATH): `rig` with the project's execution-data conventions filled in.
+
+For `rig queue create | handoff | handoff-and-complete` this adds what OpenRig's project views join on
+(sdlc-conventions.md, DISPATCH DATA; scoped-operating-posture.md), so no seat has to remember it:
+  - a `project:<id>` tag (the id from the seat's workspace catalog, $OPENRIG_WORK_ROOT/workspace.yaml);
+  - EC-3: the body line `worktree_path=<path>` when the destination seat has a worktree
+    (~/Projects/<P>.worktrees/<member>). A handoff that keeps the source body gets that body re-sent
+    with the destination's line, so the baton always names where the new owner works.
+Anything already present is left alone. Every other command passes through untouched.
+"""
+import json, os, re, subprocess, sys, tempfile
+
+REAL = os.path.expanduser("~/.local/bin/rig")
+args = sys.argv[1:]
+
+
+def run_real(a):
+    os.execv(REAL, [REAL] + a)
+
+
+if len(args) < 2 or args[0] != "queue" or args[1] not in ("create", "handoff", "handoff-and-complete"):
+    run_real(args)
+
+work = os.environ.get("OPENRIG_WORK_ROOT", "")
+project = None
+try:
+    m = re.search(r"^\s*-\s*id:\s*([\w.-]+)", open(os.path.join(work, "workspace.yaml")).read(), re.M)
+    project = m.group(1) if m else None
+except OSError:
+    pass
+
+
+def opt(name):
+    for i, a in enumerate(args):
+        if a == name and i + 1 < len(args):
+            return i, args[i + 1]
+        if a.startswith(name + "="):
+            return i, a.split("=", 1)[1]
+    return None, None
+
+
+def set_opt(name, value):
+    i, _ = opt(name)
+    if i is None:
+        args.extend([name, value])
+    elif args[i] == name:
+        args[i + 1] = value
+    else:
+        args[i] = f"{name}={value}"
+
+
+try:
+    # project tag
+    if project:
+        _, tags = opt("--tags")
+        tl = [t for t in (tags or "").split(",") if t]
+        if not any(t.startswith("project:") for t in tl):
+            set_opt("--tags", ",".join(tl + [f"project:{project}"]))
+
+    # EC-3 worktree_path for the destination seat
+    _, dest = opt("--to" if args[1] != "create" else "--destination")
+    wt = None
+    base = os.path.basename(work.rstrip("/"))
+    if dest and base.endswith("-work"):
+        cand = os.path.join(os.path.dirname(work.rstrip("/")), base[:-5] + ".worktrees", dest.split("@")[0])
+        wt = cand if os.path.isdir(cand) else None
+    if wt:
+        line = f"worktree_path={wt}"
+        bi, body = opt("--body")
+        fi, bfile = opt("--body-file")
+        text = None
+        if body is not None:
+            text = sys.stdin.read() if body == "-" else body
+        elif bfile is not None:
+            text = sys.stdin.read() if bfile == "-" else open(bfile).read()
+        elif args[1] != "create" and len(args) > 2 and not args[2].startswith("-"):
+            out = subprocess.run([REAL, "queue", "show", args[2], "--full", "--json"], capture_output=True, text=True)
+            text = json.loads(out.stdout).get("body") if out.returncode == 0 else None
+        if text is not None:  # always re-materialise: a pipe/stdin body can only be read once
+            if not re.search(r"^worktree_path=", text, re.M):
+                text = text.rstrip("\n") + "\n\n" + line + "\n"
+            fd, path = tempfile.mkstemp(prefix="rig-body-", suffix=".md")
+            os.write(fd, text.encode()); os.close(fd)
+            for flag in ("--body", "--body-file"):
+                i, _ = opt(flag)
+                if i is not None:
+                    del args[i:i + (2 if args[i] == flag else 1)]
+            args.extend(["--body-file", path])
+except Exception as e:  # never block a queue write because of the helper
+    print(f"(seat rig helper skipped: {e})", file=sys.stderr)
+
+run_real(args)

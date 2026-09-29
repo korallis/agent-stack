@@ -26,7 +26,7 @@ servers marked "latest" track upstream, the rest are pinned in `config/versions.
 | TypeSafe skill | Claude Code plugin `typesafe@typesafe-ai` 0.5.7; Codex `~/.agents/skills/typesafe-ai` | 0.5.7 | How to use Jev decisions well |
 | agent-stack skill | both (`skills/agent-stack`, linked) | this repo | How this setup works: seats, pool, Jev |
 | Neon skills (`neon`, `neon-postgres`, `neon-postgres-branches`, `neon-postgres-egress-optimizer`) | both (`~/.agents/skills`, linked into `~/.claude/skills`) | latest (`neon skills update`) | How to use Neon Postgres well: connections, migrations, branch-per-PR testing, cost |
-| openrig-skills | both (copied from the OpenRig install) | OpenRig 0.5.17 | Operating OpenRig: recovery, handover, queue triage |
+| OpenRig core skills (19: `mission-slice-sop`, `queue-handoff`, `seat-continuity-and-handover`, `claude-compaction-restore`, `openrig-skills`, ...) | both (symlinked from the OpenRig install; follow upgrades) | OpenRig 0.5.17 | Missions/slices/waves, handoffs, compaction and seat continuity. Seats would otherwise miss them: the rig specs' openrig-core plugin isn't loaded |
 
 ## MCP servers (tools the agents can call)
 
@@ -35,6 +35,8 @@ servers marked "latest" track upstream, the rest are pinned in `config/versions.
 | `jev` | Claude Code (user scope) and Codex | Typed decisions: routing, triage, merge gate (`jev/`, needs a TypeSafe key) |
 | `playwright` | Claude Code (user scope) and Codex | Drives a real headless browser: QA seats use the app like a person |
 | `Neon` | Claude Code (user scope) and Codex | Neon's hosted MCP (OAuth). Optional: agents use the `neon` CLI first |
+
+| `seat-tools/rig` (not MCP) | seats | : every `rig queue create/handoff` gets the `project:<id>` tag and the `worktree_path=` line OpenRig's project views join on |
 
 ## Background services (systemd user units)
 
