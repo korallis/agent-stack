@@ -405,16 +405,24 @@ if specs:
     import yaml
     sp = specs[0]
     au = subprocess.run(["rig", "spec", "audit", sp], capture_output=True, text=True).stdout
-    rep("OK" if "audit clean" in au else "WARN", "rig spec audit (OpenRig authoring check) is clean",
-        au.strip().splitlines()[1].strip() if "audit clean" not in au and len(au.strip().splitlines()) > 1 else "")
+    # OpenRig's audit reads any dotted name in CULTURE as a seat id; the Jev decision ids (review.merge_gate, …) are not
+    # seats, so those findings are dropped. Every other finding still WARNs.
+    try:
+        jev_ids = set((yaml.safe_load(open(os.path.join(os.path.dirname(os.path.dirname(os.path.realpath(__file__))),
+                                                         "config/decisions.yaml"))) or {}).get("decisions") or {})
+    except OSError:
+        jev_ids = set()
+    findings = [f.strip() for f in re.findall(r"^\s*- (.+)$", au, re.M)]
+    real = [f for f in findings if not ((m := re.match(r"culture references seat id '([^']+)'", f)) and m[1] in jev_ids)]
+    clean = "audit clean" in au or (findings and not real)
+    rep("OK" if clean else "WARN", "rig spec audit (OpenRig authoring check) is clean"
+        + (f" (ignoring {len(findings) - len(real)} Jev decision id(s) read as seat ids)" if clean and findings else ""),
+        "" if clean else (real[0] if real else (au.strip().splitlines()[1].strip() if len(au.strip().splitlines()) > 1 else "")))
     if running:
         dc = subprocess.run(["rig", "doctor", "--spec", sp], capture_output=True, text=True).stdout
         rep("OK" if "[OK] spec_live_conformance" in dc else "FAIL", "running rig matches its spec (rig doctor --spec)")
     d = yaml.safe_load(read(sp))
-    culture = (read(f"{W}/rig/CULTURE.md") or "").strip()
     cfile = ((d.get("managed_blocks") or {}).get("claude-code")) or "CLAUDE.md"
-    startup_md = [os.path.basename(f["path"]) for f in ((d.get("startup") or {}).get("files") or [])
-                  if f.get("delivery_hint") == "guidance_merge"]
     noblocks, stale, noskills = [], [], []
     for pod in d.get("pods", []):
         for mem in pod.get("members", []):
@@ -424,9 +432,6 @@ if specs:
             txt = read(f) or ""
             if "OpenRig MANAGED BLOCK" not in txt:
                 noblocks.append(seat); continue
-            m = re.search(r"BEGIN OpenRig MANAGED BLOCK: CULTURE\.md -->\n(.*?)\n<!-- END", txt, re.S)
-            if (m and m.group(1).strip() != culture) or any(f"MANAGED BLOCK: {n}" not in txt for n in startup_md):
-                stale.append(seat)
             ref = (mem.get("agent_ref") or "").replace("path:", "")
             ay = yaml.safe_load(read(os.path.join(ref, "agent.yaml")) or "{}") or {}
             prof = (ay.get("profiles") or {}).get(mem.get("profile") or "default") or {}
@@ -435,6 +440,14 @@ if specs:
             miss = [x for x in want if not os.path.exists(os.path.join(sd, x, "SKILL.md"))]
             if miss:
                 noskills.append(f"{seat}:{'/'.join(miss)}")
+    # Stale blocks: exactly what agent-refresh-guidance would change (it names blocks by their path under rig/, as
+    # OpenRig does, e.g. startup/context.md), so this check and the refresh can't disagree.
+    rg = subprocess.run([os.path.join(os.path.dirname(os.path.realpath(__file__)), "agent-refresh-guidance"), P, "--json"],
+                        capture_output=True, text=True)
+    try:
+        stale = [f"{c['seat']} ({'; '.join(c['reasons'])})" for c in json.loads(rg.stdout)["changed"]]
+    except (ValueError, KeyError, TypeError):
+        stale = [f"agent-refresh-guidance {P} --json failed: {(rg.stderr or rg.stdout).strip()[-200:]}"]
     if not running:  # OpenRig writes instruction blocks and projects skills at launch
         noblocks, stale, noskills = [], [], []
         rep("WARN", "seat instructions and skills not checked: the rig is not running (rig up, then re-check)")

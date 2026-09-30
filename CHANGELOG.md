@@ -39,6 +39,11 @@ has no version numbers; entries are grouped by the day they merged, newest first
 - The lead's and the merge owner's role texts and the CULTURE template use the new Jev helpers.
 
 ### Fixed
+- `agent-project-check` no longer reports seats as stale when `agent-refresh-guidance` says they are current. It
+  looked for a startup block named by basename (`context.md`), while OpenRig names it by path (`startup/context.md`).
+  The check now asks the refresh itself (`agent-refresh-guidance <P> --json`, new), so the two can't disagree. The
+  WARN names each stale seat with its reason. It also ignores OpenRig spec-audit findings that read a Jev decision id
+  (`review.merge_gate`) as a seat id; every other finding still WARNs.
 - `agent-merge-evidence` works where every seat posts to GitHub as one shared login. A login mapped to `"shared"`
   (or unmapped) takes the reviewer's family from the review's first-line heading via `identityHeadings`, and the
   exact-head rule is unchanged. A status description naming a seat of the author's own family no longer counts as
