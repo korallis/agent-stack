@@ -9,7 +9,7 @@ import { join, dirname } from "node:path";
 import { fileURLToPath } from "node:url";
 
 const repo = join(dirname(fileURLToPath(import.meta.url)), "..");
-const { buildMergeInput, passes } = await import("../orchestration/merge-evidence.js");
+const { buildMergeInput, passes, outcome, gateProblems } = await import("../orchestration/merge-evidence.js");
 const { seatCandidates, nextStep } = await import("../orchestration/pickseat.js");
 const st = await import("../orchestration/stuck.js");
 const root = fs.mkdtempSync("/tmp/claude-1000/wo35-");
@@ -40,7 +40,7 @@ test("the Jev catalog has intake.seat and seat.stuck", () => {
 });
 
 // ---- merge evidence ------------------------------------------------------------------------------------------------
-const facts = (over = {}) => ({ pr: 42, head: H, base: B, baseRef: "main", headRef: "agent/x", mergeable: "MERGEABLE", isDraft: false,
+const facts = (over = {}) => ({ pr: 42, head: H, base: B, baseRef: "main", headRef: "agent/x", mergeable: "MERGEABLE", mergeState: "CLEAN", isDraft: false,
   change: "Adds login", checks: [{ name: "verify", bucket: "pass" }, { name: "qa-evidence", bucket: "pass" }],
   independentReview: { state: "success", description: "QA PASS", creator: "rev" },
   brb: { file: "/w/proof/brb-a.md", artifact_type: "qa", verdict: "PASS", candidate_sha: H, money_evidence: "Ship: YES, 5 criteria passed" },
@@ -282,4 +282,40 @@ test("redaction covers credential assignments whole: unprefixed keys, both quote
   const sha = "a".repeat(40);
   assert.equal(redact(`candidate_sha=${sha} head ${sha}`), `candidate_sha=${sha} head ${sha}`, "shas and ordinary keys stay");
   assert.doesNotMatch(redact('x DB_PASSWORD="fake secret words" y', { longTokens: true }), /fake|secret words/);
+});
+
+
+// WO36: the integrator's below-bar path. A live Jev merge below the act bar, every deterministic gate green, is
+// NEEDS CONFIRM (a one-line exact-head "confirm <sha>" from the other-family reviewer), not HOLD.
+test("merge outcome: act -> PASS; review band with every gate green -> NEEDS CONFIRM (exit 3); otherwise HOLD", () => {
+  const green = facts();
+  const live = (band, decision = "merge") => ({ decided_by: "jev", band, result: { decision } });
+  assert.equal(outcome(live("act"), green).code, 0);
+  for (const band of ["review", "uncertain"]) {   // "below the act bar" is both bands (QA round 1)
+    const nc = outcome(live(band), green);
+    assert.equal(nc.code, 3, band); assert.match(nc.text, new RegExp(`NEEDS CONFIRM \\(Jev merge below the act bar, ${band} band.*repository's own gates.*"confirm ${H}".*--match-head-commit ${H}`));
+  }
+  assert.doesNotMatch(outcome(live("review"), green).text, /every deterministic gate/, "no claim beyond what it checked");
+  for (const [why, f] of [["a failing check", facts({ checks: [{ name: "verify", bucket: "fail" }] })], ["review not success", facts({ independentReview: { ...facts().independentReview, state: "failure" } })],
+    ["no QA verdict", facts({ brb: null })], ["QA verdict for another head", facts({ brb: { ...facts().brb, candidate_sha: "c".repeat(40) } })],
+    ["not a qa artifact", facts({ brb: { ...facts().brb, artifact_type: "implementation" } })], ["a draft", facts({ isDraft: true })],
+    ["conflicting", facts({ mergeable: "CONFLICTING" })], ["mergeability unknown", facts({ mergeable: "UNKNOWN" })],
+    ["behind its base", facts({ mergeState: "BEHIND" })], ["dirty", facts({ mergeState: "DIRTY" })], ["merge state unknown", facts({ mergeState: undefined })]]) {
+    for (const band of ["review", "uncertain"]) {
+      const o = outcome(live(band), f);
+      assert.equal(o.code, 1, `${band}: ${why}`); assert.match(o.text, /HOLD \(Jev merge below the act bar, .* band, and a gate this helper checks is not green/, why);
+    }
+  }
+  assert.deepEqual(gateProblems(green), []);
+  for (const st of ["UNSTABLE", "BLOCKED", "HAS_HOOKS"]) assert.deepEqual(gateProblems(facts({ mergeState: st })), [], `${st} (required checks are checked separately)`);
+  assert.equal(outcome(live("uncertain", "hold"), green).code, 1);
+  assert.equal(outcome(live("review", "hold"), green).code, 1);
+  assert.equal(outcome({ ...live("review"), stubbed: true }, green).code, 1, "a stub never confirms");
+  assert.equal(outcome({ decided_by: "cache", band: "review", result: { decision: "merge" } }, green).code, 1, "only live Jev");
+});
+
+test("the CULTURE template keeps the below-bar confirm path (WO36)", () => {
+  const c = fs.readFileSync(join(repo, "rig/template/CULTURE.md"), "utf8").replace(/\s+/g, " ");
+  assert.match(c, /only live Jev `merge` in the act band merges on its own; a merge below the act bar, with every deterministic gate green, merges after a one-line exact-head `confirm <sha>` from the other-family independent reviewer, as the integrator role says/);
+  assert.doesNotMatch(c, /only live Jev `merge` in the act band merges\)/);
 });

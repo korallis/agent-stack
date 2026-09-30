@@ -343,8 +343,13 @@ the lead or a person. Send Jev evidence, not conclusions.
     default).
 
   A missing check, status, review, proof, blast radius or deploy effect says MISSING. Free text is redacted before it
-  goes to Jev. The helper refuses if the PR's head or base moves while it collects. Only a live, not stubbed, Jev
-  `merge` in the act band passes. Before this, the gate was asked with hand-written summaries: of 288 calls (2026-09-28 to 2026-09-30),
+  goes to Jev. The helper refuses if the PR's head or base moves while it collects. A live, not stubbed, Jev `merge`
+  in the act band merges on its own (exit 0). A live `merge` below the act bar (review or uncertain band) is NEEDS
+  CONFIRM (exit 3) when every gate the helper checks is green: required checks pass, `independent-review` is success,
+  QA's proof is a `qa` PASS for this head, the PR is not a draft, GitHub says mergeable, and the branch is neither
+  behind nor conflicted. The integrator then checks the repository's own gates (starter-kit journeys, risk tier,
+  owner OK), asks the other-family independent reviewer for a one-line exact-head `confirm <sha>`, and merges.
+  Anything else holds (exit 1), naming what isn't green. Before this, the gate was asked with hand-written summaries: of 288 calls (2026-09-28 to 2026-09-30),
   79 were act (27%), 62 review (22%) and 147 uncertain (51%). Measure the change with
   `jev-decide stats --since <date the helper went live>` (row `review.merge_gate`).
 - **Dispatch:** `agent-dispatch pick-seat --rig R --role implementer --task "..."` lists the running seats of the role

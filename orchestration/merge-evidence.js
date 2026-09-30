@@ -7,8 +7,10 @@
 // Prints the review.merge_gate input as JSON: pr, full head and base shas, the change, every required check by name,
 // the independent-review status on that head, QA's bug-review-board proof (proof/brb-<head>.md), the blast-radius
 // comment, and the target branch, deploy effect and rollback as limits. Anything missing says MISSING, never
-// "fine". --decide also asks Jev and exits 0 only for decided_by jev, band act, decision merge (1 otherwise); code
-// still re-checks the head and merges with --match-head-commit.
+// "fine". --decide also asks Jev. Exit 0: live Jev merge in the act band. Exit 3: live Jev merge below the act bar with
+// the gates it checks green (see gateProblems): NEEDS CONFIRM, a one-line exact-head "confirm <sha>" from the
+// other-family independent reviewer after the integrator checks the repository's own gates (the integrator role's
+// below-bar path). Exit 1: hold. Code still re-checks the head and merges with --match-head-commit.
 import { execFileSync } from "node:child_process";
 import { existsSync, readFileSync } from "node:fs";
 import { join } from "node:path";
@@ -52,7 +54,7 @@ export function buildMergeInput(f) {
   ].join("\n");
   const limits = [
     `target branch ${f.baseRef} at ${f.base}; PR head branch ${f.headRef}`,
-    `mergeable: ${f.mergeable}; draft: ${f.isDraft}`,
+    `mergeable: ${f.mergeable}; merge state: ${f.mergeState || "unknown"}; draft: ${f.isDraft}`,
     `deploy effect: ${f.deploy || "MISSING: not stated (see the rig CULTURE specifics)"}`,
     f.rollback ? `rollback: ${f.rollback}` : `rollback: not stated (proposed default: revert the squash commit on ${f.baseRef})`,
   ].join("\n");
@@ -67,7 +69,7 @@ function frontmatter(path) {
 
 export function gather(pr, { repo, mission, slice, change, deploy, rollback } = {}) {
   const R = repo ? ["-R", repo] : [];
-  const FIELDS = "number,title,headRefOid,baseRefOid,baseRefName,headRefName,mergeable,isDraft,comments,reviews";
+  const FIELDS = "number,title,headRefOid,baseRefOid,baseRefName,headRefName,mergeable,mergeStateStatus,isDraft,comments,reviews";
   const v = ghJson("pr", "view", String(pr), ...R, "--json", FIELDS);
   const nwo = repo || ghJson("repo", "view", "--json", "nameWithOwner").nameWithOwner;
   let checks = [];
@@ -104,7 +106,7 @@ export function gather(pr, { repo, mission, slice, change, deploy, rollback } = 
     throw new Error(`the PR moved while its evidence was collected (head ${v.headRefOid.slice(0, 12)} -> ${again.headRefOid.slice(0, 12)}, base ${v.baseRefOid.slice(0, 12)} -> ${again.baseRefOid.slice(0, 12)}); run it again`);
   return {
     pr: v.number, head: v.headRefOid, base: v.baseRefOid, baseRef: v.baseRefName, headRef: v.headRefName,
-    mergeable: v.mergeable, isDraft: v.isDraft, change: change || v.title, checks,
+    mergeable: v.mergeable, mergeState: v.mergeStateStatus, isDraft: v.isDraft, change: change || v.title, checks,
     independentReview: ir ? { state: ir.state, description: ir.description || "", creator: ir.creator?.login || "?", url: ir.target_url || null } : null,
     reviewNote, unlinkedNote, brb, brbWhere, blastRadius: blast, deploy, rollback,
   };
@@ -113,6 +115,38 @@ export function gather(pr, { repo, mission, slice, change, deploy, rollback } = 
 // Code owns the threshold: only a live Jev "merge" in the act band passes.
 // A stubbed answer (AGENT_JEV_STUB, tests) is never a live decision, so it never passes.
 export const passes = (rec) => !rec?.stubbed && rec?.decided_by === "jev" && rec?.band === "act" && rec?.result?.decision === "merge";
+
+// The deterministic gates this helper can check from the evidence it gathered: required checks pass, the
+// independent-review status is success, QA's bug-review-board proof is a qa artifact with PASS for exactly this head,
+// the PR is not a draft, GitHub says it is mergeable, and the branch is neither behind its base nor conflicted.
+// Returns what is not green. Repository-specific gates (the integrator role's starter-kit journeys, risk tier and
+// owner OK) are not visible here and stay the integrator's to check.
+export function gateProblems(f) {
+  const p = [];
+  if (f.isDraft !== false) p.push(f.isDraft ? "the PR is a draft" : "draft state unknown");
+  if (f.mergeable !== "MERGEABLE") p.push(`GitHub mergeable: ${f.mergeable || "unknown"}`);
+  if (["BEHIND", "DIRTY", "UNKNOWN", undefined, null, ""].includes(f.mergeState)) p.push(`merge state ${f.mergeState || "unknown"} (the branch must be up to date with its base and free of conflicts)`);
+  if (!f.checks?.length) p.push("no required checks reported");
+  else if (f.checks.some((c) => c.bucket !== "pass")) p.push(`required checks not passing: ${f.checks.filter((c) => c.bucket !== "pass").map((c) => c.name).join(", ")}`);
+  if (f.independentReview?.state !== "success") p.push(`independent-review is ${f.independentReview?.state || "missing"}`);
+  if (!(f.brb && f.brb.artifact_type === "qa" && f.brb.verdict === "PASS" && f.brb.candidate_sha === f.head)) p.push("no bug-review-board qa PASS for this head");
+  return p;
+}
+
+// The integrator's standing below-bar path: live Jev merge in the review band, every deterministic gate green ->
+// ask the other-family independent reviewer for a one-line exact-head "confirm <sha>", then merge.
+export function outcome(rec, facts) {
+  if (passes(rec)) return { code: 0, text: `merge gate: PASS (live Jev merge, act band) for ${facts.head}` };
+  if (rec?.stubbed) return { code: 1, text: `merge gate: HOLD (a STUBBED answer, not a live Jev decision: ${rec.decided_by}/${rec.band}/${rec.result?.decision})` };
+  // Below the act bar = the review or the uncertain band (the integrator role's "MERGE below the act confidence bar").
+  if (rec?.decided_by === "jev" && ["review", "uncertain"].includes(rec?.band) && rec?.result?.decision === "merge") {
+    const problems = gateProblems(facts);
+    return problems.length
+      ? { code: 1, text: `merge gate: HOLD (Jev merge below the act bar, ${rec.band} band, and a gate this helper checks is not green: ${problems.join("; ")})` }
+      : { code: 3, text: `merge gate: NEEDS CONFIRM (Jev merge below the act bar, ${rec.band} band; the gates this helper checks are green: required checks, independent-review, QA's qa PASS for this head, not a draft, mergeable, up to date). Check the repository's own gates too (integrator role: starter-kit journeys, risk tier, owner OK), then ask the other-family independent reviewer for a one-line exact-head "confirm ${facts.head}", and merge with --match-head-commit ${facts.head}` };
+  }
+  return { code: 1, text: `merge gate: HOLD (${rec?.decided_by}/${rec?.band}/${rec?.result?.decision})` };
+}
 
 if (import.meta.url === `file://${process.argv[1]}` || process.argv[1]?.endsWith("agent-merge-evidence")) {
   const a = process.argv.slice(2);
@@ -126,8 +160,7 @@ if (import.meta.url === `file://${process.argv[1]}` || process.argv[1]?.endsWith
   if (!a.includes("--decide")) { console.log(JSON.stringify(input, null, 2)); process.exit(0); }
   const rec = await decideOrStub("review.merge_gate", input, { caller: process.env.OPENRIG_SESSION_NAME || "agent-merge-evidence" });
   console.log(JSON.stringify({ input, decision: { decided_by: rec.decided_by, band: rec.band, result: rec.result, request_id: rec.request_id, ...(rec.stubbed ? { stubbed: true } : {}) } }, null, 2));
-  console.error(passes(rec) ? `merge gate: PASS (live Jev merge, act band) for ${input.head}`
-    : rec.stubbed ? `merge gate: HOLD (a STUBBED answer, not a live Jev decision: ${rec.decided_by}/${rec.band}/${rec.result?.decision})`
-    : `merge gate: HOLD (${rec.decided_by}/${rec.band}/${rec.result?.decision})`);
-  process.exit(passes(rec) ? 0 : 1);
+  const o = outcome(rec, facts);
+  console.error(o.text);
+  process.exit(o.code);
 }

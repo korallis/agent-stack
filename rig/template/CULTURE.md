@@ -83,7 +83,9 @@ Six skills from agent-stack are installed for every seat. Each has a fixed momen
 - Jev decides the routine judgments; code gathers the evidence and owns the thresholds, and anything short of the act
   band goes to a person or the lead: the lead picks seats with `agent-dispatch pick-seat` (Jev's seat on act; on
   review or uncertain the lead picks and writes why in the row), and the merge owner asks the merge gate with
-  `agent-merge-evidence --decide` (exact-head evidence; only live Jev `merge` in the act band merges).
+  `agent-merge-evidence --decide` (exact-head evidence; only live Jev `merge` in the act band merges on its own; a
+  merge below the act bar, with every deterministic gate green, merges after a one-line exact-head `confirm <sha>` from
+  the other-family independent reviewer, as the integrator role says).
   `agent-stuck-check` warns the lead when a seat holding work looks looping, rate-limited or stalled; it never acts.
 - `unslop` and `technical-writing`: every seat checks its text before posting: PR descriptions, SPECs, issue and PR
   comments (including handbacks to a client), queue bodies and messages to the owner. Plain, specific, short; no

@@ -25,6 +25,13 @@ has no version numbers; entries are grouped by the day they merged, newest first
   [docs/REFERENCE.md](docs/REFERENCE.md#models-and-decisions).
 - The lead's and the merge owner's role texts and the CULTURE template use the new Jev helpers.
 
+### Fixed
+- The CULTURE template's merge-gate line keeps the integrator's below-bar path: a Jev merge below the act bar, with
+  every deterministic gate green, merges after a one-line exact-head `confirm <sha>` from the other-family reviewer.
+  `agent-merge-evidence --decide` reports a live Jev merge below the act bar (review or uncertain band) as NEEDS
+  CONFIRM (exit 3), not HOLD, when every gate it checks is green (required checks, independent-review, QA's qa PASS
+  for this head, not a draft, mergeable, up to date).
+
 ## 2026-09-30
 
 ### Added
