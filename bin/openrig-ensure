@@ -10,9 +10,11 @@ set -uo pipefail
 S=$(cd "$(dirname "$(readlink -f "$0")")/.." && pwd)
 source "$S/config/versions.defaults.env"; [ -f "$S/config/versions.env" ] && source "$S/config/versions.env"
 PKG=${OPENRIG_PKG:-$HOME/.local/share/agent-stack/openrig/lib/node_modules/@openrig/cli}
-ver_gt() { [ "$1" != "$2" ] && [ "$(printf '%s\n%s\n' "$1" "$2" | sort -V | tail -n1)" = "$1" ]; }   # $1 > $2
+ver_gt() { [ "$("$S/bin/semver-cmp" "$1" "$2" 2>/dev/null)" = 1 ]; }   # $1 > $2 by SemVer (0.6.1-rc.1 < 0.6.1)
 have=$(jq -r '.version // empty' "$PKG/package.json" 2>/dev/null || true)
-pin=$OPENRIG_VERSION
+[ -x "$S/bin/semver-cmp" ] || { echo "openrig-ensure: needs $S/bin/semver-cmp (install.sh places it); nothing changed" >&2; exit 1; }
+pin=${OPENRIG_VERSION#v}
+"$S/bin/semver-cmp" "$pin" 0.0.0 >/dev/null 2>&1 || { echo "openrig-ensure: the pin OPENRIG_VERSION='$OPENRIG_VERSION' is not a version (config/versions*.env); nothing changed" >&2; exit 1; }
 
 if [ "${1:-}" = --check ]; then
   rc=0

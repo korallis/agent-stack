@@ -11,9 +11,17 @@ source "$S/config/versions.defaults.env"; [ -f "$S/config/versions.env" ] && sou
 restart=1 downgrade=0
 while [ $# -gt 0 ]; do case $1 in --no-restart) restart=0; shift ;; --allow-downgrade) downgrade=1; shift ;; *) break ;; esac; done
 V=${1:-$OPENRIG_VERSION}; N22=$(mise where node@$NODE_FOR_OPENRIG); P=$HOME/.local/share/agent-stack/openrig
+# Resolve the target to an exact version BEFORE anything is installed: a leading "v" is dropped, and a dist-tag
+# ("latest", "next") is asked of the registry. The guard and the install then use that exact version.
+[ -x "$S/bin/semver-cmp" ] || { echo "openrig-upgrade: needs $S/bin/semver-cmp; nothing changed" >&2; exit 1; }
+V=${V#v}
+if ! "$S/bin/semver-cmp" "$V" 0.0.0 >/dev/null 2>&1; then
+  tag=$V; V=$(PATH=$N22/bin:$PATH npm view "@openrig/cli@$tag" version 2>/dev/null | tail -n1 || true)
+  "$S/bin/semver-cmp" "$V" 0.0.0 >/dev/null 2>&1 || { echo "openrig-upgrade: could not resolve '$tag' to a version (npm view); nothing changed" >&2; exit 1; }
+  echo "openrig-upgrade: $tag = $V"
+fi
 have=$(jq -r '.version // empty' "$P/lib/node_modules/@openrig/cli/package.json" 2>/dev/null || true)
-if [[ $V =~ ^[0-9]+\.[0-9]+\.[0-9]+ ]] && [ -n "$have" ] && [ "$V" != "$have" ] \
-   && [ "$(printf '%s\n%s\n' "$V" "$have" | sort -V | tail -n1)" = "$have" ] && [ $downgrade = 0 ]; then
+if [ -n "$have" ] && [ "$("$S/bin/semver-cmp" "$V" "$have" 2>/dev/null)" = -1 ] && [ $downgrade = 0 ]; then
   echo "openrig-upgrade: $V is OLDER than the installed $have; refusing to downgrade (nothing changed). If you really mean it: openrig-upgrade --allow-downgrade $V" >&2
   exit 1
 fi
@@ -25,7 +33,7 @@ if [ -z "$got" ]; then
   echo "openrig-upgrade: no readable @openrig/cli version in $P after install; stopping before any restart" >&2
   exit 1
 fi
-if [[ $V =~ ^[0-9]+\.[0-9]+\.[0-9]+ ]] && [ "$got" != "$V" ]; then
+if [ "$got" != "$V" ]; then
   echo "openrig-upgrade: asked for $V but $got is installed; stopping before any restart (the daemon still runs the old code)" >&2
   exit 1
 fi

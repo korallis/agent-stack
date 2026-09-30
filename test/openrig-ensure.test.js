@@ -14,6 +14,7 @@ process.on("exit", () => fs.rmSync(root, { recursive: true, force: true }));
 const write = (p, t, mode) => { fs.mkdirSync(dirname(p), { recursive: true }); fs.writeFileSync(p, t, mode ? { mode } : undefined); };
 const stack = join(root, "stack"), log = join(root, "calls"), pkg = join(root, "pkg");
 write(join(stack, "bin/openrig-ensure"), fs.readFileSync(join(repo, "bin/openrig-ensure"), "utf8"), 0o755);
+write(join(stack, "bin/semver-cmp"), fs.readFileSync(join(repo, "bin/semver-cmp"), "utf8"), 0o755);
 write(join(stack, "bin/openrig-upgrade"), `#!/bin/sh\necho "upgrade $*" >> ${log}\n`, 0o755);
 write(join(stack, "bin/openrig-apply-patches"), `#!/bin/sh\necho "patches $*" >> ${log}\n[ -f ${root}/patches-missing ] && { echo "OpenRig 0.6.1 patches: 8/9 applied; NOT applied: 135-x (run openrig-apply-patches)"; exit 1; }\necho "OpenRig 0.6.1 patches: all 9 applied"\n`, 0o755);
 write(join(stack, "config/versions.defaults.env"), "OPENRIG_VERSION=0.6.1\n");
@@ -78,4 +79,16 @@ test("the tracked defaults exist and are not ignored by git", () => {
   assert.match(fs.readFileSync(join(repo, "config/versions.defaults.env"), "utf8"), /^OPENRIG_VERSION=\d+\.\d+\.\d+$/m);
   assert.equal(spawnSync("git", ["-C", repo, "check-ignore", "-q", "config/versions.defaults.env"]).status, 1);
   assert.equal(spawnSync("git", ["-C", repo, "check-ignore", "-q", "config/versions.env"]).status, 0, "the local override stays untracked");
+});
+
+test("QA: a stale PRERELEASE pin (0.6.1-rc.1) never downgrades 0.6.1; a v-prefixed pin is normalised; a non-version pin changes nothing", () => {
+  const rc = ensure({ installed: "0.6.1", localPin: "OPENRIG_VERSION=0.6.1-rc.1\n" });
+  assert.doesNotMatch(rc.calls, /upgrade/);
+  assert.equal(rc.local, "OPENRIG_VERSION=0.6.1\n");
+  const v = ensure({ installed: "0.6.1", localPin: "OPENRIG_VERSION=v0.6.1\n" });
+  assert.doesNotMatch(v.calls, /upgrade/);
+  const bad = ensure({ installed: "0.6.1", localPin: "OPENRIG_VERSION=latest\n" });
+  assert.equal(bad.status, 1);
+  assert.match(bad.stderr, /not a version/);
+  assert.doesNotMatch(bad.calls, /upgrade/);
 });
