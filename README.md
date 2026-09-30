@@ -72,11 +72,13 @@ Everything is listed with versions in [`config/tools.md`](config/tools.md). In s
 - **Programs:** OpenRig, CLIProxyAPI, Claude Code, Codex CLI, Node.js (via mise), ripgrep and fd for fast search,
   the TOON CLI for compact prompts, and Playwright with Chromium.
 - **In every seat:** the **Superpowers** plugin (for Claude Code and for Codex) for disciplined plan → test → build →
-  verify work; the **TypeSafe** skill; this repo's **agent-stack** skill; OpenRig's own skills.
+  verify work; the **TypeSafe** skill; the **Neon** skills; this repo's **agent-stack** and **openrig-project-setup**
+  skills; OpenRig's own skills. Claude Code also gets the **Vercel** plugin. Every skill, its source and who gets it:
+  [docs/SKILLS.md](docs/SKILLS.md) (`agent-skills-check` shows what is missing).
 - **Tools the agents can call:** **Jev** (fast typed decisions) and a **Playwright browser** (so QA can use the app
   like a person), both in Claude Code and Codex.
 - **Background services:** the subscription pool, the OpenRig daemon, health checks, usage logging, a sign-in
-  failure alert, a quota warning at 80%, and the daily OpenRig updater.
+  failure alert, a quota warning at 80%, and a weekly check for new OpenRig releases (upgrades are operator-run).
 
 ## What you need
 

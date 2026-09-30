@@ -1,0 +1,127 @@
+#!/usr/bin/env python3
+"""agent-skills-check [--json]: one line per skill source (docs/SKILLS.md), read-only. install.sh runs it.
+
+  ok    the source is fully in place
+  WARN  something from it is missing (exit 1)
+  info  not ours to install (Claude.ai account-synced skills, the host OS's skills): shown for the record only
+"""
+import json, os, subprocess, sys
+
+HOME = os.path.expanduser("~")
+S = os.path.dirname(os.path.dirname(os.path.realpath(__file__)))
+DIRS = [f"{HOME}/.claude/skills", f"{HOME}/.agents/skills"]   # Claude Code; Codex (and other agents)
+OPENRIG = f"{HOME}/.local/share/agent-stack/openrig/lib/node_modules/@openrig/cli"
+OURS = ["agent-stack", "openrig-project-setup"]
+NEON = ["neon", "neon-postgres", "neon-postgres-branches", "neon-postgres-egress-optimizer"]
+CLAUDE_PLUGINS = ["superpowers@claude-plugins-official", "typesafe@typesafe-ai", "vercel@claude-plugins-official"]
+CODEX_PLUGINS = ["superpowers@openai-api-curated"]
+rows = []
+
+
+def row(level, source, detail):
+    rows.append({"level": level, "source": source, "detail": detail})
+
+
+def run(cmd):
+    try:
+        r = subprocess.run(cmd, capture_output=True, text=True, timeout=60)
+        return r.stdout if r.returncode == 0 else None
+    except (OSError, subprocess.TimeoutExpired):
+        return None
+
+
+def has_skill(path):
+    return os.path.isfile(os.path.join(path, "SKILL.md"))
+
+
+# 1. Ours: this repo's skills, linked (not copied) into both skill dirs.
+bad = [f"{d}/{n}" for n in OURS for d in DIRS
+       if os.path.realpath(f"{d}/{n}") != os.path.realpath(f"{S}/skills/{n}") or not has_skill(f"{d}/{n}")]
+row("WARN" if bad else "ok", "ours (skills/ in this repo)",
+    f"missing, not linked to {S}/skills, or without SKILL.md: {', '.join(bad)}" if bad else f"{', '.join(OURS)} linked for Claude and Codex")
+
+# 2. OpenRig core: every skill of the installed openrig-core plugin, linked into both dirs.
+core = f"{OPENRIG}/daemon/assets/plugins/openrig-core/skills"
+names = sorted(n for n in os.listdir(core) if has_skill(f"{core}/{n}")) if os.path.isdir(core) else []
+bad = [f"{d}/{n}" for n in names for d in DIRS if os.path.realpath(f"{d}/{n}") != os.path.realpath(f"{core}/{n}")]
+if not names:
+    row("WARN", "OpenRig core skills", f"no installed openrig-core skills at {core} (install OpenRig: openrig-ensure)")
+else:
+    row("WARN" if bad else "ok", "OpenRig core skills",
+        f"{len(bad)} of {len(names) * 2} links missing: {', '.join(bad[:4])}{' …' if len(bad) > 4 else ''}; run install.sh" if bad
+        else f"{len(names)} linked for Claude and Codex")
+
+# 3. OpenRig role skills: projected into seats by the rig specs (agents/*/agent.yaml `uses.skills`), from the installed
+#    OpenRig's shared agent (rig/template/openrig-shared links to it).
+shared = f"{S}/rig/template/openrig-shared"
+want = set()
+agents = f"{S}/rig/template/agents"
+for a in sorted(os.listdir(agents)) if os.path.isdir(agents) else []:
+    for line in open(f"{agents}/{a}/agent.yaml") if os.path.isfile(f"{agents}/{a}/agent.yaml") else []:
+        if line.strip().startswith("skills:"):
+            want |= {w.strip() for w in line.split("[", 1)[-1].rstrip("]\n ").split(",") if w.strip()}
+have = {}
+if os.path.isfile(f"{shared}/agent.yaml"):
+    sid = None
+    for line in open(f"{shared}/agent.yaml"):
+        t = line.strip()
+        if t.startswith("- id:"):
+            sid = t.split(":", 1)[1].strip()
+        elif t.startswith("path:") and sid:
+            have[sid] = f"{shared}/{t.split(':', 1)[1].strip()}"
+            sid = None
+missing = sorted(w for w in want if not (w in have and has_skill(have[w])))
+if os.path.realpath(shared) != os.path.realpath(f"{OPENRIG}/daemon/specs/agents/shared") or not os.path.isfile(f"{shared}/agent.yaml"):
+    row("WARN", "OpenRig role skills (seats)", f"{shared} does not link to the installed OpenRig's specs/agents/shared (openrig-upgrade links it)")
+else:
+    row("WARN" if missing else "ok", "OpenRig role skills (seats)",
+        f"named in rig/template/agents but not in OpenRig's shared agent: {', '.join(missing)}" if missing
+        else f"{len(want)} used by the rig specs, all present: {', '.join(sorted(want))}")
+
+# 4. Plugins.
+out = run(["claude", "plugin", "list"])
+if out is None:
+    row("WARN", "Claude Code plugins", "`claude plugin list` failed")
+else:
+    blocks = {}
+    cur = None
+    for line in out.splitlines():
+        t = line.strip().lstrip("❯ ").strip()
+        if "@" in t and " " not in t:
+            cur = t
+            blocks[cur] = ""
+        elif cur:
+            blocks[cur] += t + "\n"
+    bad = [p for p in CLAUDE_PLUGINS if p not in blocks or "enabled" not in blocks[p]]
+    row("WARN" if bad else "ok", "Claude Code plugins",
+        f"not installed or not enabled: {', '.join(bad)}" if bad else ", ".join(CLAUDE_PLUGINS))
+out = run(["codex", "plugin", "list"])
+if out is None:
+    row("WARN", "Codex plugins", "`codex plugin list` failed")
+else:
+    bad = [p for p in CODEX_PLUGINS
+           if not any(l.split()[:1] == [p] and "installed, enabled" in l for l in out.splitlines())]
+    row("WARN" if bad else "ok", "Codex plugins", f"not installed or not enabled: {', '.join(bad)}" if bad else ", ".join(CODEX_PLUGINS))
+
+# 5. Neon skills (`neon skills --global`): in ~/.agents/skills, linked into ~/.claude/skills.
+bad = [n for n in NEON if not (has_skill(f"{DIRS[1]}/{n}") and has_skill(f"{DIRS[0]}/{n}"))]
+row("WARN" if bad else "ok", "Neon skills", f"missing for Claude or Codex: {', '.join(bad)} (neon skills --global)" if bad
+    else f"{len(NEON)} present for Claude and Codex")
+
+# 6. TypeSafe for Codex: the Claude plugin's typesafe-ai skill, copied into ~/.agents/skills.
+row("ok" if has_skill(f"{DIRS[1]}/typesafe-ai") else "WARN", "TypeSafe skill for Codex",
+    f"{DIRS[1]}/typesafe-ai" + ("" if has_skill(f"{DIRS[1]}/typesafe-ai") else " missing (install.sh copies it from the plugin)"))
+
+# 7. Not ours: shown for the record.
+synced = f"{DIRS[0]}/synced"
+n = sum(1 for root, _, files in os.walk(synced) if "SKILL.md" in files) if os.path.isdir(synced) else 0
+row("info", "Claude.ai account-synced skills", f"{n} in {synced} (they come with the Claude login; not vendored)")
+host = [n for n in ("omarchy", "diagnose-crash") if os.path.exists(f"{DIRS[0]}/{n}") or os.path.exists(f"{HOME}/.codex/skills/{n}")]
+row("info", "host OS skills", ", ".join(host) + " (Omarchy; host-specific)" if host else "none")
+
+if "--json" in sys.argv:
+    print(json.dumps(rows, indent=2))
+else:
+    for r in rows:
+        print(f"{r['level']:<4}  {r['source']}: {r['detail']}")
+sys.exit(1 if any(r["level"] == "WARN" for r in rows) else 0)
