@@ -138,3 +138,47 @@ test("agent-project-check WARNs when the rig's CULTURE.md lacks Research, plan, 
     assert.equal(check().level, "OK");
   } finally { fs.rmSync(specDir, { recursive: true, force: true }); }
 });
+
+// WO30: the workflow skills are the default. The CULTURE section, the role texts, and agent-project-check.
+const WORKFLOW = ["bug-review-board", "verification-guide", "blast-radius", "review-lenses", "unslop", "technical-writing"];
+test("templates carry the Workflow skills: the CULTURE section names each skill; every role names its skills and says when", () => {
+  const culture = fs.readFileSync(join(repo, "rig/template/CULTURE.md"), "utf8");
+  const sec = culture.split(/^## /m).find((s) => s.startsWith("Workflow skills (binding)"));
+  assert.ok(sec, "section present");
+  assert.ok(culture.indexOf("## Workflow skills") < culture.indexOf("## Done means a person could use it"));
+  for (const n of WORKFLOW) assert.match(sec, new RegExp("`" + n + "`"), n);
+  const expect = { qa: ["bug-review-board", "verification-guide", "unslop"], reviewer: ["review-lenses", "blast-radius", "unslop"],
+    integrator: ["blast-radius", "bug-review-board"], architect: ["verification-guide", "technical-writing"],
+    lead: ["bug-review-board", "unslop"], implementer: ["unslop", "technical-writing"], "test-author": ["verification-guide"],
+    deputy: ["unslop"], recovery: ["unslop"] };
+  for (const [r, skills] of Object.entries(expect)) {
+    const t = fs.readFileSync(join(repo, `rig/template/agents/${r}/guidance/role.md`), "utf8");
+    const load = t.split("\n").find((l) => l.startsWith("Skills to load:"));
+    const when = t.split("\n").find((l) => l.startsWith("Workflow skills (CULTURE.md"));
+    assert.ok(load && when, r);
+    for (const n of skills) { assert.ok(load.includes(n), `${r} loads ${n}`); assert.ok(when.includes("`" + n + "`"), `${r} says when to use ${n}`); }
+  }
+});
+
+test("agent-project-check WARNs on a CULTURE without Workflow skills and on skills seats can't see; OK once both are there", () => {
+  const specDir = join(W, "rig"); fs.mkdirSync(specDir, { recursive: true });
+  fs.writeFileSync(join(specDir, "team.yaml"), `name: t\npods:\n  - id: coord\n    members:\n      - id: lead\n        cwd: "${home}"\n`);
+  const rows = () => JSON.parse(spawnSync("python3", [join(repo, "bin/agent-project-check"), W, "--json"], { encoding: "utf8",
+    env: { PATH: `${bin}:${process.env.PATH}`, HOME: home, OPENRIG_URL: "http://127.0.0.1:9" }, timeout: 60000 }).stdout);
+  const find = (r, p) => r.find((x) => x.check.startsWith(p));
+  const dirs = [join(home, ".claude/skills"), join(home, ".agents/skills")];
+  try {
+    fs.writeFileSync(join(specDir, "CULTURE.md"), "## Owner decisions\n## Operating rules\n");
+    let r = rows();
+    assert.equal(find(r, "CULTURE.md has the Workflow skills section").level, "WARN");
+    assert.equal(find(r, "seats can see the workflow skills").level, "WARN");
+    assert.match(find(r, "seats can see the workflow skills").detail, /run install\.sh/);
+    fs.writeFileSync(join(specDir, "CULTURE.md"), fs.readFileSync(join(repo, "rig/template/CULTURE.md"), "utf8"));
+    for (const d of dirs) for (const n of WORKFLOW) { fs.mkdirSync(join(d, n), { recursive: true }); fs.writeFileSync(join(d, n, "SKILL.md"), "x"); }
+    r = rows();
+    assert.equal(find(r, "CULTURE.md has the Workflow skills section").level, "OK");
+    assert.equal(find(r, "seats can see the workflow skills").level, "OK");
+    fs.rmSync(join(dirs[1], "unslop"), { recursive: true });
+    assert.match(find(rows(), "seats can see the workflow skills").detail, /\.agents\/skills\/unslop/);
+  } finally { fs.rmSync(specDir, { recursive: true, force: true }); for (const d of dirs) fs.rmSync(d, { recursive: true, force: true }); }
+});

@@ -62,7 +62,11 @@ if [ -d "$R/.git" ] && git -C "$R" rev-parse -q --verify HEAD >/dev/null && git 
   EXISTING=1; TRUNK=$(trunk_of "$R"); fi
 say() { printf '\033[1m==\033[0m %s\n' "$*"; }
 run() { if [ $DRY = 1 ]; then echo "  would: $*"; else "$@"; fi; }
-ID=${ID:-$(git config --global user.name 2>/dev/null) <$(git config --global user.email 2>/dev/null)>}
+if [ -z "$ID" ]; then   # the commit identity seats use; a fresh machine has none yet (git config fails under set -e)
+  gname=$(git config --global user.name 2>/dev/null || true); gmail=$(git config --global user.email 2>/dev/null || true)
+  [ -n "$gname" ] && [ -n "$gmail" ] || { echo "agent-project-new: no commit identity. Pass --identity \"Name <email>\", or set git config --global user.name and user.email" >&2; exit 2; }
+  ID="$gname <$gmail>"
+fi
 
 if [ $EXISTING = 1 ]; then say "repo $R (existing, trunk $TRUNK: adopted as is; starter kit goes to $W/starter-kit)"
 else say "repo $R (starter kit, existing files kept; trunk $TRUNK)"; fi
