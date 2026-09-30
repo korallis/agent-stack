@@ -39,6 +39,9 @@ has no version numbers; entries are grouped by the day they merged, newest first
 - The lead's and the merge owner's role texts and the CULTURE template use the new Jev helpers.
 
 ### Fixed
+- `agent-project-check` WARNs when it can't read the queue, with `rig queue list`'s exit code and error. Before,
+  a failed read skipped the whole queue section silently. It also says so when no row falls in the window the tag
+  checks judge, instead of printing nothing.
 - `agent-merge-evidence` no longer makes the merge gate hold on project-rig PRs. The operator's live A/B test showed
   what flipped Jev:
   - The limits line no longer says "merge state: pending this gate …" when the gate's own `jev-merge` is the only
