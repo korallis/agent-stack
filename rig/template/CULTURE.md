@@ -18,7 +18,8 @@
 
 ## Owner decisions (binding; the owner's own decisions only)
 Standing decisions, delegations and approvals the owner made, newest last, one dated line each, ending with its
-source: `- YYYY-MM-DD: <decision> (scope) (owner, Slack HH:MMZ)` or `... (owner, via operator relay of <ref>)`. The
+source: `- YYYY-MM-DD: <decision> (scope) (owner, Slack HH:MMZ)` or `... (owner, via operator relay of <ref>)`; the
+owner's name may stand for "owner" (the names `agent-owner-address --names` gives). The
 lead checks this list before asking the owner anything, and adds every new owner decision here the day it is made. A
 decision recorded here is not asked again. Nothing else goes here: an interpretation of an owner decision, a summary
 of a lead doc (`docs/decisions/*`) or a rule the operator or a lead set goes under "Operator and lead rules". When an

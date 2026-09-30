@@ -185,14 +185,14 @@ test("an existing repo gets agent-project-new's GitHub setup only with GITHUB_SE
 // QA WO41 f1: adding a decision's source must not duplicate a decision already in CULTURE.
 test("add_bullets: a decision already present (sourced or not) is never added again; an unsourced one is reported", () => {
   const src = fs.readFileSync(join(repo, "bin/agent-project-onboard"), "utf8");
-  const fns = src.slice(src.indexOf("def decision_core"), src.indexOf("def bullets_of"));
-  const regex = src.split("\n").find((l) => l.startsWith("OWNER_SOURCE = "));
+  const fns = src.slice(src.indexOf("def owner_names"), src.indexOf("def bullets_of"));
+  const regex = src.split("\n").find((l) => l.startsWith("OWNER_SOURCE = "));   // owner_source_re(owner_names())
   const culturePath = join(fs.mkdtempSync(join(tmpdir(), "onb-")), "CULTURE.md");
   fs.writeFileSync(culturePath, "# x\n\n## Owner decisions (binding)\nintro\n- 2026-09-30: Keep review independent.\n- 2026-09-30: Ship weekly. (owner, Slack 10:00Z)\n\n## Operating rules\n- r\n");
-  const py = `import re\n${regex}\n${fns}\nimport sys\nS = " (owner, via operator relay of the onboarding answers)"\n` +
+  const py = `import os, re, subprocess\n__file__ = ${JSON.stringify(join(repo, "bin/agent-project-onboard"))}\n${fns}\n${regex}\nimport sys\nS = " (owner, via operator relay of the onboarding answers)"\n` +
     `bs = ["- 2026-09-30: Keep review independent." + S, "- 2026-09-30: Ship weekly." + S, "- 2026-09-30: New one." + S]\n` +
     `print(add_bullets(sys.argv[1], "Owner decisions", bs, same=decision_core)); print(add_bullets(sys.argv[1], "Owner decisions", bs, same=decision_core))`;
-  const r = spawnSync("python3", ["-c", py, culturePath], { encoding: "utf8" });
+  const r = spawnSync("python3", ["-c", py, culturePath], { encoding: "utf8", env: { ...process.env, AGENT_OWNER_ADDRESS: "owner@external" } });
   assert.equal(r.status, 0, r.stderr);
   assert.deepEqual(r.stdout.split("\n").filter((l) => /^\d+$/.test(l)), ["1", "0"], "only the new decision, once");
   assert.match(r.stdout, /note: already in "Owner decisions" without its owner source; add it there by hand: - 2026-09-30: Keep review independent\./);

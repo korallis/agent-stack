@@ -1,12 +1,13 @@
 #!/usr/bin/env python3
-"""agent-owner-address [--source]: the owner's human address, the one seats message (`<name>@external`).
+"""agent-owner-address [--source | --names]: the owner's human address, the one seats message (`<name>@external`).
 
 The first of these that gives a valid `<name>@external`:
   1. AGENT_OWNER_ADDRESS in the environment;
   2. OWNER_ADDRESS in config/owner.env of this repo (per machine, not tracked; install.sh writes it once);
   3. the one human in OpenRig's registry (`rig gateway human list --json`);
   4. owner@external.
---source also prints where the value came from. agent-project-new puts it in a new rig's CULTURE.md (@OWNER@).
+--source also prints where the value came from. --names prints, one per line, the names a CULTURE "Owner decisions"
+source may use for the owner: "owner", the address's name part, and any in AGENT_OWNER_NAMES (comma-separated). agent-project-new puts it in a new rig's CULTURE.md (@OWNER@).
 """
 import json, os, re, subprocess, sys
 
@@ -50,4 +51,8 @@ for source, get in (("AGENT_OWNER_ADDRESS", from_env), ("config/owner.env", from
         print(f"agent-owner-address: ignoring {source}: '{value}' is not <name>@external", file=sys.stderr)
 else:
     source, value = "default", "owner@external"
-print(f"{value} ({source})" if "--source" in sys.argv else value)
+if "--names" in sys.argv:
+    names = ["owner", value.split("@", 1)[0]] + [n.strip() for n in os.environ.get("AGENT_OWNER_NAMES", "").split(",")]
+    print("\n".join(dict.fromkeys(n.lower() for n in names if n)))
+else:
+    print(f"{value} ({source})" if "--source" in sys.argv else value)

@@ -35,7 +35,28 @@ def read(p):
         return None
 
 
-OWNER_SOURCE = re.compile(r"\(owner, (?:Slack [^)]*\d{1,2}:\d{2}Z|via operator relay of [^)\s][^)]*)\)\.?\s*$")
+def owner_names():
+    """The names an Owner decisions source may use for the owner: agent-owner-address --names (per machine: "owner",
+    the owner address's name part, AGENT_OWNER_NAMES). Never a name written in this repo."""
+    try:
+        r = subprocess.run([os.path.join(os.path.dirname(os.path.realpath(__file__)), "agent-owner-address"), "--names"],
+                           capture_output=True, text=True, timeout=30)
+        names = [n.strip() for n in r.stdout.splitlines() if n.strip()] if r.returncode == 0 else []
+    except (OSError, subprocess.TimeoutExpired):
+        names = []
+    return names or ["owner"]
+
+
+def owner_source_re(names):
+    """A source: a Slack time or a non-blank operator relay reference in a parenthetical that names the owner (any
+    configured name, any case), or that follows the owner's name closely: (owner, Slack 08:08Z), (<name>, via operator
+    relay of <ref>), (<name> approved, Slack 14:04Z), <name> confirmed (Slack 14:51Z, 'yes')."""
+    alt = "|".join(re.escape(n) for n in sorted(set(names), key=len, reverse=True))
+    how = r"(?:\bSlack\b[^()]*\b\d{1,2}:\d{2}Z|via operator relay of [^()\s][^()]*)"
+    return re.compile(rf"\((?=[^()]*\b(?:{alt})\b)[^()]*{how}[^()]*\)|\b(?:{alt})\b[^().;]{{0,40}}\(\s*[^()]*?{how}[^()]*\)", re.I)
+
+
+OWNER_SOURCE = None   # compiled on first use (owner_names runs a helper)
 
 
 def owner_decision_problems(culture):
@@ -53,6 +74,8 @@ def owner_decision_problems(culture):
             cur = None
     texts = [" ".join(b) for b in bullets if " ".join(b) != "(none yet)"]
     short = lambda t: (t[:70] + "…") if len(t) > 70 else t
+    global OWNER_SOURCE
+    OWNER_SOURCE = OWNER_SOURCE or owner_source_re(owner_names())
     return [short(t) for t in texts if not OWNER_SOURCE.search(t)], [short(t) for t in texts if "docs/decisions/" in t]
 
 
@@ -108,7 +131,7 @@ if specs:
     # there reads to every seat as the owner's word (WO41).
     unsourced, lead_docs = owner_decision_problems(read(f"{W}/rig/CULTURE.md") or "")
     rep("OK" if not unsourced else "WARN", "every Owner decisions bullet ends with its owner source",
-        f"{len(unsourced)} without (owner, Slack HH:MMZ) or (owner, via operator relay of <ref>): {'; '.join(unsourced[:3])}. "
+        f"{len(unsourced)} without (owner or the owner's name, Slack HH:MMZ) or (…, via operator relay of <ref>): {'; '.join(unsourced[:3])}. "
         "Add the source, or move a rule that isn't the owner's to \"Operator and lead rules\"" if unsourced else "")
     rep("OK" if not lead_docs else "WARN", "no Owner decisions bullet rests on a lead doc (docs/decisions/*)",
         f"{'; '.join(lead_docs[:3])}: a lead's doc is not the owner's word; move it to \"Operator and lead rules\"" if lead_docs else "")
