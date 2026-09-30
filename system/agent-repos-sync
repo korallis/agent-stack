@@ -1,15 +1,29 @@
 #!/usr/bin/env bash
-# Keep every catalogued project's shared checkout on origin/main (fast-forward only).
-# OpenRig's execution view judges "merged" with `git merge-base --is-ancestor <candidate> main`, and new worktrees
-# branch from main: a stale local main makes merged work look unmerged and new seats start on an old base.
-# Skips a repo that is dirty, not on main, or has diverged. Runs from agent-repos-sync.timer every 5 minutes.
+# Keep every catalogued project's shared checkout on its trunk (fast-forward only). The trunk is origin/HEAD's branch,
+# else the checked-out branch, else main.
+# OpenRig's execution view judges "merged" with `git merge-base --is-ancestor <candidate> main`, against a LOCAL ref
+# named main, and new worktrees branch from the trunk: a stale ref makes merged work look unmerged and new seats start on
+# an old base. So per repo:
+#   - fetch origin <trunk>; fast-forward the checkout when it is on the trunk and clean. It skips a repo that is dirty,
+#     on another branch, or has diverged, as before;
+#   - when the trunk isn't main: move refs/heads/main (a mirror that agent-project-new created, marked
+#     agent-stack.mainMirror) to origin/<trunk>. It's a ref only, whatever the checkout is on; never checked out or pushed.
+# Runs from agent-repos-sync.timer every 5 minutes.
 set -uo pipefail
 cat=${AGENT_CATALOG:-$HOME/Projects/openrig-workspace/workspace.yaml}
 [ -r "$cat" ] || exit 0
+trunk_of() { local t; t=$(git -C "$1" symbolic-ref -q --short refs/remotes/origin/HEAD 2>/dev/null); t=${t#origin/}
+  [ -n "$t" ] || t=$(git -C "$1" branch --show-current 2>/dev/null); echo "${t:-main}"; }
 grep -oE 'root: *[^ ]+' "$cat" | sed 's/root: *//' | while read -r w; do
   r=${w%-work}; [ -d "$r/.git" ] || continue
-  git -C "$r" fetch -q origin main 2>/dev/null || continue
-  [ "$(git -C "$r" branch --show-current)" = main ] || { echo "$r: not on main, skipped"; continue; }
+  t=$(trunk_of "$r")
+  git -C "$r" fetch -q origin "$t" 2>/dev/null || continue
+  if [ "$t" != main ]; then
+    if [ "$(git -C "$r" config --bool agent-stack.mainMirror 2>/dev/null)" != true ]; then echo "$r: trunk $t, no main mirror (run agent-project-new)"
+    elif git -C "$r" worktree list --porcelain | grep -qx 'branch refs/heads/main'; then echo "$r: main is checked out in a worktree; mirror not moved"
+    else git -C "$r" update-ref -m "agent-stack: main mirrors origin/$t" refs/heads/main "refs/remotes/origin/$t" && echo "$r: main mirror at $(git -C "$r" rev-parse --short "origin/$t")"; fi
+  fi
+  [ "$(git -C "$r" branch --show-current)" = "$t" ] || { echo "$r: not on $t, skipped"; continue; }
   [ -z "$(git -C "$r" status --porcelain --untracked-files=no)" ] || { echo "$r: local changes, skipped"; continue; }
-  git -C "$r" merge -q --ff-only origin/main 2>/dev/null && echo "$r: main at $(git -C "$r" rev-parse --short HEAD)" || echo "$r: diverged from origin/main, skipped"
+  git -C "$r" merge -q --ff-only "origin/$t" 2>/dev/null && echo "$r: $t at $(git -C "$r" rev-parse --short HEAD)" || echo "$r: diverged from origin/$t, skipped"
 done

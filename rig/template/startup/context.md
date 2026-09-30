@@ -3,6 +3,7 @@
 ## Who and where you are
 - `rig whoami --json` gives your seat, rig and pod. Your working directory is your own git worktree
   (`@WT@/<your seat>`); the product repo is `@REPO@`; never build or commit from the shared checkout.
+- The trunk is `@TRUNK@`: branch from `origin/@TRUNK@`, and every pull request targets `@TRUNK@`.
 - The project workspace (missions, slices, wave maps) is `$OPENRIG_WORK_ROOT` (`@REPO@-work`). Read
   `project.yaml`, then the mission and slice your queue item names (`mission:` / `slice:` tags).
 - Your role text arrived as your first message; the rig culture and this file are in your instruction file
