@@ -291,13 +291,14 @@ const statusRecord = (statuses, context) => { const ir = (statuses || []).find((
 // reviews on the exact head, review comments declaring the head). The first verifiable one gives the verdict; a
 // verifiable source that disagrees makes it a conflict. With none, `why` says what each source lacked.
 // With identityHeadings, the status description's declared signer gives the status's family: its FIRST word (the
-// seat, as in "review-codex-1: PASS"), tested with each configured pattern exactly as written against the heading it
-// would sign ("## review-codex-1"). Mentions elsewhere in the text are not the signer. { family } for one family,
+// seat, as in "review-codex-1: PASS"), tested with each configured pattern exactly as written against the signer as a
+// plain first line ("Kimi", for "^Kimi$") and as the Markdown heading it would sign ("## review-codex-1"). Mentions
+// elsewhere in the text are not the signer. { family } for one family,
 // { ambiguous: true } when the signer matches patterns of two families, {} when it matches none (unknown, as before).
 export function familyFromDescription(description, headings = []) {
   const signer = (String(description || "").trim().match(/^([\w.@-]+)/) || [])[1];
   if (!signer || !headings.length) return {};
-  const fams = [...new Set(headings.filter((h) => h.re.test(`## ${signer}`)).map((h) => h.family))];
+  const fams = [...new Set(headings.filter((h) => h.re.test(signer) || h.re.test(`## ${signer}`)).map((h) => h.family))];
   return fams.length === 1 ? { family: fams[0], signer } : fams.length > 1 ? { ambiguous: true, signer } : {};
 }
 export function reviewVerdict({ head, primary = "status", status, statusContext = "independent-review", prReview, commentReview, authorFamily = null, headings = [] }) {

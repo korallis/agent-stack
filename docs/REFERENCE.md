@@ -490,8 +490,9 @@ the lead or a person. Send Jev evidence, not conclusions.
   report the status links to can't be read (a link outside the PR). It comes from verified sources only. The
   configured source goes first, then the others, in this order:
   1. the `independent-review` status on the exact head: its own state and description. With `identityHeadings`,
-     the description's signer, its FIRST word (`review-codex-1: PASS`), is tested with each pattern exactly as
-     written against the heading it would sign (`## review-codex-1`). That gives the status's family. A status
+     the description's signer, its FIRST word (`review-codex-1: PASS`, `Kimi: PASS`), is tested with each pattern
+     exactly as written, both as a plain first line (`Kimi`, for `^Kimi$`) and as the heading it would sign
+     (`## review-codex-1`). That gives the status's family. A status
      signed by the author's own family is not an independent review. Neither is one whose signer matches patterns
      of two families. Mentions elsewhere in the text are not identities. A signer matching no pattern is taken as
      before;

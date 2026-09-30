@@ -897,6 +897,12 @@ test("identity headings: a shared or unmapped login takes its family from the re
   assert.deepEqual(familyFromDescription("review-codex-1: PASS", spaced), { family: "codex", signer: "review-codex-1" }, "the pattern keeps its meaning");
   const clash = resolveConfig({ identityHeadings: { "^## review-": "claude", "^## review-codex": "codex" } }).identityHeadingRes;
   assert.deepEqual(familyFromDescription("review-codex-1: PASS", clash), { ambiguous: true, signer: "review-codex-1" });
+  // QA WO43 refresh: a plain first-line pattern ("Kimi") identifies a status signer too.
+  const plain = resolveConfig({ identityHeadings: { "^Kimi$": "kimi" } }).identityHeadingRes;
+  assert.deepEqual(familyFromDescription("Kimi: PASS", plain), { family: "kimi", signer: "Kimi" });
+  assert.deepEqual(familyFromDescription("QA PASS by Kimi", plain), {}, "still the signer only");
+  assert.equal(reviewVerdict({ head: H, status: { state: "success", description: "Kimi: PASS", creator: "o" }, prReview: { problem: "none" }, authorFamily: "kimi", headings: plain }).state, null,
+    "a same-family plain signer is withheld");
   assert.equal(reviewVerdict({ head: H, status: { state: "success", description: "review-codex-1: PASS", creator: "o" }, prReview: { problem: "none" }, authorFamily: "claude", headings: clash }).state, null,
     "an ambiguous signer is not an unknown one");
   const st = (description) => ({ state: "success", description, creator: "owner", url: null });
