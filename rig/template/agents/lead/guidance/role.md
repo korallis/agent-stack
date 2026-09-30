@@ -32,4 +32,8 @@ Other rules:
 - Ask the owner only for the plan approval, risky-tier merges (the merge owner asks), credentials, billing and genuine product decisions — and not even those where CULTURE.md records a standing owner approval or delegation (e.g. "decide with Jev"). Everything else you decide or delegate.
 - Check the wiring with `rig scope audit --mission <m>` (advisory) and the TUI Project view; a slice or queue row the project view can't place is a wiring bug to fix, not noise.
 - Use `rg` for search and TOON for any table you send or read.
+- Handovers: before a seat is rebuilt (`--source rebuild`), make sure it published its packet with `agent-seat-recap
+  write` (check: `agent-seat-recap show --seat <seat>` says the recap is ok). Hand over with `agent-seat-handover <seat>
+  --source rebuild --reason context-wall`: it waits for the daemon's result, because the CLI times out at 5 s while the
+  handover carries on. On UNKNOWN never hand over again; check `rig seat status <seat>` first.
 Now wait for the owner's first request.

@@ -1,0 +1,106 @@
+#!/usr/bin/env python3
+"""agent-seat-recap: make a seat's handover packet the thing a rebuild reads.
+
+  agent-seat-recap write <packet.md> [--learned <lessons.md>] [--seat <member>@<rig>]
+  agent-seat-recap show [--seat <member>@<rig>] [--json]
+
+`rig seat handover <seat> --source rebuild` primes the successor from the seat's DECLARED chain only (OpenRig 0.6.1,
+daemon/dist/domain/rebuild-priming-chain.js), in this order:
+  1. <topology.root>/rigs/<rig>/seats/<member>/RECAP.md       the authored recap (highest trust)
+  2. <topology.root>/rigs/<rig>/seats/<member>/LEARNED.md      lessons for every later occupant of the seat
+  3. the latest compaction restore packet ($OPENRIG_HOME/compaction/restore-pending/<seat>.json -> outputDir)
+  4. recap-superseded/RECAP-*.md, newest first
+A packet anywhere else (e.g. shared-docs/.../<seat>-handover-<date>.md) is never read.
+
+write: publishes the packet with OpenRig's own `rig context recap-write` (it keeps the previous RECAP.md in
+       recap-superseded/ and rejects a recap that isn't addressable, e.g. duplicate heading paths), then appends
+       --learned to LEARNED.md under a dated heading (append-only), then shows the chain.
+show:  the chain a rebuild would read right now, and which parts exist. Read-only.
+The seat defaults to $OPENRIG_SESSION_NAME (a seat's own name, `<member>@<rig>`).
+"""
+import datetime, json, os, subprocess, sys
+
+args = sys.argv[1:]
+
+
+def opt(name):
+    if name in args:
+        i = args.index(name)
+        if i + 1 >= len(args):
+            sys.exit(f"agent-seat-recap: {name} needs a value")
+        v = args[i + 1]
+        del args[i:i + 2]
+        return v
+    return None
+
+
+seat = opt("--seat") or os.environ.get("OPENRIG_SESSION_NAME", "")
+learned = opt("--learned")
+as_json = "--json" in args
+args = [a for a in args if a != "--json"]
+if not args or args[0] not in ("write", "show") or (args[0] == "write" and len(args) != 2):
+    sys.exit(__doc__.strip().split("\n\n")[0])
+at = seat.find("@")
+if at <= 0 or at == len(seat) - 1:
+    sys.exit(f"agent-seat-recap: seat '{seat}' is not <member>@<rig> (run it inside the seat, or pass --seat)")
+member, rig = seat[:at], seat[at + 1:]
+
+r = subprocess.run(["rig", "config", "get", "topology.root"], capture_output=True, text=True)
+root = (r.stdout.strip().splitlines() or [""])[-1].strip()
+if r.returncode != 0 or not root.startswith("/"):
+    sys.exit(f"agent-seat-recap: could not read topology.root from `rig config get topology.root`: {(r.stderr or r.stdout).strip()[:200]}")
+seat_dir = os.path.join(root, "rigs", rig, "seats", member)
+
+
+def chain():
+    """The legs rebuild-priming-chain.js declares, in its order, with whether each exists."""
+    legs = [(os.path.join(seat_dir, "RECAP.md"), "authored recap (highest trust)"),
+            (os.path.join(seat_dir, "LEARNED.md"), "seat lineage lessons")]
+    home = os.environ.get("OPENRIG_HOME") or os.path.expanduser("~/.openrig")
+    key = "".join(c if c.isalnum() or c in "_.@-" else "_" for c in seat)
+    marker = os.path.join(home, "compaction", "restore-pending", f"{key}.json")
+    if os.path.exists(marker):
+        try:
+            out = str(json.load(open(marker)).get("outputDir") or "").strip()
+            legs.append((out, "latest compaction restore packet") if out else (marker, "restore marker INVALID (no packet address)"))
+        except (OSError, ValueError):
+            legs.append((marker, "restore marker INVALID (unparseable)"))
+    sup = os.path.join(seat_dir, "recap-superseded")
+    old = sorted((f for f in os.listdir(sup) if f.startswith("RECAP-") and f.endswith(".md")), reverse=True) if os.path.isdir(sup) else []
+    legs += [(os.path.join(sup, f), f"superseded recap ({n + 1} back)") for n, f in enumerate(old)]
+    return [{"path": p, "label": l, "exists": os.path.exists(p)} for p, l in legs]
+
+
+def show():
+    c = chain()
+    if as_json:
+        print(json.dumps({"seat": seat, "seat_dir": seat_dir, "chain": c}, indent=2))
+    else:
+        print(f"rebuild chain for {seat} ({seat_dir}):")
+        for leg in c:
+            print(f"  {'ok     ' if leg['exists'] else 'MISSING'} {leg['label']}: {leg['path']}")
+    return 0 if c[0]["exists"] else 1
+
+
+if args[0] == "show":
+    sys.exit(show())
+
+packet = args[1]
+if not os.path.isfile(packet):
+    sys.exit(f"agent-seat-recap: no such packet file: {packet}")
+if learned and not os.path.isfile(learned):
+    sys.exit(f"agent-seat-recap: no such lessons file: {learned}")
+r = subprocess.run(["rig", "context", "recap-write", "--rig", rig, "--seat", member, "--file", packet],
+                   stdout=sys.stderr if as_json else None)   # --json: stdout carries only the JSON
+if r.returncode != 0:
+    sys.exit(f"agent-seat-recap: rig context recap-write failed (exit {r.returncode}); nothing else was written")
+if learned:
+    text = open(learned).read().strip()
+    if text:
+        stamp = datetime.datetime.now(datetime.timezone.utc).strftime("%Y-%m-%d %H:%M:%SZ")
+        path = os.path.join(seat_dir, "LEARNED.md")
+        new = not os.path.exists(path)
+        with open(path, "a") as f:
+            f.write(("# Lessons for every occupant of this seat\n" if new else "") + f"\n## {stamp} ({seat})\n\n{text}\n")
+        print(f"Lessons appended: {path}", file=sys.stderr if as_json else sys.stdout)
+sys.exit(show())
