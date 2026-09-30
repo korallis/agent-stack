@@ -18,7 +18,7 @@ write: publishes the packet with OpenRig's own `rig context recap-write` (it kee
 show:  the chain a rebuild would read right now, and which parts exist. Read-only.
 The seat defaults to $OPENRIG_SESSION_NAME (a seat's own name, `<member>@<rig>`).
 """
-import datetime, json, os, subprocess, sys
+import datetime, json, os, re, subprocess, sys
 
 args = sys.argv[1:]
 
@@ -57,16 +57,26 @@ def chain():
     legs = [(os.path.join(seat_dir, "RECAP.md"), "authored recap (highest trust)"),
             (os.path.join(seat_dir, "LEARNED.md"), "seat lineage lessons")]
     home = os.environ.get("OPENRIG_HOME") or os.path.expanduser("~/.openrig")
-    key = "".join(c if c.isalnum() or c in "_.@-" else "_" for c in seat)
+    key = re.sub(r"[^a-zA-Z0-9_.@-]", "_", seat)   # the precompact hook's sanitization (ASCII only)
     marker = os.path.join(home, "compaction", "restore-pending", f"{key}.json")
     if os.path.exists(marker):
         try:
-            out = str(json.load(open(marker)).get("outputDir") or "").strip()
-            legs.append((out, "latest compaction restore packet") if out else (marker, "restore marker INVALID (no packet address)"))
+            m = json.load(open(marker))
         except (OSError, ValueError):
+            m = None
             legs.append((marker, "restore marker INVALID (unparseable)"))
+        if m is not None:
+            out = m.get("outputDir") if isinstance(m, dict) else None
+            out = out.strip() if isinstance(out, str) else ""   # a string or nothing, as the rebuild reads it
+            legs.append((out, "latest compaction restore packet") if out else (marker, "restore marker INVALID (no packet address)"))
+    # listRecapChain: only RECAP-<ms>[-<seq>].md, ordered by (ms, seq) numerically, seq 1 when absent; newest first.
     sup = os.path.join(seat_dir, "recap-superseded")
-    old = sorted((f for f in os.listdir(sup) if f.startswith("RECAP-") and f.endswith(".md")), reverse=True) if os.path.isdir(sup) else []
+    gens = []
+    for f in os.listdir(sup) if os.path.isdir(sup) else []:
+        g = re.fullmatch(r"RECAP-(\d+)(?:-(\d+))?\.md", f)
+        if g:
+            gens.append((int(g.group(1)), int(g.group(2) or 1), f))
+    old = [f for _, _, f in sorted(gens, reverse=True)]
     legs += [(os.path.join(sup, f), f"superseded recap ({n + 1} back)") for n, f in enumerate(old)]
     return [{"path": p, "label": l, "exists": os.path.exists(p)} for p, l in legs]
 
@@ -97,10 +107,16 @@ if r.returncode != 0:
 if learned:
     text = open(learned).read().strip()
     if text:
-        stamp = datetime.datetime.now(datetime.timezone.utc).strftime("%Y-%m-%d %H:%M:%SZ")
+        now = os.environ.get("AGENT_SEAT_RECAP_NOW")   # tests only: a fixed clock
+        stamp = now or datetime.datetime.now(datetime.timezone.utc).strftime("%Y-%m-%d %H:%M:%S.%fZ")
         path = os.path.join(seat_dir, "LEARNED.md")
         new = not os.path.exists(path)
+        # Each entry's heading must be unique (entries are addressed by heading): add #2, #3 … on a collision.
+        have = set(re.findall(r"^## (.+)$", open(path).read(), re.M)) if not new else set()
+        head, n = f"{stamp} ({seat})", 2
+        while head in have:
+            head, n = f"{stamp} ({seat}) #{n}", n + 1
         with open(path, "a") as f:
-            f.write(("# Lessons for every occupant of this seat\n" if new else "") + f"\n## {stamp} ({seat})\n\n{text}\n")
+            f.write(("# Lessons for every occupant of this seat\n" if new else "") + f"\n## {head}\n\n{text}\n")
         print(f"Lessons appended: {path}", file=sys.stderr if as_json else sys.stdout)
 sys.exit(show())

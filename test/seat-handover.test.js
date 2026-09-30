@@ -56,7 +56,7 @@ test("recap write again with --learned: the old recap is superseded, lessons app
   assert.equal(run("agent-seat-recap", ["write", "packet2.md", "--learned", "l1.md"], SEAT).status, 0);
   const r = run("agent-seat-recap", ["write", "packet2.md", "--learned", "l2.md", "--json"], SEAT);
   const learned = fs.readFileSync(join(seatDir, "LEARNED.md"), "utf8");
-  assert.match(learned, /^# Lessons for every occupant of this seat\n\n## \d{4}-\d\d-\d\d \d\d:\d\d:\d\dZ \(arch-claude@hc\)\n\nRun heavy suites/);
+  assert.match(learned, /^# Lessons for every occupant of this seat\n\n## \d{4}-\d\d-\d\d \d\d:\d\d:\d\d\.\d{6}Z \(arch-claude@hc\)\n\nRun heavy suites/);
   assert.match(learned, /agent-heavy\.\n\n## .*\n\nThe hc main mirror lags/);
   const c = JSON.parse(r.stdout).chain;
   assert.deepEqual(c.slice(0, 2).map((l) => l.exists), [true, true]);
@@ -122,4 +122,43 @@ test("handover: --dry-run passes straight through; no seat is refused", () => {
   const r = run("agent-seat-handover", ["arch-claude@hc", "--source", "rebuild", "--dry-run"]);
   assert.equal(r.status, 0); assert.equal(r.calls.trim(), "rig seat handover arch-claude@hc --source rebuild --dry-run");
   assert.notEqual(run("agent-seat-handover", []).status, 0);
+});
+
+test("handover: a completion earlier in the SAME second as this run is not this run's (QA round 1)", () => {
+  const stale = { handover_result: "complete", handover_at: new Date(Date.now() - 20).toISOString(), current_occupant: "OLD@hc" };
+  handover({ err: "timed out", rc: 1, before: stale });
+  const r = run("agent-seat-handover", ["arch-claude@hc", "--source", "rebuild", "--wait", "0.4"]);
+  assert.equal(r.status, 3, r.stdout + r.stderr); assert.doesNotMatch(r.stdout, /complete/);
+});
+
+test("lessons: every entry heading stays unique, even on the same clock tick (QA round 1)", () => {
+  fs.writeFileSync(join(root, "l3.md"), "Lesson three.\n");
+  const clock = { ...SEAT, AGENT_SEAT_RECAP_NOW: "2026-09-30 12:00:00.000000Z" };
+  for (let i = 0; i < 3; i++) assert.equal(run("agent-seat-recap", ["write", "packet.md", "--learned", "l3.md"], clock).status, 0);
+  const heads = fs.readFileSync(join(seatDir, "LEARNED.md"), "utf8").match(/^## .+$/gm);
+  assert.equal(new Set(heads).size, heads.length, heads.join("\n"));
+  assert.ok(heads.includes("## 2026-09-30 12:00:00.000000Z (arch-claude@hc) #3"));
+  assert.equal(fs.readFileSync(join(seatDir, "LEARNED.md"), "utf8").match(/Lesson three\./g).length, 3);   // append-only
+});
+
+// Parity with the installed OpenRig's own rebuild chain builder, when it is installed (QA round 1).
+const OR = join(process.env.HOME || "", ".local/share/agent-stack/openrig/lib/node_modules/@openrig/cli/daemon/dist/domain/rebuild-priming-chain.js");
+test("show lists exactly the legs, in the order, that OpenRig's buildRebuildPrimingChain declares", { skip: !fs.existsSync(OR) && "OpenRig not installed" }, async () => {
+  const { buildRebuildPrimingChain } = await import(OR);
+  const seat = "par-ity@hc", dir = join(topo, "rigs/hc/seats/par-ity"), sup = join(dir, "recap-superseded");
+  fs.mkdirSync(sup, { recursive: true }); fs.writeFileSync(join(dir, "RECAP.md"), "# r\n");
+  for (const f of ["RECAP-not-a-generation.md", "RECAP-000000000000100.md", "RECAP-000000000000100-2.md", "RECAP-000000000000100-10.md",
+    "RECAP-000000000000099.md", "RECAP-12.md.bak", "notes.md"]) fs.writeFileSync(join(sup, f), "# old\n");
+  const markers = join(orHome, "compaction/restore-pending"); fs.mkdirSync(markers, { recursive: true });
+  const markerFile = join(markers, "par-ity@hc.json");
+  for (const marker of [null, JSON.stringify({ outputDir: "  /x/packet  " }), JSON.stringify({ outputDir: 42 }), JSON.stringify({ outputDir: "" }), "{bad"]) {
+    fs.rmSync(markerFile, { force: true }); if (marker !== null) fs.writeFileSync(markerFile, marker);
+    const mine = JSON.parse(run("agent-seat-recap", ["show", "--seat", seat, "--json"], {}).stdout).chain.map((l) => l.path);
+    const theirs = buildRebuildPrimingChain(seat, { topologyRoot: topo, openrigHome: orHome }).artifacts.map((a) => a.address);
+    assert.deepEqual(mine, theirs, `marker ${marker}`);
+  }
+  const uni = "pär-ity@hc";   // non-ASCII: both sanitize it the same (ASCII-only rule)
+  fs.writeFileSync(join(markers, `p_r-ity@hc.json`), JSON.stringify({ outputDir: "/y" }));
+  assert.deepEqual(JSON.parse(run("agent-seat-recap", ["show", "--seat", uni, "--json"], {}).stdout).chain.map((l) => l.path),
+    buildRebuildPrimingChain(uni, { topologyRoot: topo, openrigHome: orHome }).artifacts.map((a) => a.address));
 });

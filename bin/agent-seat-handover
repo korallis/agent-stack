@@ -7,6 +7,8 @@ and usually completes. Retrying then would start a SECOND successor. This wrappe
   2. a JSON answer is final: ok -> complete; ok:false -> failed, with the daemon's code and message;
   3. anything else (the timeout) -> polls `rig seat status <seat> --json` every 5 s until handover_result is
      "complete" with a handover_at at or after this run's start (the seat's new occupant is printed).
+     Correlation is by time only: a second handover of the same seat started elsewhere after this run would also
+     count (OpenRig records no request id).
      OpenRig only records successes there; a failure after the timeout is never recorded, so when --wait (default
      600 s) runs out the answer is UNKNOWN: do NOT hand over again; check `rig seat status` and the seat's tmux
      sessions first.
@@ -29,7 +31,7 @@ POLL = float(os.environ.get("AGENT_SEAT_HANDOVER_POLL", "5"))
 if "--dry-run" in args:
     os.execvp("rig", ["rig", "seat", "handover", *args])
 
-start = datetime.datetime.now(datetime.timezone.utc).replace(microsecond=0)
+start = datetime.datetime.now(datetime.timezone.utc)   # full precision: the daemon records handover_at in ms
 cmd = ["rig", "seat", "handover", *args] + ([] if "--json" in args else ["--json"])
 r = subprocess.run(cmd, capture_output=True, text=True)
 try:
@@ -71,7 +73,7 @@ while True:
               f"previous {st.get('previous_occupant', '?')})")
         sys.exit(0)
     if time.monotonic() >= deadline:
-        print(f"handover of {seat}: UNKNOWN after {wait:.0f}s (no completed handover recorded since {start:%H:%M:%SZ}). "
+        print(f"handover of {seat}: UNKNOWN after {wait:.0f}s (no completed handover recorded since {start:%H:%M:%S.%f}Z). "
               f"Do NOT start another handover: check `rig seat status {seat}` and the seat's tmux sessions first.", file=sys.stderr)
         sys.exit(3)
     time.sleep(POLL)
