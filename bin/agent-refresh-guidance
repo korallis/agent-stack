@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""agent-refresh-guidance <Project> [--apply]
+"""agent-refresh-guidance <Project | workspace path> [--apply] [--json]
 
 OpenRig writes CULTURE.md and the rig's startup files into each seat's instruction file (CLAUDE.local.md for
 Claude seats with managed_blocks, CLAUDE.md otherwise; AGENTS.md for Codex) as
@@ -15,16 +15,23 @@ block is missing.
 Only managed blocks change; text outside them is never touched. Blocks OpenRig ships itself (CULTURE-default.md,
 openrig-*.md) are left alone. --apply backs up every file it changes to ~/.local/share/agent-stack/backups/ first.
 Running sessions still need to re-read the file: tell the lead ("re-read CLAUDE.local.md / AGENTS.md").
-Dry run unless --apply.
+Dry run unless --apply. --json prints, instead, {"total": N, "changed": [{"seat", "file", "reasons"}]}: what would change
+(or changed, with --apply) and why. agent-project-check uses it, so the check and the refresh never disagree.
 """
-import glob, os, re, shutil, sys, time
+import glob, json, os, re, shutil, sys, time
 
 H = os.path.expanduser("~")
 arg = next((a for a in sys.argv[1:] if not a.startswith("--")), None)
 if not arg:
     sys.exit(__doc__)
 APPLY = "--apply" in sys.argv
-W = f"{H}/Projects/{arg}-work"
+JSON = "--json" in sys.argv
+# A project name means ~/Projects/<name>-work; a path to a workspace (a directory with rig/) is used as given.
+if os.path.isdir(os.path.join(arg, "rig")):
+    W = os.path.abspath(arg)
+    arg = os.path.basename(W)[:-5] if W.endswith("-work") else os.path.basename(W)
+else:
+    W = f"{H}/Projects/{arg}-work"
 specs = sorted(glob.glob(f"{W}/rig/*.yaml"), key=lambda f: open(f).read().count("cwd:"), reverse=True)
 spec = open(specs[0]).read()
 cwds = re.findall(r'cwd:\s*"?([^"\n]+)"?', spec)
@@ -50,18 +57,18 @@ for cwd in cwds:
 restored = []
 
 changed = total = 0
-fixed_strays = []
+fixed_strays, report = [], []
 for cwd in cwds:
     for fn in (claude_file, "AGENTS.md"):
         path = os.path.join(cwd, fn)
         if not os.path.exists(path):
             continue
         text = open(path).read()
-        new = text
+        new, why = text, []
         seat_is_codex = not os.path.exists(os.path.join(cwd, claude_file))
         if "OpenRig MANAGED BLOCK" not in text and fn == ("AGENTS.md" if seat_is_codex else claude_file) and fn in donor:
             new = text.rstrip("\n") + "\n\n" + donor[fn]
-            restored.append(os.path.basename(cwd))
+            restored.append(os.path.basename(cwd)); why.append("lost blocks restored")
         present = re.findall(r"<!-- BEGIN OpenRig MANAGED BLOCK: (\S+) -->", new)
         for stray, rel in strays.items():   # repair: drop the basename copy, or make it the declared block
             if stray in present:
@@ -69,26 +76,34 @@ for cwd in cwds:
                     new = BLOCK(stray).sub("\n", new, count=1)
                 else:
                     new = new.replace(f"MANAGED BLOCK: {stray} -->", f"MANAGED BLOCK: {rel} -->")
-                fixed_strays.append(f"{os.path.basename(cwd)}/{fn}")
+                fixed_strays.append(f"{os.path.basename(cwd)}/{fn}"); why.append(f"stray block {stray}")
         present = re.findall(r"<!-- BEGIN OpenRig MANAGED BLOCK: (\S+) -->", new)
         if present:  # add blocks for rig-level guidance_merge startup files that arrived after launch
             for rel in declared:
                 if rel in sources and rel not in present:
+                    why.append(f"missing block {rel}")
                     new = new.rstrip("\n") + f"\n\n<!-- BEGIN OpenRig MANAGED BLOCK: {rel} -->\n\n<!-- END OpenRig MANAGED BLOCK: {rel} -->\n"
         for name in re.findall(r"<!-- BEGIN OpenRig MANAGED BLOCK: (\S+) -->", new):
             if name not in sources:
                 continue
             body = open(sources[name]).read().strip("\n")
             pat = re.compile(rf"(<!-- BEGIN OpenRig MANAGED BLOCK: {re.escape(name)} -->\n)(.*?)(\n<!-- END OpenRig MANAGED BLOCK: {re.escape(name)} -->)", re.S)
+            before = new
             new = pat.sub(lambda m: m.group(1) + body + m.group(3), new)
+            if new != before and f"missing block {name}" not in why:
+                why.append(f"{name} out of date")
         total += 1
         if new != text:
             changed += 1
+            report.append({"seat": os.path.basename(cwd), "file": fn, "reasons": why or ["content differs"]})
             if APPLY:
                 dest = os.path.join(backup_dir, os.path.basename(cwd), fn)
                 os.makedirs(os.path.dirname(dest), exist_ok=True)
                 shutil.copy2(path, dest)
                 open(path, "w").write(new)
+if JSON:
+    print(json.dumps({"total": total, "changed": report}))
+    sys.exit(0)
 if restored:
     print("restored lost blocks for:", ", ".join(restored))
 if fixed_strays:
