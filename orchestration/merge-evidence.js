@@ -137,7 +137,8 @@ const SOURCES = { review: ["status", "comments"], qa: ["proof", "comments"], gat
 // Pure: the effective config for `nwo` from a parsed file (null = defaults). Throws on anything it can't use.
 export function resolveConfig(raw, nwo) {
   const own = (raw?.repos && nwo && raw.repos[nwo]) || {};
-  const cfg = { authorFamily: own.authorFamily || raw?.authorFamily || null, identities: { ...raw?.identities, ...own.identities } };
+  const cfg = { authorFamily: own.authorFamily || raw?.authorFamily || null, identities: { ...raw?.identities, ...own.identities },
+    identityHeadings: { ...raw?.identityHeadings, ...own.identityHeadings } };
   for (const k of Object.keys(SOURCES)) {
     const c = cfg[k] = { ...DEFAULT_CONFIG[k], ...raw?.[k], ...own[k] };
     if (!SOURCES[k].includes(c.source)) throw new Error(`merge-evidence config: ${k}.source must be ${SOURCES[k].join(" or ")}, not ${JSON.stringify(c.source)}`);
@@ -147,7 +148,14 @@ export function resolveConfig(raw, nwo) {
     }
   }
   for (const [login, fam] of Object.entries(cfg.identities))
-    if (!FAMILIES.includes(fam)) throw new Error(`merge-evidence config: identities.${login} must be one of ${FAMILIES.join(", ")}`);
+    if (!FAMILIES.includes(fam) && fam !== "shared") throw new Error(`merge-evidence config: identities.${login} must be one of ${FAMILIES.join(", ")} or shared`);
+  cfg.identityHeadingRes = Object.entries(cfg.identityHeadings).map(([pattern, fam]) => {
+    if (!FAMILIES.includes(fam)) throw new Error(`merge-evidence config: identityHeadings["${pattern}"] must be one of ${FAMILIES.join(", ")}`);
+    let re;
+    try { re = new RegExp(pattern); }
+    catch (e) { throw new Error(`merge-evidence config: identityHeadings["${pattern}"] is not a valid regex: ${e.message}`); }
+    return { pattern, family: fam, re };
+  });
   if (cfg.authorFamily && !FAMILIES.includes(cfg.authorFamily)) throw new Error(`merge-evidence config: authorFamily must be one of ${FAMILIES.join(", ")}`);
   return cfg;
 }
@@ -247,16 +255,31 @@ export function reviewFromComments(notes, headingRe, head, authorFamily) {
 // -> family); an unmapped login, or an unknown author family, can't be verified as cross-family. APPROVED and
 // CHANGES_REQUESTED are verdicts (combined with any the body declares); a COMMENTED review counts only when its own
 // lines declare one. Dismissed and pending reviews never count. The latest counting review decides.
-export function reviewFromPrReviews(reviews, head, authorFamily, identities = {}) {
+// With identityHeadings (heading regex -> family), a review whose login is unmapped or mapped to "shared" (every seat
+// posting as one account) takes its family from the first line of its body: self-declared, so only as trustworthy
+// as the seats. The exact-head rule is unchanged: the review's commit must be the head.
+export function familyFromHeading(body, headings = []) {
+  const first = String(body || "").split("\n", 1)[0];
+  const fams = [...new Set(headings.filter((h) => h.re.test(first)).map((h) => h.family))];
+  return fams.length === 1 ? fams[0] : null;   // no match, or patterns that disagree: unknown
+}
+export function reviewFromPrReviews(reviews, head, authorFamily, identities = {}, headings = []) {
   const all = (reviews || []).filter((r) => !["DISMISSED", "PENDING"].includes(r.reviewState));
   const stale = all.filter((r) => r.commit !== head).length;
   const staleNote = stale ? `; ${stale} review(s) on another commit ignored` : "";
-  const onHead = all.filter((r) => r.commit === head).map((r) => ({ ...r, state: verdictOf(r.body, r.reviewState), family: identities[r.author] || null })).filter((r) => r.state);
+  const who = (r) => {
+    const byLogin = identities[r.author];
+    if (byLogin && byLogin !== "shared") return { family: byLogin, how: "login" };
+    const byHeading = familyFromHeading(r.body, headings);
+    return byHeading ? { family: byHeading, how: "heading" } : { family: null, how: null };
+  };
+  const onHead = all.filter((r) => r.commit === head).map((r) => ({ ...r, state: verdictOf(r.body, r.reviewState), ...who(r) })).filter((r) => r.state);
   if (!onHead.length) return { verdict: null, problem: `no GitHub review with a verdict on ${head}${staleNote}` };
   if (!authorFamily) return { verdict: null, problem: `the PR author's model family is unknown, so no GitHub review can be verified as cross-family${staleNote}` };
   const r = onHead.filter((x) => x.family && x.family !== authorFamily).at(-1);
-  if (!r) return { verdict: null, problem: `no GitHub review on ${head} by a login mapped to a family other than ${authorFamily} (${onHead.length} unmapped or same-family; map logins in "identities")${staleNote}` };
-  return { verdict: { state: r.state, by: r.author, source: `GitHub PR review ${r.reviewState} by ${r.author} (${r.family} family; the author is ${authorFamily}) submitted on commit ${head}`, url: r.url, at: r.at,
+  if (!r) return { verdict: null, problem: `no GitHub review on ${head} by a reviewer of a family other than ${authorFamily} (${onHead.length} unmapped or same-family; map logins in "identities", or headings in "identityHeadings" for a shared login)${staleNote}` };
+  const fam = r.how === "heading" ? `${r.family} family, self-declared in its heading "${String(r.body).split("\n", 1)[0].slice(0, 60)}"` : `${r.family} family`;
+  return { verdict: { state: r.state, by: r.author, source: `GitHub PR review ${r.reviewState} by ${r.author} (${fam}; the author is ${authorFamily}) submitted on commit ${head}`, url: r.url, at: r.at,
     excerpt: String(r.body || "").replace(/\s+/g, " ").slice(0, 900), limits: statedLimits(r.body) }, problem: stale ? staleNote.slice(2) : null };
 }
 
@@ -267,11 +290,27 @@ const statusRecord = (statuses, context) => { const ir = (statuses || []).find((
 // then the others (the independent-review status on the exact head -- its own state and description --, GitHub
 // reviews on the exact head, review comments declaring the head). The first verifiable one gives the verdict; a
 // verifiable source that disagrees makes it a conflict. With none, `why` says what each source lacked.
-export function reviewVerdict({ head, primary = "status", status, statusContext = "independent-review", prReview, commentReview }) {
+// With identityHeadings, the status description's declared signer gives the status's family: its FIRST word (the
+// seat, as in "review-codex-1: PASS"), tested with each configured pattern exactly as written against the signer as a
+// plain first line ("Kimi", for "^Kimi$") and as the Markdown heading it would sign ("## review-codex-1"). Mentions
+// elsewhere in the text are not the signer. { family } for one family,
+// { ambiguous: true } when the signer matches patterns of two families, {} when it matches none (unknown, as before).
+export function familyFromDescription(description, headings = []) {
+  const signer = (String(description || "").trim().match(/^([\w.@-]+)/) || [])[1];
+  if (!signer || !headings.length) return {};
+  const fams = [...new Set(headings.filter((h) => h.re.test(signer) || h.re.test(`## ${signer}`)).map((h) => h.family))];
+  return fams.length === 1 ? { family: fams[0], signer } : fams.length > 1 ? { ambiguous: true, signer } : {};
+}
+export function reviewVerdict({ head, primary = "status", status, statusContext = "independent-review", prReview, commentReview, authorFamily = null, headings = [] }) {
+  const id = status ? familyFromDescription(status.description, headings) : {};
+  const sameFamily = id.family && authorFamily && id.family === authorFamily;
   const bySource = {
-    status: status && ["success", "failure"].includes(status.state)
-      ? { verdict: { state: status.state, source: `${statusContext} status on ${head} (${status.state}, "${status.description || ""}", by ${status.creator})`, url: status.url } }
-      : { problem: status ? `the ${statusContext} status on ${head} is ${status.state}, not a verdict` : `no ${statusContext} status on ${head}` },
+    status: status && ["success", "failure"].includes(status.state) && !sameFamily && !id.ambiguous
+      ? { verdict: { state: status.state, source: `${statusContext} status on ${head} (${status.state}, "${status.description || ""}", by ${status.creator}${id.family ? `; signed by ${id.signer}, ${id.family} family` : ""})`, url: status.url } }
+      : { problem: !status ? `no ${statusContext} status on ${head}`
+        : sameFamily ? `the ${statusContext} status on ${head} is signed by ${id.signer}, the author's own ${id.family} family, so it is not an independent review`
+        : id.ambiguous ? `the ${statusContext} status on ${head} is signed by ${id.signer}, which matches identity headings of more than one family, so its family is not established`
+        : `the ${statusContext} status on ${head} is ${status.state}, not a verdict` },
     reviews: prReview?.verdict ? { ...prReview, verdict: { ...prReview.verdict, report: { kind: "GitHub review", url: prReview.verdict.url, at: prReview.verdict.at, author: prReview.verdict.by, excerpt: prReview.verdict.excerpt, limits: prReview.verdict.limits } } } : prReview || { problem: "GitHub reviews not read" },
     comments: commentReview ? { verdict: commentReview.review && { state: commentReview.review.state, source: `review comment by seat ${commentReview.review.creator} declaring head ${head}`, url: commentReview.review.url, report: commentReview.note && { kind: "review comment", ...commentReview.note } }, problem: commentReview.problem }
       : { problem: "no review comment heading configured" },
@@ -561,7 +600,7 @@ export function gather(pr, { repo, mission, slice, change, deploy, rollback, con
   let independentReview = null, reviewNote = null, unlinkedNote = null, reviewProblem = null;
   const commentReview = cfg.review.headingRe
     ? reviewFromComments(comments, cfg.review.headingRe, v.headRefOid, author.family) : null;
-  const prReview = reviewFromPrReviews(notes.filter((n) => n.kind === "review"), v.headRefOid, author.family, cfg.identities || {});
+  const prReview = reviewFromPrReviews(notes.filter((n) => n.kind === "review"), v.headRefOid, author.family, cfg.identities || {}, cfg.identityHeadingRes || []);
   if (cfg.review.source === "comments") {
     ({ review: independentReview, note: reviewNote = null, problem: reviewProblem = null } = reviewFromComments(comments, cfg.review.headingRe, v.headRefOid, author.family));
   } else {
@@ -573,7 +612,7 @@ export function gather(pr, { repo, mission, slice, change, deploy, rollback, con
   }
   const reviewVerdictFacts = reviewVerdict({ head: v.headRefOid, primary: cfg.review.source, statusContext: cfg.review.context,
     status: independentReview?.source === "status" ? independentReview : cfg.review.source === "status" ? null : statusRecord(statuses, cfg.review.context),
-    prReview, commentReview });
+    prReview, commentReview, authorFamily: author.family, headings: cfg.identityHeadingRes || [] });
   // Applicability from verified facts only: the actual diff and the PR's creation time against the configured cutoff.
   const files = parseDiff(gh("pr", "diff", String(pr), ...R));
   let culture = "";

@@ -30,6 +30,7 @@ Never dispatch builders on a slice whose SPEC has no research (CULTURE "Research
 
 Other rules:
 - Merging belongs to the merge owner (the integ-* seat). Don't merge; pass it anything stuck and read its sweep summaries.
+- CULTURE.md "Owner decisions" holds ONLY the owner's own decisions, each ending with its source: `(owner, Slack HH:MMZ)` or `(owner, via operator relay of <ref>)`. Never write your interpretation, a summary of your docs/decisions/* or an operator rule there: those go under "Operator and lead rules" with their link. When an owner answer is ambiguous, ask (through the operator) before recording anything.
 - Ask the owner only for the plan approval, risky-tier merges (the merge owner asks), credentials, billing and genuine product decisions — and not even those where CULTURE.md records a standing owner approval or delegation (e.g. "decide with Jev"). Everything else you decide or delegate.
 - Check the wiring with `rig scope audit --mission <m>` (advisory) and the TUI Project view; a slice or queue row the project view can't place is a wiring bug to fix, not noise.
 - Use `rg` for search and TOON for any table you send or read.

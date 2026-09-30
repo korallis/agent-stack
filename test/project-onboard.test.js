@@ -7,6 +7,7 @@ import { spawnSync } from "node:child_process";
 import * as fs from "node:fs";
 import { join, dirname } from "node:path";
 import { fileURLToPath } from "node:url";
+import { tmpdir } from "node:os";
 
 const repo = join(dirname(fileURLToPath(import.meta.url)), "..");
 const home = fs.mkdtempSync(join(fs.existsSync("/tmp/claude-1000") ? "/tmp/claude-1000" : "/tmp", "onboard-"));
@@ -87,6 +88,8 @@ test("apply: clones, pulls Development env only, creates the team, stages plan, 
   const section = (h) => c.split(/^## /m).find((s) => s.startsWith(h));
   assert.match(section("Owner decisions"), /no owner approval per PR/);
   assert.match(section("Owner decisions"), /Issue workflow: research, plan, implement, verify\. NEVER close an issue/);
+  for (const b of section("Owner decisions").split("\n").filter((l) => /^- \d{4}-/.test(l)))
+    assert.match(b, /\(owner, via operator relay of the onboarding answers\)$/, "every staged owner decision ends with its source (WO41)");
   assert.match(section("Shop specifics"), /Trunk: `main`[\s\S]*pnpm[\s\S]*Required checks: `ci`\.\n  Squash merges only\./);
   const brief = fs.readFileSync(join(W, "docs/lead-brief.md"), "utf8");
   assert.match(brief, /Owner brief for the shop rig, from operator-agent@kernel/);
@@ -177,4 +180,28 @@ test("an existing repo gets agent-project-new's GitHub setup only with GITHUB_SE
   const r = onboard([answers("GITHUB_SETUP=yes\n")]);
   assert.equal(r.status, 0, r.stderr);
   assert.match(r.stdout, /GITHUB_SETUP=yes, the owner agreed/); assert.match(r.stdout, /--github acme --dry-run/);
+});
+
+// QA WO41 f1: adding a decision's source must not duplicate a decision already in CULTURE.
+test("add_bullets: a decision already present (sourced or not) is never added again; an unsourced one is reported", () => {
+  const src = fs.readFileSync(join(repo, "bin/agent-project-onboard"), "utf8");
+  const fns = src.slice(src.indexOf("def owner_names"), src.indexOf("def bullets_of"));
+  const regex = src.split("\n").filter((l) => /^(OWNER_SOURCE|PROVENANCE) = /.test(l)).join("\n");
+  const culturePath = join(fs.mkdtempSync(join(tmpdir(), "onb-")), "CULTURE.md");
+  fs.writeFileSync(culturePath, "# x\n\n## Owner decisions (binding)\nintro\n- 2026-09-30: Keep review independent.\n- 2026-09-30: Ship weekly. (owner, Slack 10:00Z)\n" +
+    "- 2026-09-30: Owner approved weekly releases (Slack 14:04Z)\n\n## Operating rules\n- r\n");
+  const py = `import os, re, subprocess\n__file__ = ${JSON.stringify(join(repo, "bin/agent-project-onboard"))}\n${fns}\n${regex}\nimport sys\nS = " (owner, via operator relay of the onboarding answers)"\n` +
+    `bs = ["- 2026-09-30: Keep review independent." + S, "- 2026-09-30: Ship weekly." + S, "- 2026-09-30: New one." + S,\n` +
+    `  "- 2026-09-30: Owner approved backup retention (Slack 14:05Z)"]\n` +
+    `print(add_bullets(sys.argv[1], "Owner decisions", bs, same=decision_core)); print(add_bullets(sys.argv[1], "Owner decisions", bs, same=decision_core))`;
+  const r = spawnSync("python3", ["-c", py, culturePath], { encoding: "utf8", env: { ...process.env, AGENT_OWNER_ADDRESS: "owner@external" } });
+  assert.equal(r.status, 0, r.stderr);
+  assert.deepEqual(r.stdout.split("\n").filter((l) => /^\d+$/.test(l)), ["2", "0"], "only the new decisions, once each");
+  assert.match(r.stdout, /note: already in "Owner decisions" without its owner source; add it there by hand: - 2026-09-30: Keep review independent\./);
+  const c = fs.readFileSync(culturePath, "utf8");
+  assert.equal((c.match(/Keep review independent/g) || []).length, 1); assert.equal((c.match(/Ship weekly/g) || []).length, 1);
+  assert.equal((c.match(/backup retention/g) || []).length, 1, "QA WO41: a distinct decision by the owner's name is not taken for another");
+  assert.equal((c.match(/weekly releases/g) || []).length, 1);
+  assert.match(c, /- 2026-09-30: New one\. \(owner, via operator relay of the onboarding answers\)\n- 2026-09-30: Owner approved backup retention \(Slack 14:05Z\)\n\n## Operating rules/);
+  fs.rmSync(dirname(culturePath), { recursive: true, force: true });
 });
