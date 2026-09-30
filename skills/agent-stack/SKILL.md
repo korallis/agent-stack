@@ -95,6 +95,9 @@ project-workspace.md) and the `mission-slice-sop` skill. Verify each point on di
   - Add every entry a seat will need first, then relaunch it once.
   - Append to `~/.config/agent-stack/secrets/playwright.env`, never rewrite it, and prefix names with the project
     (`FORTIS_WITNESS_PASSWORD`).
+- **Credentials never go to a seat's output** (it is the transcript). Seats' `neon`/`vercel` run through
+  `seat-bin/credguard`: credential-printing commands need `--output-file <path>` (0600) and use the values by name
+  (docs/PROJECT-ENV.md). `agent-credguard-check` shows which running seats are guarded (Claude seats: after a relaunch).
 - **`rig ps` ATTN `user_prompt_submit`** on a seat that is working is not a stuck seat: it is mid-turn. Check its pane
   before acting.
 - Never stop or restart `openrig.service` or `openrig-tmux.service` while rigs run. Restart the daemon with

@@ -13,7 +13,7 @@ note() { logger -t openrig-update "$2"; notify-send --app-name="Agent stack" ${3
 
 validate() {
   local tmp; tmp=$(mktemp -d); local ok=0
-  for f in "$S"/rig/template/{core,team,build,full-stack,fallback-codex}.yaml; do
+  for f in "$S"/rig/template/{core,small,team,build,full-stack,fallback-codex}.yaml; do
     sed -e "s#@RIG@#chk$(basename "$f" .yaml)#g; s#@REPO@#$tmp/repo#g; s#@WT@#$tmp/wt#g; s#@AGENT_STACK@#$S#g" "$f" > "$tmp/$(basename "$f")"
     rig spec validate "$tmp/$(basename "$f")" >/dev/null 2>&1 || { echo "spec failed: $(basename "$f")"; ok=1; }
   done

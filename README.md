@@ -115,7 +115,8 @@ seat's `OPENRIG_HOME` would point the installer at that machine's live config):
 
 1. `git clone https://github.com/korallis/agent-stack ~/Projects/agent-stack && cd ~/Projects/agent-stack`
 2. `./install.sh --check`: reports what is missing; it installs and configures nothing. It does create empty
-   directories, set the secrets directory to 0700, and fill the npm cache while it checks the Playwright browser.
+   directories, set the secrets directory to 0700, and fill the npm cache while it checks the Playwright browser; in a
+   fresh HOME, asking Claude Code for its MCP servers makes it create its own `~/.claude.json`.
    Then `./install.sh`.
 3. Logins: `gh auth login`, then `agent-login claude|codex|kimi <label>` once per subscription.
 4. Secrets, in `~/.config/agent-stack/secrets/` (0600, never in a repo):
@@ -214,8 +215,8 @@ Details are in the `agent-stack` skill. What went wrong before: [docs/incidents/
 - **OpenRig** never upgrades by itself: running seats would be interrupted. A weekly check (`openrig-update`) tells
   the upgrade owner when a newer release is out. The upgrade is an operator-run window
   ([docs/UPGRADE.md](docs/UPGRADE.md)): `openrig-upgrade <version>` installs it and applies this setup's local patches
-  (`patches/openrig/<version>/`); `openrig-update --validate` then checks five team templates
-  (`rig/template/` core, team, build, full-stack, fallback-codex) against it.
+  (`patches/openrig/<version>/`); `openrig-update --validate` then checks the six team templates
+  (`rig/template/` core, small, team, build, full-stack, fallback-codex) against it.
 - **Versions:** the tracked pins are in `config/versions.defaults.env`; a machine can override them in
   `config/versions.env` (not tracked). The installer never downgrades OpenRig: if the installed version is newer than
   the pin, it keeps it ([docs/incidents/2026-09-30-openrig-downgrade.md](docs/incidents/2026-09-30-openrig-downgrade.md)).

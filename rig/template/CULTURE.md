@@ -36,6 +36,11 @@ adds every new owner decision here the day it is made. A decision recorded here 
   at a max runtime (45min build, 30min browser; `--max-runtime` to raise it).
 - Never `pkill -f`/`killall` by a pattern: it also matches other seats' command lines. Stop your own processes by PID
   (`pgrep -f` narrowed by cwd or parent PID, then `kill <pid>`).
+- Never print a credential: connection strings, passwords, API keys and tokens never go to a command's output (it is
+  your transcript) or into a tool input. Write them to a 0600 file (`neon cs … --output-file <path>`; the seat guard in
+  front of `neon` and `vercel` refuses anything else) and use them by name. A flag the installed CLI's `--help` doesn't
+  list may be silently ignored: check before relying on it. If a secret was printed, tell the owner at once so it gets
+  rotated.
 - Scratch checkouts for review or QA go under `~/Projects/<P>.worktrees/`, never `/tmp`, and are removed in a
   `finally`/`trap`. Test suites remove every `mkdtemp` directory they create.
 - Proof for a project in the workspace catalog: `rig proof show|judge <project-id>:<mission>/slices/<slice>` (the catalog

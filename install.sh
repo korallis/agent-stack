@@ -74,9 +74,12 @@ step "Helper scripts"
 mkdir -p "$L/bin" "$L/seat-bin" "$B"
 for f in agent-login cliproxy-healthcheck cliproxy-key openrig-healthcheck cliproxy-authwatch cliproxy-quotawatch agent-repos-sync; do place "$S/system/$f" "$L/bin/$f" 755; done
 place "$S/system/seat-bin-codex" "$L/seat-bin/codex" 755
+# Credential guard for seats' neon/vercel (refuses to print secrets into a transcript); env.sh adds the seat functions.
+place "$S/system/seat-bin-credguard" "$L/seat-bin/credguard" 755
+for f in neon neonctl vercel vc; do link "$L/seat-bin/credguard" "$L/seat-bin/$f"; done
 mkdir -p "$L/seat-tools"; place "$S/system/seat-tools-rig" "$L/seat-tools/rig" 755   # queue writes get the project tag + EC-3 worktree_path
 link "$L/bin/agent-login" "$B/agent-login"
-for f in claude-pool agent-heavy openrig-ensure playwright-browsers agent-claude-trust openrig-upgrade openrig-update agent-project-new agent-project-check agent-never-prompt-check agent-human-inbox-tidy openrig-daemon-cycle openrig-tmux-adopt agent-queue-backfill agent-refresh-guidance agent-project-repair agent-waves-sync; do link "$S/bin/$f" "$B/$f"; done
+for f in claude-pool agent-heavy openrig-ensure playwright-browsers agent-claude-trust openrig-upgrade openrig-update agent-project-new agent-project-check agent-never-prompt-check agent-credguard-check agent-human-inbox-tidy openrig-daemon-cycle openrig-tmux-adopt agent-queue-backfill agent-refresh-guidance agent-project-repair agent-waves-sync; do link "$S/bin/$f" "$B/$f"; done
 link "$S/proxy/status.py" "$B/agent-proxy-status"
 if [ $CHECK = 0 ] || mise where "node@$NODE_FOR_JEV" >/dev/null 2>&1; then
   launcher jev-mcp "$NODE_FOR_JEV" "$S/jev/bin/jev-mcp.js"
