@@ -127,8 +127,223 @@ export function blastNotApplicable({ files }) {
   return `N/A: ${files.length} changed path(s), all ${[...new Set(kinds)].join(" or ")} (checked in the diff): ${files.map((f) => f.path).slice(0, 8).join(", ")}`;
 }
 
+// ---- Evidence sources (WO39): commit statuses by default, or PR comments for repos that record them there ----------
+// Config: --config <file>, else AGENT_MERGE_EVIDENCE_CONFIG (a file), else $OPENRIG_WORK_ROOT/.agent-stack/merge-evidence.json.
+// Top-level keys are the defaults; "repos": { "owner/name": { ... } } overrides them per repository. See docs/REFERENCE.md.
+export const DEFAULT_CONFIG = { review: { source: "status", context: "independent-review" }, qa: { source: "proof" },
+  gate: { source: "status", context: "jev-merge" }, authorFamily: null };
+const SOURCES = { review: ["status", "comments"], qa: ["proof", "comments"], gate: ["status", "comments"] };
+
+// Pure: the effective config for `nwo` from a parsed file (null = defaults). Throws on anything it can't use.
+export function resolveConfig(raw, nwo) {
+  const own = (raw?.repos && nwo && raw.repos[nwo]) || {};
+  const cfg = { authorFamily: own.authorFamily || raw?.authorFamily || null };
+  for (const k of Object.keys(SOURCES)) {
+    const c = cfg[k] = { ...DEFAULT_CONFIG[k], ...raw?.[k], ...own[k] };
+    if (!SOURCES[k].includes(c.source)) throw new Error(`merge-evidence config: ${k}.source must be ${SOURCES[k].join(" or ")}, not ${JSON.stringify(c.source)}`);
+    if (c.source === "comments") {
+      if (!c.heading) throw new Error(`merge-evidence config: ${k}.heading is required with source "comments"`);
+      try { c.headingRe = new RegExp(c.heading); } catch (e) { throw new Error(`merge-evidence config: ${k}.heading is not a valid regex: ${e.message}`); }
+    }
+  }
+  if (cfg.authorFamily && !FAMILIES.includes(cfg.authorFamily)) throw new Error(`merge-evidence config: authorFamily must be one of ${FAMILIES.join(", ")}`);
+  return cfg;
+}
+
+export function loadConfig({ flagPath, nwo, env = process.env } = {}) {
+  const named = flagPath || env.AGENT_MERGE_EVIDENCE_CONFIG;
+  const path = named || (env.OPENRIG_WORK_ROOT ? join(env.OPENRIG_WORK_ROOT, ".agent-stack", "merge-evidence.json") : null);
+  if (!path || !existsSync(path)) {
+    if (named) throw new Error(`merge-evidence config ${named} not found`);
+    return { ...resolveConfig(null, nwo), path: null };
+  }
+  let raw;
+  try { raw = JSON.parse(readFileSync(path, "utf8")); } catch (e) { throw new Error(`merge-evidence config ${path} is not valid JSON: ${e.message}`); }
+  return { ...resolveConfig(raw, nwo), path };
+}
+
+// A seat's model family from its name (review-claude-2, impl-codex-1, impl-astra-1). null when the name doesn't say.
+export const FAMILIES = ["claude", "codex", "kimi"];
+export const familyOf = (seat) => { const s = String(seat || "").toLowerCase();
+  return /claude|fable|opus|sonnet/.test(s) ? "claude" : /codex|gpt|astra/.test(s) ? "codex" : /kimi/.test(s) ? "kimi" : null; };
+
+const WORD = { success: /^(PASS(ED)?|APPROVED?|YES|MERGE)$/i, failure: /^(FAIL(ED)?|BLOCK(ED|ING)?|NO|HOLD|CHANGES[_ ]REQUESTED|REQUEST[_ ]CHANGES)$/i };
+const word = (w) => WORD.success.test(w) ? "success" : WORD.failure.test(w) ? "failure" : null;
+
+// Pure: the lines of a record that are its own declarations: fenced code blocks and quoted (">") lines are examples or
+// citations, never the record's own statements, so they are dropped. Bold/code markers are removed; underscores kept.
+export function ownLines(body) {
+  const out = []; let fence = null;
+  for (const raw of String(body || "").split("\n")) {
+    const m = raw.match(/^\s*(`{3,}|~{3,})/);
+    if (m) { if (!fence) fence = m[1][0]; else if (m[1][0] === fence) fence = null; continue; }
+    if (fence || /^\s*>/.test(raw)) continue;
+    out.push(raw.replace(/\*\*|`/g, "").trim());
+  }
+  return out;
+}
+
+// Pure: what a record declares. `candidates`: the shas it names on a declaration line of its own ("head: <sha>",
+// "candidate_sha: <sha>", "reviewed head <sha>", or "confirm <sha>"); a sha mentioned inside a sentence is not one.
+// `verdicts`: each declared verdict (a "confirm <sha>" line; each "Verdict:" / "Ship:" / "Result:" line; verdict
+// words in the heading after its seat word), as success, failure or unknown (a declaration this helper can't read).
+export function declarations(body) {
+  const lines = ownLines(body), candidates = [], verdicts = [];
+  const heading = (lines[0] || "").replace(/^#*\s*[\w.@-]+/, "");
+  for (const w of heading.split(/[^A-Za-z_]+/)) if (word(w)) verdicts.push(word(w));
+  for (const l of lines.slice(1)) {
+    let m = l.match(/^confirm\s+([0-9a-f]{40})$/i);
+    if (m) { candidates.push(m[1].toLowerCase()); verdicts.push("success"); continue; }
+    m = l.match(/^(?:reviewed\s+)?(?:head|candidate(?:[_ ]sha)?|sha|commit)\s*[:=]?\s*([0-9a-f]{40})\.?$/i);
+    if (m) { candidates.push(m[1].toLowerCase()); continue; }
+    m = l.match(/^(?:verdict|ship|result)\s*[:=—-]\s*(.*)$/i);
+    if (m) { const t = m[1].trim().split(/[\s—:;,.()]+/); verdicts.push(word(`${t[0]} ${t[1] || ""}`.trim()) || word(t[0]) || "unknown"); }
+  }
+  return { candidates: [...new Set(candidates)], verdicts };
+}
+
+// Pure: one record's state from its declarations: success only when every declared verdict is success; any failure
+// (or a conflict) is failure; otherwise "unclear". null when it declares none.
+const combine = (v) => {
+  if (!v.length) return null;
+  return v.every((x) => x === "success") ? "success" : v.includes("failure") ? "failure" : "unclear";
+};
+export const verdictOf = (body, reviewState) => combine([...declarations(body).verdicts,
+  ...(reviewState === "APPROVED" ? ["success"] : reviewState === "CHANGES_REQUESTED" ? ["failure"] : [])]);
+
+// Pure: the PR comments/reviews that are records for one evidence kind ABOUT THIS HEAD: the first line matches the
+// configured heading, and the record's own candidate declarations name exactly this head (a record that declares
+// another sha, or none, is not about it). Oldest first. `seat` is the first word of the heading (the seat); `state`
+// is its verdict (null when it declares none, which never counts as success). A GitHub review's own state
+// (APPROVED / CHANGES_REQUESTED) is one more declaration.
+export function records(notes, headingRe, head) {
+  return (notes || []).filter((n) => {
+    if (!headingRe.test(String(n.body || "").split("\n", 1)[0])) return false;
+    const c = declarations(n.body).candidates;
+    return c.length === 1 && c[0] === head.toLowerCase();
+  }).map((n) => {
+    return { ...n, seat: (String(n.body).split("\n", 1)[0].match(/^#*\s*([\w.@-]+)/) || [])[1] || null, state: verdictOf(n.body, n.reviewState) };
+  });
+}
+
+// Pure: the limits a record states in its own lines ("LIMIT: ...", "Limits: ...", "Caveat: ...", "Not verified: ...").
+export const statedLimits = (body) => ownLines(body).flatMap((l) => [...l.matchAll(/\b(?:LIMITS?|CAVEATS?|NOT VERIFIED|UNTESTED)\s*:\s*(.+?)(?=\s+\b(?:LIMITS?|CAVEATS?)\s*:|$)/gi)].map((m) => m[1].trim()));
+
+// Pure: the independent review from comments: the LATEST record by a seat of another family than the author's. An
+// unknown author family, or a record whose seat has no family, never counts (cross-family can't be verified).
+export function reviewFromComments(notes, headingRe, head, authorFamily) {
+  const recs = records(notes, headingRe, head);
+  if (!authorFamily) return { review: null, problem: `the PR author's model family is unknown (set authorFamily, pass --author-family, or use an agent/<seat> branch), so no comment review can be verified as cross-family${recs.length ? `; ${recs.length} review record(s) for this head not counted` : ""}` };
+  const r = recs.filter((x) => familyOf(x.seat) && familyOf(x.seat) !== authorFamily).at(-1);
+  if (!r) return { review: null, problem: `no review comment for ${head} by a seat outside the ${authorFamily} family${recs.length ? ` (${recs.length} same-family or unattributed record(s) ignored)` : ""}` };
+  return { review: { state: r.state || "no verdict stated", description: String(r.body).split("\n", 1)[0].slice(0, 200), creator: r.seat, url: r.url || null, source: "comment" },
+    note: { url: r.url, at: r.at, author: r.seat, excerpt: String(r.body).replace(/\s+/g, " ").slice(0, 900), limits: statedLimits(r.body) } };
+}
+
+// Pure: QA's verdict from comments, in the shape of a bug-review-board proof (the same exact-head rule applies).
+export function qaFromComments(notes, headingRe, head) {
+  const r = records(notes, headingRe, head).at(-1);
+  return r ? { file: r.url || "PR comment", artifact_type: "qa", verdict: r.state === "success" ? "PASS" : r.state === "failure" ? "BLOCKING" : "UNCLEAR", candidate_sha: head,
+    money_evidence: `QA comment by ${r.seat} (${r.at}): ${String(r.body).replace(/\s+/g, " ").slice(0, 300)}`, source: "comment" } : null;
+}
+
+// Pure: the merge gate's own record for this head. From the latest status of its context, or the latest gate comment.
+export function gateFrom(cfg, { statuses, notes, head }) {
+  if (cfg.gate.source === "comments") {
+    const r = records(notes, cfg.gate.headingRe, head).at(-1);
+    return r ? { state: r.state || "posted without a verdict", url: r.url || null, source: "comment" } : { state: null, source: "comment" };
+  }
+  const st = (statuses || []).find((x) => x.context === cfg.gate.context);   // newest first
+  return st ? { state: st.state, url: st.target_url || null, source: "status" } : { state: null, source: "status" };
+}
+
+// ---- Branch requirements when GitHub says BLOCKED -----------------------------------------------------------------
+// Rule types that govern pushes to the branch itself, never merging a PR into it.
+const MERGE_NEUTRAL_RULES = new Set(["deletion", "non_fast_forward", "creation"]);
+const reviewsRequired = (p) => p && (p.required_approving_review_count > 0 || p.require_code_owner_review || p.require_code_owner_reviews || p.require_last_push_approval);
+
+// Pure: every requirement the base branch's rulesets and classic protection place on merging. Required contexts carry
+// their bound producer (ruleset integration_id, classic app_id; null/-1 = any). Anything this helper cannot verify is
+// listed in `unverified`, never assumed satisfied.
+export function requirementsFrom(rules, prot, reviewDecision) {
+  const contexts = [], unverified = [];
+  const needsReview = (where) => { if (reviewDecision !== "APPROVED" && !["REVIEW_REQUIRED", "CHANGES_REQUESTED"].includes(reviewDecision)) unverified.push(`${where} requires approving review(s) and GitHub reported no review decision`); };
+  for (const r of rules || []) {
+    if (MERGE_NEUTRAL_RULES.has(r.type)) continue;
+    if (r.type === "required_status_checks") { for (const c of r.parameters?.required_status_checks || []) contexts.push({ context: c.context, app: c.integration_id ?? null }); continue; }
+    if (r.type === "pull_request") {
+      if (r.parameters?.required_review_thread_resolution) unverified.push("a ruleset requires review conversations to be resolved");
+      if (reviewsRequired(r.parameters)) needsReview("a ruleset");
+      continue;
+    }
+    unverified.push(`ruleset rule ${r.type}`);   // required_deployments, required_signatures, merge_queue, required_linear_history, update, ...
+  }
+  if (prot) {
+    for (const c of prot.required_status_checks?.checks || []) contexts.push({ context: c.context, app: c.app_id ?? null });
+    const bound = new Set((prot.required_status_checks?.checks || []).map((c) => c.context));
+    for (const c of prot.required_status_checks?.contexts || []) if (!bound.has(c)) contexts.push({ context: c, app: null });
+    if (prot.required_pull_request_reviews && (reviewsRequired(prot.required_pull_request_reviews) || prot.required_pull_request_reviews.required_approving_review_count == null)) needsReview("classic protection");
+    for (const [k, what] of [["required_signatures", "signed commits"], ["required_linear_history", "linear history"],
+      ["required_conversation_resolution", "resolved conversations"], ["lock_branch", "a locked branch"]])
+      if (prot[k]?.enabled) unverified.push(`classic protection: ${what}`);
+    if (prot.restrictions) unverified.push("classic protection: restrictions on who may merge");
+  }
+  return { contexts, unverified };
+}
+
+// Pure: one required context on this head: "pass", null (nothing posted yet) or why it is not met. Every same-name
+// result counts (a check and a status can share a name): any non-success one keeps it unmet. A context bound to an app
+// is met only by that app's latest check run; unreadable check runs keep it unmet.
+export function contextState(req, { checks, statuses, checkRuns }) {
+  const bad = (checks || []).filter((c) => c.name === req.context && c.bucket !== "pass").map((c) => `check ${c.bucket}`);
+  const latest = (statuses || []).find((s) => s.context === req.context);
+  if (latest && latest.state !== "success") bad.push(`status ${latest.state}`);
+  if (req.app != null && req.app !== -1) {
+    if (!Array.isArray(checkRuns)) return `${req.context}: bound to app ${req.app} and the check runs could not be read`;
+    const run = checkRuns.filter((r) => r.name === req.context && r.app?.id === req.app).sort((a, b) => b.id - a.id)[0];
+    if (!run) return `${req.context}: no result from its required app ${req.app}${latest || (checks || []).some((c) => c.name === req.context) ? " (another producer's result does not count)" : ""}`;
+    if (run.conclusion !== "success") bad.unshift(`app ${req.app} ${run.conclusion || run.status}`);
+    return bad.length ? `${req.context}: ${bad.join(", ")}` : "pass";
+  }
+  if (bad.length) return `${req.context}: ${bad.join(", ")}`;
+  return latest || (checks || []).some((c) => c.name === req.context) ? "pass" : null;
+}
+
+// GitHub says BLOCKED while ANY merge requirement is unmet, including the merge-gate status this helper exists to
+// produce (jev-merge). Pure: the merge-state line with the real reasons when BLOCKED. "pending this gate" only when
+// the gate is the single unmet requirement, has posted nothing, and everything else is verified; else BLOCKED.
+export const GATE_CONTEXT = "jev-merge";
+export function mergeStateLine(f) {
+  const GATE = f.gateContext || GATE_CONTEXT;
+  if (f.mergeState !== "BLOCKED") return `merge state: ${f.mergeState || "unknown"}`;
+  const reasons = [];
+  if (f.mergeable && f.mergeable !== "MERGEABLE") reasons.push(`mergeable ${f.mergeable}`);
+  if (["REVIEW_REQUIRED", "CHANGES_REQUESTED"].includes(f.reviewDecision)) reasons.push(`review decision ${f.reviewDecision}`);
+  const req = f.requirements;
+  if (!req) reasons.push("the branch requirements could not be read");
+  else {
+    for (const u of req.unverified) reasons.push(`not verified by this helper: ${u}`);
+    const missing = req.contexts.filter((c) => c.context !== GATE && c.state === null).map((c) => c.context);
+    if (missing.length) reasons.push(`required context(s) not posted: ${[...new Set(missing)].join(", ")}`);
+    for (const c of req.contexts) if (c.state && c.state !== "pass") reasons.push(c.state);
+  }
+  const gateReqs = (req?.contexts || []).filter((c) => c.context === GATE);
+  const gateUnposted = gateReqs.length && gateReqs.every((c) => c.state === null);
+  if (!reasons.length && gateUnposted) return `merge state: pending this gate (${GATE} not yet posted; every other requirement verified)`;
+  if (gateUnposted) reasons.push(`${GATE} not yet posted`);
+  return `merge state: BLOCKED (${[...new Set(reasons)].join("; ") || "reason not visible to this helper"})`;
+}
+
+// Pure: this gate's own record for the head, worded like mergeStateLine: nothing posted = "pending this gate".
+export function gateLine(f) {
+  const G = f.gateContext || GATE_CONTEXT, g = f.gate, from = g.source === "comment" ? "gate comment" : "status";
+  if (!g.state) return `merge gate ${G} (${from}): pending this gate (nothing posted for ${f.head})`;
+  return `merge gate ${G} (${from}): ${g.state} already posted for ${f.head}${g.url ? ` (${g.url})` : ""}`;
+}
+
 // Pure: the review.merge_gate input from gathered facts (facts are what gh and the proof file said; strings only).
 export function buildMergeInput(f) {
+  const RC = f.reviewContext || "independent-review";
   const checks = f.checks || [];
   const failed = checks.filter((c) => c.bucket !== "pass");
   const ci = !checks.length
@@ -136,16 +351,20 @@ export function buildMergeInput(f) {
     : `${checks.length} required check(s) on ${f.head}: ` + checks.map((c) => `${c.name}=${c.bucket}`).join(", ")
       + (failed.length ? `; NOT passing: ${failed.map((c) => c.name).join(", ")}` : "; all pass");
   const review = [
-    f.independentReview
-      ? `independent-review status on ${f.head}: ${f.independentReview.state} "${f.independentReview.description}" (by ${f.independentReview.creator}${f.independentReview.url ? `, ${f.independentReview.url}` : ""})`
-      : `MISSING: no independent-review status on ${f.head}`,
+    f.independentReview?.source === "comment"
+      ? `independent review comment on ${f.head}: ${f.independentReview.state} "${f.independentReview.description}" (seat ${f.independentReview.creator}, another family than the author's ${f.authorFamily}${f.independentReview.url ? `, ${f.independentReview.url}` : ""})`
+      : f.independentReview
+        ? `${RC} status on ${f.head}: ${f.independentReview.state} "${f.independentReview.description}" (by ${f.independentReview.creator}${f.independentReview.url ? `, ${f.independentReview.url}` : ""})`
+        : f.sources?.review === "comments" ? `MISSING: ${f.reviewProblem || `no independent review comment for ${f.head}`}` : `MISSING: no ${RC} status on ${f.head}`,
     // Provenance comes only from the status's own link (target_url): a comment that merely mentions the head could be
     // anyone's, the author's included, so it is shown as UNVERIFIED and never as the review.
-    f.reviewNote
-      ? `independent review report, linked from the independent-review status (${f.reviewNote.url}, ${f.reviewNote.at}, by ${f.reviewNote.author}): ${f.reviewNote.excerpt}`
+    f.independentReview?.source === "comment"
+      ? (f.reviewNote ? `independent review report, the selected comment itself (${f.reviewNote.url}, ${f.reviewNote.at}, seat ${f.reviewNote.author}): ${f.reviewNote.excerpt}` : null)
+      : f.reviewNote
+      ? `independent review report, linked from the ${RC} status (${f.reviewNote.url}, ${f.reviewNote.at}, by ${f.reviewNote.author}): ${f.reviewNote.excerpt}`
       : f.independentReview?.url
         ? `independent review report: ${f.independentReview.url} (linked from the status, outside this PR; not read)`
-        : `MISSING: the independent-review status links no review report (no target_url), so what the reviewer verified is not established`,
+        : f.sources?.review === "comments" ? null : `MISSING: the ${RC} status links no review report (no target_url), so what the reviewer verified is not established`,
     ...(!f.reviewNote && f.unlinkedNote
       ? [`UNVERIFIED, not linked from the status and not treated as the review: the latest PR comment naming ${f.head.slice(0, 7)} (${f.unlinkedNote.url}, ${f.unlinkedNote.at}, by ${f.unlinkedNote.author}): ${f.unlinkedNote.excerpt}`]
       : []),
@@ -155,10 +374,12 @@ export function buildMergeInput(f) {
     f.blastRadius
       ? `blast radius (${f.blastRadius.url}, ${f.blastRadius.at}${f.blastRadius.namesHead ? ", names this head" : ", does NOT name this head"}): ${f.blastRadius.excerpt}`
       : f.blastNA ? `blast radius ${f.blastNA}` : "MISSING: no blast-radius comment on the PR",
-  ].join("\n");
+  ].filter((x) => x !== null).join("\n");
   const limits = [
     `target branch ${f.baseRef} at ${f.base}; PR head branch ${f.headRef}`,
-    `mergeable: ${f.mergeable}; merge state: ${f.mergeState || "unknown"}; draft: ${f.isDraft}`,
+    `mergeable: ${f.mergeable}; ${mergeStateLine(f)}; draft: ${f.isDraft}`,
+    ...(f.gate ? [gateLine(f)] : []),
+    ...(f.reviewNote?.limits?.length ? [`limits stated by the independent review: ${f.reviewNote.limits.join("; ")}`] : []),
     `deploy effect: ${f.deploy || "MISSING: not stated (see the rig CULTURE specifics)"}`,
     f.rollback ? `rollback: ${f.rollback}` : `rollback: not stated (proposed default: revert the squash commit on ${f.baseRef})`,
   ].join("\n");
@@ -171,18 +392,41 @@ function frontmatter(path) {
   return m ? YAML.parse(m[1]) || {} : {};
 }
 
-export function gather(pr, { repo, mission, slice, change, deploy, rollback } = {}) {
+export function gather(pr, { repo, mission, slice, change, deploy, rollback, config, configPath, authorFamily } = {}) {
   const R = repo ? ["-R", repo] : [];
-  const FIELDS = "number,title,createdAt,headRefOid,baseRefOid,baseRefName,headRefName,mergeable,mergeStateStatus,isDraft,comments,reviews";
+  const FIELDS = "number,title,createdAt,headRefOid,baseRefOid,baseRefName,headRefName,mergeable,mergeStateStatus,reviewDecision,isDraft,comments,reviews";
   const v = ghJson("pr", "view", String(pr), ...R, "--json", FIELDS);
   const nwo = repo || ghJson("repo", "view", "--json", "nameWithOwner").nameWithOwner;
+  const cfg = config || loadConfig({ flagPath: configPath, nwo });
+  if (authorFamily && !FAMILIES.includes(authorFamily)) throw new Error(`--author-family must be one of ${FAMILIES.join(", ")}`);
   let checks = [];
   try { checks = ghJson("pr", "checks", String(pr), ...R, "--required", "--json", "name,state,bucket"); }
   catch (e) { const out = String(e.stdout || ""); if (out.trim().startsWith("[")) checks = JSON.parse(out); }   // gh exits non-zero when a check fails
-  const statuses = ghJson("api", `repos/${nwo}/commits/${v.headRefOid}/statuses`);
-  const ir = (statuses || []).find((s) => s.context === "independent-review");
+  // Every status, all pages, newest first: absence from one page is not absence (a context's latest status can sit
+  // behind many newer ones of another context).
+  const pages = ghJson("api", `repos/${nwo}/commits/${v.headRefOid}/statuses?per_page=100`, "--paginate", "--slurp") || [];
+  const statuses = pages.every(Array.isArray) ? pages.flat() : pages;
+  // Every merge requirement on the base branch (rulesets + classic protection) and its state on this head. When
+  // BLOCKED, these tell a real block apart from "only the gate itself hasn't posted". Unreadable -> null (keeps BLOCKED).
+  let requirements = null;
+  if (v.mergeStateStatus === "BLOCKED") {
+    try {
+      const rules = ghJson("api", `repos/${nwo}/rules/branches/${v.baseRefName}?per_page=100`) || [];
+      if (rules.length >= 100) throw new Error("more rules than one page");
+      let prot = null;
+      try { prot = ghJson("api", `repos/${nwo}/branches/${v.baseRefName}/protection`); }
+      catch (e) { if (!/HTTP 404|Branch not protected/.test(String(e.stderr || e.message))) throw e; }
+      const found = requirementsFrom(rules, prot, v.reviewDecision || null);
+      let checkRuns = null;
+      if (found.contexts.some((c) => c.app != null && c.app !== -1)) {
+        try { const cr = ghJson("api", `repos/${nwo}/commits/${v.headRefOid}/check-runs?per_page=100`); if (cr.total_count <= cr.check_runs.length) checkRuns = cr.check_runs; }
+        catch { checkRuns = null; }
+      }
+      requirements = { unverified: found.unverified, contexts: found.contexts.map((c) => ({ ...c, state: contextState(c, { checks, statuses, checkRuns }) })) };
+    } catch { requirements = null; }
+  }
   let brb = null, brbWhere = null;
-  if (mission && slice) {
+  if (mission && slice && cfg.qa.source === "proof") {
     brbWhere = join(process.env.OPENRIG_WORK_ROOT || ".", "missions", mission, "slices", slice, "proof", `brb-${v.headRefOid}.md`);
     if (existsSync(brbWhere)) {
       const fm = frontmatter(brbWhere);
@@ -193,17 +437,27 @@ export function gather(pr, { repo, mission, slice, change, deploy, rollback } = 
   const namesHead = (body) => (body || "").includes(short);
   const notes = [
     ...(v.comments || []).map((c) => ({ body: c.body, url: c.url, at: c.createdAt, author: c.author?.login })),
-    ...(v.reviews || []).map((r) => ({ body: r.body, url: r.url || `review ${r.id}`, at: r.submittedAt, author: r.author?.login, commit: r.commit?.oid })),
+    ...(v.reviews || []).map((r) => ({ body: r.body, url: r.url || `review ${r.id}`, at: r.submittedAt, author: r.author?.login, commit: r.commit?.oid, reviewState: r.state })),
   ].sort((a, b) => String(a.at).localeCompare(String(b.at)));
+  const gate = gateFrom(cfg, { statuses, notes, head: v.headRefOid });
+  const author = { family: authorFamily || cfg.authorFamily || familyOf((v.headRefName || "").match(/^agent\/([\w.-]+)/)?.[1]) || null };
+  if (cfg.qa.source === "comments") { brb = qaFromComments(notes, cfg.qa.headingRe, v.headRefOid); brbWhere = `PR comments headed /${cfg.qa.heading}/`; }
   const br = [...notes].reverse().find((c) => /^## Blast radius/m.test(c.body || ""));
   const blast = br ? { url: br.url, at: br.at, namesHead: namesHead(br.body) || br.commit === v.headRefOid,
     excerpt: br.body.slice(br.body.search(/^## Blast radius/m)).replace(/\s+/g, " ").slice(0, 700) } : null;
   // What the cross-family reviewer verified: the report the independent-review status links to (target_url), and
   // nothing else. Without a link, the latest comment naming the head is passed on only as UNVERIFIED.
-  const note = (c) => c && { url: c.url, at: c.at, author: c.author || "?", excerpt: c.body.replace(/\s+/g, " ").slice(0, 900) };
-  const link = ir?.target_url || null;
-  const reviewNote = link ? note(notes.find((c) => c.url && c.url === link)) || null : null;
-  const unlinkedNote = note([...notes].reverse().find((c) => (c.body || "").length > 40 && (namesHead(c.body) || c.commit === v.headRefOid)));
+  const note = (c) => c && { url: c.url, at: c.at, author: c.author || "?", excerpt: c.body.replace(/\s+/g, " ").slice(0, 900), limits: statedLimits(c.body) };
+  let independentReview = null, reviewNote = null, unlinkedNote = null, reviewProblem = null;
+  if (cfg.review.source === "comments") {
+    ({ review: independentReview, note: reviewNote = null, problem: reviewProblem = null } = reviewFromComments(notes, cfg.review.headingRe, v.headRefOid, author.family));
+  } else {
+    const ir = statuses.find((s) => s.context === cfg.review.context);
+    if (ir) independentReview = { state: ir.state, description: ir.description || "", creator: ir.creator?.login || "?", url: ir.target_url || null, source: "status" };
+    const link = ir?.target_url || null;
+    reviewNote = link ? note(notes.find((c) => c.url && c.url === link)) || null : null;
+    unlinkedNote = note([...notes].reverse().find((c) => (c.body || "").length > 40 && (namesHead(c.body) || c.commit === v.headRefOid)));
+  }
   // Applicability from verified facts only: the actual diff and the PR's creation time against the configured cutoff.
   const files = parseDiff(gh("pr", "diff", String(pr), ...R));
   let culture = "";
@@ -217,9 +471,9 @@ export function gather(pr, { repo, mission, slice, change, deploy, rollback } = 
     throw new Error(`the PR moved while its evidence was collected (head ${v.headRefOid.slice(0, 12)} -> ${again.headRefOid.slice(0, 12)}, base ${v.baseRefOid.slice(0, 12)} -> ${again.baseRefOid.slice(0, 12)}); run it again`);
   return {
     pr: v.number, head: v.headRefOid, base: v.baseRefOid, baseRef: v.baseRefName, headRef: v.headRefName,
-    mergeable: v.mergeable, mergeState: v.mergeStateStatus, isDraft: v.isDraft, change: change || v.title, checks,
-    independentReview: ir ? { state: ir.state, description: ir.description || "", creator: ir.creator?.login || "?", url: ir.target_url || null } : null,
-    reviewNote, unlinkedNote, brb, brbWhere, brbNA, blastRadius: blast, blastNA, deploy, rollback,
+    mergeable: v.mergeable, mergeState: v.mergeStateStatus, reviewDecision: v.reviewDecision || null, isDraft: v.isDraft, change: change || v.title, checks,
+    requirements, gate, gateContext: cfg.gate.context, reviewContext: cfg.review.context, sources: { review: cfg.review.source, qa: cfg.qa.source, gate: cfg.gate.source },
+    authorFamily: author.family, independentReview, reviewProblem, reviewNote, unlinkedNote, brb, brbWhere, brbNA, blastRadius: blast, blastNA, deploy, rollback,
   };
 }
 
@@ -239,7 +493,7 @@ export function gateProblems(f) {
   if (["BEHIND", "DIRTY", "UNKNOWN", undefined, null, ""].includes(f.mergeState)) p.push(`merge state ${f.mergeState || "unknown"} (the branch must be up to date with its base and free of conflicts)`);
   if (!f.checks?.length) p.push("no required checks reported");
   else if (f.checks.some((c) => c.bucket !== "pass")) p.push(`required checks not passing: ${f.checks.filter((c) => c.bucket !== "pass").map((c) => c.name).join(", ")}`);
-  if (f.independentReview?.state !== "success") p.push(`independent-review is ${f.independentReview?.state || "missing"}`);
+  if (f.independentReview?.state !== "success") p.push(f.independentReview ? `independent review is ${f.independentReview.state}` : `independent review missing${f.reviewProblem ? ` (${f.reviewProblem})` : ""}`);
   if (!f.brbNA && !(f.brb && f.brb.artifact_type === "qa" && f.brb.verdict === "PASS" && f.brb.candidate_sha === f.head)) p.push("no bug-review-board qa PASS for this head");
   return p;
 }
@@ -263,9 +517,9 @@ if (import.meta.url === `file://${process.argv[1]}` || process.argv[1]?.endsWith
   const a = process.argv.slice(2);
   const flag = (n) => { const i = a.indexOf(n); return i >= 0 ? a[i + 1] : undefined; };
   const pr = a.find((x) => /^\d+$/.test(x));
-  if (!pr) { console.error("usage: agent-merge-evidence <pr> [--repo o/r] [--mission M --slice S] [--change ...] [--deploy ...] [--rollback ...] [--decide]"); process.exit(2); }
+  if (!pr) { console.error("usage: agent-merge-evidence <pr> [--repo o/r] [--mission M --slice S] [--change ...] [--deploy ...] [--rollback ...] [--config F] [--author-family claude|codex|kimi] [--decide]"); process.exit(2); }
   let facts;
-  try { facts = gather(pr, { repo: flag("--repo"), mission: flag("--mission"), slice: flag("--slice"), change: flag("--change"), deploy: flag("--deploy"), rollback: flag("--rollback") }); }
+  try { facts = gather(pr, { repo: flag("--repo"), mission: flag("--mission"), slice: flag("--slice"), change: flag("--change"), deploy: flag("--deploy"), rollback: flag("--rollback"), configPath: flag("--config"), authorFamily: flag("--author-family") }); }
   catch (e) { console.error(`agent-merge-evidence: ${e.message}`); process.exit(2); }
   const input = buildMergeInput(facts);
   if (!a.includes("--decide")) { console.log(JSON.stringify(input, null, 2)); process.exit(0); }
