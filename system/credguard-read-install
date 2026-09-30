@@ -1,0 +1,114 @@
+#!/usr/bin/env node
+// credguard-read-install [--check] --hook <path> [--claude-settings <file>] [--codex-config <file>]
+//
+// Installs the credential read guard (credguard-read-hook) as a PreToolUse hook, idempotently, keeping every other
+// hook and setting:
+//   - Claude Code: one entry in ~/.claude/settings.json hooks.PreToolUse (matcher Bash|Read|Grep). Running sessions
+//     pick up settings-file hook changes through Claude Code's file watcher, so seats need no relaunch.
+//   - Codex: a managed block in ~/.codex/config.toml with a [[hooks.PreToolUse]] group (matcher Bash: Codex's
+//     exec_command) and its [hooks.state."<key>"] trusted_hash. Codex runs a config hook only when that hash matches
+//     (the hash is Codex's own: sha256 of the canonical JSON of the hook's identity), so the block trusts exactly
+//     this command and nothing else. Codex reads config at start: running Codex seats get it at their next launch.
+// A changed file is backed up first (<file>.bak-credguard-<time>). --check changes nothing. Each line is "ok ..." or
+// "-- ..." (missing or different); the exit code is 1 when anything is missing.
+"use strict";
+const fs = require("node:fs"), crypto = require("node:crypto"), os = require("node:os"), path = require("node:path");
+
+const MARK = "agent-credguard-read-hook";
+const BEGIN = "# BEGIN AGENT-STACK CREDENTIAL READ GUARD (managed by agent-stack install.sh; do not edit)";
+const END = "# END AGENT-STACK CREDENTIAL READ GUARD";
+const TIMEOUT = 10;
+
+const claudeCommand = (hook) => `"${hook}" --runtime claude`;
+const codexCommand = (hook) => `"${hook}" --runtime codex`;
+
+// Pure: settings with exactly one guard entry in hooks.PreToolUse (an older guard entry is replaced in place).
+function withClaudeHook(settings, hook) {
+  const s = { ...settings, hooks: { ...(settings.hooks || {}) } };
+  const entry = { matcher: "Bash|Read|Grep", hooks: [{ type: "command", command: claudeCommand(hook), timeout: TIMEOUT }] };
+  const list = [...(s.hooks.PreToolUse || [])];
+  const i = list.findIndex((g) => (g.hooks || []).some((h) => String(h.command || "").includes(MARK)));
+  if (i >= 0) list[i] = entry; else list.push(entry);
+  s.hooks.PreToolUse = list;
+  return s;
+}
+const claudeHasHook = (settings, hook) => (settings.hooks?.PreToolUse || []).some((g) => /(^|\|)Bash(\||$)/.test(g.matcher || "") && /Read/.test(g.matcher || "")
+  && (g.hooks || []).some((h) => h.command === claudeCommand(hook)));
+
+// Codex's trust hash for one command hook (codex-rs hooks discovery `command_hook_hash`): sha256 over the compact JSON
+// of { event_name, matcher, hooks: [{ type, command, timeout, async }] } with every object's keys sorted.
+function canon(v) {
+  if (Array.isArray(v)) return v.map(canon);
+  if (v && typeof v === "object") return Object.fromEntries(Object.keys(v).sort().map((k) => [k, canon(v[k])]));
+  return v;
+}
+function codexHookHash({ event, matcher, command, timeout }) {
+  const id = { event_name: event, hooks: [{ type: "command", command, timeout, async: false }] };
+  if (matcher != null) id.matcher = matcher;
+  return "sha256:" + crypto.createHash("sha256").update(JSON.stringify(canon(id)), "utf8").digest("hex");
+}
+
+// Pure: config.toml text with our managed block (re)written at the end. `keySource` is the config's canonical path.
+// Codex keys hook trust by position: <keySource>:pre_tool_use:<group index>:<handler index>; our group comes after
+// every other [[hooks.PreToolUse]] group in this file.
+function withCodexBlock(text, hook, keySource) {
+  const base = stripBlock(text).replace(/\s*$/, "\n");
+  const group = (base.match(/^\s*\[\[hooks\.PreToolUse\]\]\s*$/gm) || []).length;
+  const command = codexCommand(hook);
+  const hash = codexHookHash({ event: "pre_tool_use", matcher: "Bash", command, timeout: TIMEOUT });
+  const block = [BEGIN,
+    "[[hooks.PreToolUse]]", 'matcher = "Bash"', "",
+    "[[hooks.PreToolUse.hooks]]", 'type = "command"', `command = ${JSON.stringify(command)}`, `timeout = ${TIMEOUT}`, "",
+    `[hooks.state.${JSON.stringify(`${keySource}:pre_tool_use:${group}:0`)}]`, `trusted_hash = ${JSON.stringify(hash)}`,
+    END, ""].join("\n");
+  return base + "\n" + block;
+}
+function stripBlock(text) {
+  const a = text.indexOf(BEGIN), b = text.indexOf(END);
+  if (a < 0 || b < a) return text;
+  return text.slice(0, a).replace(/\n+$/, "\n") + text.slice(b + END.length).replace(/^\n+/, "");
+}
+// [features] hooks = true (Codex runs no hook without it).
+function hooksFeatureOn(text) {
+  const m = text.match(/^\s*\[features\]\s*$([\s\S]*?)(?=^\s*\[|$(?![\s\S]))/m);
+  return !!m && /^\s*hooks\s*=\s*true\s*$/m.test(m[1]);
+}
+
+function backup(file) { if (fs.existsSync(file)) fs.copyFileSync(file, `${file}.bak-credguard-${new Date().toISOString().replace(/[:.]/g, "")}`); }
+
+function main(argv) {
+  const flag = (n) => (argv.includes(n) ? argv[argv.indexOf(n) + 1] : undefined);
+  const check = argv.includes("--check"), hook = flag("--hook");
+  if (!hook) { console.error("usage: credguard-read-install [--check] --hook <path> [--claude-settings F] [--codex-config F]"); return 2; }
+  const home = os.homedir();
+  const claude = flag("--claude-settings") || path.join(home, ".claude/settings.json");
+  const codex = flag("--codex-config") || path.join(home, ".codex/config.toml");
+  let missing = 0;
+  const say = (ok, msg) => { console.log(`${ok ? "ok" : "--"} ${msg}`); if (!ok) missing++; };
+
+  say(fs.existsSync(hook), `credential read guard hook at ${hook}`);
+
+  let settings = {};
+  try { settings = JSON.parse(fs.readFileSync(claude, "utf8")); } catch { settings = null; }
+  if (settings && claudeHasHook(settings, hook)) say(true, `Claude: credential read guard in ${claude} (PreToolUse Bash|Read|Grep)`);
+  else if (check) say(false, `Claude: credential read guard missing from ${claude}`);
+  else {
+    const next = withClaudeHook(settings || {}, hook);
+    fs.mkdirSync(path.dirname(claude), { recursive: true }); backup(claude);
+    fs.writeFileSync(claude, JSON.stringify(next, null, 2) + "\n");
+    say(true, `Claude: credential read guard added to ${claude} (running sessions pick it up)`);
+  }
+
+  if (!fs.existsSync(codex)) say(false, `Codex: ${codex} not found (the guard is added when it exists)`);
+  else {
+    const text = fs.readFileSync(codex, "utf8"), next = withCodexBlock(text, hook, fs.realpathSync(codex));
+    if (!hooksFeatureOn(text)) say(false, `Codex: [features] hooks = true is not set in ${codex} (OpenRig sets it; without it no hook runs)`);
+    if (next === text) say(true, `Codex: credential read guard in ${codex} (PreToolUse Bash, trusted)`);
+    else if (check) say(false, `Codex: credential read guard missing or outdated in ${codex}`);
+    else { backup(codex); fs.writeFileSync(codex, next); say(true, `Codex: credential read guard written to ${codex} (Codex seats get it at their next launch)`); }
+  }
+  return missing ? 1 : 0;
+}
+
+module.exports = { withClaudeHook, claudeHasHook, codexHookHash, withCodexBlock, stripBlock, hooksFeatureOn, BEGIN, END, claudeCommand, codexCommand };
+if (require.main === module) process.exit(main(process.argv.slice(2)));

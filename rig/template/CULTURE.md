@@ -41,6 +41,9 @@ adds every new owner decision here the day it is made. A decision recorded here 
   front of `neon` and `vercel` refuses anything else) and use them by name. A flag the installed CLI's `--help` doesn't
   list may be silently ignored: check before relying on it. If a secret was printed, tell the owner at once so it gets
   rotated.
+- Credential files (`.env*`, `*runtime-url*`, `*.pem`, the secrets directory) are never printed or read into the
+  transcript: a machine-wide hook refuses it. Load them by name (`set -a; . <file>; set +a; <command>`, `--env-file`)
+  and never work around a refusal.
 - Context wall: when your context passes ~85%, write your handover packet (open work, decisions WITH rationale under a
   "Decisions" heading, facts you couldn't check marked `UNVERIFIED:`) and publish it with
   `agent-seat-recap write <packet.md> [--learned <lessons.md>]`. It becomes your seat's RECAP.md, the first thing a

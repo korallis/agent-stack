@@ -1,0 +1,295 @@
+#!/usr/bin/env node
+// agent-stack credential read guard: a PreToolUse hook for Claude Code (Bash, Read, Grep) and Codex (Bash, which is
+// Codex's exec_command). It refuses a tool call that would PRINT a credential file into the transcript, where it
+// stays (and gets copied, summarised and synced). Using the values without printing them stays allowed:
+// `set -a; . .env; set +a; npm run migrate`, `--env-file .env`, dotenv loaders in scripts, `grep -q KEY .env`.
+//
+//   credguard-read-hook [--runtime claude|codex]      reads the hook input (JSON) on stdin
+//
+// Claude: a deny is JSON on stdout (hookSpecificOutput.permissionDecision = "deny"); it blocks even under
+// bypassPermissions. Codex: a deny is exit 2 with the reason on stderr. Allow = exit 0, no output.
+// Protected paths: DEFAULT_PATTERNS plus one glob per line in ~/.config/agent-stack/credguard-read-paths (local,
+// never committed: put machine- or project-specific paths there). AGENT_CREDGUARD_READ_PATHS overrides that file.
+// Best effort against ACCIDENTAL printing by a seat, not a sandbox: a script that reads and prints a file itself
+// (node -e, python -c) is not parsed. The guard never fails closed on its own errors (a broken hook must not stop
+// every seat); install.sh and agent-never-prompt-check report whether it is installed.
+"use strict";
+const fs = require("node:fs"), path = require("node:path"), os = require("node:os");
+
+const DEFAULT_PATTERNS = ["**/.env", "**/.env.*", "**/*runtime-url*", "**/*.pem", "~/.config/agent-stack/secrets/**", "**/prod.env"];
+// Templates that hold no values.
+const EXEMPT = /(^|\/)\.env\.(example|sample|template)$/;
+
+function patterns(env = process.env, home = os.homedir()) {
+  const file = env.AGENT_CREDGUARD_READ_PATHS || path.join(home, ".config/agent-stack/credguard-read-paths");
+  let extra = [];
+  try { extra = fs.readFileSync(file, "utf8").split("\n").map((l) => l.trim()).filter((l) => l && !l.startsWith("#")); } catch { /* none */ }
+  return [...DEFAULT_PATTERNS, ...extra];
+}
+
+// A glob (**, *, ?; a leading ~/ is the home directory) as a regex over absolute paths.
+function globRe(glob, home) {
+  let g = glob.startsWith("~/") ? home + glob.slice(1) : glob, re = "";
+  for (let i = 0; i < g.length; i++) {
+    const c = g[i];
+    if (c === "*" && g[i + 1] === "*") {
+      if (g[i + 2] === "/") { re += "(?:.*/)?"; i += 2; } else { re += ".*"; i += 1; }
+    } else if (c === "*") re += "[^/]*";
+    else if (c === "?") re += "[^/]";
+    else re += c.replace(/[.+^${}()|[\]\\]/g, "\\$&");
+  }
+  return new RegExp(`^${g.startsWith("/") ? "" : "(?:.*/)?"}${re}$`);
+}
+
+// Basenames a wildcard word could expand to that are protected (cat .env*, cat *.pem): tested without the filesystem.
+const SAMPLES = [".env", ".env.local", ".env.production", "key.pem", "db-runtime-url", "prod.env"];
+
+// Pure: the protected path a word names, or null. Handles ~ / $HOME, relative paths (against cwd), `--opt=path`,
+// `if=path`, `REV:path` (git show), and wildcards.
+function protectedPath(word, { cwd, home, pats }) {
+  if (!word || word === "-") return null;
+  const forms = new Set([word]);
+  const eq = word.indexOf("="); if (eq > 0) forms.add(word.slice(eq + 1));
+  const colon = word.indexOf(":"); if (colon > 0 && !word.includes("://")) forms.add(word.slice(colon + 1));
+  for (let f of forms) {
+    if (!f) continue;
+    f = f.replace(/^~(?=\/|$)/, home).replace(/^\$\{?HOME\}?(?=\/|$)/, home);
+    const abs = path.isAbsolute(f) ? path.normalize(f) : path.join(cwd || "/", f);
+    if (/[*?[]/.test(path.basename(abs))) {
+      const dir = path.dirname(abs), base = globRe(path.basename(abs), home);
+      for (const s of SAMPLES) {
+        const cand = path.join(dir, s);
+        if (base.test(s) && !EXEMPT.test(cand)) { const p = pats.find((x) => globRe(x, home).test(cand)); if (p) return { path: abs, pattern: p }; }
+      }
+      continue;
+    }
+    if (EXEMPT.test(abs)) continue;
+    const p = pats.find((x) => globRe(x, home).test(abs));
+    if (p) return { path: abs, pattern: p };
+  }
+  return null;
+}
+
+// ---- a small shell lexer: segments (simple commands) with their words and redirections -----------------------------
+// Command substitutions ($(...), `...`, <(...)) become segments of their own. Heredoc bodies are data, not commands.
+function lex(src) {
+  const segs = []; let seg = { words: [], redirs: [] }, word = null, quotedAll = true, i = 0;
+  const heredocs = [];
+  const endWord = () => { if (word !== null) { if (seg.pendingRedir) { seg.redirs.push({ op: seg.pendingRedir, target: word }); seg.pendingRedir = null; } else seg.words.push({ text: word, sq: quotedAll }); } word = null; quotedAll = true; };
+  const endSeg = () => { endWord(); if (seg.words.length || seg.redirs.length) segs.push(seg); seg = { words: [], redirs: [] }; };
+  const add = (s, single = false) => { word = (word ?? "") + s; if (!single) quotedAll = false; };
+  const sub = (open, close) => {   // returns the inner text of a balanced $( ... ) / <( ... )
+    let depth = 1, j = i, q = null;
+    for (; j < src.length; j++) {
+      const c = src[j];
+      if (q) { if (c === q) q = null; else if (c === "\\" && q === '"') j++; continue; }
+      if (c === "'" || c === '"') q = c;
+      else if (c === "\\") j++;
+      else if (c === open) depth++;
+      else if (c === close && --depth === 0) break;
+    }
+    const inner = src.slice(i, j); i = j + 1; return inner;
+  };
+  while (i < src.length) {
+    const c = src[i];
+    if (c === "\n") {
+      endSeg(); i++;
+      while (heredocs.length) {   // skip each pending heredoc body up to its delimiter line
+        const { delim, strip } = heredocs.shift();
+        while (i < src.length) {
+          const nl = src.indexOf("\n", i), line = src.slice(i, nl < 0 ? src.length : nl);
+          i = nl < 0 ? src.length : nl + 1;
+          if ((strip ? line.replace(/^\t+/, "") : line) === delim) break;
+        }
+      }
+      continue;
+    }
+    if (c === " " || c === "\t") { endWord(); i++; continue; }
+    if (c === "#" && word === null) { while (i < src.length && src[i] !== "\n") i++; continue; }
+    if (c === "\\") { if (src[i + 1] === "\n") { i += 2; continue; } add(src[i + 1] ?? ""); i += 2; continue; }
+    if (c === "'") { const j = src.indexOf("'", i + 1); add(src.slice(i + 1, j < 0 ? src.length : j), true); i = j < 0 ? src.length : j + 1; continue; }
+    if (c === '"') {
+      i++; let s = "";
+      while (i < src.length && src[i] !== '"') {
+        if (src[i] === "\\") { s += src[i + 1] ?? ""; i += 2; continue; }
+        if (src[i] === "$" && src[i + 1] === "(") { i += 2; const inner = sub("(", ")"); segs.push(...lex(inner).map((x) => ({ ...x, subst: true }))); s += "$(…)"; continue; }
+        if (src[i] === "`") { i++; const j = src.indexOf("`", i); segs.push(...lex(src.slice(i, j < 0 ? src.length : j)).map((x) => ({ ...x, subst: true }))); s += "$(…)"; i = j < 0 ? src.length : j + 1; continue; }
+        s += src[i++];
+      }
+      i++; add(s); continue;
+    }
+    if (c === "$" && src[i + 1] === "(" && src[i + 2] !== "(") { i += 2; const inner = sub("(", ")"); segs.push(...lex(inner).map((x) => ({ ...x, subst: true }))); add("$(…)"); continue; }
+    if (c === "`") { i++; const j = src.indexOf("`", i); segs.push(...lex(src.slice(i, j < 0 ? src.length : j)).map((x) => ({ ...x, subst: true }))); add("$(…)"); i = j < 0 ? src.length : j + 1; continue; }
+    if ((c === "<" || c === ">") && src[i + 1] === "(") { i += 2; const inner = sub("(", ")"); segs.push(...lex(inner).map((x) => ({ ...x, subst: true }))); add("<(…)"); continue; }
+    if (c === "|" || c === ";" || c === "&") {
+      if (c === "&" && src[i + 1] === ">") { endWord(); seg.pendingRedir = ">"; i += src[i + 2] === ">" ? 3 : 2; continue; }
+      endSeg(); i += (src[i + 1] === c || (c === "|" && src[i + 1] === "&")) ? 2 : 1; continue;
+    }
+    if (c === "<" || c === ">") {
+      const fdOnly = word !== null && /^\d+$/.test(word);
+      if (fdOnly) word = null; else endWord();
+      if (c === "<" && src[i + 1] === "<" && src[i + 2] === "<") { seg.pendingRedir = "<<<"; i += 3; continue; }
+      if (c === "<" && src[i + 1] === "<") {   // heredoc: remember the delimiter; its body is skipped at the next newline
+        i += 2; let strip = false; if (src[i] === "-") { strip = true; i++; }
+        while (src[i] === " ") i++;
+        let d = ""; while (i < src.length && !/[\s;|&<>]/.test(src[i])) d += src[i++];
+        heredocs.push({ delim: d.replace(/['"\\]/g, ""), strip }); continue;
+      }
+      let op = c; i++;
+      if (src[i] === ">" || src[i] === "|") { op += src[i] === ">" ? ">" : ""; i++; }
+      if (src[i] === "&") { i++; while (/\d|-/.test(src[i] || "")) i++; continue; }   // 2>&1, >&2: fd duplication
+      seg.pendingRedir = op; continue;
+    }
+    add(c); i++;
+  }
+  endSeg();
+  return segs;
+}
+
+const PRINT = new Set(["cat", "tac", "nl", "head", "tail", "less", "more", "most", "bat", "batcat", "jq", "yq", "xxd", "od", "hexdump",
+  "strings", "base64", "base32", "cut", "sort", "uniq", "paste", "column", "fold", "fmt", "pr", "rev", "expand", "diff", "sdiff",
+  "colordiff", "grep", "egrep", "fgrep", "zgrep", "rg", "ag", "ack", "awk", "gawk", "mawk", "sed", "perl", "tee", "vimcat",
+  "highlight", "pygmentize", "view", "openssl", "envsubst"]);
+const WRAPPERS = new Set(["sudo", "command", "builtin", "exec", "nohup", "time", "nice", "ionice", "stdbuf", "unbuffer", "doas"]);
+const TTY = /^(-|\/dev\/(stdout|stderr|tty|fd\/[12])|\/proc\/self\/fd\/[12])$/;
+
+// cut -d= -f1 (or -d '=' -f 1, --delimiter==, --fields=1): the part before the first "=", i.e. the key names.
+function isKeyNamesCut(args) {
+  const j = args.join(" ");
+  return /(^|\s)(-d\s*=|--delimiter==)(\s|$)/.test(j) && /(^|\s)(-f\s*1|--fields=1)(\s|$)/.test(j);
+}
+
+// grep/rg flags that print no file content: quiet, counts, file names only.
+function quietSearch(verb, args) {
+  for (const a of args) {
+    if (["--quiet", "--silent", "--count", "--files-with-matches", "--files-without-match", "--files", "--count-matches"].includes(a)) return true;
+    if (/^-[A-Za-z]+$/.test(a) && /[qclL]/.test(a.slice(1))) return true;
+  }
+  return false;
+}
+
+// Tools whose first operand is a pattern or program, not a file (`grep runtime-url docs/` names no file), with the
+// options that take a value. With -e/-f (pattern or program given by option) every operand is a file.
+const PATTERN_FIRST = {
+  grep: "A B C m e f d D --max-count --regexp --file --context --after-context --before-context --label --include --exclude --exclude-dir",
+  rg: "A B C m e f g t T M j --max-count --regexp --file --glob --iglob --type --type-not --context --after-context --before-context --threads --max-columns --type-add",
+  ag: "A B C m G --context --file-search-regex --max-count", ack: "A B C m --type --context --max-count",
+  awk: "F v f --field-separator --assign --file", sed: "e f l --expression --file --line-length", jq: "f --from-file --arg --argjson --slurpfile --rawfile --indent",
+};
+for (const [a, b] of [["egrep", "grep"], ["fgrep", "grep"], ["zgrep", "grep"], ["gawk", "awk"], ["mawk", "awk"], ["yq", "jq"]]) PATTERN_FIRST[a] = PATTERN_FIRST[b];
+function fileOperands(verb, args) {
+  const spec = PATTERN_FIRST[verb];
+  if (!spec) return args;
+  const takes = new Set(spec.split(" ")), out = []; let patternGiven = false, skipped = false;
+  for (let i = 0; i < args.length; i++) {
+    const a = args[i];
+    if (a === "--") { out.push(...args.slice(i + 1)); break; }
+    if (a.startsWith("--")) {
+      const name = a.split("=")[0];
+      if (["--regexp", "--file", "--expression", "--from-file"].includes(name)) patternGiven = true;
+      if (takes.has(name) && !a.includes("=")) i += ["--arg", "--argjson", "--slurpfile", "--rawfile"].includes(name) ? 2 : 1;
+      if (["--file", "--from-file", "--slurpfile", "--rawfile"].includes(name)) out.push(args[i]);   // these read a file
+      continue;
+    }
+    if (/^-[A-Za-z]/.test(a)) {
+      const last = a[a.length - 1];
+      if (verb === "jq" ? last === "f" : "ef".includes(last)) patternGiven = true;
+      if (takes.has(last) && a.length === 2) { i++; if (last === "f") out.push(args[i]); }
+      continue;
+    }
+    if (!patternGiven && !skipped) { skipped = true; continue; }   // the pattern / program
+    out.push(a);
+  }
+  return out;
+}
+
+// Pure: why this Bash command would print a protected file, or null.
+function bashVerdict(command, ctx, depth = 0) {
+  const segs = lex(String(command || ""));
+  let sourced = null;
+  for (const seg of segs) {
+    let words = seg.words.map((w) => w.text), k = 0;
+    while (k < words.length && /^[A-Za-z_][A-Za-z0-9_]*=/.test(words[k])) k++;   // FOO=bar cmd
+    while (k < words.length && WRAPPERS.has(path.basename(words[k]))) { k++; while (k < words.length && /^-/.test(words[k])) k++; }
+    if (words[k] === "env") { k++; while (k < words.length && (/^-/.test(words[k]) || /^[A-Za-z_][A-Za-z0-9_]*=/.test(words[k]))) k++;
+      if (k >= words.length) { if (sourced) return { why: `env prints the variables loaded from ${sourced.path}`, hit: sourced }; continue; } }
+    if (words[k] === "timeout") { k++; while (k < words.length && /^-/.test(words[k])) k++; k++; }
+    const verb = path.basename(words[k] || ""), args = words.slice(k + 1);
+    const hitIn = (list) => { for (const w of list) { const h = protectedPath(w, ctx); if (h) return h; } return null; };
+    // bash -c / sh -c / eval: the string is a command of its own.
+    if (["bash", "sh", "zsh", "dash", "ksh"].includes(verb) && args.includes("-c") && depth < 3) {
+      const r = bashVerdict(args[args.indexOf("-c") + 1], ctx, depth + 1); if (r) return r;
+    }
+    if (verb === "eval" && depth < 3) { const r = bashVerdict(args.join(" "), ctx, depth + 1); if (r) return r; }
+    // source/. a protected file: fine, unless a later step prints what it loaded.
+    if ((verb === "source" || verb === ".") && args.length) { const h = hitIn([args[0]]); if (h) { sourced = h; continue; } }
+    if (sourced) {
+      const bare = (v, a) => verb === v && !a.some((x) => !/^-/.test(x));
+      if (verb === "printenv" || bare("export", args) || (verb === "export" && args.includes("-p")) || bare("set", args) || bare("declare", args)
+        || (verb === "declare" && args.some((a) => /^-[a-z]*[px]/.test(a))) || verb === "typeset" || verb === "compgen")
+        return { why: `${verb} prints the variables loaded from ${sourced.path}`, hit: sourced };
+      if ((verb === "echo" || verb === "printf") && seg.words.slice(k + 1).some((w) => !w.sq && /\$[{A-Za-z_]/.test(w.text)))
+        return { why: `${verb} prints a variable after ${sourced.path} was loaded`, hit: sourced };
+    }
+    // < file into something that prints its input, or $(< file).
+    for (const r of seg.redirs) {
+      if (r.op !== "<") continue;
+      const h = protectedPath(r.target, ctx);
+      if (h && (!verb || PRINT.has(verb))) return { why: verb ? `${verb} < ${r.target} prints it` : `$(< ${r.target}) expands to its contents`, hit: h };
+    }
+    if (!verb) continue;
+    const h = hitIn(fileOperands(verb, args));
+    if (!h) continue;
+    if (verb === "git") {
+      if (["show", "diff", "log", "blame", "cat-file", "grep", "annotate"].includes(args.find((a) => !/^-/.test(a)))) return { why: `git ${args.find((a) => !/^-/.test(a))} prints it`, hit: h };
+      continue;
+    }
+    if (["cp", "mv", "install", "rsync", "ln"].includes(verb)) { const dest = args.filter((a) => !/^-/.test(a)).at(-1); if (TTY.test(dest || "")) return { why: `${verb} to ${dest} prints it`, hit: h }; continue; }
+    if (verb === "dd") { if (!args.some((a) => /^of=/.test(a) && !TTY.test(a.slice(3)))) return { why: "dd without of= prints it", hit: h }; continue; }
+    if (!PRINT.has(verb)) continue;
+    if (["grep", "egrep", "fgrep", "zgrep", "rg", "ag", "ack"].includes(verb) && quietSearch(verb, args)) continue;
+    if ((verb === "sed" || verb === "perl") && args.some((a) => /^-[a-zA-Z]*i/.test(a) || a.startsWith("--in-place"))) continue;
+    if (verb === "cut" && isKeyNamesCut(args)) continue;   // cut -d= -f1: the key names only
+    if (verb === "tee") continue;   // tee writes its stdin; the file is its output, not its input
+    return { why: `${verb} prints it`, hit: h };
+  }
+  return null;
+}
+
+// Pure: the decision for one hook input. { deny: false } or { deny: true, reason }.
+function decide(input, { home = os.homedir(), pats = patterns(process.env, home) } = {}) {
+  const ctx = { cwd: input.cwd || process.cwd(), home, pats };
+  const t = input.tool_name, ti = input.tool_input || {};
+  let v = null;
+  if (t === "Bash") v = bashVerdict(ti.command, ctx);
+  else if (t === "Read") { const h = protectedPath(ti.file_path, ctx); if (h) v = { why: "reading it shows its contents", hit: h }; }
+  else if (t === "Grep" && (ti.output_mode || "files_with_matches") === "content") {
+    const h = protectedPath(ti.path, ctx) || (ti.glob && protectedPath(path.join(ti.path || ".", ti.glob), ctx));
+    if (h) v = { why: "a content search prints the matching lines", hit: h };
+  }
+  if (!v) return { deny: false };
+  const p = v.hit.path.replace(home, "~");
+  return { deny: true, reason: [
+    `agent-stack credential guard: blocked, because this would print ${p} (a credential file, pattern ${v.hit.pattern}) into the transcript, where it stays: ${v.why}.`,
+    "Use the values by name without printing them:",
+    `  set -a; . ${p}; set +a; <the command that needs them>      (print nothing from it)`,
+    "  or the tool's own option (--env-file, dotenv in the script).",
+    `Check a key exists: grep -q '^NAME=' ${p} && echo present. List the key names only: cut -d= -f1 ${p}`,
+    "Never print a value to check it; if a value is wrong, ask the operator (the owner rotates it).",
+  ].join("\n") };
+}
+
+function main() {
+  const runtime = process.argv.includes("--runtime") ? process.argv[process.argv.indexOf("--runtime") + 1] : "claude";
+  let input;
+  try { input = JSON.parse(fs.readFileSync(0, "utf8")); } catch { process.exit(0); }
+  let d;
+  try { d = decide(input); } catch { process.exit(0); }
+  if (!d.deny) process.exit(0);
+  if (runtime === "codex") { process.stderr.write(d.reason + "\n"); process.exit(2); }
+  process.stdout.write(JSON.stringify({ hookSpecificOutput: { hookEventName: "PreToolUse", permissionDecision: "deny", permissionDecisionReason: d.reason } }));
+  process.exit(0);
+}
+
+module.exports = { DEFAULT_PATTERNS, patterns, globRe, protectedPath, lex, bashVerdict, decide };
+if (require.main === module) main();

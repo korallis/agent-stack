@@ -5,6 +5,8 @@ Verifies that Claude and Codex agents never stop to ask for permission. Read-onl
   - Codex global config: ~/.codex/config.toml has approval_policy = "never" and sandbox_mode = "danger-full-access";
   - Claude: ~/.claude/settings.json has permissions.defaultMode = "bypassPermissions" (+ skipDangerousModePermissionPrompt);
   - the seat shim (~/.local/share/agent-stack/seat-bin/codex) adds `-a never` to every Codex seat launch;
+  - the credential read guard (a PreToolUse hook that refuses printing credential files) is installed for Claude
+    (~/.claude/settings.json) and Codex (~/.codex/config.toml, with its trust hash);
   - --spec: the RigSpec carries `permission_policy: builtin:yolo`, and every Claude seat's worktree is trusted in
     ~/.claude.json (the "trust this folder?" dialog; agent-claude-trust --spec fixes it);
   - --rig: every live Codex seat of that rig runs with approval "never" (or another no-prompt mode). Resolved the
@@ -60,6 +62,19 @@ rep((cl.get("permissions") or {}).get("defaultMode") == "bypassPermissions" and 
 shim = read(f"{HOME}/.local/share/agent-stack/seat-bin/codex") or ""
 rep('"-a", "never"' in shim, "seat shim adds -a never to Codex seats (~/.local/share/agent-stack/seat-bin/codex)",
     "run install.sh to place system/seat-bin-codex")
+# The credential read guard: seats never stop for permission, so this PreToolUse hook is what refuses a command or
+# read that would print a credential file into the transcript (install.sh, system/credguard-read-install).
+GUARD = "agent-credguard-read-hook"
+guard_bin = os.path.exists(f"{HOME}/.local/share/agent-stack/bin/{GUARD}")
+has_guard = lambda g: any(GUARD in str(h.get("command", "")) for h in g.get("hooks") or [])
+cl_pre = ((cl.get("hooks") or {}).get("PreToolUse") or []) if isinstance(cl.get("hooks"), dict) else []
+rep(guard_bin and any({"Bash", "Read"} <= set((g.get("matcher") or "").split("|")) and has_guard(g) for g in cl_pre),
+    "Claude: credential read guard (PreToolUse Bash|Read|Grep in ~/.claude/settings.json)", "missing; run install.sh")
+cx_hooks = cx.get("hooks") if isinstance(cx.get("hooks"), dict) else {}
+idx = [i for i, g in enumerate(cx_hooks.get("PreToolUse") or []) if g.get("matcher") == "Bash" and has_guard(g)]
+rep(guard_bin and bool(idx) and any(k.endswith(f":pre_tool_use:{idx[0]}:0") for k in (cx_hooks.get("state") or {})),
+    "Codex: credential read guard, trusted (PreToolUse Bash in ~/.codex/config.toml)",
+    "missing or untrusted; run install.sh (Codex seats get it at their next launch)")
 
 spec = arg("--spec")
 if spec:
