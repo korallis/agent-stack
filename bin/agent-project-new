@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 # agent-project-new: set up a project for an OpenRig build team, the correct way, in one idempotent run.
 #
-#   agent-project-new --name <Project> --rig <short> [--github <user>] [--team full-stack|build|core]
+#   agent-project-new --name <Project> --rig <short> [--github <user>] [--team full-stack|build|small|core]
 #                     [--identity "Name <email>"] [--no-github] [--no-up] [--no-deps] [--dry-run]
 #
 # Creates or completes (never overwrites):
@@ -23,8 +23,24 @@ while [ $# -gt 0 ]; do case "$1" in
 [ -n "$NAME" ] && [ -n "$RIG" ] || { sed -n 2,6p "$0"; exit 2; }
 [ -f "$AS/rig/template/$TEAM.yaml" ] || { echo "no team spec rig/template/$TEAM.yaml" >&2; exit 2; }
 P=$NAME; R=$HOME/Projects/$P; W=$HOME/Projects/$P-work; WT=$HOME/Projects/$P.worktrees; H=$HOME/Projects/$P-heldout
-U=$HOME/Projects/openrig-workspace; LEAD=coord-lead-claude; MERGE=integ-codex
-[ "$TEAM" = core ] && MERGE=integ-claude
+U=$HOME/Projects/openrig-workspace
+# Seats by ROLE, from the team spec itself (the member whose agent_ref is agents/<role>), never assumed by name:
+# the lead (agents/lead), the merge owner (agents/integrator; it gets the merge sweep and judges proof) and the QA seats
+# (agents/qa, however they are named: qa-codex, qa-codex-1, ...). A session name is <pod id>-<member id>.
+seats_for() {
+  python3 - "$AS/rig/template/$TEAM.yaml" "$1" <<'PY'
+import sys, yaml
+spec, role = yaml.safe_load(open(sys.argv[1])), sys.argv[2]
+for pod in spec.get("pods") or []:
+    for m in pod.get("members") or []:
+        if str(m.get("agent_ref", "")).rstrip("/").endswith(f"/agents/{role}"):
+            print(f"{pod['id']}-{m['id']}")
+PY
+}
+LEAD=$(seats_for lead | head -1); MERGE=$(seats_for integrator | head -1); QA=$(seats_for qa | sort)
+[ -n "$LEAD" ] && [ -n "$MERGE" ] || { echo "rig/template/$TEAM.yaml needs a lead (agents/lead) and a merge owner (agents/integrator)" >&2; exit 2; }
+[ "$(seats_for integrator | wc -l)" = 1 ] || echo "note: several merge owners in $TEAM.yaml; the merge sweep goes to $MERGE" >&2
+JUDGES=$(printf '%s\n' $QA "$MERGE" "$LEAD" | sed "s/\$/@$RIG/" | paste -sd, - | sed 's/,/, /g')
 say() { printf '\033[1m==\033[0m %s\n' "$*"; }
 run() { if [ $DRY = 1 ]; then echo "  would: $*"; else "$@"; fi; }
 ID=${ID:-$(git config --global user.name 2>/dev/null) <$(git config --global user.email 2>/dev/null)>}
@@ -60,8 +76,7 @@ if [ $DRY = 0 ]; then
   grep -q '^sdlc:' "$W/project.yaml" || cat "$AS/rig/template/project-sdlc.yaml" >> "$W/project.yaml"
   grep -q '^metadata:' "$W/project.yaml" || sed -i "0,/^kind: project$/s//kind: project\nmetadata:\n  id: $RIG/" "$W/project.yaml"
   if ! grep -q '^proofPolicy:' "$W/project.yaml"; then   # readiness is "legacy" in the TUI without it
-    j="integ-codex@$RIG, coord-lead-claude@$RIG"; for q in $(grep -oE 'qa-[a-z]+-[0-9]+' "$AS/rig/template/$TEAM.yaml" | sort -u); do j="$q@$RIG, $j"; done
-    printf '\n# Who may accept a slice'"'"'s Proof contract items (rig proof judge); readiness derives from their judgments.\nproofPolicy:\n  judges: [%s]\n' "$j" >> "$W/project.yaml"
+    printf '\n# Who may accept a slice'"'"'s Proof contract items (rig proof judge); readiness derives from their judgments.\nproofPolicy:\n  judges: [%s]\n' "$JUDGES" >> "$W/project.yaml"
   fi
   [ -f "$W/conventions.md" ] || printf '# %s conventions\n\nRepo rules: %s/AGENTS.md. Team rules: rig/CULTURE.md.\n' "$P" "$R" > "$W/conventions.md"
   grep -qE '^ *- conventions.md' "$W/project.yaml" || sed -i 's/^  context: \[\]/  context:\n    - conventions.md/' "$W/project.yaml"
@@ -75,7 +90,7 @@ done
 # The daemon reads these roots at start: restart only the daemon (verified stop/start; seats live in openrig-tmux's server).
 [ $changed = 1 ] && run "$AS/bin/openrig-daemon-cycle" --reason "agent-project-new $NAME: new workspace roots"
 
-say "rig folder $W/rig ($TEAM)"
+say "rig folder $W/rig ($TEAM: lead $LEAD, merge owner $MERGE, proof judges [$JUDGES])"
 run mkdir -p "$W/rig"
 if [ $DRY = 0 ]; then
   for f in "$TEAM.yaml" CULTURE.md merge-sweep.watchdog.yaml daily-summary.watchdog.yaml; do
@@ -89,7 +104,11 @@ fi
 
 say "worktrees $WT (one per seat)"
 run mkdir -p "$WT"
-if [ $DRY = 0 ]; then
+if [ $DRY = 1 ]; then
+  for cwd in $(grep -oE 'cwd: *"?[^"]+' "$AS/rig/template/$TEAM.yaml" | sed 's/cwd: *"\{0,1\}//; s#@WT@#'"$WT"'#'); do
+    seat=$(basename "$cwd"); case "$seat" in impl-*) run git -C "$R" worktree add -q "$cwd" -b "agent/$seat" main ;; *) run git -C "$R" worktree add -q --detach "$cwd" main ;; esac
+  done
+else
   for cwd in $(grep -oE 'cwd: *"?[^"]+' "$W/rig/$TEAM.yaml" | sed 's/cwd: *"\{0,1\}//'); do
     seat=$(basename "$cwd"); [ -d "$cwd" ] && continue
     case "$seat" in impl-*) git -C "$R" worktree add -q "$cwd" -b "agent/$seat" main ;; *) git -C "$R" worktree add -q --detach "$cwd" main ;; esac
@@ -104,8 +123,9 @@ if [ $UP = 1 ]; then
   active=$(rig watchdog list --json 2>/dev/null || echo '[]')
   reg() { # reg <seat> <interval> <spec>: only when no such watchdog is active (duplicates waste turns)
     echo "$active" | jq -e --arg s "$1@$RIG" --argjson i "$2" 'any(.[]; .state=="active" and .targetSession==$s and .intervalSeconds==$i)' >/dev/null \
-      || run rig watchdog register --policy periodic-reminder --spec "$3" --target-session "$1@$RIG" --interval-seconds "$2" --registered-by "$USER" >/dev/null; }
-  reg "$MERGE" 900 "$W/rig/merge-sweep.watchdog.yaml"
+      || if [ $DRY = 1 ]; then echo "  would: rig watchdog register --spec $3 --target-session $1@$RIG --interval-seconds $2"
+         else rig watchdog register --policy periodic-reminder --spec "$3" --target-session "$1@$RIG" --interval-seconds "$2" --registered-by "$USER" >/dev/null; fi; }
+  reg "$MERGE" 900 "$W/rig/merge-sweep.watchdog.yaml"   # the merge owner from the team spec
   reg "$LEAD" 86400 "$W/rig/daily-summary.watchdog.yaml"
 fi
 
