@@ -246,9 +246,16 @@ test("agent-never-prompt-check: a wrong trusted_hash or a missing hooks feature 
 
 // Runtime evidence: Codex itself (app-server hooks/list, no model call) reports the installed guard as trusted and
 // enabled, with the hash the installer computed. Skipped where no codex binary is installed.
-// The real codex binary: not the agent-stack seat shim (seat-bin/codex), which needs the real HOME to find it.
-const codexBin = (process.env.PATH || "").split(":").filter((d) => d && !d.includes("seat-bin"))
-  .map((d) => join(d, "codex")).find((f) => { try { fs.accessSync(f, fs.constants.X_OK); return fs.statSync(f).isFile(); } catch { return false; } }) || "";
+// The real codex binary: a native executable whose resolved file is named codex. Not the agent-stack seat shim or a
+// wrapper script (both need the real HOME), and not the mise shim (it resolves to mise). Falls back to `mise which`.
+const isNativeCodex = (f) => {
+  try {
+    const real = fs.realpathSync(f), fd = fs.openSync(real, "r"), b = Buffer.alloc(4); fs.readSync(fd, b, 0, 4, 0); fs.closeSync(fd);
+    return fs.statSync(real).isFile() && real.endsWith("/codex") && b.equals(Buffer.from([0x7f, 0x45, 0x4c, 0x46]));
+  } catch { return false; }
+};
+const codexBin = (process.env.PATH || "").split(":").filter(Boolean).map((d) => join(d, "codex")).find(isNativeCodex)
+  || [spawnSync("mise", ["which", "codex"], { encoding: "utf8" }).stdout?.trim()].find((f) => f && isNativeCodex(f)) || "";
 test("Codex accepts the installed guard as trusted (hooks/list)", { skip: !codexBin && "codex not installed" }, () => {
   const h = fs.mkdtempSync(join(root, "cx-")); fs.mkdirSync(join(h, "home")); fs.mkdirSync(join(h, "work"));
   fs.writeFileSync(join(h, "hook"), ""); fs.writeFileSync(join(h, "settings.json"), "{}");
