@@ -11,7 +11,7 @@ import { fileURLToPath } from "node:url";
 const repo = join(dirname(fileURLToPath(import.meta.url)), "..");
 const { buildMergeInput, passes, outcome, gateProblems, parseDiff, brbCutoff, brbNotApplicable, blastNotApplicable, flagOnly, mergeStateLine,
   requirementsFrom, contextState, gateHistory, verdictOf, records, reviewFromComments, qaFromComments, resolveConfig, loadConfig, familyOf,
-  reviewFromPrReviews, reviewVerdict, observedFrom, familyFromHeading, familyFromDescription } = await import("../orchestration/merge-evidence.js");
+  reviewFromPrReviews, reviewVerdict, observedFrom, familyFromHeading, familyFromDescription, isGateReport, firstSection } = await import("../orchestration/merge-evidence.js");
 const { seatCandidates, nextStep } = await import("../orchestration/pickseat.js");
 const st = await import("../orchestration/stuck.js");
 const root = fs.mkdtempSync("/tmp/claude-1000/wo35-");
@@ -460,27 +460,28 @@ test("paths with spaces (Git leaves them unquoted) parse exactly; renames resolv
 });
 
 
-// ---- WO38: BLOCKED only by the gate itself is "pending this gate" -------------------------------------------------
-test("merge state: only an unposted jev-merge reads as pending this gate; anything else stays BLOCKED with its reasons", () => {
+// ---- WO38 → WO50: BLOCKED only by the gate itself says nothing about merge state; anything else stays BLOCKED -------
+test("merge state: the gate's own status is never mentioned; anything else stays BLOCKED with its reasons", () => {
   const ctx = (context, state, app = null) => ({ context, app, state });
   const req = (contexts, unverified = []) => ({ contexts, unverified });
   const base = { mergeState: "BLOCKED", mergeable: "MERGEABLE", reviewDecision: "",
     requirements: req([ctx("verify", "pass"), ctx("qa-evidence", "pass"), ctx("jev-merge", null)]) };
-  assert.equal(mergeStateLine(base), "merge state: pending this gate (jev-merge not yet posted; every other requirement verified)");
+  assert.equal(mergeStateLine(base), null, "WO50: 'pending this gate' read as a missing gate and made the gate hold");
   assert.equal(mergeStateLine({ ...base, requirements: req([ctx("verify", "pass"), ctx("qa-evidence", null), ctx("jev-merge", null)]) }),
-    "merge state: BLOCKED (required context(s) not posted: qa-evidence; jev-merge not yet posted)", "jev-merge + another missing lists both");
-  assert.match(mergeStateLine({ ...base, mergeable: "CONFLICTING" }), /^merge state: BLOCKED \(mergeable CONFLICTING; jev-merge not yet posted\)$/);
-  assert.match(mergeStateLine({ ...base, reviewDecision: "REVIEW_REQUIRED" }), /BLOCKED \(review decision REVIEW_REQUIRED; jev-merge not yet posted\)/);
+    "merge state: BLOCKED (required context(s) not posted: qa-evidence)", "another missing context blocks; the gate itself isn't listed");
+  assert.match(mergeStateLine({ ...base, mergeable: "CONFLICTING" }), /^merge state: BLOCKED \(mergeable CONFLICTING\)$/);
+  assert.match(mergeStateLine({ ...base, reviewDecision: "REVIEW_REQUIRED" }), /BLOCKED \(review decision REVIEW_REQUIRED\)$/);
   assert.match(mergeStateLine({ ...base, requirements: null }), /BLOCKED \(the branch requirements could not be read\)/, "unknown facts keep BLOCKED");
   assert.match(mergeStateLine({ ...base, requirements: req([ctx("verify", "pass")]) }), /BLOCKED \(reason not visible to this helper\)/, "BLOCKED with nothing unmet: not called pending");
-  assert.match(mergeStateLine({ ...base, requirements: req(base.requirements.contexts, ["ruleset rule merge_queue"]) }), /BLOCKED \(not verified by this helper: ruleset rule merge_queue; jev-merge not yet posted\)/);
+  assert.match(mergeStateLine({ ...base, requirements: req(base.requirements.contexts, ["ruleset rule merge_queue"]) }), /BLOCKED \(not verified by this helper: ruleset rule merge_queue\)$/);
   // WO45: the gate's own earlier result is this run's to replace, never a reason (it would make holds re-hold themselves).
   const ownEarlier = mergeStateLine({ ...base, requirements: req([ctx("verify", "pass"), ctx("jev-merge", "jev-merge: status failure")]) });
-  assert.equal(ownEarlier, "merge state: pending this gate (jev-merge holds an earlier run's result, which this run replaces; every other requirement verified)");
+  assert.equal(ownEarlier, null, "an earlier own result is not mentioned either");
   assert.equal(mergeStateLine({ ...base, requirements: req([ctx("verify", "verify: check fail"), ctx("jev-merge", "jev-merge: status failure")]) }),
     "merge state: BLOCKED (verify: check fail)", "other gates still block; the gate's own result is not listed");
   for (const st of ["CLEAN", "BEHIND", "UNSTABLE"]) assert.equal(mergeStateLine({ ...base, mergeState: st }), `merge state: ${st}`);
-  assert.match(buildMergeInput(facts({ ...base })).limits, /merge state: pending this gate/);
+  assert.match(buildMergeInput(facts({ ...base })).limits, /\nmergeable: MERGEABLE; draft: false\n/, "the limits line omits the merge state");
+  assert.doesNotMatch(buildMergeInput(facts({ ...base })).limits, /pending|jev-merge|merge state/);
   const cfgS = resolveConfig(null), cfgC = resolveConfig({ gate: { source: "comments", heading: "^## jev-merge" } });
   assert.deepEqual(gateHistory(cfgS, { statuses: [{ context: "jev-merge", state: "failure", description: "Jev hold, review band, req r2", target_url: "https://x/g2", created_at: "t2" },
     { context: "verify", state: "success" }, { context: "jev-merge", state: "failure", description: "Jev hold, uncertain, req r1", created_at: "t1" }], head: H }),
@@ -617,10 +618,10 @@ esac
   const run = () => spawnSync(process.execPath, [join(repo, "orchestration/merge-evidence.js"), "8", "--repo", "o/r"], { encoding: "utf8", env: { PATH: `${bin}:${process.env.PATH}`, OPENRIG_WORK_ROOT: root } });
   ghFor("success");
   let r = run(); assert.equal(r.status, 0, r.stderr);
-  assert.match(evidence(r.stdout).limits, /merge state: pending this gate \(jev-merge not yet posted; every other requirement verified\)/);
+  assert.match(evidence(r.stdout).limits, /\nmergeable: MERGEABLE; draft: false\n/);
   ghFor("failure");
   r = run(); assert.equal(r.status, 0, r.stderr);
-  assert.match(evidence(r.stdout).limits, /merge state: BLOCKED \(independent-review: status failure; jev-merge not yet posted\)/);
+  assert.match(evidence(r.stdout).limits, /merge state: BLOCKED \(independent-review: status failure\)/);
 });
 
 test("agent-merge-evidence end to end: review, QA and gate from PR comments by config; app-bound context from check runs", () => {
@@ -654,7 +655,7 @@ process.stdout.write(typeof out === "string" ? out : JSON.stringify(out));
   let r = run(); assert.equal(r.status, 0, r.stderr);
   let o = evidence(r.stdout);
   assert.match(o.review, /MISSING: no independent-review status on a{40}/);
-  assert.match(o.limits, /merge state: pending this gate \(jev-merge not yet posted; every other requirement verified\)/, "app-bound verify met by its app's run");
+  assert.match(o.limits, /\nmergeable: MERGEABLE; draft: false\n/, "app-bound verify met by its app's run: nothing else blocks");
   assert.equal(o.history, undefined, "no earlier run of the gate: no history");
   // The workspace file switches this repo to comments.
   fs.writeFileSync(join(work, ".agent-stack", "merge-evidence.json"), JSON.stringify({ repos: { "o/r": {
@@ -681,14 +682,14 @@ process.stdout.write(typeof out === "string" ? out : JSON.stringify(out));
   assert.equal(run(plain, ["--author-family", "gemini"]).status, 2);
   // App-bound context: another app's success does not satisfy it; unreadable runs keep BLOCKED.
   o = evidence(run({ checkRuns: { total_count: 1, check_runs: [{ id: 8, name: "verify", app: { id: 1 }, conclusion: "success" }] } }).stdout);
-  assert.match(o.limits, /merge state: BLOCKED \(verify: no result from its required app 15368 \(another producer's result does not count\); jev-merge not yet posted\)/);
+  assert.match(o.limits, /merge state: BLOCKED \(verify: no result from its required app 15368 \(another producer's result does not count\)\)/);
   o = evidence(run({ checkRuns: { total_count: 150, check_runs: [] } }).stdout);
   assert.match(o.limits, /verify: bound to app 15368 and the check runs could not be read/, "a truncated list is unreadable");
   // QA WO39 f7: every status page is read: the gate's earlier run behind 100 newer statuses is still found (as history).
   const many = Array.from({ length: 100 }, () => ({ context: "verify", state: "success" }));
   fs.rmSync(join(work, ".agent-stack", "merge-evidence.json"));
   o = evidence(run({ statuses: [many, [{ context: "jev-merge", state: "failure", target_url: "https://x/g" }]] }).stdout);
-  assert.match(o.limits, /merge state: pending this gate \(jev-merge holds an earlier run's result, which this run replaces/);
+  assert.match(o.limits, /\nmergeable: MERGEABLE; draft: false\n/);
   assert.deepEqual(o.history, ['failure: "" (status https://x/g, ?)']);
   const bad = join(root, "bad.json"); fs.writeFileSync(bad, JSON.stringify({ review: { source: "comments" } }));
   r = run({}, ["--config", bad]); assert.equal(r.status, 2); assert.match(r.stderr, /review\.heading is required/);
@@ -982,14 +983,14 @@ process.stdout.write(typeof out === "string" ? out : JSON.stringify(out));
       env: { PATH: `${ghDir}:${process.env.PATH}`, OPENRIG_WORK_ROOT: join(root, "wo45-work"), GH_FIXTURE: fx, AGENT_BRB_REQUIRED_SINCE: "" } });
     assert.equal(r.status, 0, r.stderr); return evidence(r.stdout); };
   const first = run();
-  assert.match(first.limits, /merge state: pending this gate \(jev-merge not yet posted; every other requirement verified\)/);
+  assert.match(first.limits, /\nmergeable: MERGEABLE; draft: false\n/);
   assert.equal(first.history, undefined);
   // Re-run after its own HOLD on this head: gh lists jev-merge as a failing required check and the status as failure.
   const hold = { context: "jev-merge", state: "failure", description: "Jev hold, review band, req r1", target_url: "https://x/run1", created_at: "2026-09-30T10:00:00Z" };
   const again = run({ checks: [...fixture.checks, { name: "jev-merge", state: "FAILURE", bucket: "fail" }], statuses: [hold, irS] });
   assert.equal(again.ci, first.ci, "CI says what the other checks say, exactly as on the first run");
   assert.doesNotMatch(again.ci, /jev-merge/); assert.equal(again.review, first.review);
-  assert.match(again.limits, /merge state: pending this gate \(jev-merge holds an earlier run's result, which this run replaces; every other requirement verified\)/);
+  assert.equal(again.limits, first.limits, "a re-gate after its own HOLD reads exactly like the first run");
   assert.doesNotMatch(again.limits, /failure|already posted/);
   assert.deepEqual(again.history, ['failure: "Jev hold, review band, req r1" (status https://x/run1, 2026-09-30T10:00:00Z)']);
   // Its own earlier MERGE on this head is history too, not a passing check.
@@ -1185,4 +1186,82 @@ process.stdout.write(typeof out === "string" ? out : JSON.stringify(out));
   assert.match(review, /\nN\/A: 1 changed path\(s\), all CI configuration .*: \.github\/workflows\/ci\.yml\n/);
   assert.doesNotMatch(review, /MISSING: no bug-review-board proof/);
   assert.match(review, /MISSING: no blast-radius comment on the PR/, "blast radius still required");
+});
+
+// ---- WO50: the input made the gate hold on project rigs ----------------------------------------------------------
+test("gate-result comments are gate reports; a reviewer's comment mentioning the gate is not (WO50 defect 2)", () => {
+  const cfg = resolveConfig(null);
+  const g = (body) => isGateReport({ body, url: "u" }, cfg, []);
+  assert.equal(g(`integ-codex: live Jev merge gate HOLD\nHead: ${H}`), true);
+  assert.equal(g(`integrator: Jev decision hold, review band`), true);
+  assert.equal(g(`Gate rerun\nmerge gate: HOLD (Jev merge below the act bar)`), true, "the helper's own outcome line pasted in");
+  assert.equal(g(`review-claude-2: re-review after the merge gate hold\nHead: ${H}\nVerdict: PASS`), false, "a review seat's report stays evidence");
+  assert.equal(g(`qa-codex-1@shop\nHead: ${H}\nVerdict: SHIP`), false);
+  assert.equal(g(`review-claude-2: blast radius for PR #9\n## Blast radius\n…`), false);
+  assert.equal(g(`Fixed the lint job`), false);
+});
+
+test("the default change is the title plus the PR body's first section (WO50 defect 5)", () => {
+  assert.equal(firstSection("## Summary\nAdds recovery from\ninactive locations.\n\n## Tests\nall green"), "Adds recovery from inactive locations.");
+  assert.equal(firstSection("Fixes the timeout.\nSecond line.\n## Details\nx"), "Fixes the timeout. Second line.");
+  assert.equal(firstSection("🤖 Generated with a tool\n\nCo-Authored-By: x"), "");
+  assert.equal(firstSection(null), "");
+  assert.equal(firstSection("x ".repeat(400)).length, 600);
+});
+
+test("agent-merge-evidence end to end: a project-rig PR reads without the four defects (WO50)", () => {
+  const OLD = "c".repeat(40);
+  const ghDir = join(root, "gh-wo50"); fs.mkdirSync(ghDir, { recursive: true });
+  fs.writeFileSync(join(ghDir, "gh"), `#!${process.execPath}
+const f = JSON.parse(require("fs").readFileSync(process.env.GH_FIXTURE, "utf8")), a = process.argv.slice(2).join(" ");
+if (a.includes("/protection")) { process.stderr.write("gh: Branch not protected (HTTP 404)"); process.exit(1); }
+if (a.includes("/pulls/14/reviews/555")) { if (f.reviewFail) { process.stderr.write("HTTP 502"); process.exit(1); } process.stdout.write(JSON.stringify(f.review)); process.exit(0); }
+const out = a.startsWith("pr view") ? f.view : a.startsWith("pr diff") ? f.diff : a.startsWith("pr checks") ? f.checks : a.includes("/statuses") ? f.statuses
+  : a.includes("/rules/branches/") ? f.rules : undefined;
+if (out === undefined) { process.stderr.write("unexpected gh " + a); process.exit(9); }
+process.stdout.write(typeof out === "string" ? out : JSON.stringify(out));
+`, { mode: 0o755 });
+  const work = join(root, "wo50-work"), proof = join(work, "missions/m1/slices/s1/proof");
+  fs.mkdirSync(proof, { recursive: true });
+  fs.writeFileSync(join(proof, `brb-${OLD}.md`), `---\nartifact_type: qa\nverdict: PASS\ncandidate_sha: ${OLD}\nmoney_evidence: tested in the browser\n---\n`);
+  const c = (body, i) => ({ body, url: `https://github.com/o/r/pull/14#issuecomment-${i}`, createdAt: `2026-09-30T19:0${i}:00Z`, author: { login: "owner" } });
+  const fixture = {
+    view: { number: 14, title: "Recover from inactive locations on publish", body: "## Summary\nIf an allowed location becomes inactive, Publish keeps the draft.\n\n## Tests\nall green\n",
+      createdAt: "2026-09-30T15:00:00Z", headRefOid: H, baseRefOid: B, baseRefName: "main", headRefName: "agent/impl-codex-7",
+      mergeable: "MERGEABLE", mergeStateStatus: "BLOCKED", reviewDecision: "", isDraft: false, reviews: [],
+      comments: [c(`qa-codex-1@shop\nHead: ${H}\nVerdict: SHIP`, 1),
+        c(`review-claude-2: blast radius for PR #14\nHead: ${H}\n## Blast radius\nOnly the publish action changes.`, 2),
+        c(`integ-codex: live Jev merge gate HOLD\nHead: ${H}\nmerge gate: HOLD (uncertain band)`, 3)] },
+    diff: "diff --git a/src/publish.ts b/src/publish.ts\n--- a/src/publish.ts\n+++ b/src/publish.ts\n@@ -1 +1 @@\n-x\n+y\n",
+    checks: [{ name: "verify", state: "SUCCESS", bucket: "pass" }],
+    statuses: [{ context: "independent-review", state: "success", description: "review-claude-2: carry (identical patch)", creator: { login: "owner" },
+      target_url: "https://github.com/o/r/pull/14#pullrequestreview-555" }],
+    rules: [{ type: "required_status_checks", parameters: { required_status_checks: [{ context: "verify" }, { context: "independent-review" }, { context: "jev-merge" }] } }],
+    review: { body: `review-claude-2: carry at ${H.slice(0, 7)} (identical patch)\nHead: ${H}\nVerdict: PASS\nLIMIT: not re-run in a browser`, commit_id: H,
+      user: { login: "owner" }, submitted_at: "2026-09-30T19:00:00Z" } };
+  const fx = join(root, "wo50-fixture.json");
+  const run = (over = {}) => { fs.writeFileSync(fx, JSON.stringify({ ...fixture, ...over }));
+    const r = spawnSync(process.execPath, [join(repo, "orchestration/merge-evidence.js"), "14", "--repo", "o/r", "--mission", "m1", "--slice", "s1"], { encoding: "utf8",
+      env: { PATH: `${ghDir}:${process.env.PATH}`, OPENRIG_WORK_ROOT: work, GH_FIXTURE: fx, AGENT_BRB_REQUIRED_SINCE: "2026-09-30T13:00:00Z" } });
+    assert.equal(r.status, 0, r.stderr); return JSON.parse(r.stdout).input; };
+  const o = run();
+  // 1. nothing circular about the gate itself
+  assert.match(o.limits, /\nmergeable: MERGEABLE; draft: false\n/); assert.doesNotMatch(o.limits, /pending|jev-merge/);
+  // 2. the merge owner's gate comment never comes back as evidence
+  assert.doesNotMatch(o.review, /live Jev merge gate|UNVERIFIED|merge gate: HOLD/);
+  // 3. the linked GitHub review on this PR is read, with its commit
+  assert.match(o.review, /independent review report, linked from the independent-review status \(https:\/\/github\.com\/o\/r\/pull\/14#pullrequestreview-555, 2026-09-30T19:00:00Z, by owner; submitted on this head\): review-claude-2: carry at aaaaaaa \(identical patch\) Head: a{40} Verdict: PASS/);
+  assert.doesNotMatch(o.review, /outside this PR/);
+  assert.match(o.limits, /limits stated by the independent review: not re-run in a browser/);
+  // 4. the carried QA verdict (proof on file only for the old head)
+  assert.match(o.review, new RegExp(`bug-review-board verdict from a PR comment by qa-codex-1@shop \\(https://github\\.com/o/r/pull/14#issuecomment-1; the seat is self-declared; no proof file for this head; proof on file for another head: brb-${OLD}\\.md\\): artifact_type=qa verdict=PASS candidate_sha=a{40}`));
+  assert.doesNotMatch(o.review, /MISSING: no bug-review-board proof/);
+  // 5. change: title plus the body's first section
+  assert.equal(o.change, "Recover from inactive locations on publish. If an allowed location becomes inactive, Publish keeps the draft.");
+  // honest when the review is on another commit, or can't be read
+  assert.match(run({ review: { ...fixture.review, commit_id: OLD } }).review, /by owner; submitted on commit cccccccccccc, not this head\)/);
+  assert.match(run({ reviewFail: true }).review, /independent review report: https:\/\/github\.com\/o\/r\/pull\/14#pullrequestreview-555 \(linked from the status, a review on this PR, but it could not be read\)/);
+  // a QA comment for another head doesn't carry
+  const staleQA = run({ view: { ...fixture.view, comments: [c(`qa-codex-1@shop\nHead: ${OLD}\nVerdict: SHIP`, 1)] } });
+  assert.match(staleQA.review, /MISSING: no bug-review-board proof for a{40}/);
 });

@@ -39,6 +39,17 @@ has no version numbers; entries are grouped by the day they merged, newest first
 - The lead's and the merge owner's role texts and the CULTURE template use the new Jev helpers.
 
 ### Fixed
+- `agent-merge-evidence` no longer makes the merge gate hold on project-rig PRs. The operator's live A/B test showed
+  what flipped Jev:
+  - The limits line no longer says "merge state: pending this gate …" when the gate's own `jev-merge` is the only
+    unmet requirement; the gate read that as a missing gate. It now says nothing about the merge state.
+  - The merge owner's own gate-result comments ("live Jev merge gate HOLD") no longer return as UNVERIFIED review
+    text on the next run.
+  - A status link to a GitHub review on the same PR is read, with the commit it was submitted on, instead of being
+    reported as "outside this PR, so not read".
+  - A QA seat's exact-head `Verdict: SHIP` comment carries the QA verdict when a branch refresh left only
+    `brb-<old head>.md`.
+  - `change` defaults to the PR title plus the body's first section.
 - `agent-merge-evidence` says `N/A` for the bug-review-board QA verdict when every changed path is CI
   configuration (`.github/workflows/**` and the like) or docs, verified from the diff. A workflow-only change (a job
   timeout) no longer needs a slice and a QA verdict. The blast radius still applies, since a CI change can break
