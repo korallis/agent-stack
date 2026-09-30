@@ -167,13 +167,13 @@ test("status: a slot held by an older agent-heavy (no holder file) is described 
   // a stale holder file from a run that died without cleaning up must not describe the new holder
   fs.writeFileSync(join(dir, "browser.2.holder"), "pid=1\nseat=ghost\ncwd=/\nstart=0\nmax=60\ncmd=old\n");
   const old = spawn("bash", ["-c", 'exec 9>"$L"; flock 9; sleep 30; true', "/opt/old/agent-heavy", "browser", "--", "npx", "playwright", "test"],
-    { env: { PATH: "/usr/bin:/bin", L: join(dir, "browser.2.lock"), OPENRIG_SESSION_NAME: "qa@proj" }, stdio: "ignore" });
+    { env: { PATH: "/usr/bin:/bin", L: join(dir, "browser.2.lock"), OPENRIG_SESSION_NAME: "qa@proj" }, stdio: "ignore", detached: true });
   try {
     assert.ok(await until(() => /held/.test(status("browser").stdout)));
     const line = status("browser").stdout.split("\n").find(l => l.includes("held"));
     assert.match(line, new RegExp(`^browser 2/2  held  seat=qa@proj  age=0m0[0-9]s  remaining=unknown \\(no holder record\\)  cwd=\\S+  cmd=npx playwright test  pid=${old.pid}$`));
     assert.doesNotMatch(line, /ghost/);
-  } finally { old.kill(); fs.rmSync(join(dir, "browser.2.holder"), { force: true }); }
+  } finally { process.kill(-old.pid); fs.rmSync(join(dir, "browser.2.holder"), { force: true }); }   // the group: its sleep holds the lock
 });
 
 // QA round 1 (PR #12): ownership is the lock itself, not an open fd; any path to the runtime dir works; what can't be
@@ -218,4 +218,76 @@ test("a stop at the runtime cap is logged with seat, class, cwd, command and run
   for (const args of [["build", "--", "true"], ["build", "--", "false"], ["build", "--", "npm", "start"]]) {
     assert.doesNotMatch(heavy(args).c, /^logger/m, args.join(" "));
   }
+});
+
+// ---- nesting (WO15): a nested call of a class already held runs inline in that slot ---------------------------------
+const nestedPath = `${bin}:${join(repo, "bin")}:/usr/bin:/bin`;   // the job itself calls agent-heavy
+
+test("nested same-class call runs inline: one slot, a note on stderr, the class and slot exported to the job", () => {
+  const r = heavy(["browser", "--", "agent-heavy", "browser", "--", "sh", "-c", 'echo "active=$AGENT_HEAVY_ACTIVE slot=$AGENT_HEAVY_SLOT"'], { PATH: nestedPath });
+  assert.equal(r.status, 0, r.stderr);
+  assert.equal((r.c.match(/^systemd-run /gm) || []).length, 1, "only the outer run took a slot");
+  assert.match(r.stderr, /\[agent-heavy\] nested browser run: already inside browser\.1; running inline \(no second slot\)/);
+  assert.match(r.stdout, /^active=browser slot=browser\.1$/m);
+});
+
+test("two concurrent nested same-class runs both finish: no run holds both slots, no deadlock", async () => {
+  const run = () => new Promise((resolve) => {
+    const p = spawn(join(repo, "bin/agent-heavy"), ["browser", "--wait", "4", "--", "agent-heavy", "browser", "--wait", "4", "--", "sleep", "1"],
+      { env: { PATH: nestedPath, XDG_RUNTIME_DIR: root, USER: "t" }, stdio: ["ignore", "ignore", "pipe"] });
+    let err = ""; p.stderr.on("data", (d) => { err += d; });
+    p.on("exit", (code) => resolve({ code, err }));
+  });
+  const t0 = Date.now();
+  const [a, b] = await Promise.all([run(), run()]);
+  assert.equal(a.code, 0, a.err); assert.equal(b.code, 0, b.err);
+  assert.ok(Date.now() - t0 < 4000, "neither waited for a second slot");
+  for (const r of [a, b]) assert.match(r.err, /running inline/);
+});
+
+test("a nested call of a different class takes its own slot; a same class further down still runs inline", () => {
+  const r = heavy(["browser", "--", "agent-heavy", "build", "--", "agent-heavy", "browser", "--", "sh", "-c",
+    'echo "active=$AGENT_HEAVY_ACTIVE slot=$AGENT_HEAVY_SLOT"'], { PATH: nestedPath });
+  assert.equal(r.status, 0, r.stderr);
+  const scopes = r.c.match(/^systemd-run .*--unit=agent-heavy-(\w+)-\d+-\d+/gm) || [];
+  assert.deepEqual(scopes.map((l) => l.match(/agent-heavy-(\w+)-/)[1]), ["browser", "build"], "one browser slot, then one build slot");
+  assert.match(r.stderr, /nested browser run: already inside browser\.1; running inline/);
+  assert.match(r.stdout, /^active=browser build slot=browser\.1 build\.1$/m);
+});
+
+test("outside a run the job sees only the markers agent-heavy set for it", () => {
+  const r = heavy(["build", "--", "sh", "-c", 'echo "active=$AGENT_HEAVY_ACTIVE slot=$AGENT_HEAVY_SLOT"']);
+  assert.match(r.stdout, /^active=build slot=build\.1$/m);
+  assert.equal((r.c.match(/^systemd-run /gm) || []).length, 1);
+});
+
+// Operator/QA: a marker is trusted only if this process's own ancestors hold the named slot. Anything else fails closed.
+test("a marker leaked into a long-lived shell (no slot held) is ignored: the run takes a slot as usual", () => {
+  const r = heavy(["build", "--", "sh", "-c", 'echo "active=$AGENT_HEAVY_ACTIVE slot=$AGENT_HEAVY_SLOT"'],
+    { AGENT_HEAVY_ACTIVE: "build", AGENT_HEAVY_SLOT: "build.1" });
+  assert.equal(r.status, 0, r.stderr);
+  assert.equal((r.c.match(/^systemd-run /gm) || []).length, 1, "a real scope with the budget");
+  assert.match(r.stderr, /ignoring AGENT_HEAVY_ACTIVE=build: no build slot is held by this process's ancestors; taking a slot/);
+  assert.doesNotMatch(r.stderr, /running inline/);
+  assert.match(r.stdout, /^active=build slot=build\.1$/m, "the stale entry is replaced, not appended to");
+});
+
+test("a foreign marker naming a slot another seat really holds does not let this caller skip the budget", async () => {
+  const dir = join(root, "agent-heavy"); fs.mkdirSync(dir, { recursive: true });
+  const other = spawn("bash", ["-c", 'exec 9>"$L"; flock 9; sleep 30; true'], { env: { PATH: "/usr/bin:/bin", L: join(dir, "build.1.lock") }, stdio: "ignore", detached: true });
+  try {
+    assert.ok(await until(() => /build 1\/2  held/.test(status("build").stdout)), "another seat holds build.1");
+    const r = heavy(["build", "--wait", "2", "--", "true"], { AGENT_HEAVY_ACTIVE: "build", AGENT_HEAVY_SLOT: "build.1" });
+    assert.equal(r.status, 0, r.stderr);
+    assert.match(r.stderr, /ignoring AGENT_HEAVY_ACTIVE=build/);
+    assert.match(r.c, /--unit=agent-heavy-build-2-/, "it took the free slot 2 under the budget");
+  } finally { process.kill(-other.pid); }
+});
+
+test("an unverifiable marker is dropped only for its class; other classes in the lists are kept", () => {
+  const r = heavy(["build", "--", "sh", "-c", 'echo "active=$AGENT_HEAVY_ACTIVE slot=$AGENT_HEAVY_SLOT"'],
+    { AGENT_HEAVY_ACTIVE: "browser build", AGENT_HEAVY_SLOT: "browser.2 build.1" });
+  assert.equal(r.status, 0, r.stderr);
+  assert.equal((r.c.match(/^systemd-run /gm) || []).length, 1);
+  assert.match(r.stdout, /^active=browser build slot=browser\.2 build\.1$/m);
 });
