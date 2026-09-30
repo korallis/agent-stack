@@ -108,10 +108,9 @@ if [ $CHECK = 0 ]; then
 fi
 if jq -e '.skipDangerousModePermissionPrompt == true and .permissions.defaultMode == "bypassPermissions"' "$HOME/.claude/settings.json" >/dev/null 2>&1; then
   ok "~/.claude/settings.json: bypassPermissions + skipDangerousModePermissionPrompt"; else todo "~/.claude/settings.json: bypassPermissions + skipDangerousModePermissionPrompt"; fi
-link "$S/skills/agent-stack" "$HOME/.claude/skills/agent-stack"
-link "$S/skills/agent-stack" "$HOME/.agents/skills/agent-stack"
-link "$S/skills/openrig-project-setup" "$HOME/.claude/skills/openrig-project-setup"
-link "$S/skills/openrig-project-setup" "$HOME/.agents/skills/openrig-project-setup"
+# Our skills (skills/*: agent-stack, openrig-project-setup and the workflow skills), linked for Claude and Codex, so
+# every seat on the machine sees them.
+for d in "$S"/skills/*/; do n=$(basename "$d"); link "$S/skills/$n" "$HOME/.claude/skills/$n"; link "$S/skills/$n" "$HOME/.agents/skills/$n"; done
 
 step "systemd user services"
 for u in "$S"/system/systemd/*.service "$S"/system/systemd/*.timer; do place "$u" "$HOME/.config/systemd/user/$(basename "$u")"; done

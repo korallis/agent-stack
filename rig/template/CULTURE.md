@@ -67,6 +67,22 @@ Research -> plan -> implement (owner standard, 2026-09-30): every slice, feature
   records a wave's research and plan in the mission SPEC before the wave is dispatched. The lead doesn't dispatch
   builders on a slice whose SPEC lacks research; reviewers send back a PR whose slice has no Research/Plan.
 
+## Workflow skills (binding)
+Six skills from agent-stack are installed for every seat. Each has a fixed moment:
+- `verification-guide`: the architect writes `docs/VERIFY.md` (feature map, exact steps, test data) at project setup
+  and updates it in the wave that adds a user-facing area. QA, the bug review board and witnesses follow it.
+- `bug-review-board`: QA runs a real-user pass in the Playwright MCP browser before a PR or wave merges. Each bug is a
+  queue row to the lead (P0/P1/P2, steps, screenshot). The ship YES/NO verdict is recorded with `rig proof add`, and
+  the integrator puts it in the Jev merge-gate input. A NO blocks the merge.
+- `blast-radius`: before signing off a PR that touches shared code, SQL, migrations, env or jobs, the reviewer lists
+  what it could break outside the edited files and proves the key safety fact by running code or a read-only query.
+  The result goes on the PR. The integrator doesn't merge such a PR without it.
+- `review-lenses`: the cross-family reviewer applies the lenses the diff touches (correctness, security and data,
+  maintainability, UX and journey, performance) and sorts findings into act on, consider, noted and dismissed.
+- `unslop` and `technical-writing`: every seat checks its text before posting: PR descriptions, SPECs, issue and PR
+  comments (including handbacks to a client), queue bodies and messages to the owner. Plain, specific, short; no
+  filler, hype or hedging. Reviewers flag slop in PR text.
+
 ## Done means a person could use it (binding)
 - Every feature is proven from the user's side. Acceptance tests are browser journeys (Playwright) that do what a person
   does: open the page, read what is on screen, click buttons and links by their visible names, type into labelled

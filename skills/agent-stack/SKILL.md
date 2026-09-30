@@ -79,6 +79,18 @@ project-workspace.md) and the `mission-slice-sop` skill. Verify each point on di
     with `no-witness: <reason>`. Tests, merges and deploys are not witnesses.
 11. OpenRig upgrades are operator windows (`docs/UPGRADE.md`), raised weekly by `openrig-update.timer`; never ad hoc. Owner delegations/standing approvals go into the rig CULTURE.md.
 
+## Workflow skills (every rig, by default)
+Six of our skills set how a team verifies and writes. The rig CULTURE "Workflow skills" section and each role text say
+who uses which, and when:
+- `verification-guide`: the architect's `docs/VERIFY.md` feature map; QA and witnesses follow it.
+- `bug-review-board`: QA's real-user pass in the Playwright MCP browser; bugs as queue rows to the lead; the ship
+  YES/NO recorded with `rig proof add` and passed to the Jev merge gate.
+- `blast-radius`: what a diff breaks outside its files, with the key safety fact proven by running code.
+- `review-lenses`: the lenses a cross-family review applies, and how it sorts findings.
+- `unslop`, `technical-writing`: plain, specific text in every PR, SPEC, comment, queue body and owner message.
+A new rig gets them from `agent-project-new`. For a running rig: copy the section from `rig/template/CULTURE.md` into
+the rig's CULTURE.md, then `agent-refresh-guidance <P> --apply`. `agent-project-check` WARNs until both are done.
+
 ## Operating a running fleet (operator runbook)
 - **Relaunch a seat, only when it is idle.**
   - Codex: `C-u` (clear the composer), `/quit`, Enter. Claude: `/exit`.

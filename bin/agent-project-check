@@ -86,6 +86,14 @@ if specs:
     rpi = re.search(r"^## Research, plan, implement", read(f"{W}/rig/CULTURE.md") or "", re.M) is not None
     rep("OK" if rpi else "WARN", "CULTURE.md has the Research, plan, implement section (owner standard, 2026-09-30)",
         "" if rpi else "copy the section from agent-stack rig/template/CULTURE.md, then agent-refresh-guidance <P> --apply")
+    wfs = re.search(r"^## Workflow skills", read(f"{W}/rig/CULTURE.md") or "", re.M) is not None
+    rep("OK" if wfs else "WARN", "CULTURE.md has the Workflow skills section (WO30, 2026-09-30)",
+        "" if wfs else "copy the section from agent-stack rig/template/CULTURE.md, then agent-refresh-guidance <P> --apply")
+    WORKFLOW = ("bug-review-board", "verification-guide", "blast-radius", "review-lenses", "unslop", "technical-writing")
+    unseen = [f"{d}/{n}" for n in WORKFLOW for d in ("~/.claude/skills", "~/.agents/skills")
+              if not os.path.isfile(os.path.join(os.path.expanduser(d), n, "SKILL.md"))]
+    rep("OK" if not unseen else "WARN", "seats can see the workflow skills (Claude and Codex skill dirs)",
+        f"missing: {', '.join(unseen[:4])}{' …' if len(unseen) > 4 else ''}; run install.sh" if unseen else "")
     ps = sh("rig", "ps", "--json")
     running = bool(rig) and (f'"{rig}"' in ps or re.search(rf"^{re.escape(rig)}\s", sh("rig", "ps"), re.M) is not None)
     rep("OK" if running else "WARN", f"rig {rig} is running")

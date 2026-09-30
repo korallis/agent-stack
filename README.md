@@ -2,332 +2,180 @@
 
 **Write a plan. Get working, user-tested software back.**
 
-agent-stack turns one Linux computer into a full software team made of AI coding agents. You describe what you
-want in a plain plan document. The team breaks it into features, writes the tests first, builds, checks the work
-the way a real person would use it, reviews it, and merges it. You are asked for one approval of the feature list,
-for sign-off on risky changes, and for decisions only you can make. Everything else runs on its own, for hours or
-days, across as many projects as your subscriptions allow.
+agent-stack turns one Linux computer into a software team made of AI coding agents. You describe what you want in
+`docs/PLAN.md`. The team splits it into features, writes browser tests first, builds, uses the result the way a person
+would, reviews it with a second AI family, and merges it through a gate. You approve the feature list once, sign off
+risky changes, and answer the questions only you can answer.
 
-It is built from existing tools, glued together and configured so they work as one team:
+It is glue and configuration around existing tools: [OpenRig](https://www.npmjs.com/package/@openrig/cli) runs the
+team, Claude Code and Codex CLI are the agents' workspaces, [CLIProxyAPI](https://github.com/router-for-me/CLIProxyAPI)
+pools your subscriptions, [TypeSafe Jev](https://typesafe.ai) makes the small typed decisions (who builds this, may
+this merge), and Playwright gives the agents a real browser.
 
-| Tool | What it does here |
-|---|---|
-| [OpenRig](https://www.npmjs.com/package/@openrig/cli) | Runs the team: each agent is a "seat" with a role, a task queue, handoffs, reminders and one merge owner |
-| Claude Code | The workspace for seats running Anthropic models (and Kimi) |
-| Codex CLI | The workspace for seats running OpenAI GPT-6 models |
-| [CLIProxyAPI](https://github.com/router-for-me/CLIProxyAPI) | Pools your subscriptions so work moves to another account when one hits its limit |
-| [TypeSafe Jev](https://typesafe.ai) | Makes fast, small decisions: which seat should do this task, how risky is this change, should this merge |
-| [Superpowers](https://github.com/obra/superpowers) | Gives every builder a disciplined method: plan, write a failing test, build, verify |
-| Playwright | A real browser the agents use to test the app like a person, on desktop and phone sizes |
+## Quick start
 
-## How a project goes
-
-1. **You write the plan** in `docs/PLAN.md`: who uses it, what they need to do, the rules, what's out of scope.
-2. **The architect turns it into a feature list** where every acceptance criterion is something a person does and
-   sees ("choosing a full date shows 'This date is full'"). You get a desktop notification and approve it once.
-3. **Tests are written first, by a different AI.** For each feature, a test author from the other model family
-   writes browser journeys that prove it works for a person. They are locked: the builders cannot change them.
-4. **The lead hands each feature to the best builder**, chosen with Jev from the idle seats. Up to about nine
-   features are built at the same time.
-5. **A QA seat uses the finished feature by hand** in a real browser, tries the usual mistakes people make, and
-   attaches screenshots.
-6. **A reviewer from the other model family reviews it** with the plan and criteria in hand, and posts findings;
-   the builder fixes them. Risky changes (logins, payments, data deletion, database changes) also get a third review
-   and wait for your OK.
-7. **The merge owner merges it** only when CI, the locked tests, a hidden set of extra tests, QA, review and Jev all
-   agree. Two failed attempts send the feature to the strongest model (GPT-6 Astra).
-8. **You get a daily summary**, and a final report when every feature is done.
-
-## Who does what (the full-stack team, 27 seats)
-
-Every seat is pinned to the model that published benchmarks and Jev picked for its job. Most of the work runs on
-GPT-6 Sol; Claude Opus 5.5 is used where it is strongest: orchestrating the team (its 1M-token context holds the
-whole backlog), planning, user interfaces, big migrations and reviewing Codex's work.
-
-Every slice, feature, fix and wave starts research -> plan -> implement: `## Research` and `## Plan` go in the slice's
-PROGRESS.md before the first code commit (the rig CULTURE's "Research, plan, implement" section).
-
-| Seat | How many | Model | What it does |
-|---|---|---|---|
-| Lead | 1 | Claude Opus 5.5 (1M context) | The orchestrator: keeps the whole backlog in mind, asks for your approval, hands out work, tracks progress, writes the daily summary |
-| Deputy | 1 | GPT-6 Sol | Helps the lead dispatch, chase and keep notes |
-| Architect | 1 | Claude Opus 5.5 | Turns your plan into features with acceptance criteria a person can check |
-| Test authors | 3 | 2 × Opus 5.5, 1 × GPT-6 Sol | Write the locked browser tests before a feature is built (always the other family from its builder) |
-| Builders | 8 | GPT-6 Sol | Build features, unit tests and routine changes |
-| UI builders | 2 | Claude Opus 5.5 | Build screens and interfaces, and large database or code migrations |
-| Escalation builder | 1 | GPT-6 Astra | Takes over any feature that failed twice; kept free for that because its quota is small |
-| QA testers | 3 | GPT-6 Sol | Use each feature by hand like a real person and record screenshots |
-| Reviewers | 4 | 2 × Opus 5.5, 2 × GPT-6 Sol | Opus reviews GPT's work and GPT reviews Claude's: different models catch different bugs |
-| Third reviewer | 1 | Kimi K3 (1M context) | Extra review of risky changes; reads very large amounts of code at once |
-| Merge owner | 1 | GPT-6 Sol | The only seat that merges; checks every gate first |
-| Recovery | 1 | GPT-6 Sol | Unsticks stalled seats, broken builds and merge conflicts |
-
-Claude Fable 5.1 stands in for Opus 5.5 when Opus is rate-limited. Smaller projects can use `build.yaml`
-(14 seats), and `fallback-codex.yaml` keeps working with no Claude account at all.
-
-## What gets installed
-
-Everything is listed with versions in [`config/tools.md`](config/tools.md). In short:
-
-- **Programs:** OpenRig, CLIProxyAPI, Claude Code, Codex CLI, Node.js (via mise), ripgrep and fd for fast search,
-  the TOON CLI for compact prompts, and Playwright with Chromium.
-- **In every seat:** the **Superpowers** plugin (for Claude Code and for Codex) for disciplined plan → test → build →
-  verify work; the **TypeSafe** skill; the **Neon** skills; this repo's **agent-stack** and **openrig-project-setup**
-  skills; OpenRig's own skills. Claude Code also gets the **Vercel** plugin. Every skill, its source and who gets it:
-  [docs/SKILLS.md](docs/SKILLS.md) (`agent-skills-check` shows what is missing).
-- **Tools the agents can call:** **Jev** (fast typed decisions) and a **Playwright browser** (so QA can use the app
-  like a person), both in Claude Code and Codex.
-- **Background services:** the subscription pool, the OpenRig daemon, health checks, usage logging, a sign-in
-  failure alert, a quota warning at 80%, and a weekly check for new OpenRig releases (upgrades are operator-run).
-
-## What you need
-
-- A Linux computer with systemd (built and tested on Arch/Omarchy; a 16-core, 64 GB machine runs several teams).
-- Subscriptions, logged in through the proxy: at least one ChatGPT Pro (Codex) and one Claude Max plan; Kimi is
-  optional. More accounts give more capacity and smoother failover.
-- A GitHub account, and a [TypeSafe](https://typesafe.ai) key for Jev.
-
-## Install
+You need Linux, git, and accounts for GitHub and at least one of Claude or ChatGPT. Clone the repo and see what is
+missing. The check installs nothing:
 
 ```bash
+# Runs as shown (the README test runs this block in a throwaway HOME).
 git clone https://github.com/korallis/agent-stack ~/Projects/agent-stack
-cd ~/Projects/agent-stack && ./install.sh
+cd ~/Projects/agent-stack && ./install.sh --check
 ```
 
-The installer is safe to re-run and never overwrites your secrets, logins or existing configs. When it finishes it
-lists the few things only you can do:
+Then install, and sign in to your accounts. Logins open a browser, so they can't be scripted:
 
 ```bash
+# Illustrative: installs software and needs your accounts (the README test checks each command and flag exists).
+./install.sh
 gh auth login
-agent-login claude claude-a        # once per Claude subscription (claude-b, …)
+agent-login claude claude-a        # once per Claude subscription (claude-b, ...)
 agent-login codex codex-a          # once per ChatGPT subscription
-agent-login kimi kimi-a            # optional
-# paste your TypeSafe key into ~/.config/agent-stack/secrets/typesafe.env
 ```
 
-`./install.sh --check` shows what is missing at any time.
+Paste your TypeSafe key into `~/.config/agent-stack/secrets/typesafe.env`, then start a project (below).
 
-It also sets OpenRig's queue pickup threshold (`queue.pickup_stall_threshold_minutes`) to 480 minutes. OpenRig's
-default of 3 minutes paged "unclaimed" for rows that a busy seat picks up minutes later. An existing value is kept.
+## How it works
 
-## Replicate on a new machine
+```text
+you --> docs/PLAN.md --> lead --> queue --> architect, test author, implementers
+                                                          |
+                                                     pull request
+                                                          |
+                      QA (real browser) + reviewer (other AI family) + Jev merge gate
+                                                          |
+                                               merge --> witness (fresh agent)
+```
 
-Everything this setup needs is in this repo. On a fresh machine, from a normal login shell (not inside a seat: a
-seat's `OPENRIG_HOME` would point the installer at that machine's live config):
+- **Rig.** One project's team, started from a spec in `~/Projects/<Project>-work/rig/`. `rig ps` lists the running rigs.
+- **Seat.** One agent with a role, its own git worktree and its own conversation. A seat's name is
+  `<pod>-<member>@<rig>`, for example `coord-lead-claude@myapp`.
+- **Queue.** Seats hand work to each other as queue rows. Every row has one owner (`rig queue list`).
+- **Merge gate.** A pull request merges only when CI, a review by the other AI family, QA's ship verdict and a live Jev
+  decision agree on the exact commit.
+- **Witness.** After a wave of features merges, a fresh agent that built none of it uses them on the deployed app and
+  records what it saw.
 
-1. `git clone https://github.com/korallis/agent-stack ~/Projects/agent-stack && cd ~/Projects/agent-stack`
-2. `./install.sh --check`: reports what is missing; it installs and configures nothing. It does create empty
-   directories, set the secrets directory to 0700, and fill the npm cache while it checks the Playwright browser; in a
-   fresh HOME, asking Claude Code for its MCP servers makes it create its own `~/.claude.json`.
-   Then `./install.sh`.
-3. Logins: `gh auth login`, then `agent-login claude|codex|kimi <label>` once per subscription.
-4. Secrets, in `~/.config/agent-stack/secrets/` (0600, never in a repo):
-   - `cliproxy.env`: local proxy keys, generated by the installer;
-   - `typesafe.env`: paste your TypeSafe key (Jev), then `openrig-daemon-cycle`;
-   - `playwright.env`: browser logins for the witness, one `NAME=value` per line, typed by name (see "Operating a
-     running fleet").
-5. `openrig-ensure --check`: OpenRig is at the pin in `config/versions.defaults.env` with every local patch applied.
-6. `agent-project-new` for each project: a new repo (below), or an existing one (it adopts the repo's trunk and merge
-   gate; see "An existing repo").
-7. `agent-project-check <Project>`: nothing may say FAIL.
-8. `./install.sh --check` again: nothing left to do.
+Every rig also follows six workflow skills: a feature map in `docs/VERIFY.md`, a real-user bug review before merge,
+a blast-radius check on risky diffs, named review lenses, and plain writing. [docs/SKILLS.md](docs/SKILLS.md) lists
+them with every other skill.
 
-The checklist was validated with `./install.sh --check` in a throwaway HOME (exit 0; no config, secrets or tools
-written).
+## Examples
 
-## Start a project
+### Create a project for a new repo
 
-One command sets up a project correctly, and a second checks it:
+See what it would create, without creating anything:
 
 ```bash
-agent-project-new --name MyProject --rig myproj --github <your-github-user>   # repo, workspace, team, worktrees, GitHub
-agent-project-check MyProject                                                 # is everything wired the way OpenRig expects?
+# Runs as shown (the README test runs this block in a throwaway HOME).
+agent-project-new --name Demo --rig demo --no-github --identity "Demo Bot <bot@example.invalid>" --dry-run
 ```
 
-`agent-project-new` copies the starter kit into the repo (the locked-test folder, the CI checks that enforce it, a
-Playwright setup), creates a private GitHub repo with branch protection, gives the project its own OpenRig workspace
-with our build defaults (waves, review steps, merge to main), creates one git worktree per seat, starts the
-27-seat team and its reminders. It never overwrites existing files, so running it again repairs a project.
-`--dry-run` shows what it would do. Then write `docs/PLAN.md` and:
+Then create it for real. It makes a private GitHub repo with the starter kit, the team's workspace and one worktree per
+seat, and starts the team:
 
 ```bash
-rig send coord-lead-claude@<rig> "Build docs/PLAN.md"
+# Illustrative: creates a GitHub repo and starts a team (the README test checks each command and flag exists).
+agent-project-new --name MyApp --rig myapp --github <your-github-user>
+agent-project-check MyApp
+rig send coord-lead-claude@myapp "Build docs/PLAN.md"
 ```
 
-The lead has the architect turn the plan into features, missions, slices and **waves** (groups of slices that
-can be built at the same time without touching the same files). Run `agent-project-check` again once you have
-approved the feature list: nothing should say FAIL before the builders start. Agents doing this follow the
-`openrig-project-setup` skill, which also lists every mistake this setup has made before and what now prevents it.
+Write `docs/PLAN.md` in `~/Projects/MyApp` and commit it before you send that message.
 
-From then on you only hear from the team through desktop notifications: the feature list to approve, risky changes
-to OK (unless you have given standing approval in the project's `rig/CULTURE.md`), blockers, and the daily summary.
+### Create a project for an existing repo
 
-### An existing repo
-
-Point `agent-project-new` at a repo that already has commits and an origin, and it adopts it as it is:
-- it keeps the repo's trunk (e.g. `master`), and keeps a local `main` ref mirroring it for OpenRig;
-- it keeps the repo's own GitHub rules (rulesets, a label that arms auto-merge);
-- it puts the starter kit in `<Project>-work/starter-kit/`, for the lead to adopt in a PR, never in the repo.
-
-Write the repo's specifics into `rig/CULTURE.md`: trunk, required checks, merge path, and whether merges deploy to
-production (then every PR must be ship-safe, and the witness runs on the production URL). Keep the seats on
-development data: [docs/PROJECT-ENV.md](docs/PROJECT-ENV.md). The `openrig-project-setup` skill has the full example.
-
-## Everyday commands
+Clone the repo to `~/Projects/<Name>` first. `agent-project-new` then keeps its trunk, its branch rules and its files,
+and puts the starter kit in `<Name>-work/starter-kit/` for the lead to adopt in a pull request:
 
 ```bash
-rig ps                                   # which teams are running
-rig ps --nodes --rig <rig>               # what each seat in a team is doing
-rig send <seat>@<rig> "message"          # talk to a seat, e.g. the lead
-rig queue list -a -A                     # who owns which task
-agent-project-check <Project>            # is a project wired correctly (waves, slices, tags, skills)?
-agent-refresh-guidance <Project> --apply # after editing a rig's CULTURE.md: update running seats' instructions
-agent-project-repair <Project> --apply   # fix anything agent-project-check flags
-rig down <rig> --snapshot                # stop a team (resume later with: rig up <rig>)
-agent-proxy-status                       # how the subscription pool is doing
-claude-pool                              # your own Claude Code session through the pool (incl. Kimi models)
-openrig-update --check                   # is OpenRig up to date? (+ are local patches ready for the new version)
+# Runs as shown (the README test runs this block in a throwaway HOME).
+git clone https://github.com/korallis/agent-stack ~/Projects/StackDemo
+agent-project-new --name StackDemo --rig stackdemo --no-github --identity "Demo Bot <bot@example.invalid>" --dry-run
 ```
 
-## Several projects at once
+Drop `--dry-run` (and `--no-github`) to do it. Keep seats on development data: [docs/PROJECT-ENV.md](docs/PROJECT-ENV.md).
 
-Each project gets its own team, its own worktrees (`~/Projects/<Name>.worktrees/`) and its own OpenRig workspace
-(`~/Projects/<Name>-work`); seats find their workspace automatically from those names. OpenRig itself points at
-`~/Projects/openrig-workspace`, whose `workspace.yaml` lists every project, so the OpenRig TUI's **PROJECTS** view
-shows each project's missions and slices. Add projects whenever you
-like. The shared limit is subscription quota, not the computer: `cliproxy-quotawatch` warns you at 80% of any
-account's 5-hour or weekly allowance, and loudly when a whole provider is nearly used up. Add another subscription
-with `agent-login` and the pool uses it straight away.
+### Dispatch a slice
 
-## Operating a running fleet
+The lead normally does this. A slice is one buildable piece of a mission:
 
-- **Relaunch a seat only when it is idle.** Codex: `C-u`, `/quit`, Enter. Claude: `/exit`. Then
-  `rig launch <rigId> <pod.member>` (the rig ID, not its name). Check that it resumed its own conversation (Codex
-  `resume <thread>`, Claude `--resume <session-id>` on its command line).
-- **Retire a seat** with `rig seat stop`; restore it with `rig launch`.
-- **Browser secrets:** the Playwright MCP reads `playwright.env` once, when it starts. Add everything a seat needs,
-  then relaunch it once. Append; never rewrite the file. Prefix names with the project.
-- **`rig ps` shows ATTN `user_prompt_submit`** while a seat works on a turn; that is not a stuck seat.
-- **Never stop or restart `openrig.service`** while rigs run: restart the daemon with `openrig-daemon-cycle`.
+```bash
+# Illustrative: needs a running team (the README test checks each command and flag exists).
+rig queue create --destination impl-codex-1@myapp --mission m01-accounts --slice 03-login --summary "Build 03-login" --body-file dispatch.md
+rig queue list --destination impl-codex-1@myapp
+```
 
-Details are in the `agent-stack` skill. What went wrong before: [docs/incidents/](docs/incidents/).
+### Run the merge gate
 
-## Staying up to date
+The merge owner (the integrator seat) does this for every pull request, on its exact head commit:
 
-- **OpenRig** never upgrades by itself: running seats would be interrupted. A weekly check (`openrig-update`) tells
-  the upgrade owner when a newer release is out. The upgrade is an operator-run window
-  ([docs/UPGRADE.md](docs/UPGRADE.md)): `openrig-upgrade <version>` installs it and applies this setup's local patches
-  (`patches/openrig/<version>/`); `openrig-update --validate` then checks the six team templates
-  (`rig/template/` core, small, team, build, full-stack, fallback-codex) against it.
-- **Versions:** the tracked pins are in `config/versions.defaults.env`; a machine can override them in
-  `config/versions.env` (not tracked). The installer never downgrades OpenRig: if the installed version is newer than
-  the pin, it keeps it ([docs/incidents/2026-09-30-openrig-downgrade.md](docs/incidents/2026-09-30-openrig-downgrade.md)).
-- Everything that makes this setup what it is lives in this repo, outside OpenRig's own files, so upgrades cannot
-  overwrite it. CLIProxyAPI is updated by changing its version pin and re-running the installer.
+```bash
+# Illustrative: needs a real pull request (the README test checks each command and flag exists).
+gh pr checks 42
+gh api repos/<owner>/<repo>/commits/<head-sha>/statuses --jq '.[] | "\(.context) \(.state)"'
+jev-decide review.merge_gate --json '{"pr":42,"head":"<head-sha>","base":"<base-sha>","change":"Adds login","review":"independent-review success; bug review board: ship YES","ci":"all required checks pass"}'
+gh pr merge 42 --squash --match-head-commit <head-sha>
+```
+
+It merges only when the review status is `success`, the checks pass and Jev answers `merge` in the act band.
+
+### Relaunch a seat
+
+Relaunch a seat only while it is idle. In its tmux pane, Codex quits with `Ctrl-U`, `/quit`, Enter; Claude with
+`/exit`. Then:
+
+```bash
+# Illustrative: needs a running team (the README test checks each command and flag exists).
+rig ps --json | jq -r '.[] | "\(.rigId) \(.name)"'
+rig launch <rigId> impl.codex-1
+rig seat status impl-codex-1@myapp
+```
+
+The seat resumes its own conversation. `docs/REFERENCE.md` says how to verify that.
+
+### Add a secret for the browser
+
+Test logins go in a file only you can read. Agents type them by name, so the value never appears in a transcript:
+
+```bash
+# Runs as shown (the README test runs this block in a throwaway HOME).
+mkdir -p ~/.config/agent-stack/secrets
+read -rsp 'Password for the MyApp test admin: ' v; echo
+printf 'MYAPP_ADMIN_PASSWORD=%s\n' "$v" >> ~/.config/agent-stack/secrets/playwright.env; unset v
+chmod 600 ~/.config/agent-stack/secrets/playwright.env
+```
+
+The browser tool reads the file when a seat starts: add every name a seat needs, then relaunch that seat once. Always
+append; prefix names with the project.
+
+### Check the machine
+
+```bash
+# Runs as shown (the README test runs this block in a throwaway HOME).
+cd ~/Projects/agent-stack && ./install.sh --check
+agent-skills-check
+agent-credguard-check
+```
+
+`install.sh --check` lists what is missing and changes no configuration. `agent-skills-check` prints one line per skill
+source. `agent-credguard-check` shows which running seats have `neon` and `vercel` behind the credential guard.
+
+## Read more
+
+- [docs/REFERENCE.md](docs/REFERENCE.md): the full team, what gets installed, everyday commands, several projects,
+  operating a fleet, upgrades, and where everything lives.
+- [docs/SKILLS.md](docs/SKILLS.md): every skill, where it comes from, and who gets it.
+- [docs/PROJECT-ENV.md](docs/PROJECT-ENV.md): keeping agents on development data.
+- [docs/UPGRADE.md](docs/UPGRADE.md): upgrading OpenRig. [docs/incidents/](docs/incidents/): what went wrong before.
+- [config/tools.md](config/tools.md): every tool and version.
 
 ## Read before you use it
 
 - **Pooling consumer subscriptions through a proxy may break your providers' terms.** Anthropic's Claude Code terms
-  explicitly prohibit it. If you pool anyway, that is your decision and your risk. `cliproxy-authwatch` alerts you
-  if an account starts failing to sign in, and `fallback-codex.yaml` lets you keep working without Claude.
+  prohibit it. If you pool anyway, that is your decision and your risk. `cliproxy-authwatch` alerts you if an account
+  starts failing to sign in, and `fallback-codex.yaml` lets you keep working without Claude.
 - **Seats run with permission checks off** so they can work unattended. Run this on a machine and accounts you are
   comfortable letting agents use, and never give seats production or cloud-admin credentials.
 - **Quality comes from verification, not from the models.** The locked tests encode what "done" means, so read the
   feature list carefully before you approve it.
-
-## Technical reference
-
-### Where things are
-
-- Secrets (0600, never in git): `~/.config/agent-stack/secrets/{cliproxy.env,typesafe.env}`; OAuth tokens in `~/.cli-proxy-api/*.json`.
-- **Transcript capture:** every 15 seconds, 400 lines (`transcripts.poll_interval_seconds`, `transcripts.lines`; set by
-  `install.sh`). OpenRig's 2s/1000-line default across ~90 seats kept the daemon's event loop busy. `openrig-daemon-cycle`
-  starts the daemon without the `OPENRIG_TRANSCRIPTS_*` overrides that seats inherit from tmux.
-- **Daemon priority and health:** the daemon runs at `CPUWeight=1000` (10x a build or test) whether `openrig.service`
-  or `openrig-daemon-cycle` started it. `openrig-health` probes `/healthz` 3 times (15s each, 10s apart). After a
-  cycle it leaves a daemon that is merely slow alone for 10 minutes, alerting instead. A hung one (accept queue at 80%+
-  of the backlog, or a main thread with no CPU progress) is cycled at once. It cycles at most 3 times in 30 minutes,
-  then only alerts.
-- **Heavy runs:** every seat runs tsc, eslint, tests, builds and Playwright through `agent-heavy build|browser -- <cmd>`
-  (2 slots, capped CPU and RAM, max runtime 45min build / 30min browser; a stop at the cap is logged, `journalctl -t
-  agent-heavy`). It refuses long-lived servers (`npm start`,
-  `start:*`, `dev`, `next start`, `vite`), which run outside it. `agent-heavy status` shows who holds each slot.
-  A nested call of the same class (a script that wraps its own runs) runs inline in the parent's slot; a different
-  class takes its own slot. The rig template's CULTURE.md makes it binding, and `agent-project-check` WARNs when a
-  project's conventions lack it.
-- **Playwright MCP:** a pinned `@playwright/mcp` release with Playwright's own Chrome for Testing (`--browser chromium`),
-  not the system Chromium. The pin lives in `system/codex/config.toml`; `install.sh` registers Claude's MCP with it and
-  `playwright-browsers` (daily timer) installs that release's own browser build. Bump the pin deliberately (0.0.80 =
-  Chrome 153, 0.0.82 = Chrome 154), then run `playwright-browsers`. `@latest` can need a browser build that isn't
-  installed yet.
-- **Test credentials:** Playwright MCP runs with `--secrets ~/.config/agent-stack/secrets/playwright.env` (0600,
-  `NAME=value`). An agent types a login BY NAME (`browser_type` text `"WITNESS_PASSWORD"`); the MCP types the value and
-  shows `<secret>WITNESS_PASSWORD</secret>` in every snapshot and code line instead of it. The MCP also echoes tool
-  input, so no env or credential value is ever inlined in `browser_run_code`/`browser_evaluate` either. Without it, a filled
-  password shows in the snapshot. `install.sh` sets it up (`system/playwright-mcp-config`); seats get it when their MCP
-  restarts.
-- **Seats never depend on the daemon unit.** Every seat lives in the tmux server of `openrig-tmux.service`, not in
-  `openrig.service`. tmux ties each pane to the unit its server runs in, which is how `systemctl stop openrig.service`
-  once stopped every seat. Restart the daemon with `openrig-daemon-cycle` (the health check does too), never with
-  systemctl. `openrig-tmux-adopt` moves an older server out of `openrig.service` without stopping seats.
-- Proxy config `~/.cli-proxy-api/config.yaml`; services `cliproxyapi`, `openrig`, `openrig-tmux` and timers `cliproxyapi-health`, `cliproxy-usage`, `openrig-health`, `cliproxy-authwatch` (alerts on repeated 401/403 for one account), `cliproxy-quotawatch` (warns at 80% of any 5-hour or weekly allowance, critical when a whole provider is past it), `openrig-update` (weekly: raises an "upgrade window due" queue item for operator-agent@kernel; never upgrades by itself, see docs/UPGRADE.md) (user units, linger on).
-- Pinned versions: `config/versions.defaults.env` (tracked) with an optional local override in `config/versions.env` (untracked; `openrig-upgrade` records the installed OpenRig there). OpenRig is never downgraded by a lower pin: `install.sh` (via `openrig-ensure`) keeps a newer install and moves the pin, and `openrig-upgrade` refuses an older version without `--allow-downgrade`.
-- Jev decisions (single source of truth): `config/decisions.yaml`; evaluation: `eval/` (`node eval/run.js`); unit tests: `node --test 'test/*.test.js'`.
-- Decision log: `~/.local/state/agent-stack/jev.sqlite` + `jev-decisions.jsonl` (state hash only, no raw payloads).
-- Routing log: `~/.local/share/agent-stack/logs/proxy-usage.jsonl` (account, model, status, latency, quota; no content).
-- Per-project team notes: `<repo>/.team/` (REQUIREMENTS, DECISIONS, plans, handoffs, incidents; git-excluded).
-- Snapshot of non-secret system files: `system/` (secrets redacted).
-
-### How seats get their configuration (launch and restart alike)
-
-- **Claude seats:** OpenRig sets `OPENRIG_NODE_ID`; `~/.config/agent-stack/env.sh` (sourced by `~/.bashrc` before its
-  interactive guard) then exports `ANTHROPIC_BASE_URL`/`ANTHROPIC_AUTH_TOKEN` for the pool, pins model aliases, and sets
-  `CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC=1`. Your own `claude` keeps direct login and claude.ai connectors.
-- **Codex seats:** global `~/.codex/config.toml` (pool provider, key via `auth.command`) plus the seat-only shim
-  `~/.local/share/agent-stack/seat-bin/codex` (first on the OpenRig daemon's PATH): `--no-daemon`, slug display names,
-  analytics/update checks off, and makes Codex the terminal foreground group.
-- **Never prompt (YOLO):** every Claude and Codex agent runs without permission prompts, on every project and machine.
-  - RigSpecs carry `permission_policy: builtin:yolo`: each one you write, and all 13 built-in presets (re-applied by
-    `openrig-upgrade`). OpenRig ignores the ambient `OPENRIG_YOLO`. That gives Claude seats `--dangerously-skip-permissions`.
-  - It gives Codex seats only a sandbox (`-s danger-full-access`), not an approval policy. So Codex also needs approval
-    `never`, or seats stop at "Would you like to run the following command?". The seat shim adds `-a never` to every
-    Codex seat launch, and `~/.codex/config.toml` (plus the `pool-*` profiles) sets `approval_policy = "never"`,
-    `sandbox_mode = "danger-full-access"` for everything else. `install.sh` fixes those two keys in place in an existing
-    config (backup first).
-  - `~/.claude/settings.json` sets `permissions.defaultMode = "bypassPermissions"` for every Claude session.
-    `skipDangerousModePermissionPrompt` stops the bypass warning dialog from exiting seats.
-  - Verify on a new machine or project with `agent-never-prompt-check [--rig <rig> --spec <rig.yaml>]`
-    (`agent-project-check` runs it too). Relaunch Codex seats that report FAIL.
-- **Jev:** MCP server `jev` registered at user scope in both harnesses (runs outside the Codex sandbox); `TYPESAFE_API_KEY`
-  exported in shells; skills `typesafe-ai` and `agent-stack` in both harnesses.
-
-### Local fixes for OpenRig + Codex (no fork)
-
-| Symptom | Cause | Fix |
-|---|---|---|
-| Messages to Codex seats never submitted | OpenRig submits with `C-m`; with tmux `extended-keys csi-u` Codex receives Ctrl+M = newline | `[tui.keymap.composer] submit = ["enter","ctrl-m"]`, newline on Shift/Alt+Enter, Ctrl+J |
-| Restored Codex seats stuck `attention_required` | resume probe expects `gpt-…` footer / non-`sh` pane command | seat shim: slug display names, Codex made foreground process group |
-| Codex activity `generation_mismatch` | shared Codex app-server daemon runs hooks with another seat's env (#69) | seat shim `--no-daemon` |
-| Kernel Claude seats exited at launch | bypass-mode warning defaults to "No, exit" | `skipDangerousModePermissionPrompt: true` |
-| Daemon crash on Node 24 (better-sqlite3 teardown) | native module ABI | OpenRig runs on Node 22 LTS |
-| Seats lacked OpenRig's own skills (mission/slice procedure, handoffs) | the specs' `openrig-core` plugin is not loaded; seats start without `--plugin-dir` | install.sh symlinks OpenRig's 19 core skills into both harnesses |
-| Project views missed most queue rows | rows lacked `project:<id>` and `worktree_path=` | the `rig` launcher sends seat `queue create/handoff` through `seat-tools/rig`, which adds both |
-| Running seats kept old team rules; two seats lost their OpenRig instructions | managed blocks are written at launch; a git reset/merge of AGENTS.md wipes them | `agent-refresh-guidance <P> --apply` refreshes/restores them; a repo pre-commit hook stops them being committed |
-| `rig spec audit`: no start-up context | team specs had no rig-level startup file | `rig/startup/context.md` (identity, environment, system check, skills) in every team spec |
-| TUI: "no wave declared", readiness unknown/legacy, merged work shown unmerged | waves in queue rows (ignored when mission.yaml exists); YAML without official `metadata:`; no proof policy; stale local `main` | `agent-project-repair <P> --apply`; `agent-repos-sync.timer`; `agent-project-check` now asks the daemon what the TUI shows |
-
-After an OpenRig upgrade run `openrig-upgrade <version>` and re-check these.
-
-### Known limits (honest)
-
-- CLIProxyAPI answers `400 unknown provider for model …` when **no** account of a family is eligible; `agent-recover`
-  turns that into `POOL EXHAUSTED …` and escalates. Cooling (quota) accounts return 429 per the proxy's code (not exercised,
-  to avoid burning subscriptions).
-- An interrupted stream is **re-sent**, not continued: Codex retries the whole sampling request (observed: proxy restart
-  mid-stream → retry 1/5 after 193 ms → success, no duplicate work). Claude Code likewise retries the request.
-- Codex reasoning effort is global (`high`); OpenRig 0.5.x cannot set it per seat under YOLO (#75).
-- Jev thresholds were tuned on the same 46 labelled cases they were measured on; add held-out cases before trusting
-  fine distinctions. On error classification a keyword baseline matched Jev, so exact signatures are rules in code first.
-- **Provider terms may prohibit pooling consumer subscriptions through a proxy.** Anthropic's Claude Code terms explicitly do. Read your providers' terms; if you pool anyway, that is your decision and your risk. `cliproxy-authwatch` alerts you when an account starts failing authentication, and `fallback-codex.yaml` keeps you working without Claude.
-
-See `docs/ROLLBACK.md` and `docs/VALIDATION.md`.

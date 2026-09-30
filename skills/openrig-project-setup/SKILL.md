@@ -56,9 +56,14 @@ binding) and `adopted` (compares with OpenRig's own build) — not project fault
      every new slice joins a wave when created. A draft from dependency levels is a fine start.
    - official YAML shape: `metadata:` in project.yaml (id), mission.yaml (name, status), slice.yaml (id);
      `approved-spec-dial:` in slice SPEC frontmatter; `proofPolicy.judges` in project.yaml.
-4. `agent-project-check <P>` — no FAIL before builders are dispatched wide.
-5. QA and the merge owner `rig proof judge` each proof item after a pass (that is the TUI's readiness).
-6. Build per wave; the wave review (two non-writer reviewers of different families; drift +
+4. The architect writes `docs/VERIFY.md` (the `verification-guide` skill) before the first wave: the feature map QA,
+   the bug review board and witnesses follow. The team's other workflow skills (`bug-review-board`, `blast-radius`,
+   `review-lenses`, `unslop`, `technical-writing`) are in the rig CULTURE "Workflow skills" section and the role texts
+   from day one.
+5. `agent-project-check <P>` — no FAIL before builders are dispatched wide (it WARNs when the CULTURE lacks the
+   Workflow skills section or a seat can't see those skills).
+6. QA and the merge owner `rig proof judge` each proof item after a pass (that is the TUI's readiness).
+7. Build per wave; the wave review (two non-writer reviewers of different families; drift +
    CONTEXT-GAP / JUDGMENT-GAP) fires once per wave on top of the per-PR checks.
 
 ## Mistakes this setup already made once (each is now prevented — keep it that way)
