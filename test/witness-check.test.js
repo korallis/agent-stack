@@ -182,3 +182,71 @@ test("agent-project-check WARNs on a CULTURE without Workflow skills and on skil
     assert.match(find(rows(), "seats can see the workflow skills").detail, /\.agents\/skills\/unslop/);
   } finally { fs.rmSync(specDir, { recursive: true, force: true }); for (const d of dirs) fs.rmSync(d, { recursive: true, force: true }); }
 });
+
+// WO41: Owner decisions hold only the owner's own decisions, with their source; a Jev HOLD in any band blocks.
+test("templates: Owner decisions are the owner's only, with a source; operator and lead rules apart; HOLD in any band blocks", () => {
+  const culture = fs.readFileSync(join(repo, "rig/template/CULTURE.md"), "utf8");
+  const sec = (h) => culture.split(/^## /m).find((s) => s.startsWith(h));
+  assert.match(sec("Owner decisions"), /the owner's own decisions only/);
+  assert.match(sec("Owner decisions"), /ending with its\s+source: `- YYYY-MM-DD: <decision> \(scope\) \(owner, Slack HH:MMZ\)` or `\.\.\. \(owner, via operator relay of <ref>\)`/);
+  assert.match(sec("Owner decisions"), /When an\s+owner answer is ambiguous, ask \(through the operator\) before recording it/);
+  assert.ok(sec("Operator and lead rules (not the owner's decisions)"), "the separate section exists");
+  assert.ok(culture.indexOf("## Owner decisions") < culture.indexOf("## Operator and lead rules") && culture.indexOf("## Operator and lead rules") < culture.indexOf("## Operating rules"));
+  assert.match(sec("Workflow skills"), /A Jev HOLD in ANY band \(act, review or\s+uncertain\) blocks the merge unless the owner waives it[\s\S]*the\s+confirm path applies only to a Jev MERGE below the act bar, never to a HOLD/);
+  const role = (r) => fs.readFileSync(join(repo, `rig/template/agents/${r}/guidance/role.md`), "utf8");
+  assert.match(role("lead"), /"Owner decisions" holds ONLY the owner's own decisions[\s\S]*Never write your interpretation[\s\S]*ask \(through the operator\) before recording/);
+  assert.match(role("integrator"), /Jev chose HOLD in ANY band \(act, review or uncertain\)[\s\S]*an operator or lead rule never overrides a HOLD/);
+  assert.doesNotMatch(role("integrator"), /HOLD in the act band/);
+});
+
+test("agent-project-check WARNs on an unsourced Owner decisions bullet and on one resting on docs/decisions/*", () => {
+  const specDir = join(W, "rig"); fs.mkdirSync(specDir, { recursive: true });
+  fs.writeFileSync(join(specDir, "team.yaml"), `name: t\npods:\n  - id: coord\n    members:\n      - id: lead\n        cwd: "${home}"\n`);
+  const rows = (extra = {}) => JSON.parse(spawnSync("python3", [join(repo, "bin/agent-project-check"), W, "--json"], { encoding: "utf8",
+    env: { PATH: `${bin}:${process.env.PATH}`, HOME: home, OPENRIG_URL: "http://127.0.0.1:9", AGENT_OWNER_ADDRESS: "alex@external", ...extra }, timeout: 60000 }).stdout);
+  const find = (r, p) => r.find((x) => x.check.startsWith(p));
+  const tmpl = fs.readFileSync(join(repo, "rig/template/CULTURE.md"), "utf8");
+  const withDecisions = (bullets) => tmpl.replace(/(## Owner decisions[^\n]*\n(?:(?!- \(none yet\))[^\n]*\n)*)- \(none yet\)\n/, `$1${bullets}`);
+  try {
+    fs.writeFileSync(join(specDir, "CULTURE.md"), withDecisions([
+      "- 2026-09-30: Merges need green CI (all PRs) (owner, Slack 14:05Z)",
+      "- 2026-09-30: Plan approval is the owner's. (owner, via operator relay of qitem-20260930-1)",
+      "- 2026-09-30: Only a confident Jev hold blocks a merge",
+      "  (see docs/decisions/merge-gate.md)",
+      "- 2026-09-30: Transition (operator, 12:55Z): PRs opened before 13:00Z keep their QA evidence", ""].join("\n")));
+    let r = rows();
+    const src = find(r, "every Owner decisions bullet ends with its owner source");
+    assert.equal(src.level, "WARN");
+    assert.match(src.detail, /^2 without \(owner or the owner's name, Slack HH:MMZ\) or \(…, via operator relay of <ref>\): 2026-09-30: Only a confident Jev hold blocks a merge \(see docs\/decisio…; 2026-09-30: Transition \(operator/);
+    assert.match(src.detail, /move a rule that isn't the owner's to "Operator and lead rules"/);
+    const doc = find(r, "no Owner decisions bullet rests on a lead doc");
+    assert.equal(doc.level, "WARN"); assert.match(doc.detail, /Only a confident Jev hold blocks.*a lead's doc is not the owner's word/);
+    assert.equal(find(r, "CULTURE.md has the Owner decisions, Operator and lead rules and Operating rules sections").level, "OK");
+    // QA WO41 f2: a blank relay reference is no source; * and + bullets are bullets; a paragraph after a blank line
+    // inside an item still belongs to it.
+    for (const [bullets, level] of [
+      ["- 2026-09-30: Policy. (owner, via operator relay of    )\n", "WARN"],
+      ["* 2026-09-30: Policy.\n", "WARN"], ["+ 2026-09-30: Policy.\n", "WARN"],
+      ["- 2026-09-30: Policy with a long reason\n\n  (owner, Slack 09:10Z)\n", "OK"],
+      ["* 2026-09-30: Policy. (owner, via operator relay of qitem-7)\n", "OK"],
+      // The operator's effect test: sources written with the owner's name (from agent-owner-address, not the repo).
+      ["- 2026-09-30: Policy. (Alex, Slack 08:08Z)\n", "OK"], ["- 2026-09-30: Policy (alex approved, Slack 14:04Z); scope x.\n", "OK"],
+      ["- 2026-09-30: Policy. (ALEX, via operator relay of qitem-9)\n", "OK"], ["- 2026-09-30: Alex confirmed (Slack 14:51Z, 'yes'): x.\n", "OK"],
+      ["- 2026-09-30: Alex waived the hold on #9.\n", "WARN"],
+      ["- 2026-09-30: Policy (Alex: \"just do it\").\n", "WARN"], ["- 2026-09-30: Policy. (Alexander, Slack 08:08Z)\n", "WARN"],
+      ["- 2026-09-30: Policy (2026-09-30 10:00Z).\n", "WARN"]]) {
+      fs.writeFileSync(join(specDir, "CULTURE.md"), withDecisions(bullets));
+      assert.equal(find(rows(), "every Owner decisions bullet ends with its owner source").level, level, JSON.stringify(bullets));
+    }
+    fs.writeFileSync(join(specDir, "CULTURE.md"), withDecisions("- 2026-09-30: Policy. (Sam Park, Slack 08:08Z)\n"));
+    assert.equal(find(rows(), "every Owner decisions bullet ends with its owner source").level, "WARN", "another person's name is not the owner's");
+    assert.equal(find(rows({ AGENT_OWNER_NAMES: "Sam Park" }), "every Owner decisions bullet ends with its owner source").level, "OK", "extra names by config");
+    fs.writeFileSync(join(specDir, "CULTURE.md"), tmpl);
+    r = rows();
+    assert.equal(find(r, "every Owner decisions bullet ends with its owner source").level, "OK", "(none yet) is fine");
+    assert.equal(find(r, "no Owner decisions bullet rests on a lead doc").level, "OK");
+    fs.writeFileSync(join(specDir, "CULTURE.md"), "## Owner decisions\n- (none yet)\n## Operating rules\n");
+    const lacks = find(rows(), "CULTURE.md has the Owner decisions, Operator and lead rules and Operating rules sections");
+    assert.equal(lacks.level, "WARN"); assert.match(lacks.detail, /missing Operator and lead rules/);
+  } finally { fs.rmSync(specDir, { recursive: true, force: true }); }
+});

@@ -114,3 +114,10 @@ test("the template carries @OWNER@, and config/owner.env stays out of git", () =
   assert.match(fs.readFileSync(join(repo, "rig/template/CULTURE.md"), "utf8"), /informational row to the owner \(@OWNER@\)/);
   assert.equal(spawnSync("git", ["check-ignore", "-q", "config/owner.env"], { cwd: repo }).status, 0);
 });
+
+test("--names: owner, the address's name part and AGENT_OWNER_NAMES, lower-cased, once each", () => {
+  const r = spawnSync(join(S, "bin/agent-owner-address"), ["--names"], { encoding: "utf8",
+    env: { PATH: `${bin}:/usr/bin:/bin`, HOME: root, AGENT_OWNER_ADDRESS: "alex@external", AGENT_OWNER_NAMES: "Alex R, OWNER,, alex" } });
+  assert.equal(r.status, 0, r.stderr);
+  assert.deepEqual(r.stdout.trim().split("\n"), ["owner", "alex", "alex r"]);
+});

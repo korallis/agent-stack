@@ -16,10 +16,21 @@
 - Secrets stay in local env files and the hosting provider; never in code, commits, tasks, tests or logs.
 - If you have no owned work, wait quietly.
 
-## Owner decisions (binding; check before asking the owner)
-Standing decisions, delegations and approvals from the owner, newest last, one dated line each:
-`- YYYY-MM-DD: <decision> (scope; how it was given)`. The lead checks this list before asking the owner anything, and
-adds every new owner decision here the day it is made. A decision recorded here is not asked again.
+## Owner decisions (binding; the owner's own decisions only)
+Standing decisions, delegations and approvals the owner made, newest last, one dated line each, ending with its
+source: `- YYYY-MM-DD: <decision> (scope) (owner, Slack HH:MMZ)` or `... (owner, via operator relay of <ref>)`; the
+owner's name may stand for "owner" (the names `agent-owner-address --names` gives). The
+lead checks this list before asking the owner anything, and adds every new owner decision here the day it is made. A
+decision recorded here is not asked again. Nothing else goes here: an interpretation of an owner decision, a summary
+of a lead doc (`docs/decisions/*`) or a rule the operator or a lead set goes under "Operator and lead rules". When an
+owner answer is ambiguous, ask (through the operator) before recording it; never record your reading of it.
+- (none yet)
+
+## Operator and lead rules (not the owner's decisions)
+Rules the operator or the lead set, and the lead's interpretations of owner decisions, each with its source or doc
+link: `- YYYY-MM-DD: <rule> (operator, <ref>)` or `(lead, docs/decisions/<file>)`. They bind the team like the
+Operating rules, but they are not the owner's word: an owner decision wins over any of them, and never cite one of
+them as the owner's.
 - (none yet)
 
 ## Operating rules (binding)
@@ -88,7 +99,9 @@ Six skills from agent-stack are installed for every seat. Each has a fixed momen
   review or uncertain the lead picks and writes why in the row), and the merge owner asks the merge gate with
   `agent-merge-evidence --decide` (exact-head evidence; only live Jev `merge` in the act band merges on its own; a
   merge below the act bar, with every deterministic gate green, merges after a one-line exact-head `confirm <sha>` from
-  the other-family independent reviewer, as the integrator role says).
+  the other-family independent reviewer, as the integrator role says). A Jev HOLD in ANY band (act, review or
+  uncertain) blocks the merge unless the owner waives it for that PR (an Owner decisions line with its source); the
+  confirm path applies only to a Jev MERGE below the act bar, never to a HOLD.
   `agent-stuck-check` warns the lead when a seat holding work looks looping, rate-limited or stalled; it never acts.
 - `unslop` and `technical-writing`: every seat checks its text before posting: PR descriptions, SPECs, issue and PR
   comments (including handbacks to a client), queue bodies and messages to the owner. Plain, specific, short; no
