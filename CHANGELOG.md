@@ -26,6 +26,10 @@ has no version numbers; entries are grouped by the day they merged, newest first
 - The lead's and the merge owner's role texts and the CULTURE template use the new Jev helpers.
 
 ### Fixed
+- `agent-merge-evidence` says `N/A: <reason>` instead of MISSING when the bug-review-board proof or the blast radius
+  doesn't apply, from verified facts only: the PR's creation time against the rig's cutoff (`AGENT_BRB_REQUIRED_SINCE`
+  or the CULTURE transition bullet), and the diff (docs only; acceptance tests; `features.json` flag flips). Jev read
+  MISSING as a gap and held no-defect PRs.
 - The CULTURE template's merge-gate line keeps the integrator's below-bar path: a Jev merge below the act bar, with
   every deterministic gate green, merges after a one-line exact-head `confirm <sha>` from the other-family reviewer.
   `agent-merge-evidence --decide` reports a live Jev merge below the act bar (review or uncertain band) as NEEDS

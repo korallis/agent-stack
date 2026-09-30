@@ -23,6 +23,59 @@ const YAML = createRequire(new URL("../jev/package.json", import.meta.url))("yam
 const gh = (...a) => execFileSync("gh", a, { encoding: "utf8", stdio: ["ignore", "pipe", "pipe"], timeout: 60_000 });
 const ghJson = (...a) => JSON.parse(gh(...a) || "null");
 
+// ---- Applicability: N/A only from verified facts (the diff, the PR's creation time, the configured cutoff) ---------
+// Pure: a unified diff (gh pr diff) -> [{ path, oldPath, added: [lines], removed: [lines] }].
+export function parseDiff(text) {
+  const files = [];
+  let cur = null;
+  for (const line of String(text || "").split("\n")) {
+    const m = line.match(/^diff --git a\/(.+?) b\/(.+)$/);
+    if (m) { cur = { path: m[2], oldPath: m[1], added: [], removed: [] }; files.push(cur); continue; }
+    if (!cur || line.startsWith("+++ ") || line.startsWith("--- ")) continue;
+    if (line.startsWith("+")) cur.added.push(line.slice(1));
+    else if (line.startsWith("-")) cur.removed.push(line.slice(1));
+  }
+  return files;
+}
+
+// The bug-review-board cutoff: AGENT_BRB_REQUIRED_SINCE (ISO), else the rig CULTURE's transition bullet
+// ("Transition (…, 2026-09-30 12:55Z): PRs opened before 13:00Z …" or "… before 2026-09-30T13:00Z …").
+export function brbCutoff({ env = process.env, culture = "" } = {}) {
+  const e = (env.AGENT_BRB_REQUIRED_SINCE || "").trim();
+  if (e && !Number.isNaN(Date.parse(e))) return { iso: new Date(Date.parse(e)).toISOString(), source: "AGENT_BRB_REQUIRED_SINCE" };
+  const bullet = (String(culture).match(/^- Transition \([^\n]*(?:\n {2,}[^\n]*)*/m) || [""])[0].replace(/\s+/g, " ");
+  const full = bullet.match(/PRs opened before (\d{4}-\d{2}-\d{2})T(\d{2}:\d{2})Z/);
+  const short = bullet.match(/\((?:[^)]*?)(\d{4}-\d{2}-\d{2})[^)]*\):.*?PRs opened before (\d{2}:\d{2})Z/);
+  const [d, t] = full ? [full[1], full[2]] : short ? [short[1], short[2]] : [];
+  return d ? { iso: new Date(`${d}T${t}:00Z`).toISOString(), source: "the rig CULTURE's transition bullet" } : null;
+}
+
+const isDocs = (p) => /^docs\//i.test(p) || /\.md$/i.test(p);
+const FLAG_LINE = /^\s*"[\w.-]+"\s*:\s*(true|false)\s*,?\s*$/;
+const flagKeys = (lines) => lines.map((l) => l.match(/"([\w.-]+)"/)[1]).sort().join(",");
+// A features.json change that only flips boolean flags: every changed line is `"key": true|false`, same keys on both sides.
+export const flagOnly = (f) => /(^|\/)features\.json$/.test(f.path) && f.added.length > 0
+  && [...f.added, ...f.removed].every((l) => FLAG_LINE.test(l)) && flagKeys(f.added) === flagKeys(f.removed);
+
+// Pure: why the bug-review-board proof doesn't apply, or null (it is required).
+export function brbNotApplicable({ createdAt, cutoff, files }) {
+  if (cutoff && createdAt && Date.parse(createdAt) < Date.parse(cutoff.iso))
+    return `N/A: PR created ${createdAt}, before the bug-review-board cutoff ${cutoff.iso} (${cutoff.source})`;
+  if (files?.length && files.every((f) => isDocs(f.path) && isDocs(f.oldPath)))
+    return `N/A: ${files.length} changed path(s), all docs (docs/** or *.md): ${files.map((f) => f.path).slice(0, 8).join(", ")}`;
+  return null;
+}
+
+// Pure: why a blast-radius check doesn't apply, or null (it is required).
+export function blastNotApplicable({ files }) {
+  if (!files?.length) return null;
+  const why = (f) => /^tests\/acceptance\//.test(f.path) && /^tests\/acceptance\//.test(f.oldPath) ? "tests/acceptance/"
+    : isDocs(f.path) && isDocs(f.oldPath) ? "docs" : flagOnly(f) ? "features.json flag flips only" : null;
+  const kinds = files.map(why);
+  if (kinds.some((k) => !k)) return null;
+  return `N/A: ${files.length} changed path(s), all ${[...new Set(kinds)].join(" or ")} (checked in the diff): ${files.map((f) => f.path).slice(0, 8).join(", ")}`;
+}
+
 // Pure: the review.merge_gate input from gathered facts (facts are what gh and the proof file said; strings only).
 export function buildMergeInput(f) {
   const checks = f.checks || [];
@@ -47,10 +100,10 @@ export function buildMergeInput(f) {
       : []),
     f.brb
       ? `bug-review-board proof ${f.brb.file}: artifact_type=${f.brb.artifact_type} verdict=${f.brb.verdict} candidate_sha=${f.brb.candidate_sha}${f.brb.candidate_sha === f.head ? "" : " (NOT this head)"}; ${f.brb.money_evidence}`
-      : `MISSING: no bug-review-board proof for ${f.head}${f.brbWhere ? ` (looked for ${f.brbWhere})` : " (no --mission/--slice given)"}`,
+      : f.brbNA || `MISSING: no bug-review-board proof for ${f.head}${f.brbWhere ? ` (looked for ${f.brbWhere})` : " (no --mission/--slice given)"}`,
     f.blastRadius
       ? `blast radius (${f.blastRadius.url}, ${f.blastRadius.at}${f.blastRadius.namesHead ? ", names this head" : ", does NOT name this head"}): ${f.blastRadius.excerpt}`
-      : "MISSING: no blast-radius comment on the PR",
+      : f.blastNA ? `blast radius ${f.blastNA}` : "MISSING: no blast-radius comment on the PR",
   ].join("\n");
   const limits = [
     `target branch ${f.baseRef} at ${f.base}; PR head branch ${f.headRef}`,
@@ -69,7 +122,7 @@ function frontmatter(path) {
 
 export function gather(pr, { repo, mission, slice, change, deploy, rollback } = {}) {
   const R = repo ? ["-R", repo] : [];
-  const FIELDS = "number,title,headRefOid,baseRefOid,baseRefName,headRefName,mergeable,mergeStateStatus,isDraft,comments,reviews";
+  const FIELDS = "number,title,createdAt,headRefOid,baseRefOid,baseRefName,headRefName,mergeable,mergeStateStatus,isDraft,comments,reviews";
   const v = ghJson("pr", "view", String(pr), ...R, "--json", FIELDS);
   const nwo = repo || ghJson("repo", "view", "--json", "nameWithOwner").nameWithOwner;
   let checks = [];
@@ -100,7 +153,14 @@ export function gather(pr, { repo, mission, slice, change, deploy, rollback } = 
   const link = ir?.target_url || null;
   const reviewNote = link ? note(notes.find((c) => c.url && c.url === link)) || null : null;
   const unlinkedNote = note([...notes].reverse().find((c) => (c.body || "").length > 40 && (namesHead(c.body) || c.commit === v.headRefOid)));
-  // Checks are read by PR number: if a push landed while we collected, the facts would mix two heads. Re-read and refuse.
+  // Applicability from verified facts only: the actual diff and the PR's creation time against the configured cutoff.
+  const files = parseDiff(gh("pr", "diff", String(pr), ...R));
+  let culture = "";
+  try { culture = readFileSync(join(process.env.OPENRIG_WORK_ROOT || ".", "rig", "CULTURE.md"), "utf8"); } catch { /* no rig CULTURE here */ }
+  const cutoff = brbCutoff({ culture });
+  const brbNA = brb ? null : brbNotApplicable({ createdAt: v.createdAt, cutoff, files });
+  const blastNA = blast ? null : blastNotApplicable({ files });
+  // Checks, statuses and the diff are read by PR number: if a push landed while we collected, the facts would mix two heads. Re-read and refuse.
   const again = ghJson("pr", "view", String(pr), ...R, "--json", "headRefOid,baseRefOid");
   if (again.headRefOid !== v.headRefOid || again.baseRefOid !== v.baseRefOid)
     throw new Error(`the PR moved while its evidence was collected (head ${v.headRefOid.slice(0, 12)} -> ${again.headRefOid.slice(0, 12)}, base ${v.baseRefOid.slice(0, 12)} -> ${again.baseRefOid.slice(0, 12)}); run it again`);
@@ -108,7 +168,7 @@ export function gather(pr, { repo, mission, slice, change, deploy, rollback } = 
     pr: v.number, head: v.headRefOid, base: v.baseRefOid, baseRef: v.baseRefName, headRef: v.headRefName,
     mergeable: v.mergeable, mergeState: v.mergeStateStatus, isDraft: v.isDraft, change: change || v.title, checks,
     independentReview: ir ? { state: ir.state, description: ir.description || "", creator: ir.creator?.login || "?", url: ir.target_url || null } : null,
-    reviewNote, unlinkedNote, brb, brbWhere, blastRadius: blast, deploy, rollback,
+    reviewNote, unlinkedNote, brb, brbWhere, brbNA, blastRadius: blast, blastNA, deploy, rollback,
   };
 }
 
@@ -129,7 +189,7 @@ export function gateProblems(f) {
   if (!f.checks?.length) p.push("no required checks reported");
   else if (f.checks.some((c) => c.bucket !== "pass")) p.push(`required checks not passing: ${f.checks.filter((c) => c.bucket !== "pass").map((c) => c.name).join(", ")}`);
   if (f.independentReview?.state !== "success") p.push(`independent-review is ${f.independentReview?.state || "missing"}`);
-  if (!(f.brb && f.brb.artifact_type === "qa" && f.brb.verdict === "PASS" && f.brb.candidate_sha === f.head)) p.push("no bug-review-board qa PASS for this head");
+  if (!f.brbNA && !(f.brb && f.brb.artifact_type === "qa" && f.brb.verdict === "PASS" && f.brb.candidate_sha === f.head)) p.push("no bug-review-board qa PASS for this head");
   return p;
 }
 

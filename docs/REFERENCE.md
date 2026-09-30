@@ -342,7 +342,14 @@ the lead or a person. Send Jev evidence, not conclusions.
   - the target branch, the deploy effect, and the rollback (a rollback nobody stated is labelled as a proposed
     default).
 
-  A missing check, status, review, proof, blast radius or deploy effect says MISSING. Free text is redacted before it
+  A missing check, status, review, proof, blast radius or deploy effect says MISSING, unless verified facts show it
+  doesn't apply, and then it says `N/A: <reason>` with those facts:
+  - the bug-review-board proof: the PR was created before the rig's cutoff (`AGENT_BRB_REQUIRED_SINCE`, else the rig
+    CULTURE's "Transition (…): PRs opened before HH:MMZ" bullet), or every changed path is docs (`docs/**`, `*.md`);
+  - the blast radius: every changed path is under `tests/acceptance/`, docs, or a `features.json` change that only
+    flips `"key": true|false` values (read from the diff hunks, never the PR title).
+
+  A mixed change (one docs file and one source file) still needs both. Free text is redacted before it
   goes to Jev. The helper refuses if the PR's head or base moves while it collects. A live, not stubbed, Jev `merge`
   in the act band merges on its own (exit 0). A live `merge` below the act bar (review or uncertain band) is NEEDS
   CONFIRM (exit 3) when every gate the helper checks is green: required checks pass, `independent-review` is success,
