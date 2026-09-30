@@ -7,12 +7,15 @@ For each live seat agent (a claude or codex process with OPENRIG_NODE_ID in its 
   - Claude Code runs commands in a shell snapshot taken at launch from the rc files (functions included), with mise's
     PATH ahead of seat-bin. What counts is env.sh's guard functions: the seat must have started after env.sh got them.
 A seat that fails needs a relaunch at idle (`rig launch <rigId> <pod.member>`) after install.sh has placed the guard.
+Loops: behind the guard, the real CLI must not be a version-manager shim. Where mise doesn't activate the tool, its shim
+hands the call back to the guard, an endless loop (2026-09-30). A seat FAILs when the installed guard predates the
+shim-skipping fix, or when the guard (asked with --credguard-resolve under the seat's own PATH) would run a shim.
 Exit 1 when any seat is unguarded.
 This reads process state; confirm it after install with a canary in one Claude and one Codex seat:
 `neon --credguard-status --help` and `vercel --credguard-status --help` must answer "seat guard: active" (without the
 guard the real CLI only prints its help).
 """
-import json, os, sys
+import json, os, subprocess, sys
 
 PROC = os.environ.get("AGENT_CREDGUARD_PROC", "/proc")
 HOME = os.path.expanduser("~")
@@ -58,6 +61,31 @@ has_functions = "seat-bin/credguard" in env_sh and "neon()" in env_sh
 env_sh_mtime = os.path.getmtime(ENV_SH) if os.path.exists(ENV_SH) else None
 guard_ok = os.path.isfile(GUARD) and os.access(GUARD, os.X_OK)
 
+LOOP_SAFE = "credguard-resolve" in (read(GUARD) or "")   # a guard with the WO32 fix skips shims and answers --credguard-resolve
+_resolved = {}
+
+
+def loop_risk(path):
+    """Why this PATH could send neon/vercel into a loop behind the guard, or '' when every tool resolves to a real CLI."""
+    if not guard_ok:
+        return ""
+    if not LOOP_SAFE:
+        return "the installed guard predates the shim fix and can loop behind a mise shim: run install.sh"
+    if path not in _resolved:
+        bad = []
+        for t in ("neon", "vercel"):
+            try:
+                r = subprocess.run([os.path.join(os.path.dirname(GUARD), t), "--credguard-resolve"], capture_output=True,
+                                   text=True, timeout=15, env={"HOME": HOME, "PATH": path})
+                out = r.stdout.strip()
+            except (OSError, subprocess.TimeoutExpired):
+                bad.append(f"{t}: resolving timed out"); continue
+            if out != "none" and ("/shims/" in out or os.path.basename(os.path.realpath(out)) == "mise"):
+                bad.append(f"{t} -> {out} (a shim)")
+        _resolved[path] = "; ".join(bad)
+    return _resolved[path]
+
+
 rows = []
 for pid in sorted((p for p in os.listdir(PROC) if p.isdigit()), key=int):
     comm = (read(f"{PROC}/{pid}/comm") or "").strip()
@@ -82,6 +110,9 @@ for pid in sorted((p for p in os.listdir(PROC) if p.isdigit()), key=int):
                "guard not installed" if not guard_ok else
                "env.sh has no guard functions (run install.sh)" if not has_functions else
                "launched before env.sh got the guard functions: relaunch at idle")
+    risk = loop_risk(env.get("PATH", ""))
+    if risk:
+        ok, why = False, f"loop-prone: {risk}"
     rows.append({"seat": seat, "runtime": comm, "pid": int(pid), "guarded": ok, "why": why})
 
 if "--json" in sys.argv:

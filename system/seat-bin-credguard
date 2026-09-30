@@ -34,17 +34,60 @@ args = sys.argv[1:]
 NAME = {"neonctl": "neon", "vc": "vercel"}.get(tool, tool)
 
 
-def real_binary():
-    for d in os.environ.get("PATH", "").split(os.pathsep):
-        p = os.path.join(d or ".", tool)
-        if os.path.isfile(p) and os.access(p, os.X_OK) and os.path.realpath(p) != me:
-            return p
-    if tool == "neonctl":   # the npm package `neon` only ships `neon`
+# A version manager's shim is never the real CLI. Where mise doesn't activate the tool (a project pins another node), its
+# shim execs the next `vercel`/`neon` on PATH, which is this guard again: guard -> shim -> guard, an endless loop at full
+# CPU in one process (2026-09-30, hc). So shims are skipped (mise's, and any other manager's `shims` dir), and the real
+# CLI comes from the next plain entry on PATH, else from mise's node installs, newest version first.
+def is_shim(p):
+    rp = os.path.realpath(p)
+    return "/shims/" in p or "/shims/" in rp or os.path.basename(rp) == "mise"
+
+
+def version_key(p):
+    v = p.split("/node/", 1)[1].split("/", 1)[0] if "/node/" in p else ""
+    return [int(x) if x.isdigit() else -1 for x in re.split(r"[.\-]", v)]
+
+
+def resolve_real():
+    """The real CLI this guard runs, or None. Never itself, never a shim."""
+    import glob
+    names = [tool] + (["neon"] if tool == "neonctl" else [])   # the npm package `neon` only ships `neon`
+    for name in names:
         for d in os.environ.get("PATH", "").split(os.pathsep):
-            p = os.path.join(d or ".", "neon")
-            if os.path.isfile(p) and os.access(p, os.X_OK) and os.path.realpath(p) != me:
+            p = os.path.join(d or ".", name)
+            if os.path.isfile(p) and os.access(p, os.X_OK) and os.path.realpath(p) != me and not is_shim(p):
                 return p
-    sys.exit(f"{tool} (seat guard): the real {tool} is not on PATH")
+    for name in names:
+        found = {}
+        for p in glob.glob(os.path.expanduser(f"~/.local/share/mise/installs/node/*/bin/{name}")):
+            rp = os.path.realpath(p)
+            if os.path.isfile(rp) and os.access(rp, os.X_OK) and rp != me:
+                found.setdefault(rp, p)
+        if found:
+            return max(found.values(), key=version_key)
+    return None
+
+
+def real_binary():
+    p = resolve_real()
+    if not p:
+        sys.exit(f"{tool} (seat guard): the real {tool} is not on PATH (shims skipped) or under mise's node installs")
+    return p
+
+
+# Loop guard, as a second line of defence: the guard execs the real CLI in the SAME process, so if this process was the
+# guard once already, nothing real ran in between (a wrapper handed the call straight back). A real CLI that starts its
+# own `vercel` or `neon` does so in a child process, with another pid, and is not stopped.
+if os.environ.get("AGENT_CREDGUARD_PID") == str(os.getpid()):
+    sys.exit(f"{tool} (seat guard): loop detected: a wrapper sent {tool} straight back to the guard; check PATH "
+             f"(agent-credguard-check)")
+os.environ["AGENT_CREDGUARD_PID"] = str(os.getpid())
+
+# `--credguard-resolve`: print the real CLI the guard would run, and run nothing (agent-credguard-check uses it).
+if args[:1] == ["--credguard-resolve"]:
+    p = resolve_real()
+    print(p or "none")
+    sys.exit(0 if p and not is_shim(p) else 1)
 
 
 def refuse(why):

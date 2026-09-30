@@ -13,7 +13,9 @@ process.on("exit", () => fs.rmSync(root, { recursive: true, force: true }));
 const home = join(root, "home"), proc = join(root, "proc"), seatBin = join(home, ".local/share/agent-stack/seat-bin");
 const real = join(root, "node26/bin");
 fs.mkdirSync(seatBin, { recursive: true }); fs.mkdirSync(real, { recursive: true }); fs.mkdirSync(join(home, ".config/agent-stack"), { recursive: true });
-fs.writeFileSync(join(seatBin, "credguard"), "#!/bin/sh\n", { mode: 0o755 });
+// A guard stub that answers --credguard-resolve (as the WO32 guard does) from $HOME/resolve-<tool>.
+const guardSrc = '#!/bin/sh\n# answers --credguard-resolve\nt=$(basename "$0"); [ "$1" = --credguard-resolve ] && { cat "$HOME/resolve-$t" 2>/dev/null || echo none; exit 0; }\n';
+fs.writeFileSync(join(seatBin, "credguard"), guardSrc, { mode: 0o755 });
 for (const t of ["neon", "neonctl", "vercel", "vc"]) fs.symlinkSync(join(seatBin, "credguard"), join(seatBin, t));
 for (const t of ["neon", "vercel"]) fs.writeFileSync(join(real, t), "#!/bin/sh\n", { mode: 0o755 });
 const envSh = join(home, ".config/agent-stack/env.sh");
@@ -56,4 +58,19 @@ test("no guard functions in env.sh, or no guard installed: every seat fails with
   assert.match(check().rows.find((r) => r.seat === "c@r").why, /no guard functions/);
   fs.rmSync(join(seatBin, "credguard"));
   assert.ok(check().rows.every((r) => !r.guarded && /guard not installed/.test(r.why)));
+});
+
+
+test("loop-prone seats FAIL (WO32): a guard from before the shim fix, or one that would run a mise shim", () => {
+  fs.writeFileSync(envSh, 'if [ -x "$HOME/.local/share/agent-stack/seat-bin/credguard" ]; then\n  neon() { :; }\nfi\n');
+  fs.utimesSync(envSh, BOOT + 500, BOOT + 500);
+  fs.writeFileSync(join(seatBin, "credguard"), guardSrc, { mode: 0o755 });
+  for (const t of ["neon", "vercel"]) fs.writeFileSync(join(home, `resolve-${t}`), `${real}/${t}\n`);
+  assert.equal(check().rows.find((r) => r.seat === "a@r").guarded, true, "resolves to real CLIs: OK");
+  fs.writeFileSync(join(home, "resolve-vercel"), `${home}/.local/share/mise/shims/vercel\n`);
+  let a = check().rows.find((r) => r.seat === "a@r");
+  assert.equal(a.guarded, false); assert.match(a.why, /loop-prone: vercel -> .*\/shims\/vercel \(a shim\)/);
+  fs.writeFileSync(join(seatBin, "credguard"), "#!/bin/sh\n# a guard from before WO32\n", { mode: 0o755 });
+  const rows = check().rows;
+  assert.ok(rows.every((r) => !r.guarded && /predates the shim fix/.test(r.why)), JSON.stringify(rows));
 });
