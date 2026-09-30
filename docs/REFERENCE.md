@@ -396,18 +396,32 @@ the lead or a person. Send Jev evidence, not conclusions.
 
   Top-level `review` / `qa` / `gate` / `authorFamily` keys set defaults for every repository; `repos` overrides them.
   Sources: `review` is `status` (default; `context` names it) or `comments`; `qa` is `proof` (default) or `comments`;
-  `gate` is `status` (default; `context`) or `comments`. A PR comment or review counts as a record only when:
-  - its first line matches the heading regex, and the seat is the first word of that line (`## review-claude-2 ...`);
-  - it names the full 40-character head sha. A short sha or another head never counts;
-  - it states a verdict in a fixed place: a line `confirm <full head sha>`, else the first `Verdict:` / `Ship:` /
-    `Result:` line (PASS, APPROVE, YES or MERGE; FAIL, BLOCK, NO, HOLD or CHANGES REQUESTED), else a single verdict
-    word in the heading. Nothing is inferred from other free text.
+  `gate` is `status` (default; `context`) or `comments`. A PR comment or review is a record for the head only when:
+  - its first line matches the heading regex. The seat is the first word of that line (`## review-claude-2 ...`);
+  - it declares exactly one candidate, and that candidate is the full 40-character head sha. The declaration is a
+    line of its own: `head: <sha>`, `candidate_sha: <sha>`, `reviewed head <sha>` or `confirm <sha>`. A sha
+    mentioned inside a sentence ("next head <sha> has not been reviewed") is not a declaration. A short sha, another
+    sha, or two different shas never count.
+
+  Fenced code blocks and quoted (`>`) lines are examples or citations, so they are never read as declarations. The
+  verdict comes from every declaration the record makes:
+  - a `confirm <sha>` line;
+  - each `Verdict:` / `Ship:` / `Result:` line: PASS, APPROVE, YES or MERGE for success; FAIL, BLOCK, NO, HOLD or
+    CHANGES_REQUESTED / CHANGES REQUESTED for failure;
+  - verdict words in the heading after the seat word;
+  - a GitHub review's own state (APPROVED or CHANGES_REQUESTED).
+
+  It is success only when every declaration says success. Any failure, and so any conflict, makes it failure. An
+  unreadable value is "unclear", and a record with no verdict counts as no verdict; neither is success. Nothing is
+  inferred from other free text. The latest record decides, so a newer rejection supersedes an older PASS.
 
   The review is the latest record by a seat of another model family than the PR author's. The author's family comes
   from `--author-family`, else `authorFamily`, else an `agent/<seat>` head branch. If the family is unknown, no comment
-  review counts and the review is MISSING, saying why. QA's latest record stands in for the proof file, and the gate's
-  latest record gives its line in the merge state. A bad config (unknown source, missing or invalid heading) stops
-  the helper with exit 2.
+  review counts and the review is MISSING, saying why. The selected review's body goes into the evidence, with its
+  link, time and seat, and redacted like every other free text. Limits it states (`LIMIT:`, `Caveat:`,
+  `Not verified:`, `Untested:`) are repeated in the limits field. QA's latest record stands in for the proof file
+  (PASS, BLOCKING or UNCLEAR), and the gate's latest record gives its line in the merge state. Commit statuses are
+  read across all pages. A bad config (unknown source, missing or invalid heading) stops the helper with exit 2.
 - **Dispatch:** `agent-dispatch pick-seat --rig R --role implementer --task "..."` lists the running seats of the role
   that are idle with no open work, with their load notes (code), and Jev's `intake.seat` picks one. On review or uncertain the lead picks
   and records why in the row.

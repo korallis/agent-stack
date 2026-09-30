@@ -34,8 +34,10 @@ has no version numbers; entries are grouped by the day they merged, newest first
   run. A `jev-merge` that already failed is reported as failed.
 - `agent-merge-evidence` can read the independent review, QA's verdict and the gate's own record from PR comments,
   for repositories that record them there, configured per repository (`.agent-stack/merge-evidence.json`). A comment
-  counts only with its configured heading, the full head sha and a stated verdict. The review must come from a seat
-  of another family than the author's. Before this, such repositories got a false MISSING review and a forced hold.
+  counts only with its configured heading and exactly one declared candidate equal to the full head sha. Its verdict
+  comes from its own declaration lines, never from fenced or quoted examples, and conflicting declarations fail
+  closed. The review must come from a seat of another family than the author's, and its body and stated limits go
+  into the evidence. Commit statuses are read across all pages. Before this, such repositories got a false MISSING review and a forced hold.
 - `agent-merge-evidence` says `N/A: <reason>` instead of MISSING when the bug-review-board proof or the blast radius
   doesn't apply, from verified facts only: the PR's creation time against the rig's cutoff (`AGENT_BRB_REQUIRED_SINCE`
   or the CULTURE transition bullet), and the diff (docs only; acceptance tests; `features.json` flag flips). Jev read

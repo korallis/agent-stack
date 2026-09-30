@@ -167,31 +167,67 @@ export const FAMILIES = ["claude", "codex", "kimi"];
 export const familyOf = (seat) => { const s = String(seat || "").toLowerCase();
   return /claude|fable|opus|sonnet/.test(s) ? "claude" : /codex|gpt|astra/.test(s) ? "codex" : /kimi/.test(s) ? "kimi" : null; };
 
-const hasSha = (body, sha) => new RegExp(`(?<![0-9a-f])${sha}(?![0-9a-f])`, "i").test(String(body || ""));
 const WORD = { success: /^(PASS(ED)?|APPROVED?|YES|MERGE)$/i, failure: /^(FAIL(ED)?|BLOCK(ED|ING)?|NO|HOLD|CHANGES[_ ]REQUESTED|REQUEST[_ ]CHANGES)$/i };
 const word = (w) => WORD.success.test(w) ? "success" : WORD.failure.test(w) ? "failure" : null;
 
-// Pure: the verdict a record states, read only from fixed places: a line "confirm <full head sha>"; else the first
-// "Verdict:" / "Ship:" / "Result:" line; else a verdict word in the heading after its seat word (not both kinds).
-// Free text elsewhere in the body ("no blocking findings") never decides it. null = no verdict stated.
-export function verdictOf(body, head) {
-  const lines = String(body || "").split("\n").map((l) => l.replace(/[*_`]/g, "").trim());
-  if (lines.some((l) => new RegExp(`^confirm\\s+${head}$`, "i").test(l))) return "success";
-  for (const l of lines) {
-    const m = l.match(/^(?:verdict|ship|result)\s*[:=—-]\s*([A-Za-z_ ]+?)\b(?:\s*[—:;,.(-]|$)/i);
-    if (m) return word(m[1].trim()) || word(m[1].trim().split(/\s+/)[0]);
+// Pure: the lines of a record that are its own declarations: fenced code blocks and quoted (">") lines are examples or
+// citations, never the record's own statements, so they are dropped. Bold/code markers are removed; underscores kept.
+export function ownLines(body) {
+  const out = []; let fence = null;
+  for (const raw of String(body || "").split("\n")) {
+    const m = raw.match(/^\s*(`{3,}|~{3,})/);
+    if (m) { if (!fence) fence = m[1][0]; else if (m[1][0] === fence) fence = null; continue; }
+    if (fence || /^\s*>/.test(raw)) continue;
+    out.push(raw.replace(/\*\*|`/g, "").trim());
   }
-  const heading = (lines[0] || "").replace(/^#*\s*[\w.@-]+/, ""), kinds = new Set(heading.split(/[^A-Za-z_]+/).map(word).filter(Boolean));
-  return kinds.size === 1 ? [...kinds][0] : null;
+  return out;
 }
 
-// Pure: the PR comments/reviews that are records for one evidence kind: the FIRST line matches the configured heading,
-// the body names the full 40-character head sha, and a verdict is stated. Oldest first; `seat` is the first word of
-// the heading after the #s (e.g. "## review-codex-1 ..." -> review-codex-1).
-export function records(notes, headingRe, head) {
-  return (notes || []).filter((n) => headingRe.test(String(n.body || "").split("\n", 1)[0]) && hasSha(n.body, head) && verdictOf(n.body, head))
-    .map((n) => ({ ...n, seat: (String(n.body).split("\n", 1)[0].match(/^#*\s*([\w.@-]+)/) || [])[1] || null, state: verdictOf(n.body, head) }));
+// Pure: what a record declares. `candidates`: the shas it names on a declaration line of its own ("head: <sha>",
+// "candidate_sha: <sha>", "reviewed head <sha>", or "confirm <sha>"); a sha mentioned inside a sentence is not one.
+// `verdicts`: each declared verdict (a "confirm <sha>" line; each "Verdict:" / "Ship:" / "Result:" line; verdict
+// words in the heading after its seat word), as success, failure or unknown (a declaration this helper can't read).
+export function declarations(body) {
+  const lines = ownLines(body), candidates = [], verdicts = [];
+  const heading = (lines[0] || "").replace(/^#*\s*[\w.@-]+/, "");
+  for (const w of heading.split(/[^A-Za-z_]+/)) if (word(w)) verdicts.push(word(w));
+  for (const l of lines.slice(1)) {
+    let m = l.match(/^confirm\s+([0-9a-f]{40})$/i);
+    if (m) { candidates.push(m[1].toLowerCase()); verdicts.push("success"); continue; }
+    m = l.match(/^(?:reviewed\s+)?(?:head|candidate(?:[_ ]sha)?|sha|commit)\s*[:=]?\s*([0-9a-f]{40})\.?$/i);
+    if (m) { candidates.push(m[1].toLowerCase()); continue; }
+    m = l.match(/^(?:verdict|ship|result)\s*[:=—-]\s*(.*)$/i);
+    if (m) { const t = m[1].trim().split(/[\s—:;,.()]+/); verdicts.push(word(`${t[0]} ${t[1] || ""}`.trim()) || word(t[0]) || "unknown"); }
+  }
+  return { candidates: [...new Set(candidates)], verdicts };
 }
+
+// Pure: one record's state from its declarations: success only when every declared verdict is success; any failure
+// (or a conflict) is failure; otherwise "unclear". null when it declares none.
+const combine = (v) => {
+  if (!v.length) return null;
+  return v.every((x) => x === "success") ? "success" : v.includes("failure") ? "failure" : "unclear";
+};
+export const verdictOf = (body, reviewState) => combine([...declarations(body).verdicts,
+  ...(reviewState === "APPROVED" ? ["success"] : reviewState === "CHANGES_REQUESTED" ? ["failure"] : [])]);
+
+// Pure: the PR comments/reviews that are records for one evidence kind ABOUT THIS HEAD: the first line matches the
+// configured heading, and the record's own candidate declarations name exactly this head (a record that declares
+// another sha, or none, is not about it). Oldest first. `seat` is the first word of the heading (the seat); `state`
+// is its verdict (null when it declares none, which never counts as success). A GitHub review's own state
+// (APPROVED / CHANGES_REQUESTED) is one more declaration.
+export function records(notes, headingRe, head) {
+  return (notes || []).filter((n) => {
+    if (!headingRe.test(String(n.body || "").split("\n", 1)[0])) return false;
+    const c = declarations(n.body).candidates;
+    return c.length === 1 && c[0] === head.toLowerCase();
+  }).map((n) => {
+    return { ...n, seat: (String(n.body).split("\n", 1)[0].match(/^#*\s*([\w.@-]+)/) || [])[1] || null, state: verdictOf(n.body, n.reviewState) };
+  });
+}
+
+// Pure: the limits a record states in its own lines ("LIMIT: ...", "Limits: ...", "Caveat: ...", "Not verified: ...").
+export const statedLimits = (body) => ownLines(body).flatMap((l) => [...l.matchAll(/\b(?:LIMITS?|CAVEATS?|NOT VERIFIED|UNTESTED)\s*:\s*(.+?)(?=\s+\b(?:LIMITS?|CAVEATS?)\s*:|$)/gi)].map((m) => m[1].trim()));
 
 // Pure: the independent review from comments: the LATEST record by a seat of another family than the author's. An
 // unknown author family, or a record whose seat has no family, never counts (cross-family can't be verified).
@@ -200,14 +236,14 @@ export function reviewFromComments(notes, headingRe, head, authorFamily) {
   if (!authorFamily) return { review: null, problem: `the PR author's model family is unknown (set authorFamily, pass --author-family, or use an agent/<seat> branch), so no comment review can be verified as cross-family${recs.length ? `; ${recs.length} review record(s) for this head not counted` : ""}` };
   const r = recs.filter((x) => familyOf(x.seat) && familyOf(x.seat) !== authorFamily).at(-1);
   if (!r) return { review: null, problem: `no review comment for ${head} by a seat outside the ${authorFamily} family${recs.length ? ` (${recs.length} same-family or unattributed record(s) ignored)` : ""}` };
-  return { review: { state: r.state, description: String(r.body).split("\n", 1)[0].slice(0, 200), creator: r.seat, url: r.url || null, source: "comment" },
-    note: { url: r.url, at: r.at, author: r.seat, excerpt: String(r.body).replace(/\s+/g, " ").slice(0, 900) } };
+  return { review: { state: r.state || "no verdict stated", description: String(r.body).split("\n", 1)[0].slice(0, 200), creator: r.seat, url: r.url || null, source: "comment" },
+    note: { url: r.url, at: r.at, author: r.seat, excerpt: String(r.body).replace(/\s+/g, " ").slice(0, 900), limits: statedLimits(r.body) } };
 }
 
 // Pure: QA's verdict from comments, in the shape of a bug-review-board proof (the same exact-head rule applies).
 export function qaFromComments(notes, headingRe, head) {
   const r = records(notes, headingRe, head).at(-1);
-  return r ? { file: r.url || "PR comment", artifact_type: "qa", verdict: r.state === "success" ? "PASS" : "BLOCKING", candidate_sha: head,
+  return r ? { file: r.url || "PR comment", artifact_type: "qa", verdict: r.state === "success" ? "PASS" : r.state === "failure" ? "BLOCKING" : "UNCLEAR", candidate_sha: head,
     money_evidence: `QA comment by ${r.seat} (${r.at}): ${String(r.body).replace(/\s+/g, " ").slice(0, 300)}`, source: "comment" } : null;
 }
 
@@ -215,7 +251,7 @@ export function qaFromComments(notes, headingRe, head) {
 export function gateFrom(cfg, { statuses, notes, head }) {
   if (cfg.gate.source === "comments") {
     const r = records(notes, cfg.gate.headingRe, head).at(-1);
-    return r ? { state: r.state, url: r.url || null, source: "comment" } : { state: null, source: "comment" };
+    return r ? { state: r.state || "posted without a verdict", url: r.url || null, source: "comment" } : { state: null, source: "comment" };
   }
   const st = (statuses || []).find((x) => x.context === cfg.gate.context);   // newest first
   return st ? { state: st.state, url: st.target_url || null, source: "status" } : { state: null, source: "status" };
@@ -322,7 +358,9 @@ export function buildMergeInput(f) {
         : f.sources?.review === "comments" ? `MISSING: ${f.reviewProblem || `no independent review comment for ${f.head}`}` : `MISSING: no ${RC} status on ${f.head}`,
     // Provenance comes only from the status's own link (target_url): a comment that merely mentions the head could be
     // anyone's, the author's included, so it is shown as UNVERIFIED and never as the review.
-    f.independentReview?.source === "comment" ? null : f.reviewNote
+    f.independentReview?.source === "comment"
+      ? (f.reviewNote ? `independent review report, the selected comment itself (${f.reviewNote.url}, ${f.reviewNote.at}, seat ${f.reviewNote.author}): ${f.reviewNote.excerpt}` : null)
+      : f.reviewNote
       ? `independent review report, linked from the ${RC} status (${f.reviewNote.url}, ${f.reviewNote.at}, by ${f.reviewNote.author}): ${f.reviewNote.excerpt}`
       : f.independentReview?.url
         ? `independent review report: ${f.independentReview.url} (linked from the status, outside this PR; not read)`
@@ -341,6 +379,7 @@ export function buildMergeInput(f) {
     `target branch ${f.baseRef} at ${f.base}; PR head branch ${f.headRef}`,
     `mergeable: ${f.mergeable}; ${mergeStateLine(f)}; draft: ${f.isDraft}`,
     ...(f.gate ? [gateLine(f)] : []),
+    ...(f.reviewNote?.limits?.length ? [`limits stated by the independent review: ${f.reviewNote.limits.join("; ")}`] : []),
     `deploy effect: ${f.deploy || "MISSING: not stated (see the rig CULTURE specifics)"}`,
     f.rollback ? `rollback: ${f.rollback}` : `rollback: not stated (proposed default: revert the squash commit on ${f.baseRef})`,
   ].join("\n");
@@ -363,7 +402,10 @@ export function gather(pr, { repo, mission, slice, change, deploy, rollback, con
   let checks = [];
   try { checks = ghJson("pr", "checks", String(pr), ...R, "--required", "--json", "name,state,bucket"); }
   catch (e) { const out = String(e.stdout || ""); if (out.trim().startsWith("[")) checks = JSON.parse(out); }   // gh exits non-zero when a check fails
-  const statuses = ghJson("api", `repos/${nwo}/commits/${v.headRefOid}/statuses?per_page=100`) || [];   // newest first
+  // Every status, all pages, newest first: absence from one page is not absence (a context's latest status can sit
+  // behind many newer ones of another context).
+  const pages = ghJson("api", `repos/${nwo}/commits/${v.headRefOid}/statuses?per_page=100`, "--paginate", "--slurp") || [];
+  const statuses = pages.every(Array.isArray) ? pages.flat() : pages;
   // Every merge requirement on the base branch (rulesets + classic protection) and its state on this head. When
   // BLOCKED, these tell a real block apart from "only the gate itself hasn't posted". Unreadable -> null (keeps BLOCKED).
   let requirements = null;
@@ -395,7 +437,7 @@ export function gather(pr, { repo, mission, slice, change, deploy, rollback, con
   const namesHead = (body) => (body || "").includes(short);
   const notes = [
     ...(v.comments || []).map((c) => ({ body: c.body, url: c.url, at: c.createdAt, author: c.author?.login })),
-    ...(v.reviews || []).map((r) => ({ body: r.body, url: r.url || `review ${r.id}`, at: r.submittedAt, author: r.author?.login, commit: r.commit?.oid })),
+    ...(v.reviews || []).map((r) => ({ body: r.body, url: r.url || `review ${r.id}`, at: r.submittedAt, author: r.author?.login, commit: r.commit?.oid, reviewState: r.state })),
   ].sort((a, b) => String(a.at).localeCompare(String(b.at)));
   const gate = gateFrom(cfg, { statuses, notes, head: v.headRefOid });
   const author = { family: authorFamily || cfg.authorFamily || familyOf((v.headRefName || "").match(/^agent\/([\w.-]+)/)?.[1]) || null };
@@ -405,7 +447,7 @@ export function gather(pr, { repo, mission, slice, change, deploy, rollback, con
     excerpt: br.body.slice(br.body.search(/^## Blast radius/m)).replace(/\s+/g, " ").slice(0, 700) } : null;
   // What the cross-family reviewer verified: the report the independent-review status links to (target_url), and
   // nothing else. Without a link, the latest comment naming the head is passed on only as UNVERIFIED.
-  const note = (c) => c && { url: c.url, at: c.at, author: c.author || "?", excerpt: c.body.replace(/\s+/g, " ").slice(0, 900) };
+  const note = (c) => c && { url: c.url, at: c.at, author: c.author || "?", excerpt: c.body.replace(/\s+/g, " ").slice(0, 900), limits: statedLimits(c.body) };
   let independentReview = null, reviewNote = null, unlinkedNote = null, reviewProblem = null;
   if (cfg.review.source === "comments") {
     ({ review: independentReview, note: reviewNote = null, problem: reviewProblem = null } = reviewFromComments(notes, cfg.review.headingRe, v.headRefOid, author.family));

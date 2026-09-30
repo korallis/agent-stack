@@ -90,7 +90,7 @@ case "$*" in
   "pr diff 42 -R o/r") printf 'diff --git a/src/login.ts b/src/login.ts\\n--- a/src/login.ts\\n+++ b/src/login.ts\\n@@ -1 +1 @@\\n-old\\n+new\\n' ;;
   "pr view 42 -R o/r --json"*) echo '{"number":42,"title":"Adds login","createdAt":"2026-09-30T14:00:00Z","headRefOid":"${H}","baseRefOid":"${B}","baseRefName":"main","headRefName":"agent/x","mergeable":"MERGEABLE","isDraft":false,"comments":[{"body":"looks good","url":"https://x/c0","createdAt":"2026-09-30T09:00:00Z","author":{"login":"a"}},{"body":"## Blast radius\\nSafe because: only a nullable column (${H.slice(0, 7)}).","url":"https://x/c1","createdAt":"2026-09-30T10:00:00Z","author":{"login":"rev"}},{"body":"Implementation update on ${H.slice(0, 7)}: my tests pass, all fixes are ready for review.","url":"https://x/c3","createdAt":"2026-09-30T11:00:00Z","author":{"login":"builder"}}],"reviews":[{"body":"Lenses applied: correctness, security. Verified the login tests pass on ${H.slice(0, 7)}; one finding fixed.","url":"https://x/r1","submittedAt":"2026-09-30T10:05:00Z","author":{"login":"rev"},"commit":{"oid":"${H}"}}]}' ;;
   "pr checks 42 -R o/r --required --json"*) echo '[{"name":"verify","state":"FAILURE","bucket":"fail"},{"name":"qa-evidence","state":"SUCCESS","bucket":"pass"}]'; exit 1 ;;
-  "api repos/o/r/commits/${H}/statuses?per_page=100") echo '[{"context":"independent-review","state":"success","description":"QA PASS","creator":{"login":"rev"},"target_url":"https://x/r1"}]' ;;
+  "api repos/o/r/commits/${H}/statuses?per_page=100 --paginate --slurp") echo '[{"context":"independent-review","state":"success","description":"QA PASS","creator":{"login":"rev"},"target_url":"https://x/r1"}]' ;;
   *) echo "unexpected gh $*" >&2; exit 9 ;;
 esac
 `, { mode: 0o755 });
@@ -378,7 +378,7 @@ case "$*" in
   "pr view 7 -R o/r --json"*) printf '%s\\n' '{"number":7,"title":"Docs","createdAt":"${created}","headRefOid":"${H}","baseRefOid":"${B}","baseRefName":"main","headRefName":"d","mergeable":"MERGEABLE","mergeStateStatus":"CLEAN","isDraft":false,"comments":[],"reviews":[]}' ;;
   "pr diff 7 -R o/r") cat "${join(root, "diff7")}" ;;
   "pr checks 7 -R o/r --required --json"*) echo '[]' ;;
-  "api repos/o/r/commits/${H}/statuses?per_page=100") echo '[]' ;;
+  "api repos/o/r/commits/${H}/statuses?per_page=100 --paginate --slurp") echo '[]' ;;
   *) echo "unexpected gh $*" >&2; exit 9 ;;
 esac
 `, { mode: 0o755 });
@@ -513,30 +513,42 @@ test("required contexts: a same-name success never masks a failure; app-bound co
 });
 
 // ---- WO39: evidence from PR comments for repos that record reviews there ------------------------------------------
-test("verdicts come only from fixed places and comment records need the exact full head sha", () => {
-  assert.equal(verdictOf(`## review-codex-1\nconfirm ${H}`, H), "success");
-  assert.equal(verdictOf(`## review-codex-1\nconfirm ${H.slice(0, 7)}`, H), null, "a short sha does not confirm");
-  assert.equal(verdictOf("## review-codex-1\nVerdict: PASS — no blocking findings", H), "success", "free text after the verdict doesn't flip it");
-  assert.equal(verdictOf("## review-codex-1\n**Ship:** NO", H), "failure");
-  assert.equal(verdictOf("## review-codex-1 APPROVE", H), "success");
-  assert.equal(verdictOf("## review-codex-1 PASS then FAIL", H), null, "a heading with both kinds states nothing");
-  assert.equal(verdictOf(`## jev-merge\nhead ${H}`, H), null, "the seat word in the heading is not a verdict");
-  assert.equal(verdictOf(`## jev-merge merge\nhead ${H}`, H), "success");
-  assert.equal(verdictOf("## review-codex-1\nLooks fine, would pass, no blocking issues", H), null, "no verdict line: nothing inferred from free text");
+test("records: verdicts only from the record's own declarations, bound to one declared candidate (QA WO39 f4, f5)", () => {
+  const C = "c".repeat(40);
+  assert.equal(verdictOf(`## review-codex-1\nconfirm ${H}`), "success");
+  assert.equal(verdictOf("## review-codex-1\nVerdict: PASS — no blocking findings"), "success", "free text after the verdict doesn't flip it");
+  assert.equal(verdictOf("## review-codex-1\n**Ship:** NO"), "failure");
+  assert.equal(verdictOf("## review-codex-1 APPROVE"), "success");
+  assert.equal(verdictOf("## review-codex-1\nVerdict: CHANGES_REQUESTED"), "failure", "underscores are kept");
+  assert.equal(verdictOf("## review-codex-1\nVerdict: changes requested"), "failure");
+  assert.equal(verdictOf("## review-codex-1 PASS then FAIL"), "failure", "conflicting declarations fail closed");
+  assert.equal(verdictOf(`## review-codex-1\nVerdict: FAIL\nconfirm ${H}`), "failure", "a confirm line never outvotes a FAIL");
+  assert.equal(verdictOf(`## review-codex-1\nVerdict: FAIL\n\`\`\`text\nconfirm ${H}\n\`\`\``), "failure");
+  assert.equal(verdictOf(`## review-codex-1\n\`\`\`\nVerdict: PASS\n\`\`\`\n> Verdict: PASS`), null, "fenced and quoted lines are examples, not declarations");
+  assert.equal(verdictOf("## review-codex-1\nVerdict: not yet"), "unclear", "an unreadable verdict is not success");
+  assert.equal(verdictOf("## review-codex-1\nLooks fine, would pass"), null, "nothing inferred from free text");
+  assert.equal(verdictOf("## review-codex-1\nVerdict: PASS", "CHANGES_REQUESTED"), "failure", "a GitHub review state is a declaration too");
+  assert.equal(verdictOf("## jev-merge\nhead x"), null, "the seat word in the heading is not a verdict");
   const re = /^## review-/;
   const notes = [
-    { body: `## review-codex-1\nhead ${H}\nVerdict: PASS`, url: "u1", at: "1" },
+    { body: `## review-codex-1\nhead: ${H}\nVerdict: PASS`, url: "u1", at: "1" },
     { body: `## review-codex-1\nhead ${H.slice(0, 12)}\nVerdict: PASS`, url: "u2", at: "2" },
     { body: `Summary\n## review-codex-1\nhead ${H}\nVerdict: PASS`, url: "u3", at: "3" },
     { body: `## review-codex-1\nhead ${H}0\nVerdict: PASS`, url: "u4", at: "4" },
     { body: `## notes\nhead ${H}\nVerdict: PASS`, url: "u5", at: "5" },
+    { body: `## review-codex-1\nReviewed head ${C}\nVerdict: PASS\nNext head ${H} has not been reviewed.`, url: "u6", at: "6" },
+    { body: `## review-codex-1\nhead ${H}\nhead ${C}\nVerdict: PASS`, url: "u7", at: "7" },
+    { body: `## review-codex-1\nVerdict: PASS\n\`\`\`\nhead ${H}\n\`\`\``, url: "u8", at: "8" },
+    { body: `## review-codex-1\nThe head ${H} looks good.\nVerdict: PASS`, url: "u9", at: "9" },
   ];
-  assert.deepEqual(records(notes, re, H).map((n) => [n.url, n.seat, n.state]), [["u1", "review-codex-1", "success"]], "short sha, heading not on line 1, longer hex, other heading: none count");
+  assert.deepEqual(records(notes, re, H).map((n) => [n.url, n.seat, n.state]), [["u1", "review-codex-1", "success"]],
+    "short sha, heading not first, longer hex, other heading, another declared head, two heads, a fenced head, a mention in a sentence: none count");
+  assert.deepEqual(records([{ body: `## review-codex-1\nhead ${H}\nstill looking`, url: "n" }], re, H).map((n) => n.state), [null], "a record with no verdict is kept (and is not success)");
 });
 
 test("review from comments: the latest other-family record; same-family or unknown author never counts", () => {
   const re = /^## review-(claude|codex)/;
-  const rec = (seat, v, at) => ({ body: `## ${seat}\nReviewed ${H}\nVerdict: ${v}`, url: `https://x/${seat}-${at}`, at });
+  const rec = (seat, v, at) => ({ body: `## ${seat}\nReviewed head ${H}\nVerdict: ${v}`, url: `https://x/${seat}-${at}`, at });
   const notes = [rec("review-codex-1", "PASS", "1"), rec("review-claude-2", "FAIL", "2"), rec("review-codex-2", "FAIL", "3"), rec("review-codex-1", "PASS", "4")];
   let r = reviewFromComments(notes, re, H, "claude");
   assert.deepEqual([r.review.state, r.review.creator, r.review.url, r.review.source], ["success", "review-codex-1", "https://x/review-codex-1-4", "comment"]);
@@ -578,7 +590,7 @@ case "$*" in
   "pr view 8 -R o/r --json"*) printf '%s\\n' '{"number":8,"title":"Tests only","createdAt":"2026-09-30T15:00:00Z","headRefOid":"${H}","baseRefOid":"${B}","baseRefName":"master","headRefName":"t","mergeable":"MERGEABLE","mergeStateStatus":"BLOCKED","reviewDecision":"","isDraft":false,"comments":[],"reviews":[]}' ;;
   "pr diff 8 -R o/r") printf 'diff --git a/tests/acceptance/a.spec.ts b/tests/acceptance/a.spec.ts\\n--- a/tests/acceptance/a.spec.ts\\n+++ b/tests/acceptance/a.spec.ts\\n@@ -1 +1 @@\\n-x\\n+y\\n' ;;
   "pr checks 8 -R o/r --required --json"*) echo '[{"name":"qa-evidence","state":"SUCCESS","bucket":"pass"}]' ;;
-  "api repos/o/r/commits/${H}/statuses?per_page=100") echo '${status(ir)}' ;;
+  "api repos/o/r/commits/${H}/statuses?per_page=100 --paginate --slurp") echo '${status(ir)}' ;;
   "api repos/o/r/rules/branches/master?per_page=100") echo '[{"type":"required_status_checks","parameters":{"required_status_checks":[{"context":"verify"},{"context":"qa-evidence"},{"context":"jev-merge"}]}},{"type":"required_status_checks","parameters":{"required_status_checks":[{"context":"independent-review"}]}}]' ;;
   "api repos/o/r/branches/master/protection") echo "gh: Branch not protected (HTTP 404)" >&2; exit 1 ;;
   *) echo "unexpected gh $*" >&2; exit 9 ;;
@@ -609,7 +621,7 @@ process.stdout.write(typeof out === "string" ? out : JSON.stringify(out));
   const fixture = {
     view: { number: 9, title: "Adds login", createdAt: "2026-09-30T09:00:00Z", headRefOid: H, baseRefOid: B, baseRefName: "main", headRefName: "agent/impl-codex-1",
       mergeable: "MERGEABLE", mergeStateStatus: "BLOCKED", reviewDecision: "", isDraft: false,
-      comments: [c(`## review-codex-2\nhead ${H}\nVerdict: PASS`, 1), c(`## review-claude-1\nhead ${H}\nVerdict: PASS\nLenses: correctness`, 2),
+      comments: [c(`## review-codex-2\nhead ${H}\nVerdict: PASS`, 1), c(`## review-claude-1\nhead ${H}\nVerdict: PASS\nLenses: correctness; verified the API contract. LIMIT: concurrent writers untested`, 2),
         c(`## qa-claude-1\ncandidate ${H}\nShip: YES`, 3), c(`## review-claude-1\nhead ${H.slice(0, 7)}\nVerdict: FAIL`, 4)], reviews: [] },
     diff: "diff --git a/src/a.ts b/src/a.ts\n--- a/src/a.ts\n+++ b/src/a.ts\n@@ -1 +1 @@\n-x\n+y\n",
     checks: [{ name: "verify", state: "SUCCESS", bucket: "pass" }], statuses: [],
@@ -635,6 +647,8 @@ process.stdout.write(typeof out === "string" ? out : JSON.stringify(out));
     "the codex author's own family is skipped and the short-sha FAIL doesn't count");
   assert.match(o.review, /bug-review-board proof https:\/\/x\/c3: artifact_type=qa verdict=PASS candidate_sha=a{40}; QA comment by qa-claude-1/);
   assert.doesNotMatch(o.review, /MISSING: no independent|UNVERIFIED/);
+  assert.match(o.review, /independent review report, the selected comment itself \(https:\/\/x\/c2, .*seat review-claude-1\): .*verified the API contract\. LIMIT: concurrent writers untested/, "QA WO39 f6: the body travels with the verdict");
+  assert.match(o.limits, /limits stated by the independent review: concurrent writers untested/);
   assert.match(o.limits, /merge gate jev-merge \(gate comment\): pending this gate \(nothing posted for a{40}\)/);
   const gateC = c(`## jev-merge\nhead ${H}\nVerdict: HOLD`, 5);
   r = run({ view: { ...fixture.view, comments: [...fixture.view.comments, gateC] } }); o = JSON.parse(r.stdout);
@@ -651,6 +665,12 @@ process.stdout.write(typeof out === "string" ? out : JSON.stringify(out));
   assert.match(o.limits, /merge state: BLOCKED \(verify: no result from its required app 15368 \(another producer's result does not count\); jev-merge not yet posted\)/);
   o = JSON.parse(run({ checkRuns: { total_count: 150, check_runs: [] } }).stdout);
   assert.match(o.limits, /verify: bound to app 15368 and the check runs could not be read/, "a truncated list is unreadable");
+  // QA WO39 f7: every status page is read; a failed gate behind 100 newer statuses is still seen.
+  const many = Array.from({ length: 100 }, () => ({ context: "verify", state: "success" }));
+  fs.rmSync(join(work, ".agent-stack", "merge-evidence.json"));
+  o = JSON.parse(run({ statuses: [many, [{ context: "jev-merge", state: "failure", target_url: "https://x/g" }]] }).stdout);
+  assert.match(o.limits, /merge state: BLOCKED \(jev-merge: status failure\)/);
+  assert.match(o.limits, /merge gate jev-merge \(status\): failure already posted/);
   const bad = join(root, "bad.json"); fs.writeFileSync(bad, JSON.stringify({ review: { source: "comments" } }));
   r = run({}, ["--config", bad]); assert.equal(r.status, 2); assert.match(r.stderr, /review\.heading is required/);
 });
