@@ -137,6 +137,13 @@ for kv in "transcripts.poll_interval_seconds 15" "transcripts.lines 400"; do
   if [ "$(env -u OPENRIG_TRANSCRIPTS_LINES -u OPENRIG_TRANSCRIPTS_POLL_INTERVAL_SECONDS "$B/rig" config get "$1" 2>/dev/null)" = "$2" ]; then ok "$1 = $2"
   elif [ $CHECK = 1 ]; then todo "$1 should be $2"; else "$B/rig" config set "$1" "$2" >/dev/null 2>&1 && ok "$1 = $2 (set)" || todo "$1 = $2"; fi
 done
+# Stuck-sweep pickup threshold: OpenRig's default (3 min) paged "unclaimed" on rows a busy seat picks up minutes later
+# (false positives, 2026-09-29). 480 min here; an existing value in config.json is kept, whatever it is.
+cfg=${OPENRIG_HOME:-$HOME/.openrig}/config.json
+have=$(jq -r '.queue.pickupStallThresholdMinutes // empty' "$cfg" 2>/dev/null || true)
+if [ -n "$have" ]; then ok "queue.pickup_stall_threshold_minutes = $have (kept)"
+elif [ $CHECK = 1 ]; then todo "queue.pickup_stall_threshold_minutes should be 480 (OpenRig's default of 3 min pages on busy seats)"
+else "$B/rig" config set queue.pickup_stall_threshold_minutes 480 >/dev/null 2>&1 && ok "queue.pickup_stall_threshold_minutes = 480 (set)" || todo "queue.pickup_stall_threshold_minutes = 480"; fi
 # OpenRig's own seat skills (mission-slice-sop, queue-handoff, compaction/continuity, ...). The rig specs name the
 # openrig-core plugin, but seats are launched without --plugin-dir, so they only get these as user-level skills.
 # Symlinks follow OpenRig upgrades.
