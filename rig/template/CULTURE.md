@@ -41,6 +41,11 @@ adds every new owner decision here the day it is made. A decision recorded here 
   front of `neon` and `vercel` refuses anything else) and use them by name. A flag the installed CLI's `--help` doesn't
   list may be silently ignored: check before relying on it. If a secret was printed, tell the owner at once so it gets
   rotated.
+- Context wall: when your context passes ~85%, write your handover packet (open work, decisions WITH rationale under a
+  "Decisions" heading, facts you couldn't check marked `UNVERIFIED:`) and publish it with
+  `agent-seat-recap write <packet.md> [--learned <lessons.md>]`. It becomes your seat's RECAP.md, the first thing a
+  `rig seat handover --source rebuild` successor reads; lessons for every later occupant go to LEARNED.md. A packet
+  anywhere else is never read by the rebuild. Check with `agent-seat-recap show`.
 - Scratch checkouts for review or QA go under `~/Projects/<P>.worktrees/`, never `/tmp`, and are removed in a
   `finally`/`trap`. Test suites remove every `mkdtemp` directory they create.
 - Proof for a project in the workspace catalog: `rig proof show|judge <project-id>:<mission>/slices/<slice>` (the catalog

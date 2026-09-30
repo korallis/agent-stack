@@ -99,6 +99,13 @@ project-workspace.md) and the `mission-slice-sop` skill. Verify each point on di
 - **Credentials never go to a seat's output** (it is the transcript). Seats' `neon`/`vercel` run through
   `seat-bin/credguard`: credential-printing commands need `--output-file <path>` (0600) and use the values by name
   (docs/PROJECT-ENV.md). `agent-credguard-check` shows which running seats are guarded (Claude seats: after a relaunch).
+- **Rebuild handovers read only the seat's declared chain**: `<topology.root>/rigs/<rig>/seats/<member>/RECAP.md`,
+  then LEARNED.md, the compaction restore packet and superseded recaps. A packet in shared-docs is never read.
+  - The seat publishes its packet with `agent-seat-recap write <packet> [--learned <lessons>]` (OpenRig's
+    `rig context recap-write` underneath); `agent-seat-recap show --seat <member>@<rig>` shows what a rebuild would get.
+  - Hand over with `agent-seat-handover <seat> --source rebuild --reason …`: the CLI gives up after 5 s ("outcome
+    UNKNOWN") while the daemon completes, so the wrapper polls `rig seat status` until this run's handover is
+    recorded. Exit 0 complete, 1 failed, 3 unknown. On unknown never retry: that makes a second successor.
 - **`rig ps` ATTN `user_prompt_submit`** on a seat that is working is not a stuck seat: it is mid-turn. Check its pane
   before acting.
 - Never stop or restart `openrig.service` or `openrig-tmux.service` while rigs run. Restart the daemon with
