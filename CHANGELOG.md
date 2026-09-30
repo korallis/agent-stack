@@ -20,6 +20,14 @@ has no version numbers; entries are grouped by the day they merged, newest first
   to fix it (`/model fable` once).
 
 ### Changed
+- CULTURE "Owner decisions" holds only the owner's own decisions, each ending with its source (`(owner, Slack
+  HH:MMZ)` or `(owner, via operator relay of <ref>)`). Operator and lead rules, and a lead's interpretations, go in
+  a new "Operator and lead rules" section with their link. The lead role never records an interpretation as the
+  owner's, and asks through the operator when an answer is ambiguous. `agent-project-check` WARNs on an unsourced
+  Owner decisions bullet and on one resting on `docs/decisions/*`. `agent-project-onboard` adds the source to the
+  decisions it stages. The template and the integrator role now say that a Jev HOLD in any band blocks the merge
+  unless the owner waives it; the confirm path is only for a Jev MERGE below the act bar. After a lead's
+  interpretation, filed as an owner decision, led to merges over Jev HOLDs.
 - Model defaults for every team template and every onboarding: architects run `claude-fable-5-1`, Codex implementers
   run `gpt-6-astra`. Reviewers, QA and the Claude UI implementers are unchanged. Rationale and Jev request ids:
   [docs/REFERENCE.md](docs/REFERENCE.md#models-and-decisions).

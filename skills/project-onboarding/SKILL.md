@@ -55,8 +55,9 @@ Record the answers in `~/.openrig/state/<project>-stage/` (plan, owner decisions
    docs; mark anything you inferred. For an issues-based project, one mission per issue, and the issue workflow:
    research, plan, implement, verify; never close an issue; when done, comment on it (what was wrong, what changed with
    the PR link, where to see it, exact re-test steps), reassign it to its creator and ask them to re-test.
-5. **CULTURE.** In `<Name>-work/rig/CULTURE.md`, the owner decisions go under "Owner decisions" (dated, one bullet
-   each), and the project's facts under "## <Name> specifics": trunk, package manager, required checks and merge path,
+5. **CULTURE.** In `<Name>-work/rig/CULTURE.md`, the owner's own decisions go under "Owner decisions" (dated, one
+   bullet each, ending with its source: `(owner, via operator relay of <ref>)`); operator and lead rules go under
+   "Operator and lead rules"; and the project's facts under "## <Name> specifics": trunk, package manager, required checks and merge path,
    databases and env (what seats use and never touch), deploys (what a merge ships, where the witness runs).
    `agent-project-onboard` appends both from the staged files; then run `agent-refresh-guidance <Name> --apply`.
 6. **Brief the lead.** Review `<Name>-work/docs/lead-brief.md` (rendered from

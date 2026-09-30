@@ -35,6 +35,25 @@ def read(p):
         return None
 
 
+OWNER_SOURCE = re.compile(r"\(owner, (?:Slack [^)]*\d{1,2}:\d{2}Z|via operator relay of [^)]+)\)\.?\s*$")
+
+
+def owner_decision_problems(culture):
+    """The Owner decisions bullets without an owner source at their end, and those citing a lead doc (docs/decisions/*)."""
+    m = re.search(r"^## Owner decisions[^\n]*\n(.*?)(?=^## |\Z)", culture, re.M | re.S)
+    bullets, cur = [], None
+    for line in (m.group(1) if m else "").split("\n"):
+        if line.startswith("- "):
+            cur = [line[2:].strip()]; bullets.append(cur)
+        elif cur is not None and line.startswith("  ") and line.strip():
+            cur.append(line.strip())
+        else:
+            cur = None
+    texts = [" ".join(b) for b in bullets if " ".join(b) != "(none yet)"]
+    short = lambda t: (t[:70] + "…") if len(t) > 70 else t
+    return [short(t) for t in texts if not OWNER_SOURCE.search(t)], [short(t) for t in texts if "docs/decisions/" in t]
+
+
 def frontmatter(text):
     m = re.match(r"^---\n(.*?)\n---\n", text or "", re.S)
     fm = {}
@@ -80,9 +99,17 @@ if specs:
     missing = [c for c in cwds if not os.path.isdir(c)]
     rep("OK" if not missing else "FAIL", "every seat has its worktree", ", ".join(map(os.path.basename, missing[:5])))
     rep("OK" if os.path.exists(f"{W}/rig/CULTURE.md") else "FAIL", "rig/CULTURE.md present")
-    lacks = [h for h in ("Owner decisions", "Operating rules") if not re.search(rf"^## {h}", read(f"{W}/rig/CULTURE.md") or "", re.M)]
-    rep("OK" if not lacks else "WARN", "CULTURE.md has the Owner decisions + Operating rules sections",
+    lacks = [h for h in ("Owner decisions", "Operator and lead rules", "Operating rules") if not re.search(rf"^## {h}", read(f"{W}/rig/CULTURE.md") or "", re.M)]
+    rep("OK" if not lacks else "WARN", "CULTURE.md has the Owner decisions, Operator and lead rules and Operating rules sections",
         f"missing {', '.join(lacks)}: copy from agent-stack rig/template/CULTURE.md" if lacks else "")
+    # Owner decisions hold only the owner's own decisions, each ending with its source; a lead's interpretation filed
+    # there reads to every seat as the owner's word (WO41).
+    unsourced, lead_docs = owner_decision_problems(read(f"{W}/rig/CULTURE.md") or "")
+    rep("OK" if not unsourced else "WARN", "every Owner decisions bullet ends with its owner source",
+        f"{len(unsourced)} without (owner, Slack HH:MMZ) or (owner, via operator relay of <ref>): {'; '.join(unsourced[:3])}. "
+        "Add the source, or move a rule that isn't the owner's to \"Operator and lead rules\"" if unsourced else "")
+    rep("OK" if not lead_docs else "WARN", "no Owner decisions bullet rests on a lead doc (docs/decisions/*)",
+        f"{'; '.join(lead_docs[:3])}: a lead's doc is not the owner's word; move it to \"Operator and lead rules\"" if lead_docs else "")
     rpi = re.search(r"^## Research, plan, implement", read(f"{W}/rig/CULTURE.md") or "", re.M) is not None
     rep("OK" if rpi else "WARN", "CULTURE.md has the Research, plan, implement section (owner standard, 2026-09-30)",
         "" if rpi else "copy the section from agent-stack rig/template/CULTURE.md, then agent-refresh-guidance <P> --apply")

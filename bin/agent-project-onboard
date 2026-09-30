@@ -163,6 +163,10 @@ if "Plan approval:" not in (open(culture).read() if os.path.isfile(culture) else
         if A.get("PLAN_APPROVAL") == "operator" else
         "the owner's. The operator reviews the plan first, then asks the owner; the lead dispatches no builder until the "
         "operator sends 'plan approved' with the owner's OK."))
+# Owner decisions carry their source (CULTURE "Owner decisions"): these came from the owner through the operator's
+# onboarding answers. A bullet that already names its owner source keeps it.
+OWNER_SOURCE = re.compile(r"\(owner, (?:Slack [^)]*\d{1,2}:\d{2}Z|via operator relay of [^)]+)\)\.?\s*$")
+decisions = [d if OWNER_SOURCE.search(d) else d.rstrip().rstrip(".") + ". (owner, via operator relay of the onboarding answers)" for d in decisions]
 specifics = bullets_of(files["SPECIFICS"]) if "SPECIFICS" in files else []
 workflow = ("4. Done per issue: merged through the gate, deployed, witnessed where the creator re-tests. Then comment on "
             "the issue (what was wrong, what changed with the PR link, where to see it, exact re-test steps), reassign "

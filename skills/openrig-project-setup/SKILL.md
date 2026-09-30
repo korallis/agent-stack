@@ -123,10 +123,13 @@ The kernel operator runs all of this from one request with the `project-onboardi
 
 ## Team conventions every rig carries (rig/template/CULTURE.md)
 New projects get these from the template. `agent-project-check` WARNs when an existing rig's CULTURE.md lacks
-"Owner decisions", or when its Operating rules lack the `agent-heavy` rule; copy them in from the template, then
-`agent-refresh-guidance <P> --apply` on a running rig.
-- **Owner decisions**: dated standing decisions, delegations and approvals. The lead checks them before asking the
-  owner and adds each new one there.
+"Owner decisions" or "Operator and lead rules", or when its Operating rules lack the `agent-heavy` rule; copy them
+in from the template, then `agent-refresh-guidance <P> --apply` on a running rig. It also WARNs on an Owner decisions
+bullet without an owner source, and on one that cites a lead doc (`docs/decisions/*`) as its basis.
+- **Owner decisions**: the owner's own dated standing decisions, delegations and approvals, each ending with its
+  source. The lead checks them before asking the owner and adds each new one there.
+- **Operator and lead rules**: rules the operator or the lead set, and the lead's interpretations, with their link.
+  Binding, but never the owner's word.
 - **Operating rules**:
   - owner FYIs use `--human-intent update` and are auto-closed once posted (`agent-human-inbox-tidy`; an unset intent counts as a decision); decision requests use `--human-intent decision` and stay pending (never parked or claimed: the Slack reply closes only a pending row);
   - review/QA scratch checkouts go under `~/Projects/<P>.worktrees/`, never `/tmp`, removed in a trap, and tests clean up their `mkdtemp` dirs;
