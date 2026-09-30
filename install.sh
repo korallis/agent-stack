@@ -79,7 +79,7 @@ place "$S/system/seat-bin-credguard" "$L/seat-bin/credguard" 755
 for f in neon neonctl vercel vc; do link "$L/seat-bin/credguard" "$L/seat-bin/$f"; done
 mkdir -p "$L/seat-tools"; place "$S/system/seat-tools-rig" "$L/seat-tools/rig" 755   # queue writes get the project tag + EC-3 worktree_path
 link "$L/bin/agent-login" "$B/agent-login"
-for f in claude-pool agent-heavy openrig-ensure playwright-browsers agent-claude-trust openrig-upgrade openrig-update agent-project-new agent-project-check agent-never-prompt-check agent-credguard-check agent-human-inbox-tidy openrig-daemon-cycle openrig-tmux-adopt agent-queue-backfill agent-refresh-guidance agent-project-repair agent-waves-sync; do link "$S/bin/$f" "$B/$f"; done
+for f in claude-pool agent-heavy openrig-ensure playwright-browsers agent-claude-trust openrig-upgrade openrig-update agent-project-new agent-project-check agent-never-prompt-check agent-credguard-check agent-skills-check agent-human-inbox-tidy openrig-daemon-cycle openrig-tmux-adopt agent-queue-backfill agent-refresh-guidance agent-project-repair agent-waves-sync; do link "$S/bin/$f" "$B/$f"; done
 link "$S/proxy/status.py" "$B/agent-proxy-status"
 if [ $CHECK = 0 ] || mise where "node@$NODE_FOR_JEV" >/dev/null 2>&1; then
   launcher jev-mcp "$NODE_FOR_JEV" "$S/jev/bin/jev-mcp.js"
@@ -172,9 +172,15 @@ if [ $CHECK = 0 ]; then
   claude plugin marketplace add typesafe-ai/skills >/dev/null 2>&1 || true
   claude plugin install typesafe@typesafe-ai >/dev/null 2>&1 || todo "claude plugin typesafe@typesafe-ai"
   claude plugin install superpowers@claude-plugins-official >/dev/null 2>&1 || todo "claude plugin superpowers"
+  claude plugin install vercel@claude-plugins-official >/dev/null 2>&1 || todo "claude plugin vercel@claude-plugins-official"
   codex plugin add superpowers@openai-api-curated >/dev/null 2>&1 || todo "codex plugin superpowers"
   ts=$(ls -d "$HOME"/.claude/plugins/cache/typesafe-ai/typesafe/*/skills/typesafe-ai 2>/dev/null | tail -1)
-  [ -n "$ts" ] && [ ! -e "$HOME/.agents/skills/typesafe-ai" ] && { mkdir -p "$HOME/.agents/skills"; cp -r "$ts" "$HOME/.agents/skills/"; }
+  # Codex has no Claude plugins: it gets the plugin's typesafe-ai skill as a copy, refreshed when the plugin updates.
+  if [ -n "$ts" ] && ! diff -rq "$ts" "$HOME/.agents/skills/typesafe-ai" >/dev/null 2>&1; then
+    mkdir -p "$HOME/.agents/skills" "$L/backups/skills"
+    [ -e "$HOME/.agents/skills/typesafe-ai" ] && mv "$HOME/.agents/skills/typesafe-ai" "$L/backups/skills/agents-typesafe-ai-$(date +%Y%m%d%H%M%S)"
+    cp -r "$ts" "$HOME/.agents/skills/"
+  fi
   claude mcp get jev >/dev/null 2>&1 || claude mcp add --scope user jev -- "$B/jev-mcp" >/dev/null
   # Playwright MCP: the pinned release with Playwright's own Chrome for Testing (see system/codex/config.toml). An
   # existing user-scope entry with other args (the old @latest + --executable-path) is replaced.
@@ -201,6 +207,11 @@ claude mcp get playwright 2>/dev/null | grep -qF -- "Args: -y @playwright/mcp@$P
 codex plugin list 2>/dev/null | grep -q "superpowers.*installed" && ok "Superpowers (Codex)" || todo "Superpowers (Codex)"
 command -v toon >/dev/null && ok "toon CLI" || todo "toon CLI"
 command -v neon >/dev/null && ok "Neon CLI + skills" || todo "Neon CLI (npm i -g neon; then neon login)"
+
+step "Skills (one line per source; docs/SKILLS.md)"
+{ "$S/bin/agent-skills-check" || true; } | while IFS= read -r l; do   # its WARN exit must not stop install.sh
+  case $l in "ok  "*) ok "${l#ok    }";; WARN*) todo "WARN: ${l#WARN  }";; *) printf '   %s\n' "$l";; esac
+done
 
 step "Next, by hand (logins cannot be scripted)"
 cat <<EOF
