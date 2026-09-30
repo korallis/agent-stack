@@ -17,10 +17,16 @@ branches and a redeploy with the new values (in progress then). A warning went i
     stdout to /dev/null. A plain `> file` is refused too: Claude Code's Bash tool captures a command's stdout in a
     regular file that becomes the transcript, so the guard can't tell the two apart;
   - a `--no-secrets` that the installed CLI's own `--help` doesn't list for that command is refused, not passed on;
-  - `vercel env ls --json` and `vercel env pull /dev/stdout` are guarded the same way.
+  - `vercel env ls --json` and `vercel env pull /dev/stdout` are guarded the same way;
+  - arguments are read the way the CLI's parser (yargs) reads them, erring on the guarded side, and file destinations
+    are checked where the CLI really writes (a link to the harness's capture file is refused).
+- Rollout is verified, not assumed: `agent-credguard-check` reports each running seat. Codex runs commands with its own
+  PATH, where seat-bin comes before any real CLI. Claude Code seats get the env.sh functions from the shell snapshot
+  they take at launch, so they are guarded only after a relaunch at idle.
 - Rule in the rig CULTURE template and docs/PROJECT-ENV.md: never print a credential; write it to a 0600 file and use
   it by name.
-- test/credguard.test.js: stub CLIs only, including a harness that captures stdout in a regular file.
+- test/credguard.test.js and test/credguard-check.test.js: stub CLIs and a fake /proc only, including a harness that
+  captures stdout in a regular file.
 
 ## Limits
 The guard covers these CLIs' own output. It can't stop a seat from printing a file's contents (`cat .env`) or running

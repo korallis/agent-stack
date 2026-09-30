@@ -1,0 +1,90 @@
+#!/usr/bin/env python3
+"""agent-credguard-check [--json]: is every running seat's `neon`/`vercel` behind the credential guard? Read-only.
+
+For each live seat agent (a claude or codex process with OPENRIG_NODE_ID in its environment):
+  - Codex runs each command in `bash -c` with Codex's own environment (no rc files), so what counts is Codex's PATH:
+    the first `neon`, `neonctl`, `vercel` and `vc` on it must be seat-bin's (the guard), not a real CLI.
+  - Claude Code runs commands in a shell snapshot taken at launch from the rc files (functions included), with mise's
+    PATH ahead of seat-bin. What counts is env.sh's guard functions: the seat must have started after env.sh got them.
+A seat that fails needs a relaunch at idle (`rig launch <rigId> <pod.member>`) after install.sh has placed the guard.
+Exit 1 when any seat is unguarded.
+"""
+import json, os, sys
+
+PROC = os.environ.get("AGENT_CREDGUARD_PROC", "/proc")
+HOME = os.path.expanduser("~")
+GUARD = os.path.realpath(f"{HOME}/.local/share/agent-stack/seat-bin/credguard")
+ENV_SH = f"{HOME}/.config/agent-stack/env.sh"
+TOOLS = ("neon", "neonctl", "vercel", "vc")
+
+
+def read(p, mode="r"):
+    try:
+        with open(p, mode) as f:
+            return f.read()
+    except OSError:
+        return None
+
+
+def boot_time():
+    for line in (read(f"{PROC}/stat") or "").splitlines():
+        if line.startswith("btime "):
+            return int(line.split()[1])
+    return 0
+
+
+def started(pid):
+    st = read(f"{PROC}/{pid}/stat") or ""
+    try:
+        ticks = int(st.rsplit(")", 1)[1].split()[19])
+    except (IndexError, ValueError):
+        return None
+    return boot_time() + ticks / os.sysconf("SC_CLK_TCK")
+
+
+def first_on_path(path, tool):
+    for d in path.split(":"):
+        p = os.path.join(d, tool)
+        if os.path.isfile(p) and os.access(p, os.X_OK):
+            return os.path.realpath(p)
+    return None
+
+
+env_sh = read(ENV_SH) or ""
+has_functions = "seat-bin/credguard" in env_sh and "neon()" in env_sh
+env_sh_mtime = os.path.getmtime(ENV_SH) if os.path.exists(ENV_SH) else None
+guard_ok = os.path.isfile(GUARD) and os.access(GUARD, os.X_OK)
+
+rows = []
+for pid in sorted((p for p in os.listdir(PROC) if p.isdigit()), key=int):
+    comm = (read(f"{PROC}/{pid}/comm") or "").strip()
+    if comm not in ("claude", "codex"):
+        continue
+    raw = read(f"{PROC}/{pid}/environ", "rb")
+    if not raw:
+        continue
+    env = dict(kv.split("=", 1) for kv in raw.decode(errors="replace").split("\0") if "=" in kv)
+    if not env.get("OPENRIG_NODE_ID"):
+        continue
+    seat = env.get("OPENRIG_SESSION_NAME") or env["OPENRIG_NODE_ID"]
+    if comm == "codex":
+        hits = {t: first_on_path(env.get("PATH", ""), t) for t in TOOLS}
+        bad = [f"{t} -> {h}" for t, h in hits.items() if h and h != GUARD]
+        ok = guard_ok and not bad
+        why = "PATH reaches the guard first" if ok else ("guard not installed" if not guard_ok else "PATH reaches a real CLI first: " + ", ".join(bad))
+    else:
+        t0 = started(pid)
+        ok = guard_ok and has_functions and env_sh_mtime is not None and t0 is not None and t0 > env_sh_mtime
+        why = ("launched after env.sh got the guard functions" if ok else
+               "guard not installed" if not guard_ok else
+               "env.sh has no guard functions (run install.sh)" if not has_functions else
+               "launched before env.sh got the guard functions: relaunch at idle")
+    rows.append({"seat": seat, "runtime": comm, "pid": int(pid), "guarded": ok, "why": why})
+
+if "--json" in sys.argv:
+    print(json.dumps(rows, indent=2))
+else:
+    for r in rows:
+        print(f"{'OK  ' if r['guarded'] else 'FAIL'} {r['seat']} ({r['runtime']} {r['pid']}): {r['why']}")
+    print(f"{sum(r['guarded'] for r in rows)}/{len(rows)} seats guarded")
+sys.exit(0 if all(r["guarded"] for r in rows) else 1)

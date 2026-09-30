@@ -73,11 +73,12 @@ test("--output-file through a symlink or onto a device: refused, nothing written
 });
 
 test("an unsupported --no-secrets is refused even to a file; a supported one lets create print to a pipe", () => {
-  refused(run("neon cs --no-secrets --output-file cs.txt"), /no --no-secrets in the installed version/);
+  refused(run("neon cs --no-secrets --output-file cs.txt"), /no --no-secrets\/--secrets in the installed version/);
   refused(run("neon connection-string main --secrets=false"), /no --no-secrets/);
   refused(run("neon branches list --no-secrets"), /no --no-secrets/);
   passed(run("neon projects create --no-secrets"));
-  passed(run("neon branches create --name cs --no-secrets"));
+  passed(run("neon branches create --name feature-1 --no-secrets"));
+  refused(run("neon branches create --name cs --no-secrets"));   // a value equal to a guarded word: guarded side
 });
 
 test("projects/branches create without --no-secrets, and other printing commands: refused on a pipe", () => {
@@ -136,4 +137,54 @@ test("a harness that captures stdout in a regular file (as Claude Code's Bash to
   const text = fs.readFileSync(cap, "utf8");
   assert.equal(r.status, 2); assert.match(text, /refused/); assert.doesNotMatch(text, new RegExp(SECRET));
   assert.equal(fs.existsSync(calls) ? fs.readFileSync(calls, "utf8").split("\n").filter((l) => l && !l.includes("--help")).length : 0, 0);
+});
+
+
+test("booleans read the way yargs reads them (QA round 1): negations, =values, a following true/false, last one wins", () => {
+  for (const c of ["neon cs --psql=false", "neon cs --psql false", "neon cs --psql --no-psql", "neon cs --psql=1",
+    "neon cs --help=false", "neon cs --version=false", "neon cs --help --no-help", "neon cs --help false",
+    "neon projects create --no-secrets --secrets=true", "neon projects create --no-secrets --secrets",
+    "neon projects create --no-secrets=false", "neon projects create --secrets=0"])
+    refused(run(c));
+  for (const c of ["neon cs --psql", "neon cs --psql true", "neon cs --no-psql --psql", "neon projects create --secrets --no-secrets",
+    "neon projects create --secrets=false"])
+    passed(run(c));
+  const h = run("neon cs --help"); assert.equal(h.status, 0); assert.match(h.calls, /cs --help/);
+});
+
+test("an option the guard doesn't know can't hide a command word (QA round 1: --client-id projects cs)", () => {
+  for (const c of ["neon --client-id projects cs", "neon --whatever x api /projects", "neon role --zzz y create",
+    "neon credentials --q z reveal t1"])
+    refused(run(c));
+});
+
+test("roles create is guarded: -o json/yaml prints the whole role, password included (QA round 1)", () => {
+  for (const c of ["neon roles create --name app", "neon role create -o json", "neon roles create --output yaml"]) refused(run(c));
+  passed(run("neon roles create --name app --output-file role.json"));
+});
+
+test("destinations are checked where the CLI really writes (QA round 1): default env file, --cwd, links to the capture", () => {
+  const d = join(root, "wt"); fs.mkdirSync(join(d, "nested"), { recursive: true });
+  const cap = join(root, "capture2.output");
+  const inHarness = (cmd) => {   // stdout+stderr go to a regular capture file, as in Claude Code's Bash tool
+    fs.rmSync(calls, { force: true });
+    const fd = fs.openSync(cap, "w");
+    const r = spawnSync("bash", ["-c", cmd], { cwd: d, stdio: ["ignore", fd, fd], env: { PATH, HOME: join(root, "home") } });
+    fs.closeSync(fd);
+    const c = fs.existsSync(calls) ? fs.readFileSync(calls, "utf8") : "";
+    return { status: r.status, out: "", err: fs.readFileSync(cap, "utf8"), calls: c, ran: c.split("\n").filter((l) => l && !l.includes("--help")) };
+  };
+  fs.symlinkSync(cap, join(d, ".env.local"));
+  refused(inHarness("neon env pull"), /open as this command/);            // default target .env.local -> the capture
+  fs.symlinkSync("/dev/stdout", join(d, ".env"));
+  refused(inHarness("neon env pull"), /open as this command|device|not a regular/);           // .env exists, so it is the default
+  fs.symlinkSync(cap, join(d, "nested/vars.env"));
+  refused(inHarness("vercel --cwd nested env pull vars.env --yes"), /open as this command/);
+  refused(inHarness("vercel env pull --cwd=nested vars.env"), /open as this command/);
+  fs.linkSync(cap, join(d, "hard.env"));
+  refused(inHarness("neon cs --output-file hard.env"), /open as this command/);
+  fs.rmSync(join(d, ".env")); fs.rmSync(join(d, ".env.local"));
+  fs.writeFileSync(join(d, ".env.local"), "A=1\n"); fs.symlinkSync(join(d, ".env.local"), join(d, "nested/.env.local"));
+  const ok = inHarness("neon env pull; vercel --cwd nested env pull");    // plain files, and a link to one (the worktree case)
+  assert.equal(ok.status, 0, ok.err); assert.equal(ok.ran.length, 2, ok.calls);
 });
