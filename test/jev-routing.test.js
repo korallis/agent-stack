@@ -1303,7 +1303,8 @@ test("agent-merge-evidence end to end: the selected review's paragraph blast rad
   const ghDir = join(root, "gh-wo53"); fs.mkdirSync(ghDir, { recursive: true });
   fs.writeFileSync(join(ghDir, "gh"), `#!${process.execPath}
 const f = JSON.parse(require("fs").readFileSync(process.env.GH_FIXTURE, "utf8")), a = process.argv.slice(2).join(" ");
-const out = a.startsWith("pr view") ? f.view : a.startsWith("pr diff") ? f.diff : a.startsWith("pr checks") ? f.checks : a.includes("/statuses") ? f.statuses : undefined;
+const rv = a.match(/\\/pulls\\/15\\/reviews\\/(\\d+)/);
+const out = rv ? (f.apiReviews || {})[rv[1]] : a.startsWith("pr view") ? f.view : a.startsWith("pr diff") ? f.diff : a.startsWith("pr checks") ? f.checks : a.includes("/statuses") ? f.statuses : undefined;
 if (out === undefined) { process.stderr.write("unexpected gh " + a); process.exit(9); }
 process.stdout.write(typeof out === "string" ? out : JSON.stringify(out));
 `, { mode: 0o755 });
@@ -1334,4 +1335,21 @@ process.stdout.write(typeof out === "string" ? out : JSON.stringify(out));
   const bold = c(`review-codex-2\nHead: ${H}\n**Blast radius:** BOLD_FORM only the writer.`, 3);
   review = run({ statuses: [{ ...fixture.statuses[0], target_url: bold.url }], view: { ...fixture.view, comments: [older, bold] } });
   assert.match(review, /in the selected review, names this head\): Blast radius: BOLD_FORM only the writer\./);
+  // QA PR57 f1: a fetched GitHub review that is the gate's own report never supplies the blast radius.
+  const gateReview = { body: `## jev-merge\nHead: ${H}\nBlast radius: GATE_SECTION`, commit_id: H, user: { login: "owner" }, submitted_at: "2026-09-30T23:00:00Z" };
+  const linked = "https://github.com/o/r/pull/15#pullrequestreview-555";
+  review = run({ apiReviews: { 555: gateReview }, statuses: [{ ...fixture.statuses[0], target_url: linked }, { context: "jev-merge", state: "failure", target_url: linked }],
+    view: { ...fixture.view, comments: [older] } });
+  assert.doesNotMatch(review, /GATE_SECTION/, "the gate's report is not the selected review's blast radius");
+  // QA PR57 f2: a pending status's stale linked report doesn't outrank the exact-head review that gave the verdict.
+  const work = join(root, "wo53-work"); fs.mkdirSync(join(work, ".agent-stack"), { recursive: true });
+  fs.writeFileSync(join(work, ".agent-stack", "merge-evidence.json"), JSON.stringify({ identities: { "rev-codex": "codex" } }));
+  review = run({ apiReviews: { 555: { body: `stale review\nHead: ${OLD}\nBlast radius: STALE_SECTION`, commit_id: OLD, user: { login: "owner" }, submitted_at: "2026-09-30T20:00:00Z" } },
+    statuses: [{ ...fixture.statuses[0], state: "pending", target_url: linked }],
+    view: { ...fixture.view, comments: [], reviews: [{ id: "PRR_777", url: "https://github.com/o/r/pull/15#pullrequestreview-777", author: { login: "rev-codex" },
+      body: `Review at ${H.slice(0, 7)}\nVerdict: PASS\nBlast radius: DECIDING_SECTION the writer only.`, state: "APPROVED", submittedAt: "2026-09-30T23:30:00Z", commit: { oid: H } }] } });
+  assert.match(review, /^review verdict: success, from GitHub PR review APPROVED by rev-codex/);
+  assert.match(review, /in the selected review, names this head\): Blast radius: DECIDING_SECTION/);
+  assert.doesNotMatch(review.split("\n").find((l) => l.startsWith("blast radius")) || "", /STALE_SECTION/, "the blast radius is the deciding review's");
+  fs.rmSync(join(work, ".agent-stack"), { recursive: true, force: true });
 });

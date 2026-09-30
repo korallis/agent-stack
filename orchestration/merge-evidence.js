@@ -700,10 +700,12 @@ export function gather(pr, { repo, mission, slice, change, deploy, rollback, con
     if (rl && rl[1].toLowerCase() === nwo.toLowerCase() && Number(rl[2]) === Number(pr)) {
       try {
         const rv = ghJson("api", `repos/${nwo}/pulls/${pr}/reviews/${rl[3]}`);
+        // A fetched review that is the gate's own report is history, like every other gate report (WO45).
+        if (isGateReport({ body: rv.body, url: link, kind: "review" }, cfg, statuses)) throw Object.assign(new Error("gate report"), { gate: true });
         reviewNote = { url: link, at: rv.submitted_at || "?", author: rv.user?.login || "?", commit: rv.commit_id || null,
           excerpt: String(rv.body || "").replace(/\s+/g, " ").slice(0, 900), limits: statedLimits(rv.body) };
-        reviewSrc = { url: link, at: reviewNote.at, author: reviewNote.author, commit: reviewNote.commit, body: String(rv.body || "") };
-      } catch { reviewLinkProblem = "a review on this PR, but it could not be read"; }
+        reviewSrc = { url: link, at: reviewNote.at, author: reviewNote.author, commit: reviewNote.commit, body: String(rv.body || ""), kind: "review" };
+      } catch (e) { reviewLinkProblem = e.gate ? "a review on this PR that is the merge gate's own report, so not the review" : "a review on this PR, but it could not be read"; }
     }
     unlinkedNote = note([...notes].reverse().find((c) => (c.body || "").length > 40 && (namesHead(c.body) || c.commit === v.headRefOid)));
   }
@@ -715,8 +717,10 @@ export function gather(pr, { repo, mission, slice, change, deploy, rollback, con
   // verdict); else the newest note naming this head; else the newest note (labelled as not naming it).
   const picked = reviewVerdictFacts.key && reviewVerdictFacts.key !== cfg.review.source && reviewVerdictFacts.report
     ? notes.find((c) => c.url === reviewVerdictFacts.report.url) : null;
-  const withBlast = (c) => c && blastSection(c.body) !== null;
-  const own = [reviewSrc, picked].find(withBlast);
+  // The gate's own reports never count (a fetched review can be one); the source that gave the verdict comes first
+  // (a pending status's stale linked report doesn't outrank the review that actually decided).
+  const withBlast = (c) => c && !isGateReport(c, cfg, statuses) && blastSection(c.body) !== null;
+  const own = (reviewVerdictFacts.key === "status" ? [reviewSrc, picked] : [picked, reviewSrc]).find(withBlast);
   const namingHead = (c) => namesHead(c.body) || c.commit === v.headRefOid;
   const br = own || [...notes].reverse().find((c) => withBlast(c) && namingHead(c)) || [...notes].reverse().find(withBlast);
   const blast = br ? { url: br.url, at: br.at, namesHead: namingHead(br), own: br === own, excerpt: blastSection(br.body) } : null;
