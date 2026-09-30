@@ -526,11 +526,16 @@ test("records: verdicts only from the record's own declarations, bound to one de
   const C = "c".repeat(40);
   assert.equal(verdictOf(`## review-codex-1\nconfirm ${H}`), "success");
   assert.equal(verdictOf("## review-codex-1\nVerdict: PASS — no blocking findings"), "success", "free text after the verdict doesn't flip it");
-  assert.equal(verdictOf("## review-codex-1\n**Ship:** NO"), "failure");
-  assert.equal(verdictOf("## review-codex-1 APPROVE"), "success");
+  // WO47: only an explicit "Verdict:" (or "confirm <sha>") line declares a verdict; the heading and other lines don't.
+  assert.equal(verdictOf("## review-codex-1\n**Ship:** NO"), null, "Ship: is not a verdict line");
+  assert.equal(verdictOf("## review-codex-1 APPROVE"), null, "a verdict word in the heading is not a verdict");
+  assert.equal(verdictOf("## review-claude-1 evidence remedy for HOLD 7db8271e req-123 MERGE\nVerdict: PASS"), "success", "the live case");
+  assert.equal(verdictOf("## review-claude-1 evidence remedy for HOLD 7db8271e\nVerdict: FAIL"), "failure");
+  assert.equal(verdictOf("## review-claude-1 evidence remedy for HOLD 7db8271e\nLooks good overall."), null, "no Verdict line: no verdict, never an inferred failure");
+  assert.equal(verdictOf("Verdict: FAIL"), "failure", "a Verdict line as the body's first line (a GitHub review) counts");
   assert.equal(verdictOf("## review-codex-1\nVerdict: CHANGES_REQUESTED"), "failure", "underscores are kept");
   assert.equal(verdictOf("## review-codex-1\nVerdict: changes requested"), "failure");
-  assert.equal(verdictOf("## review-codex-1 PASS then FAIL"), "failure", "conflicting declarations fail closed");
+  assert.equal(verdictOf("## review-codex-1\nVerdict: PASS\nVerdict: FAIL"), "failure", "conflicting declarations fail closed");
   assert.equal(verdictOf(`## review-codex-1\nVerdict: FAIL\nconfirm ${H}`), "failure", "a confirm line never outvotes a FAIL");
   assert.equal(verdictOf(`## review-codex-1\nVerdict: FAIL\n\`\`\`text\nconfirm ${H}\n\`\`\``), "failure");
   assert.equal(verdictOf(`## review-codex-1\n\`\`\`\nVerdict: PASS\n\`\`\`\n> Verdict: PASS`), null, "fenced and quoted lines are examples, not declarations");
@@ -568,9 +573,9 @@ test("review from comments: the latest other-family record; same-family or unkno
   r = reviewFromComments(notes, re, H, null);
   assert.equal(r.review, null); assert.match(r.problem, /author's model family is unknown/);
   assert.deepEqual(["review-claude-2", "impl-codex-1", "impl-astra-1", "review-kimi", "operator"].map(familyOf), ["claude", "codex", "codex", "kimi", null]);
-  const qa = qaFromComments([{ body: `## qa-claude-1\ncandidate ${H}\nShip: YES`, url: "https://x/qa", at: "5" }], /^## qa-/, H);
+  const qa = qaFromComments([{ body: `## qa-claude-1\ncandidate ${H}\nVerdict: PASS`, url: "https://x/qa", at: "5" }], /^## qa-/, H);
   assert.deepEqual([qa.artifact_type, qa.verdict, qa.candidate_sha, qa.file], ["qa", "PASS", H, "https://x/qa"]);
-  assert.equal(qaFromComments([{ body: `## qa-claude-1\ncandidate ${"c".repeat(40)}\nShip: YES` }], /^## qa-/, H), null, "another head's QA doesn't count");
+  assert.equal(qaFromComments([{ body: `## qa-claude-1\ncandidate ${"c".repeat(40)}\nVerdict: PASS` }], /^## qa-/, H), null, "another head's QA doesn't count");
 });
 
 test("merge-evidence config: defaults, per-repo overrides, and refusals", () => {
@@ -631,7 +636,7 @@ process.stdout.write(typeof out === "string" ? out : JSON.stringify(out));
     view: { number: 9, title: "Adds login", createdAt: "2026-09-30T09:00:00Z", headRefOid: H, baseRefOid: B, baseRefName: "main", headRefName: "agent/impl-codex-1",
       mergeable: "MERGEABLE", mergeStateStatus: "BLOCKED", reviewDecision: "", isDraft: false,
       comments: [c(`## review-codex-2\nhead ${H}\nVerdict: PASS`, 1), c(`## review-claude-1\nhead ${H}\nVerdict: PASS\nLenses: correctness; verified the API contract. LIMIT: concurrent writers untested`, 2),
-        c(`## qa-claude-1\ncandidate ${H}\nShip: YES`, 3), c(`## review-claude-1\nhead ${H.slice(0, 7)}\nVerdict: FAIL`, 4)], reviews: [] },
+        c(`## qa-claude-1\ncandidate ${H}\nVerdict: PASS`, 3), c(`## review-claude-1\nhead ${H.slice(0, 7)}\nVerdict: FAIL`, 4)], reviews: [] },
     diff: "diff --git a/src/a.ts b/src/a.ts\n--- a/src/a.ts\n+++ b/src/a.ts\n@@ -1 +1 @@\n-x\n+y\n",
     checks: [{ name: "verify", state: "SUCCESS", bucket: "pass" }], statuses: [],
     rules: [{ type: "required_status_checks", parameters: { required_status_checks: [{ context: "verify", integration_id: 15368 }, { context: "jev-merge" }] } }],
@@ -1056,4 +1061,32 @@ process.stdout.write(typeof out === "string" ? out : JSON.stringify(out));
     /merge state: UNSTABLE \(required check\(s\) not passing: verify: check pending/, "pending only in the required-check feed");
   assert.match(run({ runsFail: true }).limits, /merge state: UNSTABLE \(the checks behind it could not be read\)/);
   assert.match(run({ view: { ...fixture.view, mergeStateStatus: "CLEAN" } }).limits, /merge state: CLEAN;/, "other states unchanged");
+});
+
+// ---- WO47: the verdict comes only from an explicit "Verdict:" line; the heading names the seat, nothing else -------
+test("agent-merge-evidence end to end: a HOLD in the review heading is not a verdict; no Verdict line is NONE VERIFIABLE", () => {
+  const ghDir = join(root, "gh-wo47"); fs.mkdirSync(ghDir, { recursive: true });
+  fs.writeFileSync(join(ghDir, "gh"), `#!${process.execPath}
+const f = JSON.parse(require("fs").readFileSync(process.env.GH_FIXTURE, "utf8")), a = process.argv.slice(2).join(" ");
+const out = a.startsWith("pr view") ? f.view : a.startsWith("pr diff") ? f.diff : a.startsWith("pr checks") ? f.checks : a.includes("/statuses") ? f.statuses : undefined;
+if (out === undefined) { process.stderr.write("unexpected gh " + a); process.exit(9); }
+process.stdout.write(typeof out === "string" ? out : JSON.stringify(out));
+`, { mode: 0o755 });
+  const work = join(root, "wo47-work"); fs.mkdirSync(join(work, ".agent-stack"), { recursive: true });
+  fs.writeFileSync(join(work, ".agent-stack", "merge-evidence.json"), JSON.stringify({ review: { source: "comments", heading: "^## review-" } }));
+  const comment = (body) => ({ body, url: "https://x/r1", createdAt: "2026-09-30T12:00:00Z", author: { login: "owner" } });
+  const fixture = { view: { number: 11, title: "x", createdAt: "2026-09-30T09:00:00Z", headRefOid: H, baseRefOid: B, baseRefName: "main", headRefName: "agent/impl-codex-1",
+      mergeable: "MERGEABLE", mergeStateStatus: "CLEAN", reviewDecision: "", isDraft: false, comments: [], reviews: [] },
+    diff: "diff --git a/src/a.ts b/src/a.ts\n--- a/src/a.ts\n+++ b/src/a.ts\n@@ -1 +1 @@\n-x\n+y\n", checks: [{ name: "verify", state: "SUCCESS", bucket: "pass" }], statuses: [] };
+  const fx = join(root, "wo47-fixture.json");
+  const run = (body) => { fs.writeFileSync(fx, JSON.stringify({ ...fixture, view: { ...fixture.view, comments: [comment(body)] } }));
+    const r = spawnSync(process.execPath, [join(repo, "orchestration/merge-evidence.js"), "11", "--repo", "o/r"], { encoding: "utf8",
+      env: { PATH: `${ghDir}:${process.env.PATH}`, OPENRIG_WORK_ROOT: work, GH_FIXTURE: fx, AGENT_BRB_REQUIRED_SINCE: "" } });
+    assert.equal(r.status, 0, r.stderr); return JSON.parse(r.stdout).review; };
+  const heading = "## review-claude-1 evidence remedy for HOLD 7db8271e (req 0199-abc, MERGE after fix)";
+  assert.match(run(`${heading}\nhead: ${H}\nVerdict: PASS`), /^review verdict: success, from review comment by seat review-claude-1/);
+  assert.match(run(`${heading}\nhead: ${H}\nVerdict: FAIL`), /^review verdict: failure, from review comment by seat review-claude-1/);
+  const none = run(`${heading}\nhead: ${H}\nChecked the remedy; details below.`);
+  assert.match(none, /^review verdict: NONE VERIFIABLE on a{40} \(.*comments: no verdict stated/);
+  assert.doesNotMatch(none, /failure/, "never an inferred failure");
 });
