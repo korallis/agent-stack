@@ -197,6 +197,10 @@ else
   done
 fi
 
+# Claude seats: trust their worktrees now, so none stops on "trust this folder?" at first launch.
+if [ $DRY = 1 ]; then echo "  would: agent-claude-trust --spec $W/rig/$TEAM.yaml (pre-trust every Claude seat worktree in ~/.claude.json)"
+else "$AS/bin/agent-claude-trust" --spec "$W/rig/$TEAM.yaml" | tail -n 3; fi
+
 if [ $UP = 1 ]; then
   say "launch rig $RIG"
   run rig spec validate "$W/rig/$TEAM.yaml"

@@ -5,7 +5,8 @@ Verifies that Claude and Codex agents never stop to ask for permission. Read-onl
   - Codex global config: ~/.codex/config.toml has approval_policy = "never" and sandbox_mode = "danger-full-access";
   - Claude: ~/.claude/settings.json has permissions.defaultMode = "bypassPermissions" (+ skipDangerousModePermissionPrompt);
   - the seat shim (~/.local/share/agent-stack/seat-bin/codex) adds `-a never` to every Codex seat launch;
-  - --spec: the RigSpec carries `permission_policy: builtin:yolo`;
+  - --spec: the RigSpec carries `permission_policy: builtin:yolo`, and every Claude seat's worktree is trusted in
+    ~/.claude.json (the "trust this folder?" dialog; agent-claude-trust --spec fixes it);
   - --rig: every live Codex seat of that rig runs with approval "never" (or another no-prompt mode). Resolved the
     way Codex does: command-line flags and -c overrides, then its profile, then a project .codex/config.toml, then
     the user config ($CODEX_HOME). A seat whose policy can't be shown to be "never" FAILs.
@@ -65,6 +66,18 @@ if spec:
     rep(re.search(r"^permission_policy:\s*builtin:yolo\s*$", read(spec) or "", re.M) is not None,
         f"RigSpec {os.path.basename(spec)} has permission_policy: builtin:yolo",
         "add it at the top level (rig policy apply yolo --spec <file>)")
+    # Claude's "do you trust this folder?" dialog isn't covered by --dangerously-skip-permissions: every Claude seat's
+    # worktree must be trusted in ~/.claude.json before it launches.
+    import subprocess
+    trust = subprocess.run([os.path.join(os.path.dirname(os.path.realpath(__file__)), "agent-claude-trust"), "--spec", spec, "--check", "--json"],
+                           capture_output=True, text=True)
+    try:
+        bad = [u["seat"] for u in json.loads(trust.stdout)["untrusted"]]
+        rep(not bad, "every Claude seat's worktree is trusted (no \"trust this folder?\" stop at launch)",
+            f"untrusted: {', '.join(bad)}; fix: agent-claude-trust --spec {spec}")
+    except (json.JSONDecodeError, KeyError):
+        rep(False, "every Claude seat's worktree is trusted (no \"trust this folder?\" stop at launch)",
+            f"could not check: {(trust.stderr or trust.stdout).strip()[:200]}")
 
 
 # Codex options that take a value (codex 0.158 --help for the top level, resume, fork and exec).
