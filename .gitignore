@@ -1,5 +1,6 @@
 node_modules/
 *.env
+!config/versions.defaults.env
 secrets/
 state/
 *.log

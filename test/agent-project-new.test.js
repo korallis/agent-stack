@@ -283,3 +283,19 @@ test("QA: with core.hooksPath (the project\x27s own hooks), nothing is written t
     .find((x) => x.check.startsWith("pre-push hook keeps the main mirror"));
   assert.equal(ok.level, "OK");
 });
+
+test("WO22: agent-project-new pre-trusts every Claude seat worktree before rig up (the dry run only says so)", () => {
+  existingRepo("fortis-trust", "master");
+  const cj = join(home, ".claude.json"); fs.writeFileSync(cj, JSON.stringify({ numStartups: 1, projects: {} }), { mode: 0o600 });
+  const dryR = realRun("fortis-trust", "ftrust", ["--dry-run"]);
+  assert.match(dryR.stdout, /would: agent-claude-trust --spec \S+small\.yaml/);
+  assert.deepEqual(JSON.parse(fs.readFileSync(cj, "utf8")).projects, {});
+  const r = realRun("fortis-trust", "ftrust");
+  assert.equal(r.status, 0, r.stderr.slice(-300));
+  const pr = JSON.parse(fs.readFileSync(cj, "utf8")).projects;
+  const wt = join(home, "Projects", "fortis-trust.worktrees");
+  const claude = ["coord-lead-claude", "arch-claude", "tests-claude", "impl-claude-ui", "review-claude", "review-kimi", "integ-claude"];
+  for (const s of claude) assert.equal(pr[fs.realpathSync(join(wt, s))]?.hasTrustDialogAccepted, true, s);
+  for (const s of ["impl-codex-1", "qa-codex", "review-codex"]) assert.equal(pr[fs.realpathSync(join(wt, s))], undefined, s);
+  assert.equal(JSON.parse(fs.readFileSync(cj, "utf8")).numStartups, 1);
+});

@@ -391,6 +391,16 @@ rep("OK" if os.access(f"{HOME}/.local/share/agent-stack/seat-tools/rig", os.X_OK
 rep("OK" if "seat-tools" in (read(f"{HOME}/.config/agent-stack/env.sh") or "") else "FAIL",
     "env.sh puts seat-tools first on seats' PATH")
 
+# ---- 5b. OpenRig version and local patches (2026-09-30: a stale pin downgraded 0.6.1 to 0.5.17, patches gone) ----
+AS = os.path.dirname(os.path.dirname(os.path.realpath(__file__)))
+ens = subprocess.run([f"{AS}/bin/openrig-ensure", "--check"], capture_output=True, text=True)
+lines = [l for l in ens.stdout.splitlines() if l.strip()] or [f"--  FAIL: openrig-ensure --check gave nothing ({ens.stderr.strip()[:120]})"]
+for l in lines:   # "ok  <what>" / "--  WARN: <what>" / "--  FAIL: <what>"
+    body = l[4:]
+    lvl = "OK" if l.startswith("ok") else ("WARN" if body.startswith("WARN:") else "FAIL")
+    rep(lvl, "OpenRig version and local patches (openrig-ensure --check)" if lvl == "OK" else body.split(": ", 1)[-1][:160],
+        body if lvl == "OK" else "install.sh never downgrades; run openrig-apply-patches for missing patches")
+
 # ---- 6. never prompt: no Claude or Codex seat stops to ask for permission (agent-never-prompt-check) -----------
 np = [os.path.join(os.path.dirname(os.path.realpath(__file__)), "agent-never-prompt-check"), "--json"]
 np += (["--spec", specs[0]] if specs else []) + (["--rig", rig] if rig else [])

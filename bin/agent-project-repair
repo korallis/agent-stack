@@ -11,6 +11,8 @@
 #   5. waves into mission.yaml arrangement.waves (agent-waves-sync) — the TUI ignores wave-map queue rows
 #      whenever mission.yaml exists; delivered slices get their own wave
 #   6. queue backfill (project/slice tags, worktree_path) and seat instruction refresh
+#   7. Claude folder trust: every Claude seat's worktree trusted in ~/.claude.json (agent-claude-trust), so no seat stops
+#      on "trust this folder?" at its next launch
 # Then run agent-project-check <Project>, which probes every daemon view the TUI uses.
 set -euo pipefail
 AS=$(cd "$(dirname "$(readlink -f "$0")")/.." && pwd)
@@ -72,4 +74,5 @@ EOF
 echo "== 5. waves -> mission.yaml";   "$AS/bin/agent-waves-sync" "$P" $flag | tail -3
 echo "== 6. queue backfill";          "$AS/bin/agent-queue-backfill" "$P" $flag | tail -1
 echo "== 6. seat instructions";       "$AS/bin/agent-refresh-guidance" "$P" $flag | tail -1
+echo "== 7. Claude folder trust";      "$AS/bin/agent-claude-trust" --spec "$SPEC" $([ $APPLY = 1 ] || echo --dry-run) | tail -n 12
 [ $APPLY = 1 ] && echo "Now: agent-project-check $P" || echo "(dry run; re-run with --apply)"

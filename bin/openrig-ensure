@@ -1,0 +1,37 @@
+#!/usr/bin/env bash
+# openrig-ensure [--check]: install.sh's OpenRig step. NEVER downgrades.
+#   - OpenRig missing, or the pin (OPENRIG_VERSION, config/versions*.env) NEWER than the installed one: openrig-upgrade <pin>
+#   - the installed one NEWER than the pin: kept, and the pin follows it (config/versions.env), with a note
+#   - equal: nothing
+# A stale pin once downgraded 0.6.1 to 0.5.17 against a database 0.6.1 had migrated, unpatched (2026-09-30).
+#   --check  report only: "ok" or "WARN" when installed != pin, "FAIL" when the installed version's local patches are
+#            not all applied (openrig-apply-patches --check); exit 1 on FAIL. Changes nothing.
+set -uo pipefail
+S=$(cd "$(dirname "$(readlink -f "$0")")/.." && pwd)
+source "$S/config/versions.defaults.env"; [ -f "$S/config/versions.env" ] && source "$S/config/versions.env"
+PKG=${OPENRIG_PKG:-$HOME/.local/share/agent-stack/openrig/lib/node_modules/@openrig/cli}
+ver_gt() { [ "$("$S/bin/semver-cmp" "$1" "$2" 2>/dev/null)" = 1 ]; }   # $1 > $2 by SemVer (0.6.1-rc.1 < 0.6.1)
+have=$(jq -r '.version // empty' "$PKG/package.json" 2>/dev/null || true)
+[ -x "$S/bin/semver-cmp" ] || { echo "openrig-ensure: needs $S/bin/semver-cmp (install.sh places it); nothing changed" >&2; exit 1; }
+pin=${OPENRIG_VERSION#v}
+"$S/bin/semver-cmp" "$pin" 0.0.0 >/dev/null 2>&1 || { echo "openrig-ensure: the pin OPENRIG_VERSION='$OPENRIG_VERSION' is not a version (config/versions*.env); nothing changed" >&2; exit 1; }
+
+if [ "${1:-}" = --check ]; then
+  rc=0
+  if [ -z "$have" ]; then echo "--  OpenRig not installed (pin $pin)"; exit 1; fi
+  [ "$have" = "$pin" ] && echo "ok  OpenRig $have (= pin)" || echo "--  WARN: OpenRig $have installed, pin is $pin (install.sh never downgrades; a newer install moves the pin)"
+  if out=$("$S/bin/openrig-apply-patches" --check "$PKG" 2>&1); then echo "ok  $(tail -n1 <<<"$out")"
+  else echo "--  FAIL: $(tail -n1 <<<"$out")"; rc=1; fi
+  exit $rc
+fi
+
+if [ -z "$have" ] || ver_gt "$pin" "$have"; then
+  echo "OpenRig ${have:-not installed} -> $pin"
+  exec "$S/bin/openrig-upgrade" "$pin"
+elif ver_gt "$have" "$pin"; then
+  f="$S/config/versions.env"
+  if grep -q '^OPENRIG_VERSION=' "$f" 2>/dev/null; then sed -i "s/^OPENRIG_VERSION=.*/OPENRIG_VERSION=$have/" "$f"; else echo "OPENRIG_VERSION=$have" >> "$f"; fi
+  echo "note: OpenRig $have is newer than the pin $pin: kept, not downgraded; pin updated in config/versions.env"
+else
+  echo "OpenRig $have (= pin)"
+fi

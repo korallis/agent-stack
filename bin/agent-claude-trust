@@ -1,0 +1,156 @@
+#!/usr/bin/env python3
+"""agent-claude-trust (--spec <rig.yaml> | <dir>...) [--check] [--dry-run] [--json]
+
+Pre-trusts Claude Code seat worktrees, so a seat never stops on "Quick safety check: do you trust this folder?" at
+first launch (--dangerously-skip-permissions does not cover that dialog). Claude Code keeps trust per folder in
+~/.claude.json: projects[<real path>].hasTrustDialogAccepted = true, looked up for the worktree itself up to its repo
+root, so a parent folder's trust does not cover seat worktrees.
+
+  --spec <rig.yaml>  every Claude seat of the RigSpec (runtime claude-code): its cwd
+  <dir>...           these folders
+  --check            report only; exit 1 when any is untrusted
+  --dry-run          say what would change; write nothing
+
+Writes only what is missing, in ONE atomic write, under CLAUDE CODE'S OWN LOCK: Claude Code (2.1.284) serialises its
+config writes with a proper-lockfile lock, the directory `<config>.lock` (mkdir = acquire, stale after 10 s). This
+tool takes that same lock, so a Claude session and this tool never write over each other:
+  - it waits while the lock is held (up to AGENT_CLAUDE_TRUST_WAIT seconds, default 10), and never takes over a lock
+    that was fresh when first seen; only a lock ALREADY stale by Claude's own rule (unrefreshed for 10 s) is reclaimed;
+  - under the lock it re-reads, adds the entries (every other key kept), writes a temp file with the same mode beside
+    it, renames it over, then releases the lock;
+  - if the lock can't be had, it writes NOTHING and exits 1.
+It re-reads afterwards and retries up to 3 times, in case a writer that ignores the lock replaced the file. Idempotent.
+"""
+import json, os, sys, tempfile, time
+
+argv = sys.argv[1:]
+CHECK, DRY, JSON_OUT = "--check" in argv, "--dry-run" in argv, "--json" in argv
+CONF = os.path.join(os.environ.get("CLAUDE_CONFIG_DIR") or os.path.expanduser("~"), ".claude.json")
+
+
+def seats_from_spec(path):
+    import yaml
+    spec = yaml.safe_load(open(path)) or {}
+    out = []
+    for pod in spec.get("pods") or []:
+        for m in pod.get("members") or []:
+            if m.get("runtime") == "claude-code" and m.get("cwd"):
+                out.append((f"{pod['id']}-{m['id']}", m["cwd"]))
+    return out
+
+
+if "--spec" in argv:
+    i = argv.index("--spec")
+    if i + 1 >= len(argv):
+        sys.exit("usage: agent-claude-trust --spec <rig.yaml> [--check] [--dry-run]")
+    targets = seats_from_spec(argv[i + 1])
+    rest = argv[:i] + argv[i + 2:]
+else:
+    rest = argv
+targets = (targets if "--spec" in argv else []) + [(d, d) for d in rest if not d.startswith("--")]
+if not targets and "--spec" not in argv:
+    sys.exit(__doc__.strip().splitlines()[0])   # (a spec without Claude seats is fine: nothing to trust)
+want = {os.path.realpath(os.path.expanduser(d)): name for name, d in targets}
+
+
+def load():
+    try:
+        with open(CONF) as f:
+            return json.load(f)
+    except FileNotFoundError:
+        return {}
+
+
+def untrusted(conf):
+    pr = conf.get("projects") or {}
+    return [p for p in want if not (pr.get(p) or {}).get("hasTrustDialogAccepted") is True]
+
+
+def report(missing, done=()):
+    if JSON_OUT:
+        print(json.dumps({"config": CONF, "untrusted": [{"seat": want[p], "path": p} for p in missing], "trusted_now": list(done)}))
+        return
+    for p in done:
+        print(f"trusted {want[p]}: {p}")
+    for p in missing:
+        print(f"untrusted {want[p]}: {p}")
+
+
+try:
+    missing = untrusted(load())
+except json.JSONDecodeError as e:
+    sys.exit(f"agent-claude-trust: {CONF} is not valid JSON ({e}); not touching it")
+if CHECK or not missing:
+    report(missing)
+    if not missing and not JSON_OUT:
+        print(f"all {len(want)} trusted in {CONF}")
+    sys.exit(1 if missing else 0)
+if DRY:
+    for p in missing:
+        print(f"would trust {want[p]}: {p}")
+    sys.exit(0)
+
+LOCK, STALE = CONF + ".lock", 10.0   # proper-lockfile, as Claude Code uses it: mkdir-based, stale after 10 s
+WAIT = float(os.environ.get("AGENT_CLAUDE_TRUST_WAIT", "10"))
+
+
+def acquire():
+    """Take Claude's lock. A lock that is ALREADY stale when first seen (abandoned by a crashed writer) is reclaimed,
+    as proper-lockfile does. A lock that was fresh when first seen is never taken over: wait, then give up."""
+    deadline, delay, first = time.monotonic() + WAIT, 0.1, True
+    while True:
+        try:
+            os.mkdir(LOCK)
+            return True
+        except FileExistsError:
+            try:
+                if first and time.time() - os.stat(LOCK).st_mtime > STALE:
+                    os.rmdir(LOCK)
+                    first = False
+                    continue
+            except FileNotFoundError:
+                continue
+            except OSError:
+                pass
+            first = False
+        if time.monotonic() >= deadline:
+            return False
+        time.sleep(delay)
+        delay = min(delay * 2, 1.0)
+
+
+for attempt in range(3):
+    if not acquire():
+        print(f"agent-claude-trust: {LOCK} is held (a Claude session is writing its config) for over {WAIT:.0f}s; nothing written. Re-run.", file=sys.stderr)
+        sys.exit(1)
+    try:
+        conf = load()
+        todo = untrusted(conf)
+        projects = conf.setdefault("projects", {})
+        for p in todo:
+            entry = projects.get(p)
+            projects[p] = {**entry, "hasTrustDialogAccepted": True} if isinstance(entry, dict) else {"hasTrustDialogAccepted": True}
+        if todo:
+            mode = os.stat(CONF).st_mode & 0o777 if os.path.exists(CONF) else 0o600
+            fd, tmp = tempfile.mkstemp(prefix=".claude.json.", dir=os.path.dirname(CONF))
+            try:
+                with os.fdopen(fd, "w") as f:
+                    json.dump(conf, f, indent=2)
+                os.chmod(tmp, mode)
+                os.replace(tmp, CONF)
+            except BaseException:
+                os.unlink(tmp)
+                raise
+    finally:
+        try:
+            os.rmdir(LOCK)
+        except OSError:
+            pass
+    time.sleep(0.5 if attempt < 2 else 0)
+    still = untrusted(load())   # a running Claude session may have written back an older copy
+    if not still:
+        report([], missing)
+        sys.exit(0)
+report(still, [p for p in missing if p not in still])
+print(f"agent-claude-trust: {len(still)} entries were overwritten by a concurrent writer 3 times; re-run", file=sys.stderr)
+sys.exit(1)

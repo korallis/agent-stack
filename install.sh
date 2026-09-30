@@ -5,7 +5,8 @@
 #   ./install.sh            install / repair everything
 #   ./install.sh --check    only report what is missing
 set -euo pipefail
-S=$(cd "$(dirname "$(readlink -f "$0")")" && pwd); source "$S/config/versions.env"
+S=$(cd "$(dirname "$(readlink -f "$0")")" && pwd)
+source "$S/config/versions.defaults.env"; [ -f "$S/config/versions.env" ] && source "$S/config/versions.env"   # tracked defaults, local override
 PW_MCP=$(sed -n 's/.*"@playwright\/mcp@\([^"]*\)".*/\1/p' "$S/system/codex/config.toml" | head -1)   # the Playwright MCP pin
 L=$HOME/.local/share/agent-stack; B=$HOME/.local/bin; C=$HOME/.config/agent-stack; SEC=$C/secrets
 CHECK=0; [ "${1:-}" = "--check" ] && CHECK=1
@@ -75,7 +76,7 @@ for f in agent-login cliproxy-healthcheck cliproxy-key openrig-healthcheck clipr
 place "$S/system/seat-bin-codex" "$L/seat-bin/codex" 755
 mkdir -p "$L/seat-tools"; place "$S/system/seat-tools-rig" "$L/seat-tools/rig" 755   # queue writes get the project tag + EC-3 worktree_path
 link "$L/bin/agent-login" "$B/agent-login"
-for f in claude-pool agent-heavy playwright-browsers openrig-upgrade openrig-update agent-project-new agent-project-check agent-never-prompt-check agent-human-inbox-tidy openrig-daemon-cycle openrig-tmux-adopt agent-queue-backfill agent-refresh-guidance agent-project-repair agent-waves-sync; do link "$S/bin/$f" "$B/$f"; done
+for f in claude-pool agent-heavy openrig-ensure playwright-browsers agent-claude-trust openrig-upgrade openrig-update agent-project-new agent-project-check agent-never-prompt-check agent-human-inbox-tidy openrig-daemon-cycle openrig-tmux-adopt agent-queue-backfill agent-refresh-guidance agent-project-repair agent-waves-sync; do link "$S/bin/$f" "$B/$f"; done
 link "$S/proxy/status.py" "$B/agent-proxy-status"
 if [ $CHECK = 0 ] || mise where "node@$NODE_FOR_JEV" >/dev/null 2>&1; then
   launcher jev-mcp "$NODE_FOR_JEV" "$S/jev/bin/jev-mcp.js"
@@ -122,13 +123,14 @@ if [ $CHECK = 0 ]; then
   node22=$(mise where "node@$NODE_FOR_OPENRIG")/bin
   # Inside a seat, queue create/handoff go through seat-tools/rig first (project tag + EC-3 worktree_path).
   printf '#!/usr/bin/env bash\nif [ -n "${OPENRIG_NODE_ID:-}" ] && [ -z "${AGENT_STACK_RIG_HELPER:-}" ] && [ "${1:-}" = queue ] && [ -x "%s/seat-tools/rig" ]; then\n  case "${2:-}" in create|handoff|handoff-and-complete) exec "%s/seat-tools/rig" "$@" ;; esac\nfi\nexport PATH="%s:$PATH"\nexec "%s/openrig/bin/rig" "$@"\n' "$L" "$L" "$node22" "$L" > "$B/rig"; chmod 755 "$B/rig"
-  if [ "$("$B/rig" --version 2>/dev/null | awk '{print $1}')" != "$OPENRIG_VERSION" ]; then "$S/bin/openrig-upgrade" "$OPENRIG_VERSION"; fi
+  # Never downgrade: install only when OpenRig is missing or the pin is NEWER; a newer install is kept and moves the pin.
+  "$S/bin/openrig-ensure" | sed 's/^/   /'
   # Seats' tmux server gets its own unit first (skips itself if a server already runs; bin/openrig-tmux-adopt moves that one).
   systemctl --user enable --now openrig-tmux.service >/dev/null 2>&1 || todo "openrig-tmux.service"
   systemctl --user enable --now openrig.service >/dev/null 2>&1 || true
   for t in cliproxyapi-health cliproxy-usage openrig-health cliproxy-authwatch cliproxy-quotawatch openrig-update agent-repos-sync agent-human-inbox-tidy playwright-browsers; do systemctl --user enable --now "$t.timer" >/dev/null 2>&1 || todo "$t.timer"; done
 fi
-"$B/rig" --version >/dev/null 2>&1 && ok "rig $("$B/rig" --version | awk '{print $1}')" || todo "OpenRig not installed"
+"$S/bin/openrig-ensure" --check | sed 's/^/   /' || true   # WARN installed != pin; FAIL when local patches aren't all applied
 # Transcript capture defaults: every 15s, 400 lines. The shipped 2s/1000 lines across ~90 seats starved the daemon.
 for kv in "transcripts.poll_interval_seconds 15" "transcripts.lines 400"; do
   set -- $kv

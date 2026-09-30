@@ -280,3 +280,16 @@ test("no script or doc stops or restarts openrig.service", () => {
   const hits = files.filter(f => fs.statSync(join(repo, f)).isFile() && /systemctl --user (stop|restart) openrig(-tmux)?\.service/.test(fs.readFileSync(join(repo, f), "utf8")));
   assert.deepEqual(hits, []);
 });
+
+// WO23 d: `rig up kernel --existing` answers HTTP 409 "has live sessions" when the kernel is up (every cycle); that is
+// fine and must not warn. A real failure still does.
+test("daemon-cycle: a live kernel (409) is not a warning; a real kernel failure is", () => {
+  for (const [out, warn] of [["Error: HTTP 409: rig kernel has live sessions", false], ["Error: spec not found: kernel", true]]) {
+    const w = cycleWorld();
+    write(join(w.bin, "rig"), fs.readFileSync(join(w.bin, "rig"), "utf8").replace('case "$1 $2" in', `[ "$1 $2 $3" = "up kernel --existing" ] && { echo "${out}" >&2; exit 1; }\ncase "$1 $2" in`));
+    const r = cycle(w, "--reason", "t");
+    assert.equal(r.status, 0, r.stdout + r.stderr);
+    if (warn) assert.match(r.stdout, /rig up kernel --existing failed \(kernel may need attention\): Error: spec not found: kernel/);
+    else assert.doesNotMatch(r.stdout, /kernel may need attention/);
+  }
+});
