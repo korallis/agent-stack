@@ -349,7 +349,12 @@ the lead or a person. Send Jev evidence, not conclusions.
   - the blast radius: every changed path is under `tests/acceptance/`, docs, or a `features.json` change that only
     flips `"key": true|false` values (read from the diff hunks, never the PR title).
 
-  A mixed change (one docs file and one source file) still needs both. Free text is redacted before it
+  A mixed change (one docs file and one source file) still needs both.
+
+  GitHub reports a PR as BLOCKED while any required status is missing, including `jev-merge`, the status this gate
+  posts. So when the only unmet required context (from the base branch's rulesets and protection) is `jev-merge`, and
+  there is no review requirement or conflict, the merge state reads "pending this gate". Otherwise it stays BLOCKED
+  and lists the reasons; if the required contexts can't be read, it stays BLOCKED. Free text is redacted before it
   goes to Jev. The helper refuses if the PR's head or base moves while it collects. A live, not stubbed, Jev `merge`
   in the act band merges on its own (exit 0). A live `merge` below the act bar (review or uncertain band) is NEEDS
   CONFIRM (exit 3) when every gate the helper checks is green: required checks pass, `independent-review` is success,

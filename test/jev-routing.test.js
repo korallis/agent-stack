@@ -9,7 +9,7 @@ import { join, dirname } from "node:path";
 import { fileURLToPath } from "node:url";
 
 const repo = join(dirname(fileURLToPath(import.meta.url)), "..");
-const { buildMergeInput, passes, outcome, gateProblems, parseDiff, brbCutoff, brbNotApplicable, blastNotApplicable, flagOnly } = await import("../orchestration/merge-evidence.js");
+const { buildMergeInput, passes, outcome, gateProblems, parseDiff, brbCutoff, brbNotApplicable, blastNotApplicable, flagOnly, mergeStateLine } = await import("../orchestration/merge-evidence.js");
 const { seatCandidates, nextStep } = await import("../orchestration/pickseat.js");
 const st = await import("../orchestration/stuck.js");
 const root = fs.mkdtempSync("/tmp/claude-1000/wo35-");
@@ -451,4 +451,41 @@ test("paths with spaces (Git leaves them unquoted) parse exactly; renames resolv
   f = parseDiff(lying);
   assert.ok(f[0].unknown, "rename lines that don't rebuild the header leave it unknown"); assert.equal(brbNotApplicable({ ...at, files: f }), null);
   assert.ok(parseDiff("diff --git something odd\n@@ -1 +1 @@\n-x\n+y\n")[0].unknown, "still fails closed");
+});
+
+
+// ---- WO38: BLOCKED only by the gate itself is "pending this gate" -------------------------------------------------
+test("merge state: only jev-merge unmet reads as pending this gate; anything else stays BLOCKED with its reasons", () => {
+  const base = { mergeState: "BLOCKED", mergeable: "MERGEABLE", reviewDecision: "", requiredContexts: ["verify", "qa-evidence", "jev-merge"], passingContexts: ["verify", "qa-evidence", "independent-review"] };
+  assert.equal(mergeStateLine(base), "merge state: pending this gate (jev-merge not yet posted; every other required context passes)");
+  assert.equal(mergeStateLine({ ...base, passingContexts: ["verify"] }), "merge state: BLOCKED (required context(s) not passing: qa-evidence; jev-merge not yet posted)");
+  assert.match(mergeStateLine({ ...base, mergeable: "CONFLICTING" }), /^merge state: BLOCKED \(mergeable CONFLICTING; jev-merge not yet posted\)$/);
+  assert.match(mergeStateLine({ ...base, reviewDecision: "REVIEW_REQUIRED" }), /BLOCKED \(review decision REVIEW_REQUIRED; jev-merge not yet posted\)/);
+  assert.match(mergeStateLine({ ...base, requiredContexts: null }), /BLOCKED \(the required contexts could not be read\)/, "unknown facts keep BLOCKED");
+  assert.match(mergeStateLine({ ...base, requiredContexts: ["verify"] }), /BLOCKED \(reason not visible to this helper\)/, "BLOCKED with nothing unmet: not called pending");
+  for (const st of ["CLEAN", "BEHIND", "UNSTABLE"]) assert.equal(mergeStateLine({ ...base, mergeState: st }), `merge state: ${st}`);
+  assert.match(buildMergeInput(facts({ ...base })).limits, /merge state: pending this gate/);
+});
+
+test("agent-merge-evidence end to end: required contexts from the ruleset and protection, passing ones from checks and statuses", () => {
+  const status = (ir) => `[{"context":"independent-review","state":"${ir}","description":"ok","creator":{"login":"rev"}},{"context":"verify","state":"success"}]`;
+  const ghFor = (ir) => fs.writeFileSync(join(bin, "gh"), `#!/bin/sh
+case "$*" in
+  "pr view 8 -R o/r --json headRefOid,baseRefOid") printf '{"headRefOid":"${H}","baseRefOid":"${B}"}\\n' ;;
+  "pr view 8 -R o/r --json"*) printf '%s\\n' '{"number":8,"title":"Tests only","createdAt":"2026-09-30T15:00:00Z","headRefOid":"${H}","baseRefOid":"${B}","baseRefName":"master","headRefName":"t","mergeable":"MERGEABLE","mergeStateStatus":"BLOCKED","reviewDecision":"","isDraft":false,"comments":[],"reviews":[]}' ;;
+  "pr diff 8 -R o/r") printf 'diff --git a/tests/acceptance/a.spec.ts b/tests/acceptance/a.spec.ts\\n--- a/tests/acceptance/a.spec.ts\\n+++ b/tests/acceptance/a.spec.ts\\n@@ -1 +1 @@\\n-x\\n+y\\n' ;;
+  "pr checks 8 -R o/r --required --json"*) echo '[{"name":"qa-evidence","state":"SUCCESS","bucket":"pass"}]' ;;
+  "api repos/o/r/commits/${H}/statuses") echo '${status(ir)}' ;;
+  "api repos/o/r/rules/branches/master") echo '[{"type":"required_status_checks","parameters":{"required_status_checks":[{"context":"verify"},{"context":"qa-evidence"},{"context":"jev-merge"}]}},{"type":"required_status_checks","parameters":{"required_status_checks":[{"context":"independent-review"}]}}]' ;;
+  "api repos/o/r/branches/master/protection") echo "gh: Branch not protected (HTTP 404)" >&2; exit 1 ;;
+  *) echo "unexpected gh $*" >&2; exit 9 ;;
+esac
+`, { mode: 0o755 });
+  const run = () => spawnSync(process.execPath, [join(repo, "orchestration/merge-evidence.js"), "8", "--repo", "o/r"], { encoding: "utf8", env: { PATH: `${bin}:${process.env.PATH}`, OPENRIG_WORK_ROOT: root } });
+  ghFor("success");
+  let r = run(); assert.equal(r.status, 0, r.stderr);
+  assert.match(JSON.parse(r.stdout).limits, /merge state: pending this gate \(jev-merge not yet posted; every other required context passes\)/);
+  ghFor("failure");
+  r = run(); assert.equal(r.status, 0, r.stderr);
+  assert.match(JSON.parse(r.stdout).limits, /merge state: BLOCKED \(required context\(s\) not passing: independent-review; jev-merge not yet posted\)/);
 });

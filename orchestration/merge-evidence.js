@@ -127,6 +127,25 @@ export function blastNotApplicable({ files }) {
   return `N/A: ${files.length} changed path(s), all ${[...new Set(kinds)].join(" or ")} (checked in the diff): ${files.map((f) => f.path).slice(0, 8).join(", ")}`;
 }
 
+// GitHub says BLOCKED while ANY required context is unmet, including the merge-gate status this helper exists to
+// produce (jev-merge). Pure: the merge-state line, with the real reasons when BLOCKED. Only when the single unmet
+// required context is the gate itself, with nothing else blocking, is it "pending this gate". Unknown facts keep BLOCKED.
+export const GATE_CONTEXT = "jev-merge";
+export function mergeStateLine(f) {
+  if (f.mergeState !== "BLOCKED") return `merge state: ${f.mergeState || "unknown"}`;
+  const reasons = [];
+  if (f.mergeable && f.mergeable !== "MERGEABLE") reasons.push(`mergeable ${f.mergeable}`);
+  if (["REVIEW_REQUIRED", "CHANGES_REQUESTED"].includes(f.reviewDecision)) reasons.push(`review decision ${f.reviewDecision}`);
+  if (!Array.isArray(f.requiredContexts)) reasons.push("the required contexts could not be read");
+  const unmet = (f.requiredContexts || []).filter((c) => !(f.passingContexts || []).includes(c));
+  const others = unmet.filter((c) => c !== GATE_CONTEXT);
+  if (others.length) reasons.push(`required context(s) not passing: ${others.join(", ")}`);
+  if (!reasons.length && unmet.length === 1 && unmet[0] === GATE_CONTEXT)
+    return `merge state: pending this gate (${GATE_CONTEXT} not yet posted; every other required context passes)`;
+  if (unmet.includes(GATE_CONTEXT)) reasons.push(`${GATE_CONTEXT} not yet posted`);
+  return `merge state: BLOCKED (${reasons.join("; ") || "reason not visible to this helper"})`;
+}
+
 // Pure: the review.merge_gate input from gathered facts (facts are what gh and the proof file said; strings only).
 export function buildMergeInput(f) {
   const checks = f.checks || [];
@@ -158,7 +177,7 @@ export function buildMergeInput(f) {
   ].join("\n");
   const limits = [
     `target branch ${f.baseRef} at ${f.base}; PR head branch ${f.headRef}`,
-    `mergeable: ${f.mergeable}; merge state: ${f.mergeState || "unknown"}; draft: ${f.isDraft}`,
+    `mergeable: ${f.mergeable}; ${mergeStateLine(f)}; draft: ${f.isDraft}`,
     `deploy effect: ${f.deploy || "MISSING: not stated (see the rig CULTURE specifics)"}`,
     f.rollback ? `rollback: ${f.rollback}` : `rollback: not stated (proposed default: revert the squash commit on ${f.baseRef})`,
   ].join("\n");
@@ -173,7 +192,7 @@ function frontmatter(path) {
 
 export function gather(pr, { repo, mission, slice, change, deploy, rollback } = {}) {
   const R = repo ? ["-R", repo] : [];
-  const FIELDS = "number,title,createdAt,headRefOid,baseRefOid,baseRefName,headRefName,mergeable,mergeStateStatus,isDraft,comments,reviews";
+  const FIELDS = "number,title,createdAt,headRefOid,baseRefOid,baseRefName,headRefName,mergeable,mergeStateStatus,reviewDecision,isDraft,comments,reviews";
   const v = ghJson("pr", "view", String(pr), ...R, "--json", FIELDS);
   const nwo = repo || ghJson("repo", "view", "--json", "nameWithOwner").nameWithOwner;
   let checks = [];
@@ -181,6 +200,26 @@ export function gather(pr, { repo, mission, slice, change, deploy, rollback } = 
   catch (e) { const out = String(e.stdout || ""); if (out.trim().startsWith("[")) checks = JSON.parse(out); }   // gh exits non-zero when a check fails
   const statuses = ghJson("api", `repos/${nwo}/commits/${v.headRefOid}/statuses`);
   const ir = (statuses || []).find((s) => s.context === "independent-review");
+  // Required contexts on the base branch (rulesets + classic protection), and which pass on this head. When BLOCKED,
+  // these tell a real block apart from "only the gate itself hasn't posted". Unreadable -> null (keeps BLOCKED).
+  let requiredContexts = null;
+  if (v.mergeStateStatus === "BLOCKED") {
+    try {
+      const req = new Set();
+      for (const r of ghJson("api", `repos/${nwo}/rules/branches/${v.baseRefName}`) || [])
+        if (r.type === "required_status_checks") for (const c of r.parameters?.required_status_checks || []) req.add(c.context);
+      let prot = null;
+      try { prot = ghJson("api", `repos/${nwo}/branches/${v.baseRefName}/protection`); }
+      catch (e) { if (!/HTTP 404|Branch not protected/.test(String(e.stderr || e.message))) throw e; }
+      for (const c of prot?.required_status_checks?.contexts || []) req.add(c);
+      for (const c of prot?.required_status_checks?.checks || []) req.add(c.context);
+      requiredContexts = [...req];
+    } catch { requiredContexts = null; }
+  }
+  const latest = {};
+  for (const st of statuses || []) latest[st.context] ??= st.state;   // the API lists newest first
+  const passingContexts = [...new Set([...checks.filter((c) => c.bucket === "pass").map((c) => c.name),
+    ...Object.entries(latest).filter(([, state]) => state === "success").map(([c]) => c)])];
   let brb = null, brbWhere = null;
   if (mission && slice) {
     brbWhere = join(process.env.OPENRIG_WORK_ROOT || ".", "missions", mission, "slices", slice, "proof", `brb-${v.headRefOid}.md`);
@@ -217,7 +256,8 @@ export function gather(pr, { repo, mission, slice, change, deploy, rollback } = 
     throw new Error(`the PR moved while its evidence was collected (head ${v.headRefOid.slice(0, 12)} -> ${again.headRefOid.slice(0, 12)}, base ${v.baseRefOid.slice(0, 12)} -> ${again.baseRefOid.slice(0, 12)}); run it again`);
   return {
     pr: v.number, head: v.headRefOid, base: v.baseRefOid, baseRef: v.baseRefName, headRef: v.headRefName,
-    mergeable: v.mergeable, mergeState: v.mergeStateStatus, isDraft: v.isDraft, change: change || v.title, checks,
+    mergeable: v.mergeable, mergeState: v.mergeStateStatus, reviewDecision: v.reviewDecision || null, isDraft: v.isDraft, change: change || v.title, checks,
+    requiredContexts, passingContexts,
     independentReview: ir ? { state: ir.state, description: ir.description || "", creator: ir.creator?.login || "?", url: ir.target_url || null } : null,
     reviewNote, unlinkedNote, brb, brbWhere, brbNA, blastRadius: blast, blastNA, deploy, rollback,
   };

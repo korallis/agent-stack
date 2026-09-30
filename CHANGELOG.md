@@ -26,6 +26,9 @@ has no version numbers; entries are grouped by the day they merged, newest first
 - The lead's and the merge owner's role texts and the CULTURE template use the new Jev helpers.
 
 ### Fixed
+- `agent-merge-evidence` reports the merge state as "pending this gate" when the only unmet required context is
+  `jev-merge` itself (GitHub's BLOCKED was circular and drew no-concern holds); any other missing or failing required
+  context, a review requirement or a conflict keeps BLOCKED, with the reasons.
 - `agent-merge-evidence` says `N/A: <reason>` instead of MISSING when the bug-review-board proof or the blast radius
   doesn't apply, from verified facts only: the PR's creation time against the rig's cutoff (`AGENT_BRB_REQUIRED_SINCE`
   or the CULTURE transition bullet), and the diff (docs only; acceptance tests; `features.json` flag flips). Jev read
