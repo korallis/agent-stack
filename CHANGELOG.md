@@ -39,6 +39,9 @@ has no version numbers; entries are grouped by the day they merged, newest first
 - The lead's and the merge owner's role texts and the CULTURE template use the new Jev helpers.
 
 ### Fixed
+- `agent-merge-evidence` explains GitHub's UNSTABLE merge state. It says whether only non-required checks are red
+  ("every required check passes") or a required one is, and names each non-passing check. Before, a red optional
+  check read as a bare "UNSTABLE". The gate's own status is never listed.
 - `agent-project-check` no longer reports seats as stale when `agent-refresh-guidance` says they are current. It
   looked for a startup block named by basename (`context.md`), while OpenRig names it by path (`startup/context.md`).
   The check now asks the refresh itself (`agent-refresh-guidance <P> --json`, new), so the two can't disagree. The
