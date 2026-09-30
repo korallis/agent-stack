@@ -99,6 +99,11 @@ export function brbCutoff({ env = process.env, culture = "" } = {}) {
 }
 
 const isDocs = (p) => /^docs\//i.test(p) || /\.md$/i.test(p);
+// CI configuration: how the build and checks run, not what users get. A change to it can still break builds, so the
+// blast radius still applies; only QA's user-facing verdict doesn't.
+export const CI_PATHS = "`.github/workflows/**`, `.github/actions/**`, `.gitlab-ci.yml`, `.circleci/**`, `.buildkite/**`, `azure-pipelines.yml`, `Jenkinsfile`";
+export const isCI = (p) => /^\.github\/(workflows|actions)\//.test(p) || /^\.(circleci|buildkite)\//.test(p)
+  || /^(\.gitlab-ci\.ya?ml|azure-pipelines\.ya?ml|Jenkinsfile)$/.test(p);
 const known = (f) => !f.unknown;
 const FLAG_LINE = /^\s*"[\w.-]+"\s*:\s*(true|false)\s*,?\s*$/;
 const flagKeys = (lines) => lines.map((l) => l.match(/"([\w.-]+)"/)[1]).sort().join(",");
@@ -114,6 +119,9 @@ export function brbNotApplicable({ createdAt, cutoff, files }) {
     return `N/A: PR created ${createdAt}, before the bug-review-board cutoff ${cutoff.iso} (${cutoff.source})`;
   if (files?.length && files.every((f) => known(f) && isDocs(f.path) && isDocs(f.oldPath)))
     return `N/A: ${files.length} changed path(s), all docs (docs/** or *.md): ${files.map((f) => f.path).slice(0, 8).join(", ")}`;
+  const docsOrCI = (p) => isDocs(p) || isCI(p);
+  if (files?.length && files.every((f) => known(f) && docsOrCI(f.path) && docsOrCI(f.oldPath)))
+    return `N/A: ${files.length} changed path(s), all ${files.some((f) => isDocs(f.path)) ? "docs or " : ""}CI configuration (${CI_PATHS}${files.some((f) => isDocs(f.path)) ? "; docs/** or *.md" : ""}), no user-facing behaviour: ${files.map((f) => f.path).slice(0, 8).join(", ")}`;
   return null;
 }
 

@@ -39,6 +39,10 @@ has no version numbers; entries are grouped by the day they merged, newest first
 - The lead's and the merge owner's role texts and the CULTURE template use the new Jev helpers.
 
 ### Fixed
+- `agent-merge-evidence` says `N/A` for the bug-review-board QA verdict when every changed path is CI
+  configuration (`.github/workflows/**` and the like) or docs, verified from the diff. A workflow-only change (a job
+  timeout) no longer needs a slice and a QA verdict. The blast radius still applies, since a CI change can break
+  builds.
 - `agent-merge-evidence` prints `{"input": …, "history": …}`, so Jev's input and the gate's own earlier results can't
   be mistaken for one object. The flat printout let an integrator copy the gate's own HOLD into a hand-built Jev
   input. `--extra-evidence <file>` adds caller-supplied evidence to `input.review`, labelled as unverified and

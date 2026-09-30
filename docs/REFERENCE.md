@@ -402,7 +402,11 @@ the lead or a person. Send Jev evidence, not conclusions.
   A missing check, status, review, proof, blast radius or deploy effect says MISSING, unless verified facts show it
   doesn't apply, and then it says `N/A: <reason>` with those facts:
   - the bug-review-board proof: the PR was created before the rig's cutoff (`AGENT_BRB_REQUIRED_SINCE`, else the rig
-    CULTURE's "Transition (…): PRs opened before HH:MMZ" bullet), or every changed path is docs (`docs/**`, `*.md`);
+    CULTURE's "Transition (…): PRs opened before HH:MMZ" bullet), or every changed path is docs (`docs/**`, `*.md`),
+    or CI configuration (`.github/workflows/**`, `.github/actions/**`, `.gitlab-ci.yml`, `.circleci/**`,
+    `.buildkite/**`, `azure-pipelines.yml`, `Jenkinsfile`), or a mix of the two. These have no user-facing behaviour.
+    A CI change still needs its blast radius, since it can break builds, and the risky tier's owner glance is
+    unchanged;
   - the blast radius: every changed path is under `tests/acceptance/`, docs, or a `features.json` change that only
     flips `"key": true|false` values (read from the diff hunks, never the PR title).
 
