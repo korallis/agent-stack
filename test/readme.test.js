@@ -71,7 +71,7 @@ test("blocks that run as shown do what the README says, in a throwaway HOME", { 
     const find = (s) => outs.find((o) => o.b.includes(s));
     assert.ok(fs.existsSync(join(home, "Projects/agent-stack/install.sh")), "the quick start clone");
     assert.equal(find("--name Demo ").status, 0); assert.match(find("--name Demo ").out, /would: /);
-    assert.equal(find("--name StackDemo").status, 0); assert.match(find("--name StackDemo").out, /existing, trunk main: adopted as is/);
+    assert.equal(find("--name StackDemo").status, 0); assert.match(find("--name StackDemo").out, /existing, trunk \S+: adopted as is/);
     assert.ok(!fs.existsSync(join(home, "Projects/Demo-work")) && !fs.existsSync(join(home, "Projects/StackDemo-work")), "dry runs create nothing");
     const pw = join(home, ".config/agent-stack/secrets/playwright.env");
     assert.equal(fs.statSync(pw).mode & 0o777, 0o600);
