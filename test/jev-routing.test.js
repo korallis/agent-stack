@@ -1040,7 +1040,20 @@ process.stdout.write(typeof out === "string" ? out : JSON.stringify(out));
     "non-required only; the gate's own earlier jev-merge failure is not listed");
   const req = run({ checks: [{ name: "verify", state: "FAILURE", bucket: "fail" }],
     checkRuns: [{ total_count: 2, check_runs: [cr(1, "verify", "failure"), cr(2, "lint", "success")] }] });
-  assert.match(req.limits, /merge state: UNSTABLE \(required check\(s\) not passing: verify \(failure\)\)/);
+  assert.match(req.limits, /merge state: UNSTABLE \(required check\(s\) not passing: verify: check fail, check run failure\)/);
+  // QA PR49: each required context is verified on its own; the absence of a red one proves nothing.
+  const bound = { rules: [{ type: "required_status_checks", parameters: { required_status_checks: [{ context: "verify", integration_id: 7 }] } }] };
+  const app = (id, appId, conclusion) => ({ ...cr(id, "verify", conclusion), app: { id: appId } });
+  assert.match(run({ ...bound, checkRuns: [{ total_count: 3, check_runs: [app(1, 7, "failure"), app(2, 8, "success"), cr(3, "lint", "failure")] }] }).limits,
+    /merge state: UNSTABLE \(required check\(s\) not passing: verify: app 7 failure; also non-required: lint \(failure\)\)/, "another app's success doesn't count");
+  assert.match(run({ ...bound, checkRuns: [{ total_count: 2, check_runs: [app(2, 8, "success"), cr(3, "lint", "failure")] }] }).limits,
+    /merge state: UNSTABLE \(required check\(s\) not passing: verify: no result from its required app 7/, "the required app's result is missing");
+  assert.match(run({ checks: [], checkRuns: [{ total_count: 1, check_runs: [cr(3, "lint", "failure")] }] }).limits,
+    /merge state: UNSTABLE \(required check\(s\) not passing: verify: not reported; also non-required: lint \(failure\)\)/, "a required check with no result");
+  assert.match(run({ statuses: [{ context: "verify", state: "success" }], checkRuns: [{ total_count: 2, check_runs: [cr(1, "verify", "failure"), cr(2, "lint", "failure")] }] }).limits,
+    /merge state: UNSTABLE \(required check\(s\) not passing: verify: check run failure/, "a failing same-name check run counts although the feed and status say pass");
+  assert.match(run({ checks: [{ name: "verify", state: "PENDING", bucket: "pending" }], checkRuns: [{ total_count: 1, check_runs: [cr(3, "lint", "failure")] }] }).limits,
+    /merge state: UNSTABLE \(required check\(s\) not passing: verify: check pending/, "pending only in the required-check feed");
   assert.match(run({ runsFail: true }).limits, /merge state: UNSTABLE \(the checks behind it could not be read\)/);
   assert.match(run({ view: { ...fixture.view, mergeStateStatus: "CLEAN" } }).limits, /merge state: CLEAN;/, "other states unchanged");
 });

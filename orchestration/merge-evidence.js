@@ -400,8 +400,11 @@ export function contextState(req, { checks, statuses, checkRuns }) {
     if (run.conclusion !== "success") bad.unshift(`app ${req.app} ${run.conclusion || run.status}`);
     return bad.length ? `${req.context}: ${bad.join(", ")}` : "pass";
   }
+  // Check runs, when read, count too: the latest run of that name (any producer, as the context isn't bound).
+  const run = Array.isArray(checkRuns) ? checkRuns.filter((r) => r.name === req.context).sort((a, b) => b.id - a.id)[0] : null;
+  if (run && !["success", "neutral", "skipped"].includes(run.conclusion)) bad.push(`check run ${run.conclusion || run.status || "pending"}`);
   if (bad.length) return `${req.context}: ${bad.join(", ")}`;
-  return latest || (checks || []).some((c) => c.name === req.context) ? "pass" : null;
+  return latest || run || (checks || []).some((c) => c.name === req.context) ? "pass" : null;
 }
 
 // GitHub says BLOCKED while ANY merge requirement is unmet, including the merge-gate status this helper exists to
@@ -582,10 +585,15 @@ export function gather(pr, { repo, mission, slice, change, deploy, rollback, con
   let unstable;
   if (v.mergeStateStatus === "UNSTABLE") {
     try {
-      const required = new Set(readBaseRequirements().contexts.map((c) => c.context));
-      unstable = { required: [], other: [] };
-      for (const c of observedFrom(readCheckRuns(), statuses, [cfg.gate.context]).filter((x) => x.bucket !== "pass"))
-        (required.has(c.name.replace(/ \(status\)$/, "")) ? unstable.required : unstable.other).push(`${c.name} (${c.result})`);
+      const found = readBaseRequirements(), runs = readCheckRuns();
+      // Every required context is verified on its own (bound app, every same-name result, presence), exactly as the
+      // merge-state line does: "every required check passes" is said only when each one is, never inferred from
+      // the absence of a red one. The gate's own context is this run's to decide (WO45).
+      const reqs = found.contexts.filter((c) => c.context !== cfg.gate.context), names = new Set(found.contexts.map((c) => c.context));
+      unstable = { required: [...new Set(reqs.map((c) => contextState(c, { checks, statuses, checkRuns: runs }))
+        .map((st, i) => (st === "pass" ? null : st ?? `${reqs[i].context}: not reported`)).filter(Boolean))], other: [] };
+      for (const c of observedFrom(runs, statuses, [cfg.gate.context]).filter((x) => x.bucket !== "pass"))
+        if (!names.has(c.name.replace(/ \(status\)$/, ""))) unstable.other.push(`${c.name} (${c.result})`);
     } catch { unstable = null; }
   }
   let brb = null, brbWhere = null;
