@@ -36,23 +36,32 @@ Compare values by hash, never by eye, and never echo them into a transcript or l
 only the whole URL: a dev branch that kept its parent's password has a different host, so its URL differs, but the
 same password still opens production.
 ```bash
-# Hash the password inside DATABASE_URL; fails (and prints no value) when the file, the key or a password is missing.
+# pwhash <env file>: a short hash of the password in its DATABASE_URL (percent-decoded). Fails, printing no value, when
+# the file, the key, a postgres URL with host and database, or a password is missing.
 pwhash() { python3 - "$1" <<'PY'
 import hashlib, sys, urllib.parse
+pw = None
 try:
     lines = open(sys.argv[1]).read().splitlines()
     url = next(l.split("=", 1)[1].strip().strip("'\"") for l in lines if l.startswith("DATABASE_URL="))
-    pw = urllib.parse.urlsplit(url).password
+    u = urllib.parse.urlsplit(url)
+    if u.scheme in ("postgres", "postgresql") and u.hostname and u.path.strip("/") and u.password:
+        pw = urllib.parse.unquote(u.password)
 except Exception:
-    pw = None
+    pass
 if not pw:
-    sys.exit(f"{sys.argv[1]}: no DATABASE_URL with a password")
+    sys.exit(f"{sys.argv[1]}: no valid DATABASE_URL with a password")
 print(hashlib.sha256(pw.encode()).hexdigest()[:12])
 PY
 }
-if dev=$(pwhash .env.local) && prod=$(pwhash ~/.config/<project>/env/.env.production); then
-  [ "$dev" != "$prod" ] && echo "OK: the dev password differs" || echo "FAIL: same password; reset it on the dev branch"
-else echo "FAIL: could not compare"; fi
+# pwcheck <dev env file> <production env file>: exit 0 only when both parse and the passwords differ.
+pwcheck() {
+  local dev prod
+  dev=$(pwhash "$1") && prod=$(pwhash "$2") || { echo "FAIL: could not compare"; return 1; }
+  [ "$dev" != "$prod" ] || { echo "FAIL: same password; reset it on the dev branch"; return 1; }
+  echo "OK: the dev password differs"
+}
+pwcheck .env.local ~/.config/<project>/env/.env.production
 ```
 Check hosts by name (for example `sed -n 's/^DATABASE_URL=.*@\([^/]*\)\/.*/\1/p'`), not whole URLs.
 

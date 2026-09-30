@@ -214,7 +214,8 @@ Details are in the `agent-stack` skill. What went wrong before: [docs/incidents/
 - **OpenRig** never upgrades by itself: running seats would be interrupted. A weekly check (`openrig-update`) tells
   the upgrade owner when a newer release is out. The upgrade is an operator-run window
   ([docs/UPGRADE.md](docs/UPGRADE.md)): `openrig-upgrade <version>` installs it and applies this setup's local patches
-  (`patches/openrig/<version>/`); `openrig-update --validate` then checks every team spec against it.
+  (`patches/openrig/<version>/`); `openrig-update --validate` then checks five team templates
+  (`rig/template/` core, team, build, full-stack, fallback-codex) against it.
 - **Versions:** the tracked pins are in `config/versions.defaults.env`; a machine can override them in
   `config/versions.env` (not tracked). The installer never downgrades OpenRig: if the installed version is newer than
   the pin, it keeps it ([docs/incidents/2026-09-30-openrig-downgrade.md](docs/incidents/2026-09-30-openrig-downgrade.md)).
