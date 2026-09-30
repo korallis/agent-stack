@@ -133,9 +133,32 @@ if [[ $allow_long == 0 ]] && server "$@"; then
   exit 2
 fi
 
+# The nesting markers are only trusted when verified: the named slot's lock must be held by one of this process's own
+# ancestors (the agent-heavy that took it, or the job that inherited its locked fd), seen in /proc/<pid>/fdinfo. A
+# marker that can't be verified (leaked into a long-lived shell, set by hand, or naming a slot someone else holds) is
+# dropped and the run takes a slot normally: it never skips the budget.
+held_by_ancestor() {   # <class.N>
+  local lock=$dir/$1.lock maj min ino id p
+  [[ -e $lock ]] || return 1
+  read -r maj min ino < <(stat -L -c '%Hd %Ld %i' "$lock") || return 1
+  id=$(printf '%02x:%02x:%s' "$maj" "$min" "$ino")
+  p=$PPID
+  while [[ -n $p && $p -gt 1 ]]; do
+    grep -qsE "^lock:.*[[:space:]]FLOCK[[:space:]].*[[:space:]]$id[[:space:]]" "$PROC/$p"/fdinfo/* && return 0
+    p=$(sed 's/^.*) //' "$PROC/$p/stat" 2>/dev/null | awk '{print $2}')
+  done
+  return 1
+}
 if [[ " ${AGENT_HEAVY_ACTIVE:-} " == *" $class "* ]]; then
-  echo "[agent-heavy] nested $class run: already inside ${AGENT_HEAVY_SLOT:-a $class slot}; running inline (no second slot)" >&2
-  exec "$@"
+  mine=""
+  for s in ${AGENT_HEAVY_SLOT:-}; do [[ $s == "$class".* ]] && held_by_ancestor "$s" && { mine=$s; break; }; done
+  if [[ -n $mine ]]; then
+    echo "[agent-heavy] nested $class run: already inside $mine; running inline (no second slot)" >&2
+    exec "$@"
+  fi
+  echo "[agent-heavy] ignoring AGENT_HEAVY_ACTIVE=$AGENT_HEAVY_ACTIVE: no $class slot is held by this process's ancestors; taking a slot" >&2
+  AGENT_HEAVY_ACTIVE=$(tr ' ' '\n' <<<"$AGENT_HEAVY_ACTIVE" | grep -vx "$class" | paste -sd' ' || true)
+  AGENT_HEAVY_SLOT=$(tr ' ' '\n' <<<"${AGENT_HEAVY_SLOT:-}" | grep -v "^$class\." | paste -sd' ' || true)
 fi
 
 mkdir -p "$dir"
