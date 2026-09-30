@@ -327,7 +327,7 @@ test("the CULTURE template keeps the below-bar confirm path (WO36)", () => {
 // ---- WO37: N/A instead of MISSING, from verified facts only -------------------------------------------------------
 const diffOf = (files) => files.map(([path, removed = [], added = [], oldPath = path]) =>
   `diff --git a/${oldPath} b/${path}\n--- a/${oldPath}\n+++ b/${path}\n@@ -1 +1 @@\n${removed.map((l) => "-" + l).join("\n")}\n${added.map((l) => "+" + l).join("\n")}`).join("\n");
-const CULTURE = "## Owner decisions\n- Transition (operator, 2026-09-30 12:55Z): PRs opened before 13:00Z may merge on their existing QA and witness\n  evidence; PRs opened from 13:00Z need the bug-review-board verdict (proof brb-<head>.md).\n";
+const CULTURE = "## Operator and lead rules (not the owner's decisions)\n- Transition (operator, 2026-09-30 12:55Z): PRs opened before 13:00Z may merge on their existing QA and witness\n  evidence; PRs opened from 13:00Z need the bug-review-board verdict (proof brb-<head>.md).\n";
 
 test("the bug-review-board cutoff comes from AGENT_BRB_REQUIRED_SINCE, else the rig CULTURE's transition bullet", () => {
   assert.deepEqual(brbCutoff({ env: {}, culture: CULTURE }), { iso: "2026-09-30T13:00:00.000Z", source: "the rig CULTURE's transition bullet" });

@@ -68,7 +68,9 @@ project-workspace.md) and the `mission-slice-sop` skill. Verify each point on di
    "Would you like to run…?" means one of these is missing: run `agent-never-prompt-check --rig <rig>` and relaunch
    that seat.
 8. Only the rig LEAD is messaged; it relays. Owner decisions, delegations and approvals are dated lines in the rig
-   CULTURE.md "Owner decisions" section: check it before asking the owner, and add every new decision there.
+   CULTURE.md "Owner decisions" section, each ending with its source (`(owner, Slack HH:MMZ)` or `(owner, via
+   operator relay of <ref>)`): check it before asking the owner, and add every new decision there. Only the owner's
+   own decisions go there; operator and lead rules, and interpretations, go under "Operator and lead rules".
 9. Operating rules (template CULTURE.md, "Operating rules"):
    - send owner FYIs with `--human-intent update`: they are closed automatically once posted (`agent-human-inbox-tidy`,
      every 5 min), so don't reopen them. A row without `--human-intent` counts as a decision and is not auto-closed;
