@@ -45,6 +45,9 @@ Remaining INDETERMINATEs that are by design: `reviewed` in project views (review
 binding) and `adopted` (compares with OpenRig's own build) — not project faults.
 
 ## The order
+The kernel operator runs all of this from one request with the `project-onboarding` skill and `agent-project-onboard`
+(an answers file, dry run first). The steps below are what it does, and what to check by hand.
+
 1. `agent-project-new …` (machine prerequisites come from `~/Projects/agent-stack/install.sh`).
 2. The owner writes `docs/PLAN.md`; send ONLY the lead: `rig send coord-lead-claude@<rig> "Build docs/PLAN.md"`.
 3. The lead + architect produce, before any build dispatch:

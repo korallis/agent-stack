@@ -210,6 +210,10 @@ codex plugin list 2>/dev/null | grep -q "superpowers.*installed" && ok "Superpow
 command -v toon >/dev/null && ok "toon CLI" || todo "toon CLI"
 command -v neon >/dev/null && ok "Neon CLI + skills" || todo "Neon CLI (npm i -g neon; then neon login)"
 
+step "Kernel operator: the project-onboarding pointer"
+og=(); [ $CHECK = 1 ] && og=(--check)
+{ "$S/system/operator-guidance" "${og[@]}" || true; } | while IFS= read -r l; do case $l in "ok   "*) ok "${l#ok   }";; *) todo "${l#--   }";; esac; done
+
 step "Skills (one line per source; docs/SKILLS.md)"
 { "$S/bin/agent-skills-check" || true; } | while IFS= read -r l; do   # its WARN exit must not stop install.sh
   case $l in "ok  "*) ok "${l#ok    }";; WARN*) todo "WARN: ${l#WARN  }";; *) printf '   %s\n' "$l";; esac

@@ -82,7 +82,7 @@ test("illustrative blocks: every command exists and accepts every flag shown", (
           assert.doesNotMatch(text, /unknown command|is not a .* command/i, `${cmd} ${subs.join(" ")}`);
           for (const f of flags) assert.ok(text.includes(f), `${cmd} ${subs.join(" ")} has no ${f}`);
         } else {
-          assert.ok(["jq", "git", "cd", "echo", "python3"].includes(cmd), `unknown command in the README: ${cmd} (${line})`);
+          assert.ok(["jq", "git", "cd", "echo", "python3", "tmux", "cp"].includes(cmd), `unknown command in the README: ${cmd} (${line})`);
         }
       }
     }
@@ -126,6 +126,10 @@ test("README reads plainly, links to real files, and carries no personal data", 
     if (!/^https?:/.test(target)) assert.ok(fs.existsSync(join(repo, target)), `broken link ${target}`);
   assert.doesNotMatch(readme, /\/home\/\w+|@(gmail|outlook|hotmail|icloud)\.|sk-[A-Za-z0-9]{10}/);
   for (const [, email] of readme.matchAll(/<([^<>\s]+@[^<>\s]+)>/g)) assert.match(email, /@example\.invalid$/);
+  assert.doesNotMatch(readme, /fortis|psaneler|steep-silence|br-patient|marva|muve|matilda/i, "the worked example is anonymised");
+  assert.match(readme, /```mermaid\nflowchart/, "a How it works diagram");
+  assert.match(readme, /## Talk to your operator[\s\S]*> \*\*You:\*\* Onboard/, "example conversations");
+  for (const h of ["What does it cost?", "Is it safe to run?", "What does it never do without me?"]) assert.ok(readme.includes(`### ${h}`), h);
 });
 
 test("agent-project-new on a machine with no git identity says so and stops (it used to exit 1 silently)", () => {

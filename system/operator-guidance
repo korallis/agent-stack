@@ -1,0 +1,49 @@
+#!/usr/bin/env python3
+"""operator-guidance [--check]: point the kernel operator at the project-onboarding skill.
+
+The kernel rig ships inside OpenRig; its culture and role files are OpenRig's own (not ours to edit). Its operator
+reads the instruction file in the kernel workspace ($OPENRIG_HOME/workspace: CLAUDE.md for a Claude operator, AGENTS.md
+for a Codex one). OpenRig rewrites only its own `<!-- BEGIN OpenRig MANAGED BLOCK: … -->` blocks there, so this adds
+one agent-stack block of its own, outside them, to each of those files that exists. The block is replaced when it
+changes and never duplicated, and the file is backed up first. --check: report only (exit 1 when missing or stale).
+The operator reads it at its next start; the skill's own description already triggers on "onboard …".
+"""
+import os, shutil, sys, time
+
+CHECK = "--check" in sys.argv
+WS = os.path.join(os.environ.get("OPENRIG_HOME") or os.path.expanduser("~/.openrig"), "workspace")
+START, END = "<!-- BEGIN agent-stack: project onboarding -->", "<!-- END agent-stack: project onboarding -->"
+BLOCK = f"""{START}
+## Onboarding a project (agent-stack)
+When the owner asks to onboard, add or set up a project (a repo, a plan, docs or a list of GitHub issues), follow the
+`project-onboarding` skill: ~/.claude/skills/project-onboarding/SKILL.md (Codex: ~/.agents/skills/project-onboarding/).
+Its helper runs the mechanical steps from an answers file, as a dry run first: `agent-project-onboard <answers.env>`.
+{END}
+"""
+backups = os.path.expanduser("~/.local/share/agent-stack/backups/operator-guidance")
+found, bad = 0, 0
+for name in ("CLAUDE.md", "AGENTS.md"):
+    path = os.path.join(WS, name)
+    if not os.path.isfile(path):
+        continue
+    found += 1
+    text = open(path).read()
+    a, b = text.find(START), text.find(END)
+    new = (text[:a] + BLOCK.rstrip("\n") + text[b + len(END):]) if a != -1 and b > a else text.rstrip("\n") + "\n\n" + BLOCK
+    if new == text:
+        print(f"ok   {path}: onboarding pointer present")
+        continue
+    if CHECK:
+        print(f"--   {path}: onboarding pointer {'stale' if a != -1 else 'missing'}")
+        bad += 1
+        continue
+    os.makedirs(backups, exist_ok=True)
+    shutil.copy2(path, os.path.join(backups, f"{name}.{time.strftime('%Y%m%d%H%M%S')}.{time.time_ns() % 10**9:09d}"))
+    tmp = path + ".agent-stack.tmp"
+    open(tmp, "w").write(new)
+    shutil.copymode(path, tmp)
+    os.replace(tmp, path)
+    print(f"ok   {path}: onboarding pointer {'updated' if a != -1 else 'added'}")
+if not found:
+    print(f"--   no kernel workspace instruction file in {WS} yet (the kernel writes it at first boot); re-run install.sh after")
+sys.exit(1 if bad else 0)

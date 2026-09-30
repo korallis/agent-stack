@@ -79,6 +79,13 @@ project-workspace.md) and the `mission-slice-sop` skill. Verify each point on di
     with `no-witness: <reason>`. Tests, merges and deploys are not witnesses.
 11. OpenRig upgrades are operator windows (`docs/UPGRADE.md`), raised weekly by `openrig-update.timer`; never ad hoc. Owner delegations/standing approvals go into the rig CULTURE.md.
 
+## Onboarding a project (the kernel operator)
+"Onboard <repo or project>" to the operator runs the `project-onboarding` skill end to end: intake (only what can't be
+derived), env isolation, `agent-project-onboard <answers.env>` (dry run, then `--apply`), the owner's plan, CULTURE
+decisions and specifics, the lead brief, the plan review, `agent-project-check`, and a report to the owner. Answers file
+and lead-brief templates: `rig/template/onboarding/`. install.sh points the operator at the skill
+(`system/operator-guidance`).
+
 ## Workflow skills (every rig, by default)
 Six of our skills set how a team verifies and writes. The rig CULTURE "Workflow skills" section and each role text say
 who uses which, and when:
