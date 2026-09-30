@@ -351,10 +351,22 @@ the lead or a person. Send Jev evidence, not conclusions.
 
   A mixed change (one docs file and one source file) still needs both.
 
-  GitHub reports a PR as BLOCKED while any required status is missing, including `jev-merge`, the status this gate
-  posts. So when the only unmet required context (from the base branch's rulesets and protection) is `jev-merge`, and
-  there is no review requirement or conflict, the merge state reads "pending this gate". Otherwise it stays BLOCKED
-  and lists the reasons; if the required contexts can't be read, it stays BLOCKED. Free text is redacted before it
+  GitHub reports a PR as BLOCKED while any merge requirement is unmet, including `jev-merge`, the status this gate
+  posts. The helper reads every requirement on the base branch (rulesets and classic protection) and reports
+  "pending this gate" only when all of these hold:
+  - `jev-merge` has posted nothing for the head;
+  - every other required context passes. Every same-name result counts: a failing check is not hidden by a successful
+    status of the same name. A context bound to an app (a ruleset's `integration_id`, protection's `app_id`) is met
+    only by that app's latest check run;
+  - nothing else applies that the helper can't verify: required deployments, signed commits, a merge queue, linear
+    history, resolved conversations, a locked branch, merge restrictions, or a required review GitHub gave no
+    decision on;
+  - there is no review requirement outstanding, and no conflict.
+
+  Otherwise the merge state stays BLOCKED and lists each reason ("not verified by this helper: ..." for the kinds
+  above). A `jev-merge` that already failed reads as failed, never as "not yet posted". Unreadable requirements or
+  check runs keep BLOCKED. A separate line gives the gate's own record for the head: "pending this gate (nothing
+  posted)" or "<state> already posted". Free text is redacted before it
   goes to Jev. The helper refuses if the PR's head or base moves while it collects. A live, not stubbed, Jev `merge`
   in the act band merges on its own (exit 0). A live `merge` below the act bar (review or uncertain band) is NEEDS
   CONFIRM (exit 3) when every gate the helper checks is green: required checks pass, `independent-review` is success,
@@ -364,6 +376,38 @@ the lead or a person. Send Jev evidence, not conclusions.
   Anything else holds (exit 1), naming what isn't green. Before this, the gate was asked with hand-written summaries: of 288 calls (2026-09-28 to 2026-09-30),
   79 were act (27%), 62 review (22%) and 147 uncertain (51%). Measure the change with
   `jev-decide stats --since <date the helper went live>` (row `review.merge_gate`).
+- **Where the evidence lives:** by default the independent review and the gate are commit statuses
+  (`independent-review`, `jev-merge`) and QA's verdict is the proof file. Some repositories record them as PR
+  comments instead. Configure that per repository in `$OPENRIG_WORK_ROOT/.agent-stack/merge-evidence.json`, or point
+  `AGENT_MERGE_EVIDENCE_CONFIG` or `--config` at a file:
+
+  ```json
+  {
+    "repos": {
+      "acme/shop": {
+        "review": { "source": "comments", "heading": "^## review-(claude|codex|kimi)" },
+        "qa":     { "source": "comments", "heading": "^## qa-" },
+        "gate":   { "source": "comments", "heading": "^## jev-merge" },
+        "authorFamily": "codex"
+      }
+    }
+  }
+  ```
+
+  Top-level `review` / `qa` / `gate` / `authorFamily` keys set defaults for every repository; `repos` overrides them.
+  Sources: `review` is `status` (default; `context` names it) or `comments`; `qa` is `proof` (default) or `comments`;
+  `gate` is `status` (default; `context`) or `comments`. A PR comment or review counts as a record only when:
+  - its first line matches the heading regex, and the seat is the first word of that line (`## review-claude-2 ...`);
+  - it names the full 40-character head sha. A short sha or another head never counts;
+  - it states a verdict in a fixed place: a line `confirm <full head sha>`, else the first `Verdict:` / `Ship:` /
+    `Result:` line (PASS, APPROVE, YES or MERGE; FAIL, BLOCK, NO, HOLD or CHANGES REQUESTED), else a single verdict
+    word in the heading. Nothing is inferred from other free text.
+
+  The review is the latest record by a seat of another model family than the PR author's. The author's family comes
+  from `--author-family`, else `authorFamily`, else an `agent/<seat>` head branch. If the family is unknown, no comment
+  review counts and the review is MISSING, saying why. QA's latest record stands in for the proof file, and the gate's
+  latest record gives its line in the merge state. A bad config (unknown source, missing or invalid heading) stops
+  the helper with exit 2.
 - **Dispatch:** `agent-dispatch pick-seat --rig R --role implementer --task "..."` lists the running seats of the role
   that are idle with no open work, with their load notes (code), and Jev's `intake.seat` picks one. On review or uncertain the lead picks
   and records why in the row.
