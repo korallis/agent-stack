@@ -433,7 +433,12 @@ the lead or a person. Send Jev evidence, not conclusions.
      never count. The reviewer must be a login mapped to another family than the author's, in `identities`
      (`{ "identities": { "<github login>": "claude" } }`, top level or per repository);
   3. review comments declaring the head (above). A review `heading` with source `status` makes them the last
-     fallback.
+     fallback. Comment sources (review, QA, gate) read PR comments only. A GitHub review is always its own source,
+     under the rules in 2, so a stale, dismissed, pending, unmapped or same-family review never counts as a
+     comment.
+
+  When the verdict comes from a fallback source, that source's report (link, time, author) and its stated limits go
+  into the evidence with it.
 
   If a verifiable source disagrees with the first one, the verdict is CONFLICT and lists both. If none is
   verifiable, it is `NONE VERIFIABLE`, with what each source lacked. For the gate, the review must be `success`.

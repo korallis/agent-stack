@@ -755,10 +755,32 @@ process.stdout.write(typeof out === "string" ? out : JSON.stringify(out));
   assert.match(o.review, /independent review report: https:\/\/reports\.example\/r\/1 \(linked from the status, outside this PR, so not read\)/);
   o = run({ view: { reviews: [review("APPROVED", H)] } });
   assert.match(o.review, /^review verdict: success, from GitHub PR review APPROVED by rev-claude \(claude family; the author is codex\) submitted on commit a{40}; bound to head a{40}/);
-  assert.match(o.review, /GitHub review report \(review R1, 2026-09-30T12:00:00Z\): Verified the migration/);
+  assert.match(o.review, /GitHub review report, the source of the verdict above \(review R1, 2026-09-30T12:00:00Z, by rev-claude\): Verified the migration/);
   assert.match(o.limits, /limits stated by the GitHub review: rollback untested/);
+  assert.doesNotMatch(o.review, /UNVERIFIED.*review R1/, "the verdict's own source isn't repeated as an unverified note");
   o = run({ view: { reviews: [review("APPROVED", OLD)] } });
   assert.match(o.review, /^review verdict: NONE VERIFIABLE on a{40} \(status: no independent-review status on a{40}; reviews: no GitHub review with a verdict on a{40}; 1 review\(s\) on another commit ignored; comments: no review comment heading configured\)/);
+  // QA WO40 f1: a GitHub review shaped like a review comment (heading, head: line, PASS) never re-enters as a comment:
+  // stale, dismissed, pending, unmapped or same-family reviews stay ineligible in every mode, comments-primary included.
+  const shaped = (state, commit, login = "rev-claude") => ({ id: `R-${state}-${login}`, author: { login }, body: `## review-claude-1\nhead: ${H}\nVerdict: PASS`, state, submittedAt: "2026-09-30T12:00:00Z", commit: { oid: commit } });
+  const ineligible = [shaped("APPROVED", OLD), shaped("DISMISSED", H), shaped("PENDING", H), shaped("APPROVED", H, "stranger"), shaped("APPROVED", H, "rev-codex")];
+  for (const cfgFile of [{ identities: { "rev-claude": "claude", "rev-codex": "codex" }, review: { heading: "^## review-" } },
+    { identities: { "rev-claude": "claude", "rev-codex": "codex" }, review: { source: "comments", heading: "^## review-" } }]) {
+    fs.writeFileSync(join(work, ".agent-stack", "merge-evidence.json"), JSON.stringify(cfgFile));
+    for (const rv of ineligible) {
+      o = run({ view: { reviews: [rv] } });
+      assert.match(o.review, /^review verdict: NONE VERIFIABLE/, `${cfgFile.review.source || "status"} mode, ${rv.id} on ${rv.commit.oid.slice(0, 1)}`);
+    }
+  }
+  // QA WO40 f2: a fallback comment's report and limits travel with the verdict, next to (not replaced by) other notes.
+  fs.writeFileSync(join(work, ".agent-stack", "merge-evidence.json"), JSON.stringify({ review: { heading: "^## review-" } }));
+  o = run({ statuses: [{ context: "independent-review", state: "pending", description: "reviewing", creator: { login: "rev" }, target_url: "https://reports.example/r/2" }],
+    view: { comments: [
+      { body: `## review-claude-1\nhead: ${H}\nVerdict: PASS\nVerified the retry path against 3 fixtures. LIMIT: clock skew untested`, url: "https://x/c7", createdAt: "2026-09-30T12:00:00Z", author: { login: "owner" } },
+      { body: `Author update: pushed ${H}, ready for gate.`, url: "https://x/c8", createdAt: "2026-09-30T12:05:00Z", author: { login: "owner" } }] } });
+  assert.match(o.review, /^review verdict: success, from review comment by seat review-claude-1 declaring head a{40}; bound to head a{40}/);
+  assert.match(o.review, /review comment report, the source of the verdict above \(https:\/\/x\/c7, 2026-09-30T12:00:00Z, by review-claude-1\): .*Verified the retry path against 3 fixtures\. LIMIT: clock skew untested/);
+  assert.match(o.limits, /limits stated by the review comment: clock skew untested/);
   // With a review heading configured, comments are the last fallback even while the source is "status".
   fs.writeFileSync(join(work, ".agent-stack", "merge-evidence.json"), JSON.stringify({ review: { heading: "^## review-" } }));
   o = run({ view: { comments: [{ body: `## review-claude-1\nhead: ${H}\nVerdict: PASS`, url: "https://x/c1", createdAt: "2026-09-30T12:00:00Z", author: { login: "owner" } }] } });
