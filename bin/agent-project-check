@@ -369,9 +369,13 @@ if TRUNK != "main":
     rep("OK" if mirror and mirror == want else "FAIL", f"local main mirrors origin/{TRUNK} (OpenRig judges 'merged' against main)",
         "" if mirror and mirror == want else
         (f"main is {mirror[:8]}, origin/{TRUNK} is {want[:8]}: run agent-repos-sync" if mirror else "no local main: run agent-project-new again"))
-    pp = read(f"{REPO}/.git/hooks/pre-push") or ""
-    rep("OK" if "agent-stack.mainMirror" in pp else "FAIL", "pre-push hook keeps the main mirror off the remote",
-        "" if "agent-stack.mainMirror" in pp else "install system/git-hooks/pre-push")
+    # the hook git actually runs (core.hooksPath respected), and it must be executable
+    hooks = git("rev-parse", "--git-path", "hooks")
+    pp_path = os.path.join(REPO, hooks) if not os.path.isabs(hooks) else hooks
+    pp_path = os.path.join(pp_path, "pre-push")
+    ok = "agent-stack.mainMirror" in (read(pp_path) or "") and os.access(pp_path, os.X_OK)
+    rep("OK" if ok else "FAIL", "pre-push hook keeps the main mirror off the remote",
+        "" if ok else f"git runs hooks from {os.path.dirname(pp_path)}: put an executable agent-stack pre-push check there (system/git-hooks/pre-push)")
 tim = subprocess.run(["systemctl", "--user", "is-active", "agent-repos-sync.timer"], capture_output=True, text=True).stdout.strip()
 rep("OK" if tim == "active" else "FAIL", "agent-repos-sync.timer active (keeps every project's main current)")
 hook = read(f"{REPO}/.git/hooks/pre-commit") or ""

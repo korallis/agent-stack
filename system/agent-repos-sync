@@ -20,7 +20,7 @@ grep -oE 'root: *[^ ]+' "$cat" | sed 's/root: *//' | while read -r w; do
   git -C "$r" fetch -q origin "$t" 2>/dev/null || continue
   if [ "$t" != main ]; then
     if [ "$(git -C "$r" config --bool agent-stack.mainMirror 2>/dev/null)" != true ]; then echo "$r: trunk $t, no main mirror (run agent-project-new)"
-    elif [ "$(git -C "$r" symbolic-ref -q --short HEAD)" = main ]; then echo "$r: main is checked out; mirror not moved"
+    elif git -C "$r" worktree list --porcelain | grep -qx 'branch refs/heads/main'; then echo "$r: main is checked out in a worktree; mirror not moved"
     else git -C "$r" update-ref -m "agent-stack: main mirrors origin/$t" refs/heads/main "refs/remotes/origin/$t" && echo "$r: main mirror at $(git -C "$r" rev-parse --short "origin/$t")"; fi
   fi
   [ "$(git -C "$r" branch --show-current)" = "$t" ] || { echo "$r: not on $t, skipped"; continue; }

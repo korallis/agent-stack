@@ -85,6 +85,7 @@ function existingRepo(name, trunk) {
   return { proj, bare, seed };
 }
 function realRun(name, rig, extra = [], ghMode = "ruleset") {
+  // ghMode: ruleset (rules exist), none (a confirmed 404 and no rules), 503 (both reads fail)
   const W = join(home, "Projects", `${name}-work`);
   fs.writeFileSync(join(home, "bin/rig"), `#!/bin/bash
 echo "rig $*" >> "${home}/rig-calls"
@@ -98,9 +99,9 @@ exit 0
   fs.writeFileSync(join(home, "bin/gh"), `#!/bin/bash
 echo "gh $*" >> "${home}/gh-calls"
 case "$*" in
-  *"-X PUT"*) exit 0 ;;
-  *"/protection"*) exit 1 ;;
-  *"/rules/branches/"*) [ "${ghMode}" = ruleset ] && echo "deletion, non_fast_forward, pull_request, required_status_checks"; exit 0 ;;
+  *"-X PUT"*|*"label create"*) exit 0 ;;
+  *"/protection"*) [ "${ghMode}" = 503 ] && { echo "gh: Service Unavailable (HTTP 503)" >&2; exit 1; }; echo "gh: Branch not protected (HTTP 404)" >&2; exit 1 ;;
+  *"/rules/branches/"*) [ "${ghMode}" = 503 ] && { echo "gh: Service Unavailable (HTTP 503)" >&2; exit 1; }; [ "${ghMode}" = ruleset ] && echo "deletion, non_fast_forward, pull_request, required_status_checks"; exit 0 ;;
 esac
 exit 0
 `, { mode: 0o755 });
@@ -234,4 +235,51 @@ test("WO21 addendum: a bun lockfile installs each new worktree with bun install 
   for (const c of calls) assert.match(c, /^bun install --frozen-lockfile in .*fortis-bun\.worktrees\/[a-z0-9-]+$/);
   assert.ok(!fs.existsSync(join(home, "npm-calls")), "no npm ci for a bun project");
   fs.rmSync(join(home, "bin/bun")); fs.rmSync(join(home, "bin/npm"));
+});
+
+// ---- QA round 1 (PR #23) ----
+test("QA: failed protection reads (HTTP 503) change nothing on GitHub: no label, no PUT", () => {
+  existingRepo("fortis-503", "master");
+  const r = realRun("fortis-503", "f503", [], "503");
+  assert.equal(r.status, 0, r.stderr.slice(-400));
+  assert.match(r.stdout, /GitHub: could not read master\x27s protection \(rules: .*HTTP 503.*; branch protection: .*HTTP 503.*\); nothing changed/);
+  assert.doesNotMatch(r.gh, /-X PUT|label create/);
+});
+
+test("QA: main checked out in a LINKED worktree is never moved, by setup or by sync", () => {
+  const { proj, seed } = existingRepo("fortis-linked", "master");
+  assert.equal(realRun("fortis-linked", "flink").status, 0);
+  const side = join(home, "linked-main"); fs.rmSync(side, { recursive: true, force: true });
+  assert.equal(git(proj, "worktree", "add", "-q", side, "main").status, 0);
+  fs.appendFileSync(join(seed, "README.md"), "x\n"); git(seed, "commit", "-qam", "x"); git(seed, "push", "-q", "origin", "master");
+  const before = git(proj, "rev-parse", "main").stdout;
+  const again = realRun("fortis-linked", "flink");
+  assert.match(again.stderr, /main is checked out in a worktree; mirror not set/);
+  assert.equal(git(proj, "rev-parse", "main").stdout, before);
+  const cat = join(home, "sync-cat.yaml"); fs.writeFileSync(cat, `workspaces:\n  - id: x\n    root: ${proj}-work\n`);
+  const sync = spawnSync(join(repo, "system/agent-repos-sync"), [], { encoding: "utf8", env: { ...process.env, AGENT_CATALOG: cat, GIT_CONFIG_GLOBAL: join(home, ".gitconfig") } });
+  assert.match(sync.stdout, /main is checked out in a worktree; mirror not moved/);
+  assert.equal(git(proj, "rev-parse", "main").stdout, before);
+  assert.equal(git(side, "status", "--porcelain").stdout, "", "the linked checkout is intact");
+  git(proj, "worktree", "remove", "--force", side);
+});
+
+test("QA: with core.hooksPath (the project\x27s own hooks), nothing is written there and the check FAILs the missing guard", () => {
+  const { proj } = existingRepo("fortis-hooks", "master");
+  fs.mkdirSync(join(proj, ".husky"), { recursive: true }); git(proj, "config", "core.hooksPath", ".husky");
+  const r = realRun("fortis-hooks", "fhook");
+  assert.equal(r.status, 0, r.stderr.slice(-300));
+  assert.match(r.stderr, /core\.hooksPath is .*\.husky \(the project\x27s own hooks\): add the agent-stack pre-commit and pre-push checks there by hand/);
+  assert.deepEqual(fs.readdirSync(join(proj, ".husky")), []);
+  const chk = JSON.parse(spawnSync("python3", [join(repo, "bin/agent-project-check"), "fortis-hooks", "--json"], { encoding: "utf8", timeout: 120000,
+    env: { PATH: `${home}/bin:${process.env.PATH}`, HOME: home, OPENRIG_URL: "http://127.0.0.1:9", GIT_CONFIG_GLOBAL: join(home, ".gitconfig") } }).stdout)
+    .find((x) => x.check.startsWith("pre-push hook keeps the main mirror"));
+  assert.equal(chk.level, "FAIL");
+  assert.match(chk.detail, /git runs hooks from .*\.husky/);
+  // a guard placed there, executable, passes
+  fs.copyFileSync(join(repo, "system/git-hooks/pre-push"), join(proj, ".husky/pre-push")); fs.chmodSync(join(proj, ".husky/pre-push"), 0o755);
+  const ok = JSON.parse(spawnSync("python3", [join(repo, "bin/agent-project-check"), "fortis-hooks", "--json"], { encoding: "utf8", timeout: 120000,
+    env: { PATH: `${home}/bin:${process.env.PATH}`, HOME: home, OPENRIG_URL: "http://127.0.0.1:9", GIT_CONFIG_GLOBAL: join(home, ".gitconfig") } }).stdout)
+    .find((x) => x.check.startsWith("pre-push hook keeps the main mirror"));
+  assert.equal(ok.level, "OK");
 });

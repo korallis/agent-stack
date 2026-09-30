@@ -70,3 +70,13 @@ test("regression: a main-trunk repo is fast-forwarded as before, and nothing els
   assert.doesNotMatch(r.stdout, /mirror/);
   assert.equal(git(p.r, "config", "agent-stack.mainMirror").status, 1);
 });
+
+test("QA: a mirror checked out in a linked worktree is not moved", () => {
+  const p = project("fl", "master");
+  git(p.r, "update-ref", "refs/heads/main", "origin/master"); git(p.r, "config", "agent-stack.mainMirror", "true");
+  const side = join(root, "fl-main"); git(p.r, "worktree", "add", "-q", side, "main");
+  const before = sha(p.r, "main"); p.advance();
+  const r = sync(p.r);
+  assert.match(r.stdout, /main is checked out in a worktree; mirror not moved/);
+  assert.equal(sha(p.r, "main"), before);
+});
