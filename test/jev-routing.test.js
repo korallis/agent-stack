@@ -1,6 +1,6 @@
 // WO35: model defaults, and Jev as the decision layer (merge evidence, seat picking, stuck seats). Jev is never called
 // for real here: AGENT_JEV_STUB supplies its answers, and gh, rig and tmux are stubs.
-process.env.AGENT_STACK_STATE = (await import("node:fs")).mkdtempSync("/tmp/claude-1000/agst-wo35-");
+process.env.AGENT_STACK_STATE = (await import("node:fs")).mkdtempSync(`${(await import("node:os")).tmpdir()}/agst-wo35-`);
 import { test } from "node:test";
 import assert from "node:assert/strict";
 import { spawnSync } from "node:child_process";
@@ -14,7 +14,7 @@ const { buildMergeInput, passes, outcome, gateProblems, parseDiff, brbCutoff, br
   reviewFromPrReviews, reviewVerdict, observedFrom, familyFromHeading, familyFromDescription, isGateReport, firstSection } = await import("../orchestration/merge-evidence.js");
 const { seatCandidates, nextStep } = await import("../orchestration/pickseat.js");
 const st = await import("../orchestration/stuck.js");
-const root = fs.mkdtempSync("/tmp/claude-1000/wo35-");
+const root = fs.mkdtempSync(join((await import("node:os")).tmpdir(), "wo35-"));
 process.on("exit", () => { fs.rmSync(root, { recursive: true, force: true }); fs.rmSync(process.env.AGENT_STACK_STATE, { recursive: true, force: true }); });
 const bin = join(root, "bin"); fs.mkdirSync(bin);
 const stub = (answers) => { const f = join(root, `jev-${Math.random().toString(36).slice(2)}.json`); fs.writeFileSync(f, JSON.stringify(answers)); return f; };
