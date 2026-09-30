@@ -25,14 +25,20 @@ test("Bash: commands that would print a credential file are denied", () => {
     "cat .env", "cat ./.env.local", "head -3 .env.production", "tail -n 5 ../api/.env", "less .env", "bat .env",
     "jq . certs/server.pem", "grep DATABASE_URL .env", "rg TOKEN .env.local", "awk -F= '{print $2}' .env",
     "sed -n 1,5p .env", "sed 's/x/y/' .env", "xxd .env", "od -c .env", "strings key.pem", "base64 .env",
-    "cut -d= -f2 .env", "sort .env", "diff .env .env.local", "cat $HOME/.config/agent-stack/secrets/x.env",
+    "cut -d= -f2 .env", "cut -d= -f1 .env", "cut -d= -f1 key.pem", "sort .env", "diff .env .env.local", "cat $HOME/.config/agent-stack/secrets/x.env",
     "cat ${HOME}/.config/agent-stack/secrets/x.env", "cat prod.env", "cat .env*", "cat config/*.pem",
     'echo "$(cat .env)"', "echo $(< .env)", "echo `cat .env`", "cat < .env", "tee < .env",
     "cp .env /dev/stdout", "cp .env /dev/tty", "dd if=.env", "git show HEAD:.env", "git diff .env", "git log -p -- .env",
     'bash -c "cat .env"', "sh -c 'head .env'", "eval cat .env", "sudo cat /etc/app/.env", "FOO=1 cat .env", "timeout 5 cat .env",
     "source .env && echo $DATABASE_URL", ". ./.env; printenv", "set -a; . .env; set +a; env", "source .env; export -p",
     "source .env && printf '%s' \"$TOKEN\"", "cd /tmp && cat .env | grep URL", "export $(grep -v '^#' .env | xargs)",
-    "grep -e URL .env", "grep -A 2 URL .env", "rg --regexp TOKEN -- .env", "awk -F= '{print $2}' .env", "jq -r .key key.pem",
+    "grep -e URL .env", "grep -A 2 URL .env",
+    // QA WO42 f1: subshells, shell -c in any option spelling, env with options, groups, unquoted heredoc substitution
+    "(cat .env)", "( head .env )", "{ cat .env; }", "if cat .env; then :; fi", 'bash --noprofile --norc -lc "cat .env"',
+    "sh -ec 'cat .env'", "env -u UNUSED cat .env", "env -i PATH=/bin cat .env", 'env -S "cat .env"', "timeout -s KILL 5 cat .env",
+    "cat <<EOF\n$(cat .env)\nEOF", "cat <<EOF\n`cat .env`\nEOF", "tee < .env",
+    // QA WO42 f2: an option-looking pattern is a pattern; cut prints lines without "="
+    "grep -- -l .env", "grep -e -l .env", "rg -- -q .env", "rg --regexp TOKEN -- .env", "awk -F= '{print $2}' .env", "jq -r .key key.pem",
   ]) assert.equal(bash(c), true, c);
 });
 
@@ -41,9 +47,12 @@ test("Bash: using credentials without printing them, and ordinary commands, are 
     "grep -r TODO .", "cat README.md", "ls .env*", "ls -la", "cat .env.example", "cat .env.sample", "head .env.template",
     "set -a; . .env; set +a; npm run migrate", "source .env && npm test", "source .env && echo done", "npm run dev -- --env-file .env",
     "docker run --env-file .env img", "grep -q '^DATABASE_URL=' .env && echo present", "grep -c KEY .env", "grep -l KEY -r .",
-    "rg -l TOKEN", "cut -d= -f1 .env", "cut -d '=' -f 1 .env", "wc -l .env", "sha256sum .env", "test -f .env && echo yes", "stat .env",
+    "rg -l TOKEN", "wc -l .env", "sha256sum .env", "test -f .env && echo yes", "stat .env",
     "cp .env .env.bak", "mv .env.local .env", "sed -i 's/old/new/' .env", "echo 'X=1' >> .env", "printf 'K=v\\n' > .env.local",
-    "tail -f log.txt 2>&1 | grep err", "env | grep PATH", "git add .env.example", "git status", "chmod 600 .env",
+    "tail -f log.txt 2>&1 | grep err",
+    // QA WO42 f3: quiet input redirection, set options after loading, a file-looking pattern after --
+    "grep -q FIXTURE_KEY < .env", "source .env; set -e; true", "source .env; set -euo pipefail; npm test", "grep -- .env README.md",
+    "rg -- prod.env docs/", "cat <<'EOF'\n$(cat .env)\nEOF", "export -n FOO", "declare -r X=1", "env | grep PATH", "git add .env.example", "git status", "chmod 600 .env",
     "cat <<'EOF' > notes.md\nNever run: cat .env\nEOF", "echo 'do not cat .env'", "grep -rn 'runtime-url' docs/",
     "node scripts/migrate.js", "cat src/app.ts", "cat package.json | jq .scripts", "rg -n 'prod.env' src/",
     "grep -A 3 '.env' README.md", "awk '/runtime-url/ {print}' notes.txt", "sed -n '/.env/p' docs/setup.md",
@@ -68,7 +77,18 @@ test("the deny reason names the file and how to use it by name", () => {
   const d = decide("Bash", { command: "cat /home/seat/app/.env" });
   assert.match(d.reason, /credential guard: blocked, because this would print ~\/app\/\.env \(a credential file, pattern \*\*\/\.env\)/);
   assert.match(d.reason, /set -a; \. ~\/app\/\.env; set \+a; <the command that needs them>/);
-  assert.match(d.reason, /cut -d= -f1/);
+  assert.match(d.reason, /agent-credguard-read-hook --keys ~\/app\/\.env/);
+  assert.doesNotMatch(d.reason, /cut -d/, "cut can print whole lines, so it is not advised");
+});
+
+test("--keys prints only the key names, never a value or a line without one", () => {
+  assert.deepEqual(g.keyNames("# c\nA=1\nexport B_2 = x\n  C=\nnot a pair\nD"), ["A", "B_2", "C"]);
+  assert.deepEqual(g.keyNames("-----BEGIN PRIVATE KEY-----\nMIIEvQIBADANBgkqhkiG9w0BAQEFAASC=\n-----END PRIVATE KEY-----\n"), [], "a key file has no names");
+  assert.deepEqual(g.keyNames("TOKEN=x\nAAAAB3NzaC1yc2EAAAADAQABAAAB==\n"), ["TOKEN"], "a base64 line is not a name");
+  const f = join(root, "keys.env"); fs.writeFileSync(f, "FIXTURE_KEY=synthetic-value\nPLAIN LINE\n");
+  const r = spawnSync(process.execPath, [hookFile, "--keys", f], { encoding: "utf8" });
+  assert.equal(r.stdout, "FIXTURE_KEY\n"); assert.doesNotMatch(r.stdout, /synthetic|PLAIN/);
+  assert.equal(bash(`"$HOME/.local/share/agent-stack/bin/agent-credguard-read-hook" --keys .env`), false, "the advised command is allowed");
 });
 
 test("local extra patterns come from a file outside the repo", () => {
@@ -146,8 +166,8 @@ test("installer: a Codex config without [features] hooks = true is reported", ()
   fs.writeFileSync(join(h, "config.toml"), 'model = "x"\n');
   const r = install(h);
   assert.equal(r.status, 1); assert.match(r.stdout, /-- Codex: \[features\] hooks = true is not set/);
-  assert.equal(inst.hooksFeatureOn("[features]\nother = 1\nhooks = true\n[x]\n"), true);
-  assert.equal(inst.hooksFeatureOn("[features]\nother = 1\n[x]\nhooks = true\n"), false);
+  fs.writeFileSync(join(h, "config.toml"), '[features]\nother = 1\n\n[x]\nhooks = true\n');
+  assert.match(install(h).stdout, /-- Codex: \[features\] hooks = true is not set/, "hooks = true under another table doesn't count");
 });
 
 test("agent-never-prompt-check: an untrusted Codex guard FAILs", () => {
@@ -163,4 +183,79 @@ test("agent-never-prompt-check: an untrusted Codex guard FAILs", () => {
   const c = fs.readFileSync(join(h, ".codex/config.toml"), "utf8");
   fs.writeFileSync(join(h, ".codex/config.toml"), c.replace(/\[hooks\.state[^\n]*\]\ntrusted_hash[^\n]*\n/, ""));
   assert.deepEqual(guard(rows()), ["OK", "FAIL"]);
+});
+
+test("installer: a guard handler sharing a group with another hook leaves that hook in place (QA WO42 f4)", () => {
+  const h = fs.mkdtempSync(join(root, "s-")); fs.writeFileSync(join(h, "hook"), ""); fs.writeFileSync(join(h, "config.toml"), "[features]\nhooks = true\n");
+  const old = { type: "command", command: '"/old/agent-credguard-read-hook" --runtime claude' }, audit = { type: "command", command: "echo audit" };
+  fs.writeFileSync(join(h, "settings.json"), JSON.stringify({ hooks: { PreToolUse: [{ matcher: "Bash", hooks: [old, audit] }, { matcher: "Read", hooks: [old] }] } }));
+  assert.equal(install(h).status, 0);
+  const pre = JSON.parse(fs.readFileSync(join(h, "settings.json"), "utf8")).hooks.PreToolUse;
+  assert.deepEqual(pre.map((g) => [g.matcher, g.hooks.map((x) => x.command)]),
+    [["Bash", ["echo audit"]], ["Bash|Read|Grep", [`"${join(h, "hook")}" --runtime claude`]]], "the old guard handlers go; audit stays; an emptied group goes");
+});
+
+test("installer: malformed settings JSON is refused, never overwritten (QA WO42 f4)", () => {
+  const h = fs.mkdtempSync(join(root, "m-")); fs.writeFileSync(join(h, "hook"), ""); fs.writeFileSync(join(h, "config.toml"), "[features]\nhooks = true\n");
+  fs.writeFileSync(join(h, "settings.json"), '{"hooks": {"PreToolUse": [ broken');
+  const r = install(h);
+  assert.equal(r.status, 1); assert.match(r.stdout, /-- Claude: .*settings\.json is not valid JSON .*left unchanged/);
+  assert.equal(fs.readFileSync(join(h, "settings.json"), "utf8"), '{"hooks": {"PreToolUse": [ broken');
+  assert.equal(fs.readdirSync(h).filter((f) => f.startsWith("settings.json.bak")).length, 0);
+});
+
+test("installer: the Codex group index comes from the parsed TOML, comments and spacing included (QA WO42 f5)", () => {
+  for (const header of ["[[hooks.PreToolUse]] # existing audit", "[[ hooks.PreToolUse ]]", '[[hooks."PreToolUse"]]']) {
+    const h = fs.mkdtempSync(join(root, "p-")); fs.writeFileSync(join(h, "hook"), ""); fs.writeFileSync(join(h, "settings.json"), "{}");
+    fs.writeFileSync(join(h, "config.toml"), `[features]\nhooks = true\n\n${header}\nmatcher = "Bash"\n[[hooks.PreToolUse.hooks]]\ntype = "command"\ncommand = "audit"\n`);
+    assert.equal(install(h).status, 0, header);
+    const t = tomlJson(join(h, "config.toml"));
+    assert.equal(t.hooks.PreToolUse.findIndex((grp) => /--runtime codex/.test(grp.hooks[0].command)), 1, header);
+    assert.deepEqual(Object.keys(t.hooks.state), [`${fs.realpathSync(join(h, "config.toml"))}:pre_tool_use:1:0`], header);
+    assert.equal(install(h, "--check").status, 0);
+  }
+  const h = fs.mkdtempSync(join(root, "q-")); fs.writeFileSync(join(h, "hook"), ""); fs.writeFileSync(join(h, "settings.json"), "{}");
+  const bad = "[features]\nhooks = true\n[hooks\nbroken";
+  fs.writeFileSync(join(h, "config.toml"), bad);
+  const r = install(h);
+  assert.equal(r.status, 1); assert.match(r.stdout, /-- Codex: .*not valid TOML.*left unchanged/); assert.equal(fs.readFileSync(join(h, "config.toml"), "utf8"), bad);
+  fs.writeFileSync(join(h, "config.toml"), '[features]\nhooks = true\n[hooks]\nPreToolUse = [{ matcher = "Edit", hooks = [] }]\n');
+  const r2 = install(h);
+  assert.equal(r2.status, 1, "a static inline array can't take another group: refused, not written wrong"); assert.match(r2.stdout, /-- Codex: .*left unchanged/);
+});
+
+test("agent-never-prompt-check: a wrong trusted_hash or a missing hooks feature FAILs (QA WO42 f6)", () => {
+  const h = fs.mkdtempSync(join(root, "a-"));
+  const w = (f, c) => { fs.mkdirSync(dirname(join(h, f)), { recursive: true }); fs.writeFileSync(join(h, f), c); };
+  w(".local/share/agent-stack/bin/agent-credguard-read-hook", ""); w(".claude/settings.json", "{}"); w(".codex/config.toml", "[features]\nhooks = true\n");
+  spawnSync(process.execPath, [installFile, "--hook", join(h, ".local/share/agent-stack/bin/agent-credguard-read-hook"),
+    "--claude-settings", join(h, ".claude/settings.json"), "--codex-config", join(h, ".codex/config.toml")]);
+  const codexRow = () => JSON.parse(spawnSync("python3", [join(repo, "bin/agent-never-prompt-check"), "--json"], { encoding: "utf8", env: { PATH: process.env.PATH, HOME: h } }).stdout)
+    .find((x) => x.check.startsWith("Codex: credential read guard"));
+  assert.equal(codexRow().level, "OK");
+  const c = fs.readFileSync(join(h, ".codex/config.toml"), "utf8");
+  fs.writeFileSync(join(h, ".codex/config.toml"), c.replace(/trusted_hash = "sha256:[0-9a-f]+"/, 'trusted_hash = "sha256:invalid"'));
+  assert.equal(codexRow().level, "FAIL"); assert.match(codexRow().detail, /trusted_hash doesn't match the hook/);
+  fs.writeFileSync(join(h, ".codex/config.toml"), c.replace("hooks = true", "hooks = false"));
+  assert.equal(codexRow().level, "FAIL"); assert.match(codexRow().detail, /\[features\] hooks = true is not set/);
+});
+
+// Runtime evidence: Codex itself (app-server hooks/list, no model call) reports the installed guard as trusted and
+// enabled, with the hash the installer computed. Skipped where no codex binary is installed.
+const codexBin = spawnSync("sh", ["-c", "command -v codex"], { encoding: "utf8" }).stdout.trim();
+test("Codex accepts the installed guard as trusted (hooks/list)", { skip: !codexBin && "codex not installed" }, () => {
+  const h = fs.mkdtempSync(join(root, "cx-")); fs.mkdirSync(join(h, "home")); fs.mkdirSync(join(h, "work"));
+  fs.writeFileSync(join(h, "hook"), ""); fs.writeFileSync(join(h, "settings.json"), "{}");
+  fs.writeFileSync(join(h, "home/config.toml"), '[features]\nhooks = true\n\n[[hooks.PreToolUse]] # another hook first\nmatcher = "Edit"\n[[hooks.PreToolUse.hooks]]\ntype = "command"\ncommand = "true"\n');
+  spawnSync(process.execPath, [installFile, "--hook", join(h, "hook"), "--claude-settings", join(h, "settings.json"), "--codex-config", join(h, "home/config.toml")]);
+  const input = ['{"id":1,"method":"initialize","params":{"clientInfo":{"name":"test","version":"0"}}}', '{"method":"initialized"}',
+    JSON.stringify({ id: 2, method: "hooks/list", params: { cwds: [join(h, "work")] } })].join("\n") + "\n";
+  const r = spawnSync("sh", ["-c", `(cat; sleep 4) | timeout 25 "${codexBin}" app-server`], { input, cwd: join(h, "work"), encoding: "utf8",
+    env: { PATH: process.env.PATH, HOME: h, CODEX_HOME: join(h, "home") } });
+  const line = r.stdout.split("\n").find((l) => /"id":2/.test(l));
+  assert.ok(line, r.stderr.slice(-500));
+  const guard = JSON.parse(line).result.data[0].hooks.find((x) => /--runtime codex/.test(x.command || ""));
+  assert.deepEqual([guard.eventName, guard.matcher, guard.enabled, guard.trustStatus], ["preToolUse", "Bash", true, "trusted"]);
+  assert.equal(guard.key, `${fs.realpathSync(join(h, "home/config.toml"))}:pre_tool_use:1:0`);
+  assert.equal(guard.currentHash, tomlJson(join(h, "home/config.toml")).hooks.state[guard.key].trusted_hash);
 });

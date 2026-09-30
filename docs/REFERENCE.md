@@ -306,16 +306,25 @@ and `system/credguard-read-install` merges it idempotently, keeping every other 
   Codex gives its `exec_command` shell tool in hooks, and Codex reads files only through that shell. The block also
   holds the hook's `[hooks.state."<config>:pre_tool_use:<n>:0"] trusted_hash`: Codex runs a config hook only when
   that hash matches, and it is Codex's own (sha256 of the canonical JSON of the hook's identity; checked against a
-  hash Codex wrote itself). A deny is exit 2 with the reason on stderr. Codex reads its config at start, so Codex
+  hash Codex wrote itself). The installer finds the group's position by parsing the TOML (Python's `tomllib`), then
+  parses the result again to prove the guard sits there with its trust recorded; a file it can't parse, or can't
+  extend safely, is left unchanged and reported. Codex's own `hooks/list` (app-server) reports the installed guard as
+  `trusted` and `enabled` (a test runs it where `codex` is installed). A deny is exit 2 with the reason on stderr. Codex reads its config at start, so Codex
   seats get the guard at their next launch. `[features] hooks = true` must be set (OpenRig sets it).
 
 What is refused: a read or print verb (`cat`, `head`, `tail`, `less`, `bat`, `jq`, `grep`, `rg`, `awk`, `sed`
 without `-i`, `xxd`, `od`, `strings`, `base64`, `cut`, `diff`, …) with a protected file as an operand or `<` input;
 `$(< file)`; `cp`/`mv`/`dd` to the terminal; `git show|diff|log|blame` of one; `bash -c`/`sh -c`/`eval` of any of
-these; and `source`/`.` of one followed by `env`, `printenv`, `export -p`, `set`, `declare -p` or `echo`/`printf`
-of a variable. The Read tool on one, and a Grep content search of one, are refused too. What is allowed:
+these, in any spelling (`bash --norc -lc`, `env -u X`, `env -S`, a `( … )` subshell or `{ …; }` group, `if`/`while`
+bodies, `timeout`, `sudo`); command substitutions inside an unquoted heredoc (`<<EOF` runs them; `<<'EOF'` doesn't);
+and `source`/`.` of one followed by `env`, `printenv`, bare `export`/`set`/`declare`, `export -p` or `echo`/`printf`
+of a variable. Options are read as each tool reads them: `--` ends them, value-taking options take their value, and
+a pattern operand is a pattern (`grep -- -l .env` prints; `grep -- .env README.md` names no protected file). The Read tool on one, and a Grep content search of one, are refused too. What is allowed:
 - using it without printing: `set -a; . .env; set +a; <cmd>`, `--env-file`, `docker run --env-file`;
-- `grep -q`/`-c`/`-l` on it, `cut -d= -f1` (key names only), `wc`, `sha256sum`, `test -f`, `stat`, `ls`;
+- `grep -q`/`-c`/`-l` on it (also as `grep -q X < .env`), `wc`, `sha256sum`, `test -f`, `stat`, `ls`, and
+  `agent-credguard-read-hook --keys <file>`, which prints only the key names (nothing for a key file). `cut -d= -f1`
+  is refused: it prints every line without a `=` whole;
+- `set -e` and other shell options after loading (bare `set` dumps variables and is refused);
 - `cp` to another file, `sed -i`, and writing to it;
 - a grep/rg/awk/sed pattern that merely looks like a file name (`grep -rn runtime-url docs/`);
 - heredoc bodies, which are data, not commands.
@@ -326,7 +335,8 @@ line, in `~/.config/agent-stack/credguard-read-paths`. That file is local and ne
 project there.
 
 The deny message says how to use the values by name. `agent-never-prompt-check` (and so `agent-project-check`)
-FAILs when the guard is missing from either runtime or the Codex hook is untrusted.
+FAILs when the guard is missing from either runtime, or when Codex would skip it: `[features] hooks = true` unset, or
+no `trusted_hash` equal to the hash of the guard as written (it recomputes it, the way Codex does).
 
 Limits (honest): it stops accidental printing by a seat, not a determined one. A script that reads and prints a
 file itself (`node -e`, `python -c`, a project script) isn't parsed, and neither is a variable holding a path. A

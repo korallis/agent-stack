@@ -22,14 +22,16 @@ const TIMEOUT = 10;
 const claudeCommand = (hook) => `"${hook}" --runtime claude`;
 const codexCommand = (hook) => `"${hook}" --runtime codex`;
 
-// Pure: settings with exactly one guard entry in hooks.PreToolUse (an older guard entry is replaced in place).
+// Pure: settings with exactly one guard group in hooks.PreToolUse. Only guard handlers are removed from existing
+// groups (a group left with other handlers keeps them; one left empty goes); every other hook stays as it was.
 function withClaudeHook(settings, hook) {
   const s = { ...settings, hooks: { ...(settings.hooks || {}) } };
   const entry = { matcher: "Bash|Read|Grep", hooks: [{ type: "command", command: claudeCommand(hook), timeout: TIMEOUT }] };
-  const list = [...(s.hooks.PreToolUse || [])];
-  const i = list.findIndex((g) => (g.hooks || []).some((h) => String(h.command || "").includes(MARK)));
-  if (i >= 0) list[i] = entry; else list.push(entry);
-  s.hooks.PreToolUse = list;
+  const list = (s.hooks.PreToolUse || []).map((g) => {
+    const kept = (g.hooks || []).filter((h) => !String(h.command || "").includes(MARK));
+    return kept.length === (g.hooks || []).length ? g : kept.length ? { ...g, hooks: kept } : null;
+  }).filter(Boolean);
+  s.hooks.PreToolUse = [...list, entry];
   return s;
 }
 const claudeHasHook = (settings, hook) => (settings.hooks?.PreToolUse || []).some((g) => /(^|\|)Bash(\||$)/.test(g.matcher || "") && /Read/.test(g.matcher || "")
@@ -48,12 +50,23 @@ function codexHookHash({ event, matcher, command, timeout }) {
   return "sha256:" + crypto.createHash("sha256").update(JSON.stringify(canon(id)), "utf8").digest("hex");
 }
 
-// Pure: config.toml text with our managed block (re)written at the end. `keySource` is the config's canonical path.
-// Codex keys hook trust by position: <keySource>:pre_tool_use:<group index>:<handler index>; our group comes after
-// every other [[hooks.PreToolUse]] group in this file.
-function withCodexBlock(text, hook, keySource) {
+// TOML is parsed by Python's tomllib (the machine's python3): comments, spacing and quoting all count as Codex sees
+// them. Throws on invalid TOML.
+function parseToml(text) {
+  const r = require("node:child_process").spawnSync("python3", ["-c", "import sys,json,tomllib;print(json.dumps(tomllib.loads(sys.stdin.read())))"], { input: text, encoding: "utf8" });
+  if (r.status !== 0) throw new Error(`not valid TOML: ${(r.stderr || "").trim().split("\n").at(-1)}`);
+  return JSON.parse(r.stdout);
+}
+
+// Pure (given parse): config.toml text with our managed block (re)written at the end. `keySource` is the config's
+// canonical path. Codex keys hook trust by position, <keySource>:pre_tool_use:<group>:<handler>, so the group index is
+// the number of PreToolUse groups the rest of the file really has (parsed, not pattern-matched), and the result is
+// parsed again to prove the guard sits at that index with its trust recorded. Throws when it can't be made so.
+function withCodexBlock(text, hook, keySource, parse = parseToml) {
   const base = stripBlock(text).replace(/\s*$/, "\n");
-  const group = (base.match(/^\s*\[\[hooks\.PreToolUse\]\]\s*$/gm) || []).length;
+  const pre = parse(base).hooks?.PreToolUse;
+  if (pre != null && !Array.isArray(pre)) throw new Error("hooks.PreToolUse is not an array of groups");
+  const group = (pre || []).length;
   const command = codexCommand(hook);
   const hash = codexHookHash({ event: "pre_tool_use", matcher: "Bash", command, timeout: TIMEOUT });
   const block = [BEGIN,
@@ -61,19 +74,18 @@ function withCodexBlock(text, hook, keySource) {
     "[[hooks.PreToolUse.hooks]]", 'type = "command"', `command = ${JSON.stringify(command)}`, `timeout = ${TIMEOUT}`, "",
     `[hooks.state.${JSON.stringify(`${keySource}:pre_tool_use:${group}:0`)}]`, `trusted_hash = ${JSON.stringify(hash)}`,
     END, ""].join("\n");
-  return base + "\n" + block;
+  const next = base + "\n" + block, parsed = parse(next);
+  const at = (parsed.hooks?.PreToolUse || []).findIndex((g) => g.matcher === "Bash" && (g.hooks || []).some((h) => h.command === command));
+  const key = `${keySource}:pre_tool_use:${group}:0`;
+  if (at !== group || parsed.hooks?.state?.[key]?.trusted_hash !== hash)
+    throw new Error(`the guard would not sit at PreToolUse group ${group} with its trust recorded (found at ${at}); edit the file by hand`);
+  return next;
 }
 function stripBlock(text) {
   const a = text.indexOf(BEGIN), b = text.indexOf(END);
   if (a < 0 || b < a) return text;
   return text.slice(0, a).replace(/\n+$/, "\n") + text.slice(b + END.length).replace(/^\n+/, "");
 }
-// [features] hooks = true (Codex runs no hook without it).
-function hooksFeatureOn(text) {
-  const m = text.match(/^\s*\[features\]\s*$([\s\S]*?)(?=^\s*\[|$(?![\s\S]))/m);
-  return !!m && /^\s*hooks\s*=\s*true\s*$/m.test(m[1]);
-}
-
 function backup(file) { if (fs.existsSync(file)) fs.copyFileSync(file, `${file}.bak-credguard-${new Date().toISOString().replace(/[:.]/g, "")}`); }
 
 function main(argv) {
@@ -88,12 +100,13 @@ function main(argv) {
 
   say(fs.existsSync(hook), `credential read guard hook at ${hook}`);
 
-  let settings = {};
-  try { settings = JSON.parse(fs.readFileSync(claude, "utf8")); } catch { settings = null; }
-  if (settings && claudeHasHook(settings, hook)) say(true, `Claude: credential read guard in ${claude} (PreToolUse Bash|Read|Grep)`);
+  let settings = {}, unreadable = null;
+  if (fs.existsSync(claude)) { try { settings = JSON.parse(fs.readFileSync(claude, "utf8")); } catch (e) { unreadable = e.message; } }
+  if (unreadable) say(false, `Claude: ${claude} is not valid JSON (${unreadable}); left unchanged: fix it, then run this again`);
+  else if (claudeHasHook(settings, hook)) say(true, `Claude: credential read guard in ${claude} (PreToolUse Bash|Read|Grep)`);
   else if (check) say(false, `Claude: credential read guard missing from ${claude}`);
   else {
-    const next = withClaudeHook(settings || {}, hook);
+    const next = withClaudeHook(settings, hook);
     fs.mkdirSync(path.dirname(claude), { recursive: true }); backup(claude);
     fs.writeFileSync(claude, JSON.stringify(next, null, 2) + "\n");
     say(true, `Claude: credential read guard added to ${claude} (running sessions pick it up)`);
@@ -101,14 +114,18 @@ function main(argv) {
 
   if (!fs.existsSync(codex)) say(false, `Codex: ${codex} not found (the guard is added when it exists)`);
   else {
-    const text = fs.readFileSync(codex, "utf8"), next = withCodexBlock(text, hook, fs.realpathSync(codex));
-    if (!hooksFeatureOn(text)) say(false, `Codex: [features] hooks = true is not set in ${codex} (OpenRig sets it; without it no hook runs)`);
-    if (next === text) say(true, `Codex: credential read guard in ${codex} (PreToolUse Bash, trusted)`);
+    const text = fs.readFileSync(codex, "utf8");
+    let next = null, parsed = null;
+    try { parsed = parseToml(text); next = withCodexBlock(text, hook, fs.realpathSync(codex)); }
+    catch (e) { say(false, `Codex: ${codex}: ${e.message}; left unchanged`); }
+    if (parsed && parsed.features?.hooks !== true) say(false, `Codex: [features] hooks = true is not set in ${codex} (OpenRig sets it; without it no hook runs)`);
+    if (next === null) { /* reported above */ }
+    else if (next === text) say(true, `Codex: credential read guard in ${codex} (PreToolUse Bash, trusted)`);
     else if (check) say(false, `Codex: credential read guard missing or outdated in ${codex}`);
     else { backup(codex); fs.writeFileSync(codex, next); say(true, `Codex: credential read guard written to ${codex} (Codex seats get it at their next launch)`); }
   }
   return missing ? 1 : 0;
 }
 
-module.exports = { withClaudeHook, claudeHasHook, codexHookHash, withCodexBlock, stripBlock, hooksFeatureOn, BEGIN, END, claudeCommand, codexCommand };
+module.exports = { withClaudeHook, claudeHasHook, codexHookHash, withCodexBlock, stripBlock, parseToml, BEGIN, END, claudeCommand, codexCommand };
 if (require.main === module) process.exit(main(process.argv.slice(2)));
