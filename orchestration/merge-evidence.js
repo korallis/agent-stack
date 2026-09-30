@@ -504,9 +504,10 @@ export function buildMergeInput(f) {
       ? `blast radius (${f.blastRadius.url}, ${f.blastRadius.at}${f.blastRadius.namesHead ? ", names this head" : ", does NOT name this head"}): ${f.blastRadius.excerpt}`
       : f.blastNA ? `blast radius ${f.blastNA}` : "MISSING: no blast-radius comment on the PR",
     // Evidence the caller adds (--extra-evidence <file>): labelled as theirs, never mistaken for what was verified here.
-    // Redacted whole before it is cut (a cut can split a credential past the redactor); the label (a file name the
+    // Redacted whole, before AND after whitespace is collapsed (collapsing can join a split value into a recognizable
+    // credential), and only then cut: a cut can split a credential past the redactor. The label (a file name the
     // caller controls) has its control characters removed and is quoted, so it can't start a line of its own.
-    ...(f.extraEvidence ? [`additional evidence supplied by the caller (${JSON.stringify(String(f.extraEvidence.label).replace(/[\u0000-\u001f\u007f-\u009f\u2028\u2029]+/g, " ").slice(0, 80))}; not verified by this helper): ${redact(f.extraEvidence.text).replace(/\s+/g, " ").trim().slice(0, 1500)}`] : []),
+    ...(f.extraEvidence ? [`additional evidence supplied by the caller (${JSON.stringify(String(f.extraEvidence.label).replace(/[\u0000-\u001f\u007f-\u009f\u2028\u2029]+/g, " ").slice(0, 80))}; not verified by this helper): ${redact(redact(f.extraEvidence.text).replace(/\s+/g, " ").trim()).slice(0, 1500)}`] : []),
   ].filter((x) => x !== null).join("\n");
   const limits = [
     `target branch ${f.baseRef} at ${f.base}; PR head branch ${f.headRef}`,
