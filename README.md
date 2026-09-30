@@ -44,6 +44,9 @@ Every seat is pinned to the model that published benchmarks and Jev picked for i
 GPT-6 Sol; Claude Opus 5.5 is used where it is strongest: orchestrating the team (its 1M-token context holds the
 whole backlog), planning, user interfaces, big migrations and reviewing Codex's work.
 
+Every slice, feature, fix and wave starts research -> plan -> implement: `## Research` and `## Plan` go in the slice's
+PROGRESS.md before the first code commit (the rig CULTURE's "Research, plan, implement" section).
+
 | Seat | How many | Model | What it does |
 |---|---|---|---|
 | Lead | 1 | Claude Opus 5.5 (1M context) | The orchestrator: keeps the whole backlog in mind, asks for your approval, hands out work, tracks progress, writes the daily summary |

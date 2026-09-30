@@ -107,3 +107,34 @@ test("templates require agent-heavy for heavy runs and forbid pattern pkill", ()
     assert.doesNotMatch(t, /(?<!-- )`npx playwright test/, `${role}: bare playwright run`);
   }
 });
+
+// WO25 A: research -> plan -> implement is the template default.
+test("templates carry Research, plan, implement: the CULTURE section and the four role lines", () => {
+  const culture = fs.readFileSync(join(repo, "rig/template/CULTURE.md"), "utf8");
+  const sec = culture.split(/^## /m).find((s) => s.startsWith("Research, plan, implement (binding)"));
+  assert.ok(sec, "section present");
+  assert.ok(culture.indexOf("## Research, plan, implement") < culture.indexOf("## Done means a person could use it"), "before Done means");
+  assert.match(sec, /Record both under `## Research` and `## Plan` in the slice's PROGRESS\.md before the first code commit/);
+  const role = (r) => fs.readFileSync(join(repo, `rig/template/agents/${r}/guidance/role.md`), "utf8");
+  assert.match(role("implementer"), /`## Research` .* and `## Plan` .* into the slice's PROGRESS\.md/s);
+  assert.match(role("implementer"), /writing-plans → test-driven-development/, "Superpowers line kept as the plan tool");
+  assert.match(role("architect"), /SPEC .* carries the research/s);
+  assert.match(role("lead"), /Never dispatch builders on a slice whose SPEC has no research/);
+  assert.match(role("reviewer"), /Send the PR back to its author when its slice's PROGRESS\.md has no `## Research` and `## Plan`/);
+});
+
+test("agent-project-check WARNs when the rig's CULTURE.md lacks Research, plan, implement; OK with the template's", () => {
+  const specDir = join(W, "rig"); fs.mkdirSync(specDir, { recursive: true });
+  fs.writeFileSync(join(specDir, "team.yaml"), `name: t\npods:\n  - id: coord\n    members:\n      - id: lead\n        cwd: "${home}"\n`);
+  const check = () => JSON.parse(spawnSync("python3", [join(repo, "bin/agent-project-check"), W, "--json"], { encoding: "utf8",
+    env: { PATH: `${bin}:${process.env.PATH}`, HOME: home, OPENRIG_URL: "http://127.0.0.1:9" }, timeout: 60000 }).stdout)
+    .find((x) => x.check.startsWith("CULTURE.md has the Research, plan, implement section"));
+  try {
+    fs.writeFileSync(join(specDir, "CULTURE.md"), "## Owner decisions\n## Operating rules\n");
+    const w = check();
+    assert.equal(w.level, "WARN");
+    assert.match(w.detail, /copy the section from agent-stack rig\/template\/CULTURE\.md, then agent-refresh-guidance/);
+    fs.writeFileSync(join(specDir, "CULTURE.md"), fs.readFileSync(join(repo, "rig/template/CULTURE.md"), "utf8"));
+    assert.equal(check().level, "OK");
+  } finally { fs.rmSync(specDir, { recursive: true, force: true }); }
+});

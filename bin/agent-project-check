@@ -83,6 +83,9 @@ if specs:
     lacks = [h for h in ("Owner decisions", "Operating rules") if not re.search(rf"^## {h}", read(f"{W}/rig/CULTURE.md") or "", re.M)]
     rep("OK" if not lacks else "WARN", "CULTURE.md has the Owner decisions + Operating rules sections",
         f"missing {', '.join(lacks)}: copy from agent-stack rig/template/CULTURE.md" if lacks else "")
+    rpi = re.search(r"^## Research, plan, implement", read(f"{W}/rig/CULTURE.md") or "", re.M) is not None
+    rep("OK" if rpi else "WARN", "CULTURE.md has the Research, plan, implement section (owner standard, 2026-09-30)",
+        "" if rpi else "copy the section from agent-stack rig/template/CULTURE.md, then agent-refresh-guidance <P> --apply")
     ps = sh("rig", "ps", "--json")
     running = bool(rig) and (f'"{rig}"' in ps or re.search(rf"^{re.escape(rig)}\s", sh("rig", "ps"), re.M) is not None)
     rep("OK" if running else "WARN", f"rig {rig} is running")
