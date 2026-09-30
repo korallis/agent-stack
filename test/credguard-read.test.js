@@ -272,3 +272,35 @@ test("Codex accepts the installed guard as trusted (hooks/list)", { skip: !codex
   assert.equal(guard.key, `${fs.realpathSync(join(h, "home/config.toml"))}:pre_tool_use:1:0`);
   assert.equal(guard.currentHash, tomlJson(join(h, "home/config.toml")).hooks.state[guard.key].trusted_hash);
 });
+
+// ---- globs, cd, links and quoting against a real directory (the operator's attack list) ---------------------------
+test("globs follow bash's dotfile rule; dotglob, .* and ** still refuse; cd, links, copies, $'…', braces and variables resolve", () => {
+  const w = fs.mkdtempSync(join(root, "glob-")), d = join(w, "app"), bin = join(w, "bin");
+  fs.mkdirSync(d); fs.mkdirSync(bin);
+  fs.writeFileSync(join(d, ".env"), "FIXTURE_KEY=x\n"); fs.writeFileSync(join(d, "notes.txt"), "hi\n");
+  fs.writeFileSync(join(bin, "tool"), "#!/bin/sh\n"); fs.writeFileSync(join(bin, "other"), "x\n");
+  const dec = (command, cwd = w) => g.decide({ tool_name: "Bash", tool_input: { command }, cwd }, { home, pats: g.DEFAULT_PATTERNS }).deny;
+  // the false positive that started this: a glob over a directory with no credential files
+  assert.equal(dec("grep -rn TODO bin/*"), false);
+  assert.equal(dec("cat app/*"), false, "bash's * doesn't match .env (dotglob off)");
+  for (const c of ["shopt -s dotglob; cat app/*", "bash -O dotglob -c 'cat app/*'", "cat app/.*", "cat app/.e*", "cat app/**", "cat app/.en?"])
+    assert.equal(dec(c), true, c);
+  assert.equal(dec("shopt -s dotglob; shopt -u dotglob; cat app/*"), false, "dotglob turned off again");
+  fs.writeFileSync(join(d, "prod.env"), "K=v\n");
+  assert.equal(dec("cat app/*"), true, "a non-dot credential file matched by *"); fs.rmSync(join(d, "prod.env"));
+  // cd: relative paths resolve against the directory the command moved to
+  assert.equal(dec("cd ~/.config/agent-stack/secrets && cat cliproxy.env", "/"), true, "cd into the secrets dir, then a bare name");
+  assert.equal(dec("cd app; cat .env"), true); assert.equal(dec("cd app && cat notes.txt"), false);
+  assert.equal(dec("cd /; cd ~/.config/agent-stack && cat secrets/x.env"), true);
+  // links and copies (an existing symlink to .env also makes `cat app/*` print it)
+  fs.symlinkSync(join(d, ".env"), join(d, "readme-link"));
+  assert.equal(dec("cat app/readme-link"), true, "an existing symlink to .env");
+  assert.equal(dec("cat app/*"), true, "* now matches a link to .env");
+  for (const c of ["ln -s app/.env n && cat n", "cp app/.env /tmp/n.txt; cat /tmp/n.txt", "mv app/.env keep; head keep", "cp app/.env app/ && cat app/.env",
+    "dd if=app/.env of=out.txt; cat out.txt", "tee copy.txt < app/.env >/dev/null; cat copy.txt"]) assert.equal(dec(c), true, c);
+  assert.equal(dec("cp app/notes.txt n && cat n"), false, "copying an ordinary file taints nothing");
+  // quoting, braces, variables
+  for (const c of ["cat $'app/\\x2eenv'", "cat $'app/.e\\156v'", "cat app/.{e,x}nv", "cat \"app/.e\"nv", "cat app/\\.env", "F=app/.env; cat $F",
+    "export F=app/.env; cat \"$F\"", "D=app; cat ${D}/.env"]) assert.equal(dec(c), true, c);
+  assert.equal(dec("cat app/.{x,y}nv"), false, "braces that name nothing protected");
+});

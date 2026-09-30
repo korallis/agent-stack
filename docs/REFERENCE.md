@@ -338,9 +338,20 @@ The deny message says how to use the values by name. `agent-never-prompt-check` 
 FAILs when the guard is missing from either runtime, or when Codex would skip it: `[features] hooks = true` unset, or
 no `trusted_hash` equal to the hash of the guard as written (it recomputes it, the way Codex does).
 
+Paths are resolved the way the shell will run the command:
+- A glob is expanded against the real directory when it can be read, with bash's rule: a name starting with `.` is
+  matched only by a pattern starting with `.`, or with `shopt -s dotglob` / `bash -O dotglob`. So `grep x bin/*`
+  passes, while `cat app/.*` and `shopt -s dotglob; cat app/*` are refused. `**`, a glob in a directory part, or an
+  unreadable directory are judged against sample names, dotfiles included.
+- `cd`/`pushd` earlier in the same command moves where later relative paths resolve.
+- An existing symlink is followed to what it names.
+- A name the command gave a protected file (`cp`, `ln`, `mv`, `dd of=`, `tee < file`) is protected for the rest of
+  the command.
+- `$'…'` escapes, simple `{a,b}` braces, and variables the command assigned (`F=.env; cat $F`) are expanded.
+
 Limits (honest): it stops accidental printing by a seat, not a determined one. A script that reads and prints a
-file itself (`node -e`, `python -c`, a project script) isn't parsed, and neither is a variable holding a path. A
-broken hook allows the call rather than stopping every seat. `export $(grep -v '^#' .env | xargs)` is refused
+file itself (`node -e`, `python -c`, a project script) isn't parsed, and neither is a path in a variable the command
+didn't set, or one built by a command substitution. A broken hook allows the call rather than stopping every seat. `export $(grep -v '^#' .env | xargs)` is refused
 (conservatively); use `set -a; . .env; set +a` instead.
 
 ### Known limits (honest)
