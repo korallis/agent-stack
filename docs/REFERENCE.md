@@ -434,9 +434,11 @@ the lead or a person. Send Jev evidence, not conclusions.
   report the status links to can't be read (a link outside the PR). It comes from verified sources only. The
   configured source goes first, then the others, in this order:
   1. the `independent-review` status on the exact head: its own state and description. With `identityHeadings`,
-     a description that names a matching seat (the pattern without its leading `^## `, e.g. `review-codex-1: PASS`)
-     gives the status's family, and a status naming the author's own family is not an independent review. A
-     description naming no such seat is taken as before;
+     the description's signer, its FIRST word (`review-codex-1: PASS`), is tested with each pattern exactly as
+     written against the heading it would sign (`## review-codex-1`). That gives the status's family. A status
+     signed by the author's own family is not an independent review. Neither is one whose signer matches patterns
+     of two families. Mentions elsewhere in the text are not identities. A signer matching no pattern is taken as
+     before;
   2. GitHub PR reviews submitted on the exact head. The review's commit must equal the head, so a review of an older
      commit never counts as current; such reviews are counted as ignored. APPROVED and CHANGES_REQUESTED are verdicts,
      combined with any the body declares. A COMMENTED review counts only if its body declares one. Dismissed reviews

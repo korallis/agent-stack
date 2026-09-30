@@ -878,13 +878,27 @@ test("identity headings: a shared or unmapped login takes its family from the re
     "a login mapped to a family wins over what its body says");
   assert.equal(reviewFromPrReviews([rv("owner", "## review-claude-2\nVerdict: PASS")], H, "codex", cfg.identities, []).verdict, null, "no headings configured: shared stays unknown");
   // The status description: only a named seat matching a configured pattern gives a family.
-  assert.equal(familyFromDescription("review-codex-1: PASS on aaaa", H2), "codex");
-  assert.equal(familyFromDescription("QA PASS", H2), null);
+  assert.deepEqual(familyFromDescription("review-codex-1: PASS on aaaa", H2), { family: "codex", signer: "review-codex-1" });
+  assert.deepEqual(familyFromDescription("QA PASS", H2), {});
+  // QA WO43: only the declared signer (the first word) counts; mentions elsewhere are not identities.
+  assert.deepEqual(familyFromDescription("PASS by QA; not-review-codex-1", H2), {});
+  assert.deepEqual(familyFromDescription("QA PASS on review-codex-1 changes", H2), {});
+  assert.deepEqual(familyFromDescription("review-codex-1: PASS; review-claude-1 requested fixes", H2), { family: "codex", signer: "review-codex-1" });
+  const spaced = resolveConfig({ identityHeadings: { "^##\\s+review-codex": "codex" } }).identityHeadingRes;
+  assert.deepEqual(familyFromDescription("review-codex-1: PASS", spaced), { family: "codex", signer: "review-codex-1" }, "the pattern keeps its meaning");
+  const clash = resolveConfig({ identityHeadings: { "^## review-": "claude", "^## review-codex": "codex" } }).identityHeadingRes;
+  assert.deepEqual(familyFromDescription("review-codex-1: PASS", clash), { ambiguous: true, signer: "review-codex-1" });
+  assert.equal(reviewVerdict({ head: H, status: { state: "success", description: "review-codex-1: PASS", creator: "o" }, prReview: { problem: "none" }, authorFamily: "claude", headings: clash }).state, null,
+    "an ambiguous signer is not an unknown one");
   const st = (description) => ({ state: "success", description, creator: "owner", url: null });
   let v = reviewVerdict({ head: H, status: st("review-codex-1: PASS"), prReview: { problem: "none" }, authorFamily: "codex", headings: H2 });
-  assert.equal(v.state, null); assert.match(v.why, /status: the independent-review status on a{40} names a codex seat, the author's own family, so it is not an independent review/);
+  assert.equal(v.state, null); assert.match(v.why, /status: the independent-review status on a{40} is signed by review-codex-1, the author's own codex family, so it is not an independent review/);
+  assert.equal(reviewVerdict({ head: H, status: st("review-codex-1: PASS; review-claude-1 requested fixes"), prReview: { problem: "none" }, authorFamily: "codex", headings: H2 }).state, null,
+    "another family's mention doesn't hide a same-family signer");
+  assert.equal(reviewVerdict({ head: H, status: st("QA PASS on review-codex-1 changes"), prReview: { problem: "none" }, authorFamily: "codex", headings: H2 }).state, "success",
+    "a mention that isn't the signer doesn't withhold the status");
   v = reviewVerdict({ head: H, status: st("review-claude-2: PASS"), prReview: { problem: "none" }, authorFamily: "codex", headings: H2 });
-  assert.equal(v.state, "success"); assert.match(v.source, /by owner; claude family, named in its description\)/);
+  assert.equal(v.state, "success"); assert.match(v.source, /by owner; signed by review-claude-2, claude family\)/);
   v = reviewVerdict({ head: H, status: st("QA PASS"), prReview: { problem: "none" }, authorFamily: "codex", headings: H2 });
   assert.equal(v.state, "success", "no seat named: unchanged from before"); assert.doesNotMatch(v.source, /family/);
   assert.doesNotThrow(() => resolveConfig({ identities: { owner: "shared" } }));
@@ -918,5 +932,5 @@ process.stdout.write(typeof out === "string" ? out : JSON.stringify(out));
   assert.match(run({ view: { reviews: [review("## review-codex-2\nVerdict: PASS")] } }).review, /^review verdict: NONE VERIFIABLE/, "same family by heading");
   assert.match(run({ view: { reviews: [review("## review-claude-1\nVerdict: PASS", "c".repeat(40))] } }).review, /^review verdict: NONE VERIFIABLE .*1 review\(s\) on another commit ignored/);
   assert.match(run({ statuses: [{ context: "independent-review", state: "success", description: "review-codex-2: PASS", creator: { login: "owner" } }], view: {} }).review,
-    /^review verdict: NONE VERIFIABLE .*names a codex seat, the author's own family/);
+    /^review verdict: NONE VERIFIABLE .*is signed by review-codex-2, the author's own codex family/);
 });

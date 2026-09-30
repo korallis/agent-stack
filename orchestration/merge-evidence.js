@@ -151,10 +151,10 @@ export function resolveConfig(raw, nwo) {
     if (!FAMILIES.includes(fam) && fam !== "shared") throw new Error(`merge-evidence config: identities.${login} must be one of ${FAMILIES.join(", ")} or shared`);
   cfg.identityHeadingRes = Object.entries(cfg.identityHeadings).map(([pattern, fam]) => {
     if (!FAMILIES.includes(fam)) throw new Error(`merge-evidence config: identityHeadings["${pattern}"] must be one of ${FAMILIES.join(", ")}`);
-    let re, bare;
-    try { re = new RegExp(pattern); bare = new RegExp(pattern.replace(/^\^?#+\s*/, "").replace(/^\^/, "")); }
+    let re;
+    try { re = new RegExp(pattern); }
     catch (e) { throw new Error(`merge-evidence config: identityHeadings["${pattern}"] is not a valid regex: ${e.message}`); }
-    return { pattern, family: fam, re, bare };
+    return { pattern, family: fam, re };
   });
   if (cfg.authorFamily && !FAMILIES.includes(cfg.authorFamily)) throw new Error(`merge-evidence config: authorFamily must be one of ${FAMILIES.join(", ")}`);
   return cfg;
@@ -290,19 +290,25 @@ const statusRecord = (statuses, context) => { const ir = (statuses || []).find((
 // then the others (the independent-review status on the exact head -- its own state and description --, GitHub
 // reviews on the exact head, review comments declaring the head). The first verifiable one gives the verdict; a
 // verifiable source that disagrees makes it a conflict. With none, `why` says what each source lacked.
-// With identityHeadings, a status description naming a seat that matches one (the pattern without its leading "## ")
-// gives the status's family; a same-family status is then not an independent review. No match: unknown, as before.
+// With identityHeadings, the status description's declared signer gives the status's family: its FIRST word (the
+// seat, as in "review-codex-1: PASS"), tested with each configured pattern exactly as written against the heading it
+// would sign ("## review-codex-1"). Mentions elsewhere in the text are not the signer. { family } for one family,
+// { ambiguous: true } when the signer matches patterns of two families, {} when it matches none (unknown, as before).
 export function familyFromDescription(description, headings = []) {
-  const fams = [...new Set(headings.filter((h) => h.bare.test(String(description || ""))).map((h) => h.family))];
-  return fams.length === 1 ? fams[0] : null;
+  const signer = (String(description || "").trim().match(/^([\w.@-]+)/) || [])[1];
+  if (!signer || !headings.length) return {};
+  const fams = [...new Set(headings.filter((h) => h.re.test(`## ${signer}`)).map((h) => h.family))];
+  return fams.length === 1 ? { family: fams[0], signer } : fams.length > 1 ? { ambiguous: true, signer } : {};
 }
 export function reviewVerdict({ head, primary = "status", status, statusContext = "independent-review", prReview, commentReview, authorFamily = null, headings = [] }) {
-  const sFam = status ? familyFromDescription(status.description, headings) : null;
+  const id = status ? familyFromDescription(status.description, headings) : {};
+  const sameFamily = id.family && authorFamily && id.family === authorFamily;
   const bySource = {
-    status: status && ["success", "failure"].includes(status.state) && !(sFam && authorFamily && sFam === authorFamily)
-      ? { verdict: { state: status.state, source: `${statusContext} status on ${head} (${status.state}, "${status.description || ""}", by ${status.creator}${sFam ? `; ${sFam} family, named in its description` : ""})`, url: status.url } }
+    status: status && ["success", "failure"].includes(status.state) && !sameFamily && !id.ambiguous
+      ? { verdict: { state: status.state, source: `${statusContext} status on ${head} (${status.state}, "${status.description || ""}", by ${status.creator}${id.family ? `; signed by ${id.signer}, ${id.family} family` : ""})`, url: status.url } }
       : { problem: !status ? `no ${statusContext} status on ${head}`
-        : sFam && authorFamily && sFam === authorFamily ? `the ${statusContext} status on ${head} names a ${sFam} seat, the author's own family, so it is not an independent review`
+        : sameFamily ? `the ${statusContext} status on ${head} is signed by ${id.signer}, the author's own ${id.family} family, so it is not an independent review`
+        : id.ambiguous ? `the ${statusContext} status on ${head} is signed by ${id.signer}, which matches identity headings of more than one family, so its family is not established`
         : `the ${statusContext} status on ${head} is ${status.state}, not a verdict` },
     reviews: prReview?.verdict ? { ...prReview, verdict: { ...prReview.verdict, report: { kind: "GitHub review", url: prReview.verdict.url, at: prReview.verdict.at, author: prReview.verdict.by, excerpt: prReview.verdict.excerpt, limits: prReview.verdict.limits } } } : prReview || { problem: "GitHub reviews not read" },
     comments: commentReview ? { verdict: commentReview.review && { state: commentReview.review.state, source: `review comment by seat ${commentReview.review.creator} declaring head ${head}`, url: commentReview.review.url, report: commentReview.note && { kind: "review comment", ...commentReview.note } }, problem: commentReview.problem }
