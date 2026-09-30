@@ -7,7 +7,7 @@ all. A missing or failed patch gets a logger + desktop warning, and OpenRig keep
 Each patch is a `-p1` unified diff against the published `@openrig/cli@<version>` package root (`dist/`,
 `daemon/dist/`), one per upstream issue.
 
-Patches exist for 0.5.17, 0.6.0 and 0.6.1 (134 to 139 are 0.6.1 only).
+Patches exist for 0.5.17, 0.6.0 and 0.6.1 (134 to 140 are 0.6.1 only).
 
 | Patch | Upstream | Fix | Drop it when |
 |---|---|---|---|
@@ -20,6 +20,7 @@ Patches exist for 0.5.17, 0.6.0 and 0.6.1 (134 to 139 are 0.6.1 only).
 | `137-proof-add-binary-file` | 0.6.1 only; fix on korallis/openrig `local-patch-0.6.1` c31d42f1 (upstream issue mvschwarz/openrig#170) | `rig proof add --file` read any file as UTF-8 and wrote it back, under a C1 header, to `proof/<the file's own name>`, so `--file proof/shot.png` corrupted the screenshot in place. Now: a non-text `--file` (binary extension, NUL byte, invalid UTF-8) is refused and pointed at `--media`; the artifact name must end in `.md` (`--file` defaults to `<stem>.md`); an existing artifact is replaced only with `--replace` (by rename, never writing through a hardlink or symlink), and never the `--file` source itself (device+inode). Applies after 132 (same file) | at the first release that stops `proof add` from writing a binary `--file` back |
 | `138-seat-lookup-prefer-live-rig` | 0.6.1 only; fix on korallis/openrig `local-patch-0.6.1` f930c450 (not yet upstream) | A seat named `<member>@<rig>` matched nodes in ARCHIVED rigs of the same name too, so `rig seat handover impl-astra@hc` failed "matched multiple nodes" once older `hc` generations were archived. Seat lookups (seat-lifecycle and seat-status) now prefer the live rigs of that name; archived ones count only when no live rig has the name. Same bug class as 134 | at the first release whose seat lookup ignores archived same-name rigs |
 | `139-batch-seat-tmux-reads` | 0.6.1 only; fix on korallis/openrig `local-patch-0.6.1` f23494a2 (not yet upstream; extends mvschwarz/openrig#161, draft in the PR) | The 1 Hz seat-activity sweep spawned one `tmux display-message` per seat (~85/s, 51.7% of daemon CPU), and the identity sweep a pid + command read per seat. Each sweep now reads all seats with ONE tmux call (`list-windows -a` / `list-panes -a`), per-seat only on a miss. Cadence, debounce and arbitration are unchanged. Applies after 136 (same file) | at the first release that batches these reads |
+| `140-delivery-outcome-resolved-close` | 0.6.1 only; fix on korallis/openrig `local-patch-0.6.1` 343bcaf0; fork PR korallis/openrig#1 against upstream main f8f3aff6 (same bug there) | Rows a human closed by a direct Slack reply read `deliveryOutcome: never-posted` although their ALERT was posted: the close's `human-decision-resolved` notice (never posted, since the outbound lists active rows only) became the ledger's current episode. On a row no longer active, the episode is now the latest outbound notice. Active rows unchanged | at the first release with the fix |
 
 (Issues and PRs are in mvschwarz/openrig. To check a release: `git merge-base --is-ancestor <merge-sha> v<version>` in an openrig clone.)
 
