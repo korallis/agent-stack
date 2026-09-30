@@ -20,12 +20,12 @@ printf '%s\\n' "rig $*" >> ${calls}
 fs.writeFileSync(join(bin, "logger"), "#!/bin/sh\nexit 0\n", { mode: 0o755 });
 const row = (id, dest, intent, outcome) => ({ qitemId: id, destinationSession: dest, humanIntent: intent, deliveryOutcome: outcome, state: "pending", summary: id });
 fs.writeFileSync(list, JSON.stringify([
-  row("fyi", "lee@external", null, "posted"),
-  row("quiet", "lee@external", "update", "posted"),
-  row("decide", "lee@external", "decision", "posted"),
-  row("unsent", "lee@external", null, null),
-  row("failed", "lee@external", null, "failed"),
-  row("never", "lee@external", null, "never-posted"),
+  row("fyi", "owner@external", null, "posted"),
+  row("quiet", "owner@external", "update", "posted"),
+  row("decide", "owner@external", "decision", "posted"),
+  row("unsent", "owner@external", null, null),
+  row("failed", "owner@external", null, "failed"),
+  row("never", "owner@external", null, "never-posted"),
   row("agent", "impl@shop", null, "posted"),
 ]));
 function run(args = [], env = {}) {
@@ -54,7 +54,7 @@ test("an unreadable queue exits 1 without writing; one failed close is logged an
   const down = run([], { FAIL_LIST: "1" });
   assert.equal(down.status, 1);
   assert.deepEqual(down.calls, []);
-  fs.writeFileSync(list, JSON.stringify([row("a", "lee@external", "update", "posted"), row("b", "lee@external", "update", "posted")]));
+  fs.writeFileSync(list, JSON.stringify([row("a", "owner@external", "update", "posted"), row("b", "owner@external", "update", "posted")]));
   const partial = run([], { FAIL_ID: "a" });
   assert.equal(partial.status, 0);
   assert.match(partial.stdout, /could not close a[\s\S]*closed b/);

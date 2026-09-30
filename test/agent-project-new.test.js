@@ -84,7 +84,7 @@ function existingRepo(name, trunk) {
   git(home, "clone", "-q", bare, proj);
   return { proj, bare, seed };
 }
-function realRun(name, rig, extra = [], ghMode = "ruleset") {
+function realRun(name, rig, extra = [], ghMode = "ruleset", env = {}) {
   // ghMode: ruleset (rules exist), none (a confirmed 404 and no rules), 503 (both reads fail)
   const W = join(home, "Projects", `${name}-work`);
   fs.writeFileSync(join(home, "bin/rig"), `#!/bin/bash
@@ -107,7 +107,7 @@ exit 0
 `, { mode: 0o755 });
   for (const f of ["rig-calls", "gh-calls"]) fs.rmSync(join(home, f), { force: true });
   const r = spawnSync(join(repo, "bin/agent-project-new"), ["--name", name, "--rig", rig, "--github", "korallis", "--team", "small", "--no-up", "--no-deps", ...extra],
-    { encoding: "utf8", env: { PATH: `${home}/bin:${process.env.PATH}`, HOME: home, USER: "t", GIT_CONFIG_GLOBAL: join(home, ".gitconfig"), OPENRIG_URL: "http://127.0.0.1:9" } });
+    { encoding: "utf8", env: { PATH: `${home}/bin:${process.env.PATH}`, HOME: home, USER: "t", GIT_CONFIG_GLOBAL: join(home, ".gitconfig"), OPENRIG_URL: "http://127.0.0.1:9", ...env } });
   return { ...r, W, gh: fs.existsSync(join(home, "gh-calls")) ? fs.readFileSync(join(home, "gh-calls"), "utf8") : "" };
 }
 
@@ -298,4 +298,26 @@ test("WO22: agent-project-new pre-trusts every Claude seat worktree before rig u
   for (const s of claude) assert.equal(pr[fs.realpathSync(join(wt, s))]?.hasTrustDialogAccepted, true, s);
   for (const s of ["impl-codex-1", "qa-codex", "review-codex"]) assert.equal(pr[fs.realpathSync(join(wt, s))], undefined, s);
   assert.equal(JSON.parse(fs.readFileSync(cj, "utf8")).numStartups, 1);
+});
+
+
+// WO33: the owner address is per machine. A new rig's CULTURE.md gets it where the template says @OWNER@; a rig whose
+// CULTURE.md already exists keeps its own text.
+test("a new rig's CULTURE.md names this machine's owner address; an existing CULTURE.md is left as it is", () => {
+  existingRepo("shop-owner", "main");
+  const r = realRun("shop-owner", "fown", [], "ruleset", { AGENT_OWNER_ADDRESS: "ann@external" });
+  assert.equal(r.status, 0, r.stderr);
+  const culture = fs.readFileSync(join(r.W, "rig/CULTURE.md"), "utf8");
+  assert.match(culture, /informational row to the owner \(ann@external\)/); assert.doesNotMatch(culture, /@OWNER@/);
+  fs.writeFileSync(join(r.W, "rig/CULTURE.md"), culture.replace("ann@external", "someone@external"));
+  const again = realRun("shop-owner", "fown", [], "ruleset", { AGENT_OWNER_ADDRESS: "ann@external" });
+  assert.equal(again.status, 0, again.stderr);
+  assert.match(fs.readFileSync(join(r.W, "rig/CULTURE.md"), "utf8"), /\(someone@external\)/, "an existing rig keeps its text");
+});
+
+test("under agent-project-onboard (AGENT_PROJECT_ONBOARD=1) agent-project-new prints no Next: block of its own", () => {
+  const run = (env) => spawnSync(join(repo, "bin/agent-project-new"), ["--name", "Demo", "--rig", "demo", "--team", "core", "--no-github", "--dry-run"],
+    { encoding: "utf8", env: { PATH: `${home}/bin:${process.env.PATH}`, HOME: home, USER: "t", OPENRIG_URL: "http://127.0.0.1:9", ...env } }).stdout;
+  assert.match(run({}), /^Next: write /m);
+  assert.doesNotMatch(run({ AGENT_PROJECT_ONBOARD: "1" }), /^Next: write /m);
 });

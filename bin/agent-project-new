@@ -165,6 +165,9 @@ run mkdir -p "$W/rig"
 if [ $DRY = 0 ]; then
   for f in "$TEAM.yaml" CULTURE.md merge-sweep.watchdog.yaml daily-summary.watchdog.yaml; do
     [ -f "$W/rig/$f" ] || cp "$AS/rig/template/$f" "$W/rig/$f"; done
+  # The owner's human address (per machine: agent-owner-address), where the template says @OWNER@. A CULTURE.md that
+  # already exists keeps its text: only a remaining placeholder is filled.
+  OWNER=$("$AS/bin/agent-owner-address"); sed -i "s#@OWNER@#$OWNER#g" "$W/rig/CULTURE.md"
   mkdir -p "$W/rig/startup"
   [ -f "$W/rig/startup/context.md" ] || sed "s#@REPO@#$R#g; s#@WT@#$WT#g; s#@TRUNK@#$TRUNK#g" "$AS/rig/template/startup/context.md" > "$W/rig/startup/context.md"
   sed -i "s#@RIG@#$RIG#g; s#@REPO@#$R#g; s#@WT@#$WT#g; s#@AGENT_STACK@#$AS#g; s#@LEAD_SEAT@#$LEAD#g; s#@MERGE_SEAT@#$MERGE#g" \
@@ -220,6 +223,7 @@ fi
 
 say "check"
 [ $DRY = 1 ] || "$AS/bin/agent-project-check" "$P" || true
+[ -n "${AGENT_PROJECT_ONBOARD:-}" ] && exit 0   # agent-project-onboard prints its own next steps
 cat <<EOF
 
 Next: write $R/docs/PLAN.md, commit it, then  rig send $LEAD@$RIG "Build docs/PLAN.md"

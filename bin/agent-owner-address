@@ -1,0 +1,48 @@
+#!/usr/bin/env python3
+"""agent-owner-address [--source]: the owner's human address, the one seats message (`<name>@external`).
+
+The first of these that gives a valid `<name>@external`:
+  1. AGENT_OWNER_ADDRESS in the environment;
+  2. OWNER_ADDRESS in config/owner.env of this repo (per machine, not tracked; install.sh writes it once);
+  3. the one human in OpenRig's registry (`rig gateway human list --json`);
+  4. owner@external.
+--source also prints where the value came from. agent-project-new puts it in a new rig's CULTURE.md (@OWNER@).
+"""
+import json, os, re, subprocess, sys
+
+S = os.path.dirname(os.path.dirname(os.path.realpath(__file__)))
+VALID = re.compile(r"[A-Za-z0-9][A-Za-z0-9._-]*@external")
+
+
+def from_env():
+    return os.environ.get("AGENT_OWNER_ADDRESS", "").strip()
+
+
+def from_file():
+    try:
+        for line in open(os.path.join(S, "config/owner.env")):
+            if line.startswith("OWNER_ADDRESS="):
+                return line.split("=", 1)[1].strip().strip("'\"")
+    except OSError:
+        pass
+    return ""
+
+
+def from_registry():
+    try:
+        r = subprocess.run(["rig", "gateway", "human", "list", "--json"], capture_output=True, text=True, timeout=20)
+        humans = json.loads(r.stdout).get("humans") or []
+    except (OSError, ValueError, subprocess.TimeoutExpired, AttributeError):
+        return ""
+    return humans[0].get("address", "") if len(humans) == 1 else ""
+
+
+for source, get in (("AGENT_OWNER_ADDRESS", from_env), ("config/owner.env", from_file), ("OpenRig human registry", from_registry)):
+    value = get()
+    if value and VALID.fullmatch(value):
+        break
+    if value:
+        print(f"agent-owner-address: ignoring {source}: '{value}' is not <name>@external", file=sys.stderr)
+else:
+    source, value = "default", "owner@external"
+print(f"{value} ({source})" if "--source" in sys.argv else value)

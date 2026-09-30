@@ -23,7 +23,7 @@ adds every new owner decision here the day it is made. A decision recorded here 
 - (none yet)
 
 ## Operating rules (binding)
-- Human FYIs: send an informational row to the owner (lee@external) with `--human-intent update`. It is closed
+- Human FYIs: send an informational row to the owner (@OWNER@) with `--human-intent update`. It is closed
   automatically once Slack has posted it (`agent-human-inbox-tidy`, every 5 minutes); don't reopen it. A row without
   `--human-intent` counts as a decision and stays open. Decision requests use `--human-intent decision` and
   stay pending until answered: the owner's Slack reply closes a pending row, and parking or claiming it breaks that.
