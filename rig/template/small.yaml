@@ -48,7 +48,7 @@ pods:
         agent_ref: "path:@AGENT_STACK@/rig/template/agents/architect"
         profile: default
         runtime: claude-code
-        model: "claude-opus-5-5"
+        model: "claude-fable-5-1"
         cwd: "@WT@/arch-claude"
         restore_policy: resume_if_possible
     edges: []
@@ -72,7 +72,7 @@ pods:
         agent_ref: "path:@AGENT_STACK@/rig/template/agents/implementer"
         profile: default
         runtime: codex
-        model: "gpt-6-sol"
+        model: "gpt-6-astra"
         cwd: "@WT@/impl-codex-1"
         restore_policy: resume_if_possible
       - id: claude-ui

@@ -28,4 +28,8 @@
 2. `pwd` is your worktree and `git status` shows only your own work.
 3. `node --version`, `gh auth status`, `rig queue list --owned` work.
 4. `echo $OPENRIG_WORK_ROOT $E2E_PORT` are both set.
+5. Seats on `claude-fable-5-1` (the architect): Fable bills to the account's usage credits, and an account may first
+   need a one-time consent. If Claude Code asks for it, or says the model is unavailable, stop and tell the lead in
+   one row: "Fable needs its one-time consent: run `/model fable` once in <your seat>, then relaunch me at idle".
+   Never carry on silently on another model.
 If anything is missing, tell the lead in one message; don't work around it.

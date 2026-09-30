@@ -47,7 +47,7 @@ pods:
         agent_ref: "path:@AGENT_STACK@/rig/template/agents/implementer"
         profile: default
         runtime: codex
-        model: gpt-6-sol
+        model: gpt-6-astra
         cwd: "@WT@/impl-codex-1"
         restore_policy: resume_if_possible
     edges: []

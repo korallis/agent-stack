@@ -6,6 +6,7 @@
 //   agent-dispatch review-plan --rig R --repo PATH --branch agent/<seat> [--base main] [--apply --item ID]
 //   agent-dispatch triage-update --text "..."
 //   agent-dispatch record --seat S --outcome completed|returned|failed      (quality ledger)
+//   agent-dispatch pick-seat --rig R --role ROLE --task "one line" [--evidence "..."]   (Jev picks the seat; see pickseat.js)
 //
 // Jev supplies bounded judgments (type, gaps, role, duplicates, reviews, tests). Code supplies
 // capacity, account availability, dependencies and the final seat. Without --apply nothing changes.
@@ -15,6 +16,8 @@ import { join } from "node:path";
 import { tmpdir } from "node:os";
 import { decide, decideBatch } from "../jev/lib/engine.js";
 import { rig, seats, pickSeat, eligibleFamilies, queueItems, lexicalTop, recordQuality, odb, normQ } from "./lib.js";
+import { seatCandidates, nextStep } from "./pickseat.js";
+import { decideOrStub } from "./jevcall.js";
 
 const args = process.argv.slice(2);
 const flag = (n, d) => { const i = args.indexOf(n); return i >= 0 ? args[i + 1] : d; };
@@ -168,10 +171,19 @@ async function triage() {
   out({ kind: r.result.kind, ...brief(r), route: { routine_progress: "log only", actionable_blocker: "lead resolves or reassigns", needs_user: "surface to the user" }[r.result.kind] });
 }
 
-const cmds = { intake, "review-plan": reviewPlan, "triage-update": triage,
+async function pickSeatCmd() {
+  const rigName = flag("--rig"), role = flag("--role"), task = flag("--task");
+  if (!rigName || !role || !task) throw new Error("--rig, --role and --task are required");
+  const candidates = seatCandidates(seats(rigName), role, eligibleFamilies());
+  if (!candidates.length) return out({ action: "none free", note: `no running ${role} seat without open work in ${rigName}: queue it to the least-loaded ${role} seat or wait` });
+  const rec = await decideOrStub("intake.seat", { task, role, ...(flag("--evidence") ? { evidence: flag("--evidence") } : {}), candidates }, { caller });
+  out({ ...brief(rec), candidates: candidates.map((c) => c.id), next: nextStep(rec, candidates, task) });
+}
+
+const cmds = { intake, "pick-seat": pickSeatCmd, "review-plan": reviewPlan, "triage-update": triage,
   record: async () => { recordQuality(flag("--seat"), flag("--outcome")); out({ ok: true }); } };
 try {
-  if (!cmds[args[0]]) { console.log(readFileSync(new URL(import.meta.url), "utf8").split("\n").slice(1, 11).join("\n").replace(/^\/\/ ?/gm, "")); process.exit(args[0] ? 2 : 0); }
+  if (!cmds[args[0]]) { console.log(readFileSync(new URL(import.meta.url), "utf8").split("\n").slice(1, 12).join("\n").replace(/^\/\/ ?/gm, "")); process.exit(args[0] ? 2 : 0); }
   await cmds[args[0]]();
 } catch (e) {
   console.error(JSON.stringify({ error: e.message }));

@@ -86,6 +86,8 @@ if [ $CHECK = 0 ] || mise where "node@$NODE_FOR_JEV" >/dev/null 2>&1; then
   launcher jev-decide "$NODE_FOR_JEV" "$S/jev/bin/jev-decide.js"
   launcher agent-recover "$NODE_FOR_JEV" "$S/orchestration/recover.js"
   launcher agent-dispatch "$NODE_FOR_JEV" "$S/orchestration/dispatch.js"
+  launcher agent-merge-evidence "$NODE_FOR_JEV" "$S/orchestration/merge-evidence.js"
+  launcher agent-stuck-check "$NODE_FOR_JEV" "$S/orchestration/stuck.js"
 fi
 if [ -d "$S/jev/node_modules" ]; then ok "jev dependencies"; elif [ $CHECK = 1 ]; then todo "jev npm ci"; else
   (cd "$S/jev" && PATH="$(mise where "node@$NODE_FOR_JEV")/bin:$PATH" npm ci --silent) && ok "jev dependencies installed"; fi
@@ -130,7 +132,7 @@ if [ $CHECK = 0 ]; then
   # Seats' tmux server gets its own unit first (skips itself if a server already runs; bin/openrig-tmux-adopt moves that one).
   systemctl --user enable --now openrig-tmux.service >/dev/null 2>&1 || todo "openrig-tmux.service"
   systemctl --user enable --now openrig.service >/dev/null 2>&1 || true
-  for t in cliproxyapi-health cliproxy-usage openrig-health cliproxy-authwatch cliproxy-quotawatch openrig-update agent-repos-sync agent-human-inbox-tidy playwright-browsers; do systemctl --user enable --now "$t.timer" >/dev/null 2>&1 || todo "$t.timer"; done
+  for t in cliproxyapi-health cliproxy-usage openrig-health cliproxy-authwatch cliproxy-quotawatch openrig-update agent-repos-sync agent-human-inbox-tidy agent-stuck-check playwright-browsers; do systemctl --user enable --now "$t.timer" >/dev/null 2>&1 || todo "$t.timer"; done
 fi
 "$S/bin/openrig-ensure" --check | sed 's/^/   /' || true   # WARN installed != pin; FAIL when local patches aren't all applied
 # Transcript capture defaults: every 15s, 400 lines. The shipped 2s/1000 lines across ~90 seats starved the daemon.

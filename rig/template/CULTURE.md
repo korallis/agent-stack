@@ -80,6 +80,11 @@ Six skills from agent-stack are installed for every seat. Each has a fixed momen
   The result goes on the PR. The integrator doesn't merge such a PR without it.
 - `review-lenses`: the cross-family reviewer applies the lenses the diff touches (correctness, security and data,
   maintainability, UX and journey, performance) and sorts findings into act on, consider, noted and dismissed.
+- Jev decides the routine judgments; code gathers the evidence and owns the thresholds, and anything short of the act
+  band goes to a person or the lead: the lead picks seats with `agent-dispatch pick-seat` (Jev's seat on act; on
+  review or uncertain the lead picks and writes why in the row), and the merge owner asks the merge gate with
+  `agent-merge-evidence --decide` (exact-head evidence; only live Jev `merge` in the act band merges).
+  `agent-stuck-check` warns the lead when a seat holding work looks looping, rate-limited or stalled; it never acts.
 - `unslop` and `technical-writing`: every seat checks its text before posting: PR descriptions, SPECs, issue and PR
   comments (including handbacks to a client), queue bodies and messages to the owner. Plain, specific, short; no
   filler, hype or hedging. Reviewers flag slop in PR text.

@@ -97,6 +97,23 @@ if specs:
     ps = sh("rig", "ps", "--json")
     running = bool(rig) and (f'"{rig}"' in ps or re.search(rf"^{re.escape(rig)}\s", sh("rig", "ps"), re.M) is not None)
     rep("OK" if running else "WARN", f"rig {rig} is running")
+    # Fable seats (the architect by default) bill to usage credits; an account may need a one-time consent first. A
+    # running Fable seat whose screen asks for it, or says the model is unavailable, would otherwise stall silently.
+    fable = []
+    for pod_block in re.split(r"\n  - id: ", spec or "")[1:]:
+        pod = pod_block.split("\n", 1)[0].strip()
+        for mem in re.split(r"\n      - id: ", pod_block)[1:]:
+            if re.search(r'model:\s*"?claude-fable', mem):
+                fable.append(f"{pod}-{mem.split(chr(10), 1)[0].strip()}@{rig}")
+    stuck_fable = []
+    for seat in fable if running else []:
+        pane = subprocess.run(["tmux", "capture-pane", "-p", "-S", "-80", "-t", seat], capture_output=True, text=True).stdout
+        if re.search(r"usage credits|extra usage|consent|/model fable|model .{0,40}(is )?(not available|unavailable|not supported)|invalid model", pane, re.I):
+            stuck_fable.append(seat)
+    if fable:
+        rep("OK" if not stuck_fable else "WARN", f"Fable seats can use their model ({', '.join(fable)})",
+            f"{', '.join(stuck_fable)}: the screen asks for Fable's one-time usage-credits consent or says the model is unavailable. "
+            "In that seat run `/model fable` once, accept, then relaunch it at idle" if stuck_fable else "")
     try:
         wd = [j for j in json.loads(sh("rig", "watchdog", "list", "--json") or "[]")
               if j.get("state") == "active" and (j.get("targetSession") or "").endswith(f"@{rig}")]
