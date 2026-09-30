@@ -24,8 +24,11 @@ if [ -n "$key" ] && files=$(api -f "$mgmt/auth-files" 2>/dev/null); then
   jq -r '.files[]? | select((.disabled // false) | not)
     | select((.status == "error" and ((.status_message // "") | test("expired"; "i")))
           or ((.unavailable // false) and ((.status_message // "") | test("expired|refresh"; "i"))))
-    | "\(.name)\t\(.provider // "?")\t\(.status_message // "")"' <<<"$files" |
-  while IFS=$'\t' read -r name provider why; do
+    | {name, provider: (.provider // "?"), why: ((.status_message // "") | gsub("[\\r\\n\\t]+"; " "))}
+    | @json' <<<"$files" |   # one JSON object per line: a newline inside a field can never start another row
+  while IFS= read -r row; do
+    name=$(jq -r '.name' <<<"$row"); provider=$(jq -r '.provider' <<<"$row"); why=$(jq -r '.why' <<<"$row")
+    [ -n "$name" ] && [ "$name" != null ] || continue
     log=$state/refresh-$(printf '%s' "$name" | tr -c 'A-Za-z0-9._-' '_')   # one epoch per line: this credential's attempts
     now=$(date +%s)
     recent=$(awk -v t=$((now - 3600)) '$1 > t' "$log" 2>/dev/null || true)

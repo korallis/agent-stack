@@ -127,3 +127,16 @@ test("the proxy is never restarted", () => {
   const code = fs.readFileSync(join(repo, "system/cliproxy-authwatch"), "utf8").split("\n").filter((l) => !/^\s*#/.test(l)).join("\n");
   assert.doesNotMatch(code, /systemctl|restart|kill/);
 });
+
+// QA round 1 (PR #17): a newline inside a field must never become another credential row.
+test("multiline status_message or name: exactly one refresh per credential, with its exact name; logs stay one line", async () => {
+  reset(); refreshStatus = 200;
+  files = [
+    { name: "a.json", provider: "kimi", status: "error", status_message: "token expired\nupstream refresh failed", unavailable: true },
+    { name: "odd\nb.json", provider: "codex", status: "error", status_message: "token expired", unavailable: false },
+  ];
+  const r = await watch();
+  assert.equal(r.code, 0, r.out);
+  assert.deepEqual(refreshes().map((q) => JSON.parse(q.body).name).sort(), ["a.json", "odd\nb.json"], "no row made from message text");
+  assert.match(r.c, /^logger -t cliproxy-authwatch kimi credential a\.json was 'token expired upstream refresh failed'; refresh requested/m);
+});
