@@ -39,24 +39,40 @@ test("install.sh reads that pin, registers Claude's MCP with it, installs via pl
 // (the READY marker). Directories alone are not enough, as with an interrupted download.
 const bin = join(root, "bin"), calls = join(root, "calls"), cache = join(root, "cache"), ready = join(root, "READY");
 fs.mkdirSync(bin);
+// A fake npx install tree, like the real one: .bin/playwright -> ../playwright/cli.js, @playwright/mcp/package.json, and a
+// playwright-core whose chromium.launch() works only once installed (READY). The stub runs the probe's real sh -c script
+// with that tree's .bin on PATH, so node module resolution is exercised for real.
+const tree = join(root, "npx-tree", "node_modules");
+const mkTree = (mcpVersion) => {
+  fs.rmSync(join(root, "npx-tree"), { recursive: true, force: true });
+  fs.mkdirSync(join(tree, ".bin"), { recursive: true }); fs.mkdirSync(join(tree, "playwright")); fs.mkdirSync(join(tree, "@playwright/mcp"), { recursive: true });
+  fs.mkdirSync(join(tree, "playwright-core"));
+  fs.writeFileSync(join(tree, "playwright/cli.js"), "#!/usr/bin/env node\n", { mode: 0o755 });
+  fs.symlinkSync("../playwright/cli.js", join(tree, ".bin/playwright"));
+  fs.writeFileSync(join(tree, "@playwright/mcp/package.json"), JSON.stringify({ version: mcpVersion }));
+  fs.writeFileSync(join(tree, "playwright-core/index.js"), `module.exports = { chromium: { launch: async () => {
+    if (!require("fs").existsSync(${JSON.stringify(ready)})) throw new Error("browserType.launch: Executable doesn't exist at ${cache}/chromium_headless_shell-1243/chrome-headless-shell");
+    return { close: async () => {} }; } } };`);
+};
 fs.writeFileSync(join(bin, "npx"), `#!/bin/bash
-printf '%s\\n' "npx $*" >> "${calls}"
+printf '%s\\n' "npx $* (cwd $PWD)" >> "${calls}"
 if [[ "$*" == *"--dry-run"* ]]; then
   [ "\${FAKE_PLAN:-}" = empty ] && exit 0
   echo "Chrome for Testing 153.0.8010.12 (playwright chromium v1243)"; echo "  Install location:    ${cache}/chromium-1243"
   echo "Chrome Headless Shell 153.0.8010.12 (playwright chromium-headless-shell v1243)"; echo "  Install location:    ${cache}/chromium_headless_shell-1243"
-elif [[ "$*" == *" sh -c "* ]]; then
-  [ -f "${ready}" ] && exit 0
-  echo "headless shell: browserType.launch: Executable doesn't exist at ${cache}/chromium_headless_shell-1243/chrome-headless-shell"; exit 1
 elif [[ "$*" == *"install --force chromium"* ]]; then mkdir -p "${cache}/chromium-1243" "${cache}/chromium_headless_shell-1243"; touch "${ready}"
+else
+  while [ "$1" != sh ]; do shift; done; shift 2   # -y -p <pkg> sh -c <script> [args]
+  script=$1; shift; PATH="${tree}/.bin:$PATH" exec sh -c "$script" sh "$@"
 fi
 `, { mode: 0o755 });
 fs.writeFileSync(join(bin, "logger"), "#!/bin/sh\nexit 0\n", { mode: 0o755 });
+const nodeDir = dirname(process.execPath);   // the probe runs node
 const ensure = (args = [], env = {}) => { fs.rmSync(calls, { force: true });
-  const r = spawnSync(join(repo, "bin/playwright-browsers"), args, { encoding: "utf8", env: { PATH: `${bin}:/usr/bin:/bin`, HOME: root, ...env } });
+  const r = spawnSync(join(repo, "bin/playwright-browsers"), args, { encoding: "utf8", env: { PATH: `${bin}:${nodeDir}:/usr/bin:/bin`, HOME: root, ...env } });
   return { ...r, c: fs.existsSync(calls) ? fs.readFileSync(calls, "utf8") : "" }; };
 const esc = (x) => x.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
-const fresh = () => { fs.rmSync(cache, { recursive: true, force: true }); fs.rmSync(ready, { force: true }); };
+const fresh = (mcpVersion = pin) => { fs.rmSync(cache, { recursive: true, force: true }); fs.rmSync(ready, { force: true }); mkTree(mcpVersion); };
 
 test("playwright-browsers: ready means it launches; --check reports and installs nothing; plain mode installs, then verifies", () => {
   fresh();
@@ -66,9 +82,10 @@ test("playwright-browsers: ready means it launches; --check reports and installs
   assert.doesNotMatch(check.c, /install --force/, "--check installs nothing");
   const inst = ensure();
   assert.equal(inst.status, 0, inst.stdout + inst.stderr);
-  assert.match(inst.c, new RegExp(`^npx -y -p @playwright/mcp@${esc(pin)} playwright install --force chromium$`, "m"));
+  assert.match(inst.c, new RegExp(`^npx -y -p @playwright/mcp@${esc(pin)} playwright install --force chromium \\(cwd `, "m"));
   assert.doesNotMatch(inst.c, /playwright@latest/);
   assert.equal((inst.c.match(/ sh -c /g) || []).length, 2, "launch checked before and after the install");
+  assert.doesNotMatch(inst.c, new RegExp(`\\(cwd ${esc(process.cwd())}\\)`), "npx never runs from the caller's directory");
   const again = ensure();
   assert.equal(again.status, 0);
   assert.match(again.stdout, /browser ready \(launches\): Chrome for Testing 153\.0\.8010\.12/);
@@ -83,7 +100,7 @@ test("QA: a partial cache (the install directories exist, the browser doesn't) i
   assert.match(check.stdout, /which does not launch/);
   const repair = ensure();
   assert.equal(repair.status, 0);
-  assert.match(repair.c, /playwright install --force chromium$/m, "reinstalled over the partial directories");
+  assert.match(repair.c, /playwright install --force chromium \(cwd /m, "reinstalled over the partial directories");
 });
 
 test("QA: an empty or unrecognised install plan is an error, never 'present'", () => {
@@ -115,4 +132,22 @@ test("agent-project-check WARNs on @latest and on an --executable-path older tha
   assert.match(old.detail, /chromium-152 is 152, @playwright\/mcp@latest bundles Chrome for Testing 153/);
   fs.writeFileSync(join(home, ".codex/config.toml"), `[mcp_servers.playwright]\ncommand = "npx"\nargs = ["-y", "@playwright/mcp@${pin}", "--headless", "--browser", "chromium"]\n`);
   assert.deepEqual(run().map((r) => r.level), ["OK", "OK"]);
+});
+
+// QA round 2: the probe must use the PINNED release's playwright-core, whatever the caller's directory holds.
+test("a playwright-core in the caller's directory can't stand in for the pinned one (absolute path, neutral cwd)", () => {
+  fresh();
+  const proj = join(root, "project"); fs.mkdirSync(join(proj, "node_modules/playwright-core"), { recursive: true });
+  fs.writeFileSync(join(proj, "node_modules/playwright-core/index.js"), "module.exports = { chromium: { launch: async () => ({ close: async () => {} }) } };");
+  fs.rmSync(calls, { force: true });
+  const r = spawnSync(join(repo, "bin/playwright-browsers"), ["--check"], { cwd: proj, encoding: "utf8", env: { PATH: `${bin}:${nodeDir}:/usr/bin:/bin`, HOME: root, NODE_PATH: join(proj, "node_modules") } });
+  assert.equal(r.status, 1, r.stdout + r.stderr);
+  assert.match(r.stdout, /which does not launch: headless shell: .*Executable doesn't exist/, "the shadow copy (which always launches) was not used");
+});
+
+test("a playwright tree that isn't from the pinned @playwright/mcp release is refused, never 'ready'", () => {
+  fresh("0.0.83"); fs.writeFileSync(ready, "");   // a browser that would launch, but from the wrong release
+  const r = ensure(["--check"]);
+  assert.equal(r.status, 1);
+  assert.match(r.stdout, new RegExp(`the playwright found is not from @playwright/mcp@${esc(pin)} \\(found 0\\.0\\.83 in `));
 });
