@@ -331,14 +331,24 @@ export function qaFromComments(notes, headingRe, head) {
     money_evidence: `QA comment by ${r.seat} (${r.at}): ${String(r.body).replace(/\s+/g, " ").slice(0, 300)}`, source: "comment" } : null;
 }
 
-// Pure: the merge gate's own record for this head. From the latest status of its context, or the latest gate comment.
-export function gateFrom(cfg, { statuses, notes, head }) {
-  if (cfg.gate.source === "comments") {
-    const r = records(notes, cfg.gate.headingRe, head).at(-1);
-    return r ? { state: r.state || "posted without a verdict", url: r.url || null, source: "comment" } : { state: null, source: "comment" };
-  }
-  const st = (statuses || []).find((x) => x.context === cfg.gate.context);   // newest first
-  return st ? { state: st.state, url: st.target_url || null, source: "status" } : { state: null, source: "status" };
+// Pure: this gate's own earlier runs on this head, newest first: every status of its context (statuses are read for
+// the head only, so an older head's never appear), or every gate comment declaring the head. This is history, not
+// evidence: the gate's own earlier HOLD fed back as "failure already posted" would make every hold re-hold itself.
+// It is reported to people next to the input and never sent to Jev.
+export function gateHistory(cfg, { statuses, notes, head }) {
+  if (cfg.gate.source === "comments")
+    return records(notes, cfg.gate.headingRe, head).reverse().map((r) =>
+      `${r.state || "no verdict"}: ${String(r.body).split("\n", 1)[0].slice(0, 160)} (gate comment ${r.url || "?"}, ${r.at || "?"})`);
+  return (statuses || []).filter((x) => x.context === cfg.gate.context).map((x) =>
+    `${x.state}: "${x.description || ""}" (status${x.target_url ? ` ${x.target_url}` : ""}, ${x.created_at || "?"})`);
+}
+
+// Pure: is this PR comment or review one of the gate's own reports?
+export function isGateReport(n, cfg, statuses = []) {
+  const first = String(n.body || "").split("\n", 1)[0];
+  const ctx = cfg.gate.context.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+  return (statuses || []).some((s) => s.context === cfg.gate.context && s.target_url && s.target_url === n.url)
+    || !!cfg.gate.headingRe?.test(first) || new RegExp(`^#+\\s*${ctx}\\b`, "i").test(first);
 }
 
 // ---- Branch requirements when GitHub says BLOCKED -----------------------------------------------------------------
@@ -409,11 +419,13 @@ export function mergeStateLine(f) {
     for (const u of req.unverified) reasons.push(`not verified by this helper: ${u}`);
     const missing = req.contexts.filter((c) => c.context !== GATE && c.state === null).map((c) => c.context);
     if (missing.length) reasons.push(`required context(s) not posted: ${[...new Set(missing)].join(", ")}`);
-    for (const c of req.contexts) if (c.state && c.state !== "pass") reasons.push(c.state);
+    for (const c of req.contexts) if (c.context !== GATE && c.state && c.state !== "pass") reasons.push(c.state);
   }
+  // The gate's own context is this run's to decide: an earlier run's result on it is never a reason (WO45).
   const gateReqs = (req?.contexts || []).filter((c) => c.context === GATE);
-  const gateUnposted = gateReqs.length && gateReqs.every((c) => c.state === null);
-  if (!reasons.length && gateUnposted) return `merge state: pending this gate (${GATE} not yet posted; every other requirement verified)`;
+  const gateOpen = gateReqs.length && gateReqs.some((c) => c.state !== "pass"), gateUnposted = gateReqs.length && gateReqs.every((c) => c.state === null);
+  if (!reasons.length && gateOpen)
+    return `merge state: pending this gate (${GATE} ${gateUnposted ? "not yet posted" : "holds an earlier run's result, which this run replaces"}; every other requirement verified)`;
   if (gateUnposted) reasons.push(`${GATE} not yet posted`);
   return `merge state: BLOCKED (${[...new Set(reasons)].join("; ") || "reason not visible to this helper"})`;
 }
@@ -435,13 +447,6 @@ export function observedFrom(checkRuns, statuses, own = []) {
       bucket: s.state === "success" ? "pass" : s.state === "pending" ? "pending" : "fail" });
   }
   return [...runs.values(), ...sts.values()];
-}
-
-// Pure: this gate's own record for the head, worded like mergeStateLine: nothing posted = "pending this gate".
-export function gateLine(f) {
-  const G = f.gateContext || GATE_CONTEXT, g = f.gate, from = g.source === "comment" ? "gate comment" : "status";
-  if (!g.state) return `merge gate ${G} (${from}): pending this gate (nothing posted for ${f.head})`;
-  return `merge gate ${G} (${from}): ${g.state} already posted for ${f.head}${g.url ? ` (${g.url})` : ""}`;
 }
 
 // Pure: the review.merge_gate input from gathered facts (facts are what gh and the proof file said; strings only).
@@ -492,7 +497,6 @@ export function buildMergeInput(f) {
   const limits = [
     `target branch ${f.baseRef} at ${f.base}; PR head branch ${f.headRef}`,
     `mergeable: ${f.mergeable}; ${mergeStateLine(f)}; draft: ${f.isDraft}`,
-    ...(f.gate ? [gateLine(f)] : []),
     ...(f.reviewNote?.limits?.length ? [`limits stated by the independent review: ${f.reviewNote.limits.join("; ")}`] : []),
     ...(f.verdictReport?.limits?.length ? [`limits stated by the ${f.verdictReport.kind}: ${f.verdictReport.limits.join("; ")}`] : []),
     `deploy effect: ${f.deploy || "MISSING: not stated (see the rig CULTURE specifics)"}`,
@@ -517,6 +521,8 @@ export function gather(pr, { repo, mission, slice, change, deploy, rollback, con
   let checks = [];
   try { checks = ghJson("pr", "checks", String(pr), ...R, "--required", "--json", "name,state,bucket"); }
   catch (e) { const out = String(e.stdout || ""); if (out.trim().startsWith("[")) checks = JSON.parse(out); }   // gh exits non-zero when a check fails
+  // The gate's own status is this run's output, not CI: never a failing (or passing) required check here (WO45).
+  checks = checks.filter((c) => c.name !== cfg.gate.context);
   // Every status, all pages, newest first: absence from one page is not absence (a context's latest status can sit
   // behind many newer ones of another context).
   const pages = ghJson("api", `repos/${nwo}/commits/${v.headRefOid}/statuses?per_page=100`, "--paginate", "--slurp") || [];
@@ -570,14 +576,18 @@ export function gather(pr, { repo, mission, slice, change, deploy, rollback, con
   }
   const short = v.headRefOid.slice(0, 7);
   const namesHead = (body) => (body || "").includes(short);
-  const notes = [
+  const allNotes = [
     ...(v.comments || []).map((c) => ({ body: c.body, url: c.url, at: c.createdAt, author: c.author?.login })),
     ...(v.reviews || []).map((r) => ({ body: r.body, url: r.url || `review ${r.id}`, at: r.submittedAt, author: r.author?.login, commit: r.commit?.oid, reviewState: r.state, kind: "review" })),
   ].sort((a, b) => String(a.at).localeCompare(String(b.at)));
+  const gateRuns = gateHistory(cfg, { statuses, notes: allNotes.filter((n) => n.kind !== "review"), head: v.headRefOid });
+  // The gate's own reports are history only (WO45): no evidence collector below (review fallback, blast radius,
+  // comment sources) may pick one up. A gate report is one a gate status links to, one under the configured gate
+  // heading, or one headed with the gate's context name ("## jev-merge").
+  const notes = allNotes.filter((n) => !isGateReport(n, cfg, statuses));
   // Comment sources read PR comments only. A GitHub review is its own source with its own eligibility (exact-head
   // commit, not dismissed or pending, a mapped login of another family), so it never re-enters as a "comment".
   const comments = notes.filter((n) => n.kind !== "review");
-  const gate = gateFrom(cfg, { statuses, notes: comments, head: v.headRefOid });
   const author = { family: authorFamily || cfg.authorFamily || familyOf((v.headRefName || "").match(/^agent\/([\w.-]+)/)?.[1]) || null };
   if (cfg.qa.source === "comments") { brb = qaFromComments(comments, cfg.qa.headingRe, v.headRefOid); brbWhere = `PR comments headed /${cfg.qa.heading}/`; }
   const br = [...notes].reverse().find((c) => /^## Blast radius/m.test(c.body || ""));
@@ -616,7 +626,7 @@ export function gather(pr, { repo, mission, slice, change, deploy, rollback, con
   return {
     pr: v.number, head: v.headRefOid, base: v.baseRefOid, baseRef: v.baseRefName, headRef: v.headRefName,
     mergeable: v.mergeable, mergeState: v.mergeStateStatus, reviewDecision: v.reviewDecision || null, isDraft: v.isDraft, change: change || v.title, checks,
-    requirements, observedChecks, gate, gateContext: cfg.gate.context, reviewContext: cfg.review.context, sources: { review: cfg.review.source, qa: cfg.qa.source, gate: cfg.gate.source },
+    requirements, observedChecks, gateHistory: gateRuns, gateContext: cfg.gate.context, reviewContext: cfg.review.context, sources: { review: cfg.review.source, qa: cfg.qa.source, gate: cfg.gate.source },
     authorFamily: author.family, independentReview, reviewProblem, reviewNote,
     reviewVerdict: reviewVerdictFacts,
     // The report of the source the verdict came from, when the lines below don't already carry it (a fallback source).
@@ -673,9 +683,11 @@ if (import.meta.url === `file://${process.argv[1]}` || process.argv[1]?.endsWith
   try { facts = gather(pr, { repo: flag("--repo"), mission: flag("--mission"), slice: flag("--slice"), change: flag("--change"), deploy: flag("--deploy"), rollback: flag("--rollback"), configPath: flag("--config"), authorFamily: flag("--author-family") }); }
   catch (e) { console.error(`agent-merge-evidence: ${e.message}`); process.exit(2); }
   const input = buildMergeInput(facts);
-  if (!a.includes("--decide")) { console.log(JSON.stringify(input, null, 2)); process.exit(0); }
+  // `history`: this gate's own earlier runs on this head, for people; never part of the input Jev decides on.
+  const history = facts.gateHistory?.length ? { history: facts.gateHistory } : {};
+  if (!a.includes("--decide")) { console.log(JSON.stringify({ ...input, ...history }, null, 2)); process.exit(0); }
   const rec = await decideOrStub("review.merge_gate", input, { caller: process.env.OPENRIG_SESSION_NAME || "agent-merge-evidence" });
-  console.log(JSON.stringify({ input, decision: { decided_by: rec.decided_by, band: rec.band, result: rec.result, request_id: rec.request_id, ...(rec.stubbed ? { stubbed: true } : {}) } }, null, 2));
+  console.log(JSON.stringify({ input, ...history, decision: { decided_by: rec.decided_by, band: rec.band, result: rec.result, request_id: rec.request_id, ...(rec.stubbed ? { stubbed: true } : {}) } }, null, 2));
   const o = outcome(rec, facts);
   console.error(o.text);
   process.exit(o.code);
