@@ -92,6 +92,24 @@ function expand(word, ctx) {
   }
   return words.flatMap((w) => braces(w)).slice(0, 64);
 }
+// A `bash -c` string as the parent passes it: only the $NAME / ${NAME} the parent expands (mask "0") take the
+// parent's values; single-quoted or escaped ones stay for the child. At most 64 spellings.
+function parentExpand(text, mask, ctx) {
+  const re = /\$(?:([A-Za-z_][A-Za-z0-9_]*)|\{([A-Za-z_][A-Za-z0-9_]*)(?:\[[^\]]*\])?\})/g;
+  let m;
+  while ((m = re.exec(text))) {
+    if (mask[m.index] === "1") continue;
+    const name = m[1] ?? m[2], vals = name === "HOME" ? [ctx.home] : ctx.vars?.get(name);
+    if (!vals) continue;   // unknown to the parent: left for the child (conservative)
+    const out = [];
+    for (const v of vals) for (const rest of parentExpand(text.slice(m.index + m[0].length), mask.slice(m.index + m[0].length), ctx)) {
+      if (out.length >= 64) break;
+      out.push(text.slice(0, m.index) + v + rest);
+    }
+    return out;
+  }
+  return [text];
+}
 const unresolved = (w) => /\$[{A-Za-z_(]|`|\$\(…\)|<\(…\)/.test(w);   // a variable nobody set here, or a substitution
 
 // Is this absolute path protected: by pattern, by being (under) a copy or link this command made of one, or by
@@ -187,11 +205,13 @@ function lex(src) {
   // assignments there don't reach the parent) and `cond` (after && or ||: it may not run).
   let subDepth = 0;
   const newSeg = (o = {}) => ({ words: [], redirs: [], sub: subDepth > 0 || !!o.sub, cond: !!o.cond });
-  const segs = []; let seg = newSeg(), word = null, quotedAll = true, i = 0;
+  // mask: one flag per character of the word, "1" where the parent shell takes it literally (single quotes, $'…',
+  // a backslash escape), so a `bash -c "…"` string can be expanded the way the parent expands it.
+  const segs = []; let seg = newSeg(), word = null, quotedAll = true, mask = "", i = 0;
   const heredocs = [];
-  const endWord = () => { if (word !== null) { if (seg.pendingRedir) { seg.redirs.push({ op: seg.pendingRedir, target: word }); seg.pendingRedir = null; } else seg.words.push({ text: word, sq: quotedAll }); } word = null; quotedAll = true; };
+  const endWord = () => { if (word !== null) { if (seg.pendingRedir) { seg.redirs.push({ op: seg.pendingRedir, target: word }); seg.pendingRedir = null; } else seg.words.push({ text: word, sq: quotedAll, mask }); } word = null; quotedAll = true; mask = ""; };
   const endSeg = (o) => { endWord(); if (seg.words.length || seg.redirs.length) segs.push(seg); seg = newSeg(o); };
-  const add = (s, single = false) => { word = (word ?? "") + s; if (!single) quotedAll = false; };
+  const add = (s, single = false, m = null) => { word = (word ?? "") + s; mask += m ?? (single ? "1" : "0").repeat(s.length); if (!single) quotedAll = false; };
   const sub = (open, close) => {   // returns the inner text of a balanced $( ... ) / <( ... )
     let depth = 1, j = i, q = null;
     for (; j < src.length; j++) {
@@ -223,7 +243,7 @@ function lex(src) {
     }
     if (c === " " || c === "\t") { endWord(); i++; continue; }
     if (c === "#" && word === null) { while (i < src.length && src[i] !== "\n") i++; continue; }
-    if (c === "\\") { if (src[i + 1] === "\n") { i += 2; continue; } add(src[i + 1] ?? ""); i += 2; continue; }
+    if (c === "\\") { if (src[i + 1] === "\n") { i += 2; continue; } add(src[i + 1] ?? "", false, src[i + 1] === undefined ? "" : "1"); i += 2; continue; }
     if (c === "$" && src[i + 1] === "'") {   // $'…': ANSI-C quoting, escapes decoded ($'\x2eenv' is .env)
       let j = i + 2, out = "";
       const ESC = { n: "\n", t: "\t", r: "\r", a: "\x07", b: "\b", e: "\x1b", f: "\f", v: "\v", "\\": "\\", "'": "'", '"': '"', "?": "?" };
@@ -243,14 +263,19 @@ function lex(src) {
     }
     if (c === "'") { const j = src.indexOf("'", i + 1); add(src.slice(i + 1, j < 0 ? src.length : j), true); i = j < 0 ? src.length : j + 1; continue; }
     if (c === '"') {
-      i++; let s = "";
+      i++; let s = "", sm = "";
       while (i < src.length && src[i] !== '"') {
-        if (src[i] === "\\") { s += src[i + 1] ?? ""; i += 2; continue; }
-        if (src[i] === "$" && src[i + 1] === "(") { i += 2; const inner = sub("(", ")"); segs.push(...lex(inner).map((x) => ({ ...x, subst: true, sub: true }))); s += "$(…)"; continue; }
-        if (src[i] === "`") { i++; const j = src.indexOf("`", i); segs.push(...lex(src.slice(i, j < 0 ? src.length : j)).map((x) => ({ ...x, subst: true, sub: true }))); s += "$(…)"; i = j < 0 ? src.length : j + 1; continue; }
-        s += src[i++];
+        if (src[i] === "\\") {   // in double quotes a backslash escapes only $ ` " \ and newline
+          const e = src[i + 1] ?? "";
+          if (e === "\n") { i += 2; continue; }
+          if ("$`\"\\".includes(e) && e) { s += e; sm += "1"; } else { s += "\\" + e; sm += "0".repeat(1 + e.length); }
+          i += 2; continue;
+        }
+        if (src[i] === "$" && src[i + 1] === "(") { i += 2; const inner = sub("(", ")"); segs.push(...lex(inner).map((x) => ({ ...x, subst: true, sub: true }))); s += "$(…)"; sm += "0000"; continue; }
+        if (src[i] === "`") { i++; const j = src.indexOf("`", i); segs.push(...lex(src.slice(i, j < 0 ? src.length : j)).map((x) => ({ ...x, subst: true, sub: true }))); s += "$(…)"; sm += "0000"; i = j < 0 ? src.length : j + 1; continue; }
+        s += src[i++]; sm += "0";
       }
-      i++; add(s); continue;
+      i++; add(s, false, sm); continue;
     }
     if (c === "$" && src[i + 1] === "(" && src[i + 2] !== "(") { i += 2; const inner = sub("(", ")"); segs.push(...lex(inner).map((x) => ({ ...x, subst: true, sub: true }))); add("$(…)"); continue; }
     if (c === "`") { i++; const j = src.indexOf("`", i); segs.push(...lex(src.slice(i, j < 0 ? src.length : j)).map((x) => ({ ...x, subst: true, sub: true }))); add("$(…)"); i = j < 0 ? src.length : j + 1; continue; }
@@ -370,13 +395,19 @@ function bashVerdict(command, ctx, depth = 0) {
   // Read fields as bash does: IFS whitespace trims and runs together, any other IFS character ends one field;
   // the last name takes the rest of the line.
   // Without -r a backslash escapes the next character (kept literally, never a separator) and is removed.
-  const readFields = (line, names, ifs, raw = true) => {
-    let t = [];   // characters, each marked escaped or not
+  // read decodes escapes as it reads, so the delimiter and -n apply to the decoded characters (each marked escaped
+  // or not): backslash-newline continues the line, an escaped delimiter doesn't end it.
+  const readTokens = (line, raw) => {
+    const t = [];
     for (let i = 0; i < line.length; i++) {
       if (!raw && line[i] === "\\" && i + 1 < line.length) { if (line[i + 1] !== "\n") t.push({ c: line[i + 1], e: true }); i++; }
       else if (!raw && line[i] === "\\") continue;
       else t.push({ c: line[i], e: false });
     }
+    return t;
+  };
+  const readFields = (tokens, names, ifs) => {
+    let t = tokens;
     const ws = [...ifs].filter((c) => /\s/.test(c)).join(""), isWs = (x) => !x.e && ws.includes(x.c), isIfs = (x) => !x.e && ifs.includes(x.c);
     const str = (a) => a.map((x) => x.c).join("");
     let a = 0, b = t.length; while (a < b && isWs(t[a])) a++; while (b > a && isWs(t[b - 1])) b--; t = t.slice(a, b);
@@ -469,31 +500,35 @@ function bashVerdict(command, ctx, depth = 0) {
       if (here && verb === "read") {
         const ifsList = ctx.childEnv?.get("IFS") ?? ctx.vars.get("IFS") ?? [" \t\n"];   // IFS=: read …: read's own IFS
         for (const value of expand(here.target, ctx)) for (const ifs of ifsList) {
-          let line = value;
+          let t = readTokens(value, !!opt.r);
           const delim = opt.d !== undefined ? (opt.d[0] ?? "\0") : "\n";
-          if (opt.N === undefined && line.includes(delim)) line = line.slice(0, line.indexOf(delim));
-          const n = Number(opt.N ?? opt.n); if (Number.isFinite(n) && n >= 0) line = line.slice(0, n);
-          if (opt.a) { for (const f of readFields(line, Array(64).fill(0), ifs, !!opt.r).filter(Boolean)) setVar(opt.a, f, true); continue; }
+          const at = opt.N === undefined ? t.findIndex((x) => !x.e && x.c === delim) : -1;
+          if (at >= 0) t = t.slice(0, at);
+          const n = Number(opt.N ?? opt.n); if (Number.isFinite(n) && n >= 0) t = t.slice(0, n);
+          if (opt.a) { for (const f of readFields(t, Array(64).fill(0), ifs).filter(Boolean)) setVar(opt.a, f, true); continue; }
           const names1 = names.length ? names : ["REPLY"];
-          readFields(line, names1, ifs, !!opt.r).forEach((f, i) => setVar(names1[i], f, true));
+          readFields(t, names1, ifs).forEach((f, i) => setVar(names1[i], f, true));
         }
       } else for (const n of [...names, opt.a].filter(Boolean)) if (!scoped) ctx.vars.delete(n);
       continue;
     }
     // bash -c / -lc / --norc -c …, sh -c, eval: the command string is a command of its own.
     if (SHELLS.has(verb) && depth < 3) {
-      let dashC = false, cmd = null;
+      let dashC = false, cmd = null, cmdAt = -1;
       for (let i = 0; i < args.length; i++) {
         const a = args[i];
-        if (a === "--") { if (dashC) cmd = args[i + 1]; break; }
+        if (a === "--") { if (dashC) { cmd = args[i + 1]; cmdAt = i + 1; } break; }
         if (["--rcfile", "--init-file", "-o", "-O", "+O", "+o"].includes(a)) { i++; continue; }
         if (/^-[A-Za-z]+$/.test(a)) { if (a.includes("c")) dashC = true; continue; }
         if (a.startsWith("--")) continue;
-        if (dashC) cmd = a;
+        if (dashC) { cmd = a; cmdAt = i; }
         break;
       }
       const dg = args.some((a, i) => a === "-O" && args[i + 1] === "dotglob");
-      if (cmd != null) { const r = bashVerdict(cmd, childCtx(dg ? { dotglob: true } : {}), depth + 1); if (r) return r; }
+      if (cmd != null) {   // the parent expands its part of the string first (old values), then the child runs it
+        const w = seg.words[k + 1 + cmdAt];
+        for (const c of w && w.mask ? parentExpand(cmd, w.mask, ctx) : [cmd]) { const r = bashVerdict(c, childCtx(dg ? { dotglob: true } : {}), depth + 1); if (r) return r; }
+      }
     }
     if (verb === "eval" && depth < 3) {   // eval's words: the old values; the text it runs: the prefix values too
       const c2 = childCtx();

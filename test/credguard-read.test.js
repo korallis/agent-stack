@@ -378,3 +378,18 @@ test("QA PR59 boundary: a prefix reaches the child's environment, not the comman
 'read -rn12 F <<< "app/safe.txtJUNK"; cat "$F"', "read F <<< 'app/safe\\.txt'; cat \"$F\""])
     assert.equal(dec(c), false, c);
 });
+
+// QA PR59 combination (b8ca0b59): the parent expands its part of a bash -c string first; read decodes, then cuts.
+test("QA PR59 combination: bash -c \"…\" takes the parent's old values; read -n / -d / continuation count decoded characters", () => {
+  const h = fs.mkdtempSync(join(root, "qa59c-")), app = join(h, "app");
+  fs.mkdirSync(app); fs.writeFileSync(join(app, ".env"), "K=v\n"); fs.writeFileSync(join(app, "safe.txt"), "hi\n");
+  const dec = (command) => g.decide({ tool_name: "Bash", tool_input: { command }, cwd: h }, { home: h, pats: g.DEFAULT_PATTERNS }).deny;
+  for (const c of ['F=app/.env; F=app/safe.txt bash -c "cat $F"', "F=app/safe.txt; F=app/.env bash -c 'cat \"$F\"'",
+    'F=app/safe.txt; F=app/.env bash -c "cat \\$F"', "F=app/safe.txt; F=app/.env bash -c 'cat '\"x\"' \"$F\"'",
+    'F=app/.env; F=app/safe.txt sh -c "cat \\"$F\\""', "read -n8 F <<< 'app/\\.envJUNK'; cat \"$F\"",
+    "read F <<< $'app/\\\\\\n.env'; cat \"$F\"", "read -d: F <<< 'app/\\.env:ignored'; cat \"$F\"", "read -d: F <<< 'app/.e\\:x:nv'; cat app/.env"])
+    assert.equal(dec(c), true, c);
+  for (const c of ['F=app/safe.txt; F=app/.env bash -c "cat $F"', "F=app/.env; F=app/safe.txt bash -c 'cat \"$F\"'",
+    "read F <<< 'app/safe\\.txt'; cat \"$F\"", "read -n12 F <<< 'app/safe.txtJUNK'; cat \"$F\"", 'echo "a\\b"; cat app/safe.txt'])
+    assert.equal(dec(c), false, c);
+});
