@@ -34,35 +34,66 @@ test("install.sh reads that pin, registers Claude's MCP with it, installs via pl
   assert.match(read("system/systemd/playwright-browsers.service"), /ExecStart=%h\/\.local\/bin\/playwright-browsers/);
 });
 
-// playwright-browsers with a stub npx: the dry run names two install locations; FAKE_PRESENT decides whether they exist.
-const bin = join(root, "bin"), calls = join(root, "calls"), cache = join(root, "cache");
+// playwright-browsers with a stub npx that stands in for the pinned release's Playwright: the dry run names install
+// locations (or nothing, with FAKE_PLAN=empty); the launch check (`sh -c …`) succeeds only once a real install has run
+// (the READY marker). Directories alone are not enough, as with an interrupted download.
+const bin = join(root, "bin"), calls = join(root, "calls"), cache = join(root, "cache"), ready = join(root, "READY");
 fs.mkdirSync(bin);
 fs.writeFileSync(join(bin, "npx"), `#!/bin/bash
 printf '%s\\n' "npx $*" >> "${calls}"
 if [[ "$*" == *"--dry-run"* ]]; then
+  [ "\${FAKE_PLAN:-}" = empty ] && exit 0
   echo "Chrome for Testing 153.0.8010.12 (playwright chromium v1243)"; echo "  Install location:    ${cache}/chromium-1243"
   echo "Chrome Headless Shell 153.0.8010.12 (playwright chromium-headless-shell v1243)"; echo "  Install location:    ${cache}/chromium_headless_shell-1243"
-else mkdir -p "${cache}/chromium-1243" "${cache}/chromium_headless_shell-1243"; fi
+elif [[ "$*" == *" sh -c "* ]]; then
+  [ -f "${ready}" ] && exit 0
+  echo "headless shell: browserType.launch: Executable doesn't exist at ${cache}/chromium_headless_shell-1243/chrome-headless-shell"; exit 1
+elif [[ "$*" == *"install --force chromium"* ]]; then mkdir -p "${cache}/chromium-1243" "${cache}/chromium_headless_shell-1243"; touch "${ready}"
+fi
 `, { mode: 0o755 });
 fs.writeFileSync(join(bin, "logger"), "#!/bin/sh\nexit 0\n", { mode: 0o755 });
-const ensure = (...args) => { fs.rmSync(calls, { force: true });
-  const r = spawnSync(join(repo, "bin/playwright-browsers"), args, { encoding: "utf8", env: { PATH: `${bin}:/usr/bin:/bin`, HOME: root } });
+const ensure = (args = [], env = {}) => { fs.rmSync(calls, { force: true });
+  const r = spawnSync(join(repo, "bin/playwright-browsers"), args, { encoding: "utf8", env: { PATH: `${bin}:/usr/bin:/bin`, HOME: root, ...env } });
   return { ...r, c: fs.existsSync(calls) ? fs.readFileSync(calls, "utf8") : "" }; };
+const esc = (x) => x.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+const fresh = () => { fs.rmSync(cache, { recursive: true, force: true }); fs.rmSync(ready, { force: true }); };
 
-test("playwright-browsers: asks the PINNED release's own Playwright; --check reports a missing build; install only when missing", () => {
-  fs.rmSync(cache, { recursive: true, force: true });
-  const check = ensure("--check");
+test("playwright-browsers: ready means it launches; --check reports and installs nothing; plain mode installs, then verifies", () => {
+  fresh();
+  const check = ensure(["--check"]);
   assert.equal(check.status, 1);
-  assert.match(check.stdout, new RegExp(`@playwright/mcp@${pin.replace(/\./g, "\\.")} needs Chrome for Testing 153\\.0\\.8010\\.12 \\(playwright chromium v1243\\); missing: `));
-  assert.doesNotMatch(check.c, /install chromium$/m, "--check installs nothing");
+  assert.match(check.stdout, new RegExp(`@playwright/mcp@${esc(pin)} needs Chrome for Testing 153\\.0\\.8010\\.12 \\(playwright chromium v1243\\), which does not launch: headless shell: .*Executable doesn't exist`));
+  assert.doesNotMatch(check.c, /install --force/, "--check installs nothing");
   const inst = ensure();
-  assert.equal(inst.status, 0, inst.stderr);
-  assert.match(inst.c, new RegExp(`^npx -y -p @playwright/mcp@${pin.replace(/\./g, "\\.")} playwright install chromium$`, "m"));
+  assert.equal(inst.status, 0, inst.stdout + inst.stderr);
+  assert.match(inst.c, new RegExp(`^npx -y -p @playwright/mcp@${esc(pin)} playwright install --force chromium$`, "m"));
   assert.doesNotMatch(inst.c, /playwright@latest/);
+  assert.equal((inst.c.match(/ sh -c /g) || []).length, 2, "launch checked before and after the install");
   const again = ensure();
   assert.equal(again.status, 0);
-  assert.match(again.stdout, /browser present: Chrome for Testing 153\.0\.8010\.12/);
-  assert.doesNotMatch(again.c, /install chromium$/m, "no reinstall when present");
+  assert.match(again.stdout, /browser ready \(launches\): Chrome for Testing 153\.0\.8010\.12/);
+  assert.doesNotMatch(again.c, /install --force/, "no reinstall when it launches");
+});
+
+test("QA: a partial cache (the install directories exist, the browser doesn't) is not ready, and plain mode repairs it", () => {
+  fresh();
+  fs.mkdirSync(join(cache, "chromium-1243"), { recursive: true }); fs.mkdirSync(join(cache, "chromium_headless_shell-1243"), { recursive: true });
+  const check = ensure(["--check"]);
+  assert.equal(check.status, 1);
+  assert.match(check.stdout, /which does not launch/);
+  const repair = ensure();
+  assert.equal(repair.status, 0);
+  assert.match(repair.c, /playwright install --force chromium$/m, "reinstalled over the partial directories");
+});
+
+test("QA: an empty or unrecognised install plan is an error, never 'present'", () => {
+  fresh(); fs.writeFileSync(ready, "");   // even with a browser that would launch
+  for (const args of [["--check"], []]) {
+    const r = ensure(args, { FAKE_PLAN: "empty" });
+    assert.equal(r.status, 1, args.join(" "));
+    assert.match(r.stdout, /unrecognised install plan from @playwright\/mcp@/);
+    assert.doesNotMatch(r.stdout, /browser ready|browser present/);
+  }
 });
 
 // agent-project-check on a fake HOME: npx and the system browser are stubbed.
