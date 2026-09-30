@@ -427,3 +427,28 @@ test("NEEDS CONFIRM names an N/A QA verdict as not required, not as a PASS (QA r
   const o = outcome({ decided_by: "jev", band: "review", result: { decision: "merge" } }, facts({ brb: null, brbNA: "N/A: 2 changed path(s), all docs" }));
   assert.equal(o.code, 3); assert.match(o.text, /QA verdict not required \(2 changed path\(s\), all docs\)/); assert.doesNotMatch(o.text, /qa PASS/);
 });
+
+test("paths with spaces (Git leaves them unquoted) parse exactly; renames resolve only when the header rebuilds (QA round 2)", () => {
+  const T = "\t";
+  const docs = `diff --git a/docs/guide one.md b/docs/guide one.md\nindex 90be1f3..294186e 100644\n--- a/docs/guide one.md${T}\n+++ b/docs/guide one.md${T}\n@@ -1 +1 @@\n-before\n+after\n`;
+  const src = `diff --git a/src/two words.ts b/src/two words.ts\nindex 1..2 100644\n--- a/src/two words.ts${T}\n+++ b/src/two words.ts${T}\n@@ -1 +1 @@\n-x\n+y\n`;
+  const renameDocs = `diff --git a/docs/guide one.md b/docs/guide two.md\nsimilarity index 90%\nrename from docs/guide one.md\nrename to docs/guide two.md\n--- a/docs/guide one.md${T}\n+++ b/docs/guide two.md${T}\n@@ -1 +1,2 @@\n a\n+b\n`;
+  const renameOut = `diff --git a/src/old name.ts b/docs/new name.md\nsimilarity index 90%\nrename from src/old name.ts\nrename to docs/new name.md\n`;
+  const lying = `diff --git a/docs/x y.md b/docs/z w.md\nrename from src/secret.ts\nrename to docs/z w.md\n`;
+  const at = { createdAt: "2026-10-01T00:00:00Z", cutoff: null };
+  let f = parseDiff(docs);
+  assert.deepEqual(f.map((x) => [x.path, x.oldPath, Boolean(x.unknown)]), [["docs/guide one.md", "docs/guide one.md", false]]);
+  assert.match(brbNotApplicable({ ...at, files: f }), /^N\/A: 1 changed path\(s\), all docs/); assert.match(blastNotApplicable({ files: f }), /^N\/A: .*all docs/);
+  f = parseDiff(docs + src);
+  assert.deepEqual(f.map((x) => x.path), ["docs/guide one.md", "src/two words.ts"]);
+  assert.equal(brbNotApplicable({ ...at, files: f }), null, "mixed with a spaced source file: required"); assert.equal(blastNotApplicable({ files: f }), null);
+  f = parseDiff(renameDocs);
+  assert.deepEqual(f.map((x) => [x.oldPath, x.path, Boolean(x.unknown), Boolean(x.renamed)]), [["docs/guide one.md", "docs/guide two.md", false, true]]);
+  assert.match(brbNotApplicable({ ...at, files: f }), /^N\/A: .*all docs/, "a docs-to-docs rename with spaces is docs");
+  f = parseDiff(renameOut);
+  assert.deepEqual([f[0].oldPath, f[0].path, Boolean(f[0].unknown)], ["src/old name.ts", "docs/new name.md", false]);
+  assert.equal(brbNotApplicable({ ...at, files: f }), null, "a rename out of source is not docs-only");
+  f = parseDiff(lying);
+  assert.ok(f[0].unknown, "rename lines that don't rebuild the header leave it unknown"); assert.equal(brbNotApplicable({ ...at, files: f }), null);
+  assert.ok(parseDiff("diff --git something odd\n@@ -1 +1 @@\n-x\n+y\n")[0].unknown, "still fails closed");
+});

@@ -49,11 +49,29 @@ export function parseDiff(text) {
     if (line.startsWith("diff --git ")) {
       const m = line.match(new RegExp(`^diff --git ${PATH} ${PATH}$`));
       const a = m && gitUnquote(m[1]), b = m && gitUnquote(m[2]);
-      cur = a?.startsWith("a/") && b?.startsWith("b/")
-        ? { path: b.slice(2), oldPath: a.slice(2), added: [], removed: [] }
-        : { path: "<unparsed diff header>", oldPath: "<unparsed diff header>", added: [], removed: [], unknown: true, header: line.slice(0, 200) };
+      // Git leaves spaces unquoted ("a/docs/guide one.md b/docs/guide one.md"): an unrenamed file's header is exactly
+      // "a/P b/P", so it splits without guessing. Anything else waits for its rename or ---/+++ lines.
+      const rest = line.slice("diff --git ".length);
+      const half = (rest.length - 5) / 2, P = Number.isInteger(half) ? rest.slice(2, 2 + half) : null;
+      if (a?.startsWith("a/") && b?.startsWith("b/")) cur = { path: b.slice(2), oldPath: a.slice(2), added: [], removed: [] };
+      else if (P !== null && rest === `a/${P} b/${P}`) cur = { path: P, oldPath: P, added: [], removed: [] };
+      else cur = { path: "<unparsed diff header>", oldPath: "<unparsed diff header>", added: [], removed: [], unknown: true, header: line, seen: {} };
       files.push(cur);
       continue;
+    }
+    // An unresolved header is confirmed only when the names from its rename or ---/+++ lines rebuild it exactly.
+    if (cur?.unknown && cur.seen) {
+      const name = (l, prefix) => { const v = gitUnquote(l.replace(/\t$/, "")); return v.startsWith(prefix) ? v.slice(prefix.length) : null; };
+      let hit = true;
+      if (line.startsWith("rename from ")) cur.seen.old = gitUnquote(line.slice(12));
+      else if (line.startsWith("rename to ")) cur.seen.new = gitUnquote(line.slice(10));
+      else if (line.startsWith("--- ")) cur.seen.old ??= name(line.slice(4), "a/");
+      else if (line.startsWith("+++ ")) cur.seen.new ??= name(line.slice(4), "b/");
+      else hit = false;
+      if (hit && cur.seen.old && cur.seen.new && `diff --git a/${cur.seen.old} b/${cur.seen.new}` === cur.header) {
+        Object.assign(cur, { path: cur.seen.new, oldPath: cur.seen.old, unknown: false });
+        delete cur.header; delete cur.seen;
+      }
     }
     if (!cur) continue;
     if (/^(rename|copy) (from|to) /.test(line) || /^similarity index /.test(line)) cur.renamed = true;
