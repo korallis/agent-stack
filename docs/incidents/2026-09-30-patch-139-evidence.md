@@ -3,7 +3,7 @@
 Collected for the operator's re-gate after a live Jev HOLD on PR #21. Nothing on the live host was changed; only tmux
 read queries were sent to the live tmux server.
 
-## 1. Full daemon test suite (all 2,282 files, 10,051 tests, through `agent-heavy build`)
+## 1. Full daemon test suite (all 744 test files, 2,282 suites, 10,051 tests, through `agent-heavy build`)
 The same worktree (korallis/openrig `local-patch-0.6.1`) was run twice:
 - **patched** at f23494a2;
 - **baseline**, with only the three changed sources (`adapters/tmux.ts`, `domain/seat-activity-service.ts`,
