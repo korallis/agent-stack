@@ -1,0 +1,176 @@
+# Small team (10 seats): the build team without the extra implementers, the escalation seat and the second test author.
+# Same roles, gates, models, culture, startup files and watchdogs as build.yaml; for smaller projects.
+# Copy to <workspace>/rig/, replace @RIG@, @REPO@, @WT@, @AGENT_STACK@ (this repo), create one git worktree per seat, then:
+#   rig spec validate small.yaml  →  rig up small.yaml   (agent-project-new --team small does all of this)
+# Claude Code seats (incl. Kimi) reach models through CLIProxyAPI via ~/.config/agent-stack/env.sh; Codex seats via ~/.codex/config.toml.
+# Kimi seat: "kimi-k3[1m]" gives the 1M window. One test author (tests.claude) and two implementers (impl.codex-1,
+# impl.claude-ui); scale up to build.yaml when more parallel work is needed.
+version: "0.2"
+name: "@RIG@"
+summary: "Small build team: plan approval, locked user-journey tests, routed implementation, hands-on QA, cross-family review, gated merge"
+culture_file: CULTURE.md
+permission_policy: builtin:yolo
+managed_blocks:
+  claude-code: CLAUDE.local.md
+
+workspace:
+  workspace_root: "@REPO@"
+  repos:
+    - name: "@RIG@"
+      path: .
+      kind: project
+  default_repo: "@RIG@"
+
+startup:
+  files:
+    - path: startup/context.md   # identity, environment, system check, skills to load (rig spec audit: startup context)
+      delivery_hint: guidance_merge
+      required: true
+  actions: []
+
+pods:
+  - id: coord
+    label: "Coordination"
+    members:
+      - id: lead-claude
+        agent_ref: "path:@AGENT_STACK@/rig/template/agents/lead"
+        profile: default
+        runtime: claude-code
+        model: "claude-opus-5-5"
+        cwd: "@WT@/coord-lead-claude"
+        restore_policy: resume_if_possible
+    edges: []
+
+  - id: arch
+    label: "Plan and acceptance criteria"
+    members:
+      - id: claude
+        agent_ref: "path:@AGENT_STACK@/rig/template/agents/architect"
+        profile: default
+        runtime: claude-code
+        model: "claude-opus-5-5"
+        cwd: "@WT@/arch-claude"
+        restore_policy: resume_if_possible
+    edges: []
+
+  - id: tests
+    label: "Locked user-journey tests"
+    members:
+      - id: claude
+        agent_ref: "path:@AGENT_STACK@/rig/template/agents/test-author"
+        profile: default
+        runtime: claude-code
+        model: "claude-opus-5-5"
+        cwd: "@WT@/tests-claude"
+        restore_policy: resume_if_possible
+    edges: []
+
+  - id: impl
+    label: "Implementation"
+    members:
+      - id: codex-1
+        agent_ref: "path:@AGENT_STACK@/rig/template/agents/implementer"
+        profile: default
+        runtime: codex
+        model: "gpt-6-sol"
+        cwd: "@WT@/impl-codex-1"
+        restore_policy: resume_if_possible
+      - id: claude-ui
+        agent_ref: "path:@AGENT_STACK@/rig/template/agents/implementer"
+        profile: default
+        runtime: claude-code
+        model: "claude-opus-5-5"
+        cwd: "@WT@/impl-claude-ui"
+        restore_policy: resume_if_possible
+    edges: []
+
+  - id: qa
+    label: "Hands-on user QA"
+    members:
+      - id: codex
+        agent_ref: "path:@AGENT_STACK@/rig/template/agents/qa"
+        profile: default
+        runtime: codex
+        model: "gpt-6-sol"
+        cwd: "@WT@/qa-codex"
+        restore_policy: resume_if_possible
+    edges: []
+
+  - id: review
+    label: "Independent review (Opus reviews Codex, Sol reviews Claude, Kimi third family)"
+    members:
+      - id: claude
+        agent_ref: "path:@AGENT_STACK@/rig/template/agents/reviewer"
+        profile: default
+        runtime: claude-code
+        model: "claude-opus-5-5"
+        cwd: "@WT@/review-claude"
+        restore_policy: resume_if_possible
+      - id: codex
+        agent_ref: "path:@AGENT_STACK@/rig/template/agents/reviewer"
+        profile: default
+        runtime: codex
+        model: "gpt-6-sol"
+        cwd: "@WT@/review-codex"
+        restore_policy: resume_if_possible
+      - id: kimi
+        agent_ref: "path:@AGENT_STACK@/rig/template/agents/reviewer"
+        profile: default
+        runtime: claude-code
+        model: "kimi-k3[1m]"
+        cwd: "@WT@/review-kimi"
+        restore_policy: resume_if_possible
+    edges: []
+
+  - id: integ
+    label: "Merge owner"
+    members:
+      - id: claude
+        agent_ref: "path:@AGENT_STACK@/rig/template/agents/integrator"
+        profile: default
+        runtime: claude-code
+        model: "claude-opus-5-5"
+        cwd: "@WT@/integ-claude"
+        restore_policy: resume_if_possible
+    edges: []
+
+edges:
+  - kind: delegates_to
+    from: coord.lead-claude
+    to: arch.claude
+  - kind: delegates_to
+    from: coord.lead-claude
+    to: tests.claude
+  - kind: delegates_to
+    from: coord.lead-claude
+    to: impl.codex-1
+  - kind: delegates_to
+    from: coord.lead-claude
+    to: impl.claude-ui
+  - kind: delegates_to
+    from: coord.lead-claude
+    to: qa.codex
+  - kind: delegates_to
+    from: coord.lead-claude
+    to: review.claude
+  - kind: delegates_to
+    from: coord.lead-claude
+    to: review.codex
+  - kind: delegates_to
+    from: coord.lead-claude
+    to: review.kimi
+  - kind: delegates_to
+    from: coord.lead-claude
+    to: integ.claude
+  - kind: delegates_to
+    from: integ.claude
+    to: review.claude
+  - kind: delegates_to
+    from: integ.claude
+    to: review.codex
+  - kind: delegates_to
+    from: integ.claude
+    to: review.kimi
+  - kind: escalates_to
+    from: integ.claude
+    to: coord.lead-claude

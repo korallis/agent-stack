@@ -11,6 +11,7 @@ improves every repo's rig the next time it launches.
 | `core.yaml` | 4 seats: Claude lead, Codex implementer, Codex reviewer, Claude merge owner |
 | `team.yaml` | 24 seats: balanced 12 Claude + 12 Codex |
 | `full-stack.yaml` | **Default: the large, fast team, 27 seats.** Pinned per the Jev routing table: 8 GPT-6 Sol implementers + 2 Opus UI implementers + Astra escalation, 3 Sol QA seats, 2 Opus + 2 Sol + 1 Kimi reviewers, Opus lead/architect/merge owner, Sol deputy and recovery, test authors of both families. About 9 implementers busy at once |
+| `small.yaml` | **Small team, 10 seats.** `build.yaml` without impl.codex-2/-3, impl.astra and tests.codex: Opus lead/architect/UI implementer/test author/reviewer/merge owner, one GPT-6 Sol implementer, Sol QA and reviewer, Kimi reviewer. Same culture, gates and watchdogs |
 | `build.yaml` | **Standard team, 14 seats.** Models pinned per the routing table in `CULTURE.md`: Opus 5.5 lead/architect/UI/reviewer/merge owner, GPT-6 Sol implementers/QA/reviewer, GPT-6 Astra escalation seat, Kimi K3 (1M) third-family reviewer, test authors of both families. Max 4 busy implementers |
 | `fallback-codex.yaml` | Same roles with no Claude accounts: Codex builds and merges, Kimi writes the locked tests and reviews |
 | `daily-summary.watchdog.yaml` | Wakes the lead once a day to write `docs/summary/<date>.md` and notify the owner |
