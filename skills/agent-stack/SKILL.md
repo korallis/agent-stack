@@ -132,7 +132,13 @@ lead confirms that with each seat.
     `rig context recap-write` underneath); `agent-seat-recap show --seat <member>@<rig>` shows what a rebuild would get.
   - Hand over with `agent-seat-handover <seat> --source rebuild --reason …`: the CLI gives up after 5 s ("outcome
     UNKNOWN") while the daemon completes, so the wrapper polls `rig seat status` until this run's handover is
-    recorded. Exit 0 complete, 1 failed, 3 unknown. On unknown never retry: that makes a second successor.
+    recorded. Exit 0 complete, 1 failed, 3 unknown, 4 complete but a parked row's wake couldn't be re-armed. On
+    unknown never retry: that makes a second successor.
+  - OpenRig stops every watchdog job the retiring occupant registered, park timers (`rig queue block --wake-after`)
+    included. The wrapper records the seat's parked rows and timers first and, once the handover is complete,
+    re-parks each row that is still blocked and lost its timer (same blocker, same interval), printing each one. It
+    never adds a second wake to a row that still has one. `agent-seat-handover <seat> --wakes` lists them and changes
+    nothing.
 - **`rig ps` ATTN `user_prompt_submit`** on a seat that is working is not a stuck seat: it is mid-turn. Check its pane
   before acting.
 - Never stop or restart `openrig.service` or `openrig-tmux.service` while rigs run. Restart the daemon with

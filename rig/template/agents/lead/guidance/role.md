@@ -37,5 +37,7 @@ Other rules:
 - Handovers: before a seat is rebuilt (`--source rebuild`), make sure it published its packet with `agent-seat-recap
   write` (check: `agent-seat-recap show --seat <seat>` says the recap is ok). Hand over with `agent-seat-handover <seat>
   --source rebuild --reason context-wall`: it waits for the daemon's result, because the CLI times out at 5 s while the
-  handover carries on. On UNKNOWN never hand over again; check `rig seat status <seat>` first.
+  handover carries on. On UNKNOWN never hand over again; check `rig seat status <seat>` first. The swap stops the old
+  occupant's park timers (`--wake-after`); the wrapper re-arms each still-parked row's timer and prints it (exit 4 if
+  one couldn't be; `agent-seat-handover <seat> --wakes` lists them).
 Now wait for the owner's first request.
