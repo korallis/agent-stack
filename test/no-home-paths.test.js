@@ -8,14 +8,17 @@ import { join, dirname } from "node:path";
 import { fileURLToPath } from "node:url";
 
 const repo = join(dirname(fileURLToPath(import.meta.url)), "..");
-const tracked = spawnSync("git", ["ls-files", "-s"], { cwd: repo, encoding: "utf8" }).stdout.split("\n").filter(Boolean)
-  .map((l) => { const [meta, path] = l.split("\t"); return { mode: meta.split(" ")[0], path }; });
+// NUL-delimited, so a name git would quote (accents, tabs, newlines) is read exactly as it is on disk.
+const git = (args) => { const r = spawnSync("git", args, { cwd: repo, encoding: "buffer", maxBuffer: 1 << 28 });
+  if (r.status !== 0) throw new Error(`git ${args.join(" ")}: ${r.stderr}`); return r.stdout; };
+const tracked = git(["ls-files", "-s", "-z"]).toString("utf8").split("\0").filter(Boolean)
+  .map((rec) => { const tab = rec.indexOf("\t"); return { mode: rec.slice(0, tab).split(" ")[0], sha: rec.slice(0, tab).split(" ")[1], path: rec.slice(tab + 1) }; });
 // Placeholder homes used in docs and tests; any other /home/<name> is somebody's real home.
 const PLACEHOLDERS = new Set(["you", "user", "u", "seat", "runner", "me", "username", "example"]);
 
 test("no tracked symlink points at an absolute path", () => {
   const abs = tracked.filter((f) => f.mode === "120000")
-    .map((f) => ({ path: f.path, target: spawnSync("git", ["cat-file", "-p", `:${f.path}`], { cwd: repo, encoding: "utf8" }).stdout }))
+    .map((f) => ({ path: f.path, target: git(["cat-file", "blob", f.sha]).toString("utf8") }))   // by object id: no path quoting, errors throw
     .filter((f) => f.target.startsWith("/"));
   assert.deepEqual(abs, [], "make it a local link created at install (see rig/template/openrig-shared in install.sh)");
 });
@@ -24,8 +27,7 @@ test("no tracked file names a real home directory (/home/<name>)", () => {
   const hits = [];
   for (const f of tracked) {
     if (f.mode === "120000" || f.mode === "160000") continue;
-    let text;
-    try { text = fs.readFileSync(join(repo, f.path)); } catch { continue; }
+    const text = git(["cat-file", "blob", f.sha]);   // the tracked content, whatever the working tree holds; errors throw
     if (text.includes(0)) continue;   // binary
     for (const m of text.toString("utf8").matchAll(/(?<![\w$.])\/home\/([A-Za-z0-9._-]+)/g))
       if (!PLACEHOLDERS.has(m[1].toLowerCase())) hits.push(`${f.path}: /home/${m[1]}`);
