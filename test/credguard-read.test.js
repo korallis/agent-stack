@@ -304,3 +304,24 @@ test("globs follow bash's dotfile rule; dotglob, .* and ** still refuse; cd, lin
     "export F=app/.env; cat \"$F\"", "D=app; cat ${D}/.env"]) assert.equal(dec(c), true, c);
   assert.equal(dec("cat app/.{x,y}nv"), false, "braces that name nothing protected");
 });
+
+// QA PR59 (c5830bd9): brackets, directory state, globs over new copies, cp -t / directory copies, \U, and variables.
+test("QA PR59: bracket classes, every visited directory, tainted names in globs, cp -t, dir copies, \\U, command-local variables", () => {
+  const h = fs.mkdtempSync(join(root, "qa59-")), app = join(h, "app"), sec = join(h, ".config/agent-stack/secrets");
+  fs.mkdirSync(app); fs.mkdirSync(sec, { recursive: true }); fs.mkdirSync(join(h, "out"));
+  fs.writeFileSync(join(app, ".env"), "K=v\n"); fs.writeFileSync(join(app, "key.pem"), "x\n"); fs.writeFileSync(join(app, "notes"), "hi\n");
+  fs.writeFileSync(join(sec, "token.txt"), "t\n"); fs.symlinkSync(join(app, ".env"), join(app, "nlink"));
+  const dec = (command) => g.decide({ tool_name: "Bash", tool_input: { command }, cwd: h }, { home: h, pats: g.DEFAULT_PATTERNS }).deny;
+  for (const c of [
+    "cat app/.[e]nv", "cat app/key.[p]em", "cat app/.[!x]nv", "cat app/n[l]ink",                                  // f1
+    `cd "$HOME/.config/agent-stack/secrets"; (cd "$HOME"); cat token.txt`, "pushd ~/.config/agent-stack/secrets; popd; cat token.txt",
+    "cd ~/.config/agent-stack/secrets; cd -; cat token.txt", "env -C ~/.config/agent-stack/secrets cat token.txt",  // f2
+    "cp app/.env copied; cat cop*", "cp app/.env c1; cp c* c2; cat c2", "mv app/.env moved; cat mov*", "ln -s app/.env lk; cat l?", "dd if=app/.env of=d1; cat d*", // f3
+    'cp -t out "$HOME/.config/agent-stack/secrets/token.txt"; cat out/token.txt', 'cp -r "$HOME/.config/agent-stack/secrets" out/; cat out/secrets/token.txt', // f4
+    "cat $'app/\\U0000002eenv'",                                                                                       // f5
+    "F=app/.env bash -c 'cat \"$F\"'", "declare F=app/.env; cat $F", "read F <<< app/.env; cat $F", "for f in app/.env; do cat \"$f\"; done", // f6
+    "cat \"$(printf app/.env)\" # names app/.env", "X=$(echo app); cat app/.env",                                      // backstop / plain
+  ]) assert.equal(dec(c), true, c);
+  for (const c of ["cat app/n[o]tes", "cat app/[!.]otes", "cd app; cat notes", "cp app/notes n2; cat n*", "for f in app/notes; do cat \"$f\"; done",
+    "cat \"$UNSET\"", "ls app/.[e]nv", "cp -t out app/notes; cat out/notes"]) assert.equal(dec(c), false, c);
+});

@@ -343,15 +343,20 @@ Paths are resolved the way the shell will run the command:
   matched only by a pattern starting with `.`, or with `shopt -s dotglob` / `bash -O dotglob`. So `grep x bin/*`
   passes, while `cat app/.*` and `shopt -s dotglob; cat app/*` are refused. `**`, a glob in a directory part, or an
   unreadable directory are judged against sample names, dotfiles included.
-- `cd`/`pushd` earlier in the same command moves where later relative paths resolve.
+- Bracket classes (`.[e]nv`, `[!x]`) match the way bash matches them.
+- Every directory the command may be in counts: each `cd`/`pushd`/`env -C` target is added and none is dropped, so a
+  subshell's `cd`, `popd` or `cd -` can't hide one.
 - An existing symlink is followed to what it names.
-- A name the command gave a protected file (`cp`, `ln`, `mv`, `dd of=`, `tee < file`) is protected for the rest of
-  the command.
-- `$'…'` escapes, simple `{a,b}` braces, and variables the command assigned (`F=.env; cat $F`) are expanded.
+- A name the command gave a protected file (`cp`, `ln`, `mv`, `dd of=`, `tee < file`, `cp -t DIR`, a copied
+  directory and everything under it) is protected for the rest of the command, globs over it included.
+- `$'…'` escapes (`\x`, `\u`, `\U`, octal), simple `{a,b}` braces, and variables the command sets are expanded:
+  `F=…`, a prefix `F=… cmd`, `export`, `declare`, `local`, `readonly`, `read F <<< …` and `for f in …`.
+- Backstop: if the command names a protected path anywhere, a print whose operand still holds a value the guard can't
+  resolve (a variable it didn't see set, a substitution) is refused.
 
 Limits (honest): it stops accidental printing by a seat, not a determined one. A script that reads and prints a
-file itself (`node -e`, `python -c`, a project script) isn't parsed, and neither is a path in a variable the command
-didn't set, or one built by a command substitution. A broken hook allows the call rather than stopping every seat. `export $(grep -v '^#' .env | xargs)` is refused
+file itself (`node -e`, `python -c`, a project script) isn't parsed. A path held by a variable from outside the
+command, or built by a substitution in a command that names no protected path, isn't known either. A broken hook allows the call rather than stopping every seat. `export $(grep -v '^#' .env | xargs)` is refused
 (conservatively); use `set -a; . .env; set +a` instead.
 
 ### Known limits (honest)
