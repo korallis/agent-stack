@@ -1,10 +1,59 @@
 #!/usr/bin/env bash
-# Alert when a pooled account keeps failing authentication (401/403) instead of letting the proxy
-# silently shift all load to the other accounts. Reads the routing log only (no secrets, no content).
-# Alerts at most once per account every 6 hours. Runs from cliproxy-authwatch.timer every 5 minutes.
+# Keep pooled CLIProxyAPI credentials working. Runs from cliproxy-authwatch.timer every 5 minutes.
+# 1. Expired credentials: CLIProxyAPI can stop refreshing a credential after one transient upstream error and leave it
+#    "token expired" / unavailable (kimi-ai, 2026-09-29 23:26-23:58Z, after a single 521). From the management API's
+#    auth-files list, a credential with status=error and an "expired" message, or one unavailable after a failed
+#    refresh, gets a refresh request (POST auth-files/refresh), with backoff: at most 4 attempts per credential per
+#    hour, spaced 5, 10, 20 min. A successful refresh is only logged; a failed one is logged and alerted. The proxy is
+#    never restarted. The management key comes from secrets/cliproxy.env and is passed to curl on a file descriptor,
+#    never on the command line or in any output.
+# 2. Repeated auth failures: alert when a pooled account keeps failing authentication (401/403) instead of letting the
+#    proxy silently shift all load to the other accounts. Reads the routing log only (no secrets, no content). At most
+#    once per account every 6 hours.
 set -euo pipefail
-log=${AUTHWATCH_LOG:-$HOME/.local/share/agent-stack/logs/proxy-usage.jsonl}
 state=${AUTHWATCH_STATE:-$HOME/.local/state/agent-stack/authwatch}; mkdir -p "$state"
+alert() { logger -t cliproxy-authwatch "$2"; notify-send --urgency=critical --app-name="Agent stack" "$1" "$2" 2>/dev/null || true; }
+
+# ---- 1. refresh expired credentials --------------------------------------------------------------------------------
+mgmt=${AUTHWATCH_MGMT_URL:-http://127.0.0.1:8317/v0/management}
+secrets=${AUTHWATCH_SECRETS:-$HOME/.config/agent-stack/secrets/cliproxy.env}
+key=$(sed -n 's/^CLIPROXY_MGMT_KEY=//p' "$secrets" 2>/dev/null || true)
+api() { curl -sS -m 20 -H @<(printf 'Authorization: Bearer %s\n' "$key") "$@"; }
+max_per_hour=4 base_gap=300
+if [ -n "$key" ] && files=$(api -f "$mgmt/auth-files" 2>/dev/null); then
+  jq -r '.files[]? | select((.disabled // false) | not)
+    | select((.status == "error" and ((.status_message // "") | test("expired"; "i")))
+          or ((.unavailable // false) and ((.status_message // "") | test("expired|refresh"; "i"))))
+    | "\(.name)\t\(.provider // "?")\t\(.status_message // "")"' <<<"$files" |
+  while IFS=$'\t' read -r name provider why; do
+    log=$state/refresh-$(printf '%s' "$name" | tr -c 'A-Za-z0-9._-' '_')   # one epoch per line: this credential's attempts
+    now=$(date +%s)
+    recent=$(awk -v t=$((now - 3600)) '$1 > t' "$log" 2>/dev/null || true)
+    n=$(grep -c . <<<"$recent" || true)
+    last=$(tail -n1 <<<"$recent")
+    if [ "$n" -ge "$max_per_hour" ]; then
+      logger -t cliproxy-authwatch "$provider credential $name still '$why'; $n refresh attempts in the last hour, waiting (max $max_per_hour/hour)"
+      continue
+    fi
+    if [ "$n" -gt 0 ] && [ $((now - last)) -lt $((base_gap << (n - 1))) ]; then continue; fi   # 5, 10, 20 min apart
+    { printf '%s\n' "$recent" | grep . || true; echo "$now"; } > "$log.new" && mv "$log.new" "$log"
+    body=$(jq -cn --arg n "$name" '{name: $n}')
+    if out=$(api -w '\n%{http_code}' -X POST -H 'Content-Type: application/json' -d "$body" "$mgmt/auth-files/refresh" 2>&1); then
+      code=$(tail -n1 <<<"$out")
+    else
+      code=000
+    fi
+    if [[ $code == 2?? ]]; then
+      logger -t cliproxy-authwatch "$provider credential $name was '$why'; refresh requested (attempt $((n + 1)) this hour, HTTP $code)"
+    else
+      detail=$(head -n -1 <<<"$out" | tr -d '\n' | cut -c1-200)
+      alert "Proxy credential refresh failed" "$provider credential $name is '$why' and the refresh failed (HTTP $code${detail:+: $detail}; attempt $((n + 1)) this hour). Log in again if it keeps failing: agent-login $provider."
+    fi
+  done
+fi
+
+# ---- 2. repeated 401/403 in the routing log --------------------------------------------------------------------------
+log=${AUTHWATCH_LOG:-$HOME/.local/share/agent-stack/logs/proxy-usage.jsonl}
 window_min=15; threshold=3; quiet_s=$((6 * 3600))
 [ -r "$log" ] || exit 0
 
@@ -18,7 +67,5 @@ while IFS=$'\t' read -r account provider count status; do
   stamp="$state/$account"
   if [ -f "$stamp" ] && [ $(( $(date +%s) - $(stat -c %Y "$stamp") )) -lt "$quiet_s" ]; then continue; fi
   touch "$stamp"
-  msg="$provider account '$account': $count auth failures (last HTTP $status) in ${window_min} min. Check the login (agent-login $provider $account) or whether the account was suspended."
-  logger -t cliproxy-authwatch "$msg"
-  notify-send --urgency=critical --app-name="Agent stack" "Proxy account failing auth" "$msg" 2>/dev/null || true
+  alert "Proxy account failing auth" "$provider account '$account': $count auth failures (last HTTP $status) in ${window_min} min. Check the login (agent-login $provider $account) or whether the account was suspended."
 done
