@@ -41,8 +41,9 @@ has no version numbers; entries are grouped by the day they merged, newest first
 ### Fixed
 - `agent-seat-handover` keeps parked rows' wakes (WO56). OpenRig stops every watchdog job of the retiring occupant at a
   seat swap, including the timers of `rig queue block --wake-after`, so after a handover the seat's parked rows had no
-  live wake. The wrapper now records them before the handover and re-arms each one that lost its timer afterwards
-  (same row, blocker and interval; never a second wake). A repeating wait or a refused re-park is reported (exit 4).
+  live wake. The wrapper now records them before the handover and re-arms each one that is still the seat's and lost
+  its wake afterwards (same row, blocker and interval; never a second wake). A repeating wait, a refused re-park or a
+  row it can't read is reported (exit 4).
   `--wakes` lists them without changing anything.
 - `agent-merge-evidence` no longer makes the merge gate hold on project-rig PRs. The operator's live A/B test showed
   what flipped Jev:

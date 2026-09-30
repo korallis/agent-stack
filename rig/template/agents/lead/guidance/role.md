@@ -39,5 +39,5 @@ Other rules:
   --source rebuild --reason context-wall`: it waits for the daemon's result, because the CLI times out at 5 s while the
   handover carries on. On UNKNOWN never hand over again; check `rig seat status <seat>` first. The swap stops the old
   occupant's park timers (`--wake-after`); the wrapper re-arms each still-parked row's timer and prints it (exit 4 if
-  one couldn't be; `agent-seat-handover <seat> --wakes` lists them).
+  one couldn't be re-armed or read; `agent-seat-handover <seat> --wakes` lists them).
 Now wait for the owner's first request.

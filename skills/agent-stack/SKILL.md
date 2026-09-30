@@ -135,9 +135,9 @@ lead confirms that with each seat.
     recorded. Exit 0 complete, 1 failed, 3 unknown, 4 complete but a parked row's wake couldn't be re-armed. On
     unknown never retry: that makes a second successor.
   - OpenRig stops every watchdog job the retiring occupant registered, park timers (`rig queue block --wake-after`)
-    included. The wrapper records the seat's parked rows and timers first and, once the handover is complete,
-    re-parks each row that is still blocked and lost its timer (same blocker, same interval), printing each one. It
-    never adds a second wake to a row that still has one. `agent-seat-handover <seat> --wakes` lists them and changes
+    included. The wrapper records the seat's parked rows and their wakes first and, once the handover is complete,
+    re-parks each row that is still blocked, still the seat's, and has no live wake (same blocker, same interval),
+    printing each one. It never adds a second wake to a row that still has one; a row it can't read is listed. `agent-seat-handover <seat> --wakes` lists them and changes
     nothing.
 - **`rig ps` ATTN `user_prompt_submit`** on a seat that is working is not a stuck seat: it is mid-turn. Check its pane
   before acting.

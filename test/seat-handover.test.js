@@ -28,11 +28,15 @@ case "$1 $2" in
   "seat status")
     n=$(cat "${root}/polls" 2>/dev/null || echo 0); echo $((n + 1)) > "${root}/polls"
     if [ "$n" -ge "$(cat "${root}/complete-after" 2>/dev/null || echo 999)" ]; then cat "${root}/status-done.json"; else cat "${root}/status-before.json"; fi ;;
-  "watchdog list")   # WO56: the first read is before the handover, later ones after it
-    [ -f "${root}/wd-fail" ] && { echo "daemon down" >&2; exit 1; }
-    n=$(cat "${root}/wd-reads" 2>/dev/null || echo 0); echo $((n + 1)) > "${root}/wd-reads"
-    if [ "$n" -ge 1 ]; then cat "${root}/wd-after.json" 2>/dev/null || echo "[]"; else cat "${root}/wd-before.json" 2>/dev/null || echo "[]"; fi ;;
-  "queue show") cat "${root}/rows/$3.json" 2>/dev/null || { echo "no such qitem" >&2; exit 1; } ;;
+  "queue list")   # WO56: the blocked rows of --destination, from rows/ (their first, pre-handover state)
+    [ -f "${root}/list-fail" ] && { echo "daemon down" >&2; exit 1; }
+    while [ $# -gt 0 ]; do [ "$1" = --destination ] && d=$2; shift; done
+    python3 -c 'import json,sys,glob; print(json.dumps([r for r in (json.load(open(f)) for f in sorted(glob.glob(sys.argv[1] + "/*.json"))) if r.get("destinationSession") == sys.argv[2] and r.get("state") == "blocked"]))' "${root}/rows" "$d" ;;
+  "queue show")   # the first read of a row is rows/<id>.json; later ones rows-after/<id>.json when there is one
+    [ -f "${root}/show-fail-$3" ] && { echo "transport failure" >&2; exit 1; }
+    n=$(cat "${root}/shows-$3" 2>/dev/null || echo 0); echo $((n + 1)) > "${root}/shows-$3"
+    if [ "$n" -ge 1 ] && [ -f "${root}/rows-after/$3.json" ]; then cat "${root}/rows-after/$3.json"; else cat "${root}/rows/$3.json" 2>/dev/null || { echo "no such qitem" >&2; exit 1; }; fi ;;
+  "watchdog show") cat "${root}/jobs/$3.json" 2>/dev/null || { echo "no such job" >&2; exit 1; } ;;
   "queue update") [ -f "${root}/update-fail" ] && { echo "blocker_not_live: the blocker is done" >&2; exit 1; }; echo '{"ok":true}' ;;
 esac
 `, { mode: 0o755 });
@@ -91,7 +95,7 @@ test("recap write: a recap-write failure writes nothing else; a bad or missing s
 });
 
 function handover({ out = "", err = "", rc = 0, before = {}, done = null, after = 999 }) {
-  for (const f of ["polls", "wd-reads", "wd-before.json", "wd-after.json", "wd-fail", "update-fail", "rows"]) fs.rmSync(join(root, f), { force: true, recursive: true });
+  for (const f of fs.readdirSync(root)) if (/^(polls|list-fail|update-fail|rows|rows-after|jobs|shows-.*|show-fail-.*)$/.test(f)) fs.rmSync(join(root, f), { force: true, recursive: true });
   fs.writeFileSync(join(root, "handover.out"), out); fs.writeFileSync(join(root, "handover.err"), err);
   fs.writeFileSync(join(root, "handover.rc"), String(rc));
   fs.writeFileSync(join(root, "status-before.json"), JSON.stringify(before));
@@ -170,85 +174,102 @@ test("show lists exactly the legs, in the order, that OpenRig's buildRebuildPrim
 });
 
 // WO56: OpenRig stops the retiring generation's watchdog jobs at a swap, park timers included; the wrapper re-arms them.
-const timer = (q, seat, interval, extra = {}) => ({ jobId: `J-${q}`, policy: "periodic-reminder", state: "active", targetSession: seat, intervalSeconds: interval,
-  specYaml: `policy: periodic-reminder\ntarget:\n  session: "${seat}"\nmessage: "Wake timer fired for parked qitem ${q}. Resume the recorded continuation and update the row."\n`, ...extra });
-const ladder = (q, seat, interval) => ({ ...timer(q, seat, interval), specYaml: `message: "Resume parked qitem ${q} and inspect current evidence."\n` });
-const row = (q, state, blockedOn = null, dest = "arch-claude@shop") => { fs.mkdirSync(join(root, "rows"), { recursive: true });
-  fs.writeFileSync(join(root, "rows", `${q}.json`), JSON.stringify({ qitemId: q, state, blockedOn, destinationSession: dest })); };
-const wd = (before, after) => { fs.writeFileSync(join(root, "wd-before.json"), JSON.stringify(before)); fs.writeFileSync(join(root, "wd-after.json"), JSON.stringify(after)); };
-const OK = JSON.stringify({ ok: true, currentStatus: { currentOccupant: "arch-claude@shop" } });
+// A row's wake is what the daemon projects for it (waiting.nextBackstop "watchdog:<job>" while that job is active).
+const SEATN = "arch-claude@shop";
+const put = (dir, id, obj) => { fs.mkdirSync(join(root, dir), { recursive: true }); fs.writeFileSync(join(root, dir, `${id}.json`), JSON.stringify(obj)); };
+const rowObj = (q, { state = "blocked", blockedOn = null, dest = SEATN, wake = null } = {}) => ({ qitemId: q, state, blockedOn, destinationSession: dest,
+  waiting: { nextBackstop: wake ? { mechanism: `watchdog:${wake}`, intervalSeconds: 1 } : { mechanism: blockedOn ? "blocker-transition / queue-stuck-sweep" : "UNVERIFIED: no timed backstop" } } });
+const row = (q, o) => put("rows", q, rowObj(q, o));            // before the handover
+const rowAfter = (q, o) => put("rows-after", q, rowObj(q, o));  // after it
+const job = (id, interval, { wait = false } = {}) => put("jobs", id, { jobId: id, policy: "periodic-reminder", intervalSeconds: interval, state: "active",
+  specYaml: wait ? JSON.stringify({ message: "custom", context: { queue_wait: { qitemId: "q" } } }) : "policy: periodic-reminder\nmessage: \"anything, custom too\"\n" });
+const OK = JSON.stringify({ ok: true, currentStatus: { currentOccupant: SEATN } });
 
-test("WO56: after a completed handover, each parked row that lost its timer is re-armed (same row, blocker, interval); a live wake is left alone", () => {
-  handover({ out: OK, before: { current_occupant: "arch-claude@shop" } });
-  for (const [q, st, b] of [["qitem-a", "blocked", "qitem-up"], ["qitem-b", "blocked", null], ["qitem-live", "blocked", "qitem-up"], ["qitem-gone", "blocked", null], ["qitem-lad", "blocked", "qitem-up"]]) row(q, st, b);
-  row("qitem-other", "blocked", null, "review@shop");
-  wd([timer("qitem-a", "arch-claude@shop", 3600), timer("qitem-b", "arch-claude@shop", 900), timer("qitem-live", "arch-claude@shop", 1800),
-      timer("qitem-gone", "arch-claude@shop", 600), ladder("qitem-lad", "arch-claude@shop", 300),
-      timer("qitem-other", "review@shop", 60), timer("qitem-x", "arch-claude@shop", 60, { state: "stopped" })],
-     [timer("qitem-live", "arch-claude@shop", 1800, { jobId: "J-new" })]);
-  row("qitem-gone", "done");   // no longer parked when the wrapper records: not one of the seat's parked rows
-  const r = run("agent-seat-handover", ["arch-claude@shop", "--source", "rebuild"]);
+test("WO56: after a completed handover, each parked row that lost its wake is re-armed (same row, blocker, interval); a live wake is left alone", () => {
+  handover({ out: OK, before: { current_occupant: SEATN } });
+  job("J-a", 3600); job("J-b", 900); job("J-live", 1800); job("J-lad", 300, { wait: true }); job("J-other", 60);
+  row("qitem-a", { blockedOn: "qitem-up", wake: "J-a" }); rowAfter("qitem-a", { blockedOn: "qitem-up" });
+  row("qitem-b", { wake: "J-b" }); rowAfter("qitem-b", {});
+  row("qitem-live", { blockedOn: "qitem-up", wake: "J-live" }); rowAfter("qitem-live", { blockedOn: "qitem-up", wake: "J-successor-custom" });
+  row("qitem-lad", { blockedOn: "qitem-up", wake: "J-lad" }); rowAfter("qitem-lad", { blockedOn: "qitem-up" });
+  row("qitem-blocker-only", { blockedOn: "qitem-up" });                               // no timed wake: nothing to lose
+  row("qitem-other", { wake: "J-other", dest: "review@shop" });                        // another seat's row
+  row("qitem-done", { state: "done", wake: "J-a" });                                   // not parked
+  const r = run("agent-seat-handover", [SEATN, "--source", "rebuild"]);
   assert.equal(r.status, 4, r.stdout + r.stderr);
-  assert.match(r.calls, /rig queue update qitem-a --state blocked --blocked-on qitem-up --wake-after 3600s --note wake re-armed after the seat handover of arch-claude@shop \(the retiring generation's timer J-qitem-a was stopped\)/);
+  assert.match(r.calls, /rig queue update qitem-a --state blocked --blocked-on qitem-up --wake-after 3600s --note wake re-armed after the seat handover of arch-claude@shop \(the retiring occupant's wake J-a was stopped\)/);
   assert.match(r.calls, /rig queue update qitem-b --state blocked --wake-after 900s --note/);
   assert.match(r.stdout, /wake of qitem-a: re-armed, every 3600s, blocked on qitem-up/);
-  assert.match(r.stdout, /wake of qitem-live: still live \(job J-new\), left alone/);
-  assert.doesNotMatch(r.calls, /queue update qitem-(live|other|x|gone|lad)/);
+  assert.match(r.stdout, /wake of qitem-live: still live \(job J-successor-custom\), left alone/);
+  assert.doesNotMatch(r.calls, /queue update qitem-(live|other|done|lad|blocker-only)/);
   assert.match(r.stderr, /wake of qitem-lad: NOT re-armed: it was a repeating wait \(every 300s\).*re-park it by hand/);
   assert.equal((r.calls.match(/^rig seat handover/gm) || []).length, 1);
 });
 
-test("WO56: a row that is no longer parked after the handover is not re-parked; nothing recorded means nothing to do (exit 0)", () => {
+test("WO56 (QA PR61): a row now owned by another seat, or no longer parked, is not re-parked; nothing recorded is exit 0", () => {
+  handover({ out: OK }); job("J-a", 3600); job("J-b", 600);
+  row("qitem-a", { blockedOn: "qitem-up", wake: "J-a" }); rowAfter("qitem-a", { blockedOn: "qitem-up", dest: "review@shop" });
+  row("qitem-b", { wake: "J-b" }); rowAfter("qitem-b", { state: "handed-off" });
+  let r = run("agent-seat-handover", [SEATN, "--source", "rebuild"]);
+  assert.equal(r.status, 0, r.stderr);
+  assert.match(r.stdout, /wake of qitem-a: left alone, the row belongs to review@shop now/);
+  assert.match(r.stdout, /wake of qitem-b: not needed, the row is handed-off now/);
+  assert.doesNotMatch(r.calls, /queue update/);
   handover({ out: OK });
-  row("qitem-a", "blocked", "qitem-up"); wd([timer("qitem-a", "arch-claude@shop", 3600)], []);
-  const orig = fs.readFileSync(join(stubs, "rig"), "utf8");
-  // the row is handed off by the time the wrapper looks again: serve a second state on the second show
-  fs.writeFileSync(join(stubs, "rig"), orig.replace(`"queue show") cat`, `"queue show") m=$(cat "${root}/shows" 2>/dev/null || echo 0); echo $((m + 1)) > "${root}/shows"; [ "$m" -ge 1 ] && { echo '{"state":"handed-off"}'; exit 0; }; cat`));
-  try {
-    fs.rmSync(join(root, "shows"), { force: true });
-    const r = run("agent-seat-handover", ["arch-claude@shop", "--source", "rebuild"]);
-    assert.equal(r.status, 0, r.stderr); assert.match(r.stdout, /wake of qitem-a: not needed, the row is handed-off now/);
-    assert.doesNotMatch(r.calls, /queue update/);
-  } finally { fs.writeFileSync(join(stubs, "rig"), orig, { mode: 0o755 }); }
-  handover({ out: OK }); wd([], []);
-  const r = run("agent-seat-handover", ["arch-claude@shop", "--source", "rebuild"]);
-  assert.equal(r.status, 0); assert.doesNotMatch(r.stdout + r.stderr, /wake of/);
+  r = run("agent-seat-handover", [SEATN, "--source", "rebuild"]);
+  assert.equal(r.status, 0); assert.doesNotMatch(r.stdout + r.stderr, /wake of|WARN/);
 });
 
 test("WO56: the timeout-then-poll path re-arms too; a refused re-park exits 4 with the reason", () => {
-  const fresh = { handover_result: "complete", handover_at: new Date(Date.now() + 1000).toISOString(), current_occupant: "arch-claude@shop" };
+  const fresh = { handover_result: "complete", handover_at: new Date(Date.now() + 1000).toISOString(), current_occupant: SEATN };
   handover({ err: "timed out", rc: 1, before: {}, done: fresh, after: 2 });
-  row("qitem-a", "blocked", "qitem-up"); wd([timer("qitem-a", "arch-claude@shop", 3600)], []);
-  let r = run("agent-seat-handover", ["arch-claude@shop", "--source", "rebuild", "--wait", "30"]);
+  job("J-a", 3600); row("qitem-a", { blockedOn: "qitem-up", wake: "J-a" }); rowAfter("qitem-a", { blockedOn: "qitem-up" });
+  let r = run("agent-seat-handover", [SEATN, "--source", "rebuild", "--wait", "30"]);
   assert.equal(r.status, 0, r.stderr); assert.match(r.stdout, /complete at .*\n.*wake of qitem-a: re-armed/);
-  handover({ out: OK }); row("qitem-a", "blocked", "qitem-up"); wd([timer("qitem-a", "arch-claude@shop", 3600)], []);
+  handover({ out: OK }); job("J-a", 3600); row("qitem-a", { blockedOn: "qitem-up", wake: "J-a" }); rowAfter("qitem-a", { blockedOn: "qitem-up" });
   fs.writeFileSync(join(root, "update-fail"), "");
-  r = run("agent-seat-handover", ["arch-claude@shop", "--source", "rebuild"]);
+  r = run("agent-seat-handover", [SEATN, "--source", "rebuild"]);
   assert.equal(r.status, 4); assert.match(r.stderr, /wake of qitem-a: NOT re-armed: blocker_not_live: the blocker is done/);
 });
 
-test("WO56: timers unreadable before -> WARN, the handover still runs, nothing re-parked; unreadable after -> the commands to re-arm by hand", () => {
-  handover({ out: OK }); row("qitem-a", "blocked", "qitem-up"); fs.writeFileSync(join(root, "wd-fail"), "");
-  let r = run("agent-seat-handover", ["arch-claude@shop", "--source", "rebuild"]);
-  assert.equal(r.status, 0, r.stderr); assert.match(r.stderr, /WARN: could not record arch-claude@shop's park timers \(exit 1: daemon down\); none will be re-armed/);
-  assert.match(r.calls, /seat handover/); assert.doesNotMatch(r.calls, /queue update/);
-  handover({ out: OK }); row("qitem-a", "blocked", "qitem-up");
-  fs.writeFileSync(join(root, "wd-before.json"), JSON.stringify([timer("qitem-a", "arch-claude@shop", 3600)])); fs.writeFileSync(join(root, "wd-after.json"), "not json");
-  r = run("agent-seat-handover", ["arch-claude@shop", "--source", "rebuild"]);
-  assert.equal(r.status, 4); assert.match(r.stderr, /rig queue update qitem-a --state blocked --blocked-on qitem-up --wake-after 3600s/);
-  assert.doesNotMatch(r.calls, /queue update/);
+test("WO56 (QA PR61): unreadable rows are never silent: a list failure or a row read failure WARNs, exits 4, and says what to check", () => {
+  handover({ out: OK }); fs.writeFileSync(join(root, "list-fail"), "");
+  let r = run("agent-seat-handover", [SEATN, "--source", "rebuild"]);
+  assert.equal(r.status, 4, r.stderr); assert.match(r.stderr, /WARN: could not record arch-claude@shop's parked rows \(exit 1: daemon down\); no wake will be re-armed/);
+  assert.match(r.stderr, /CHECK BY HAND: the seat's parked rows could not be recorded/);
+  assert.match(r.calls, /rig seat handover/); assert.doesNotMatch(r.calls, /queue update/);
+  handover({ out: OK }); job("J-a", 3600); job("J-b", 900);
+  row("qitem-a", { blockedOn: "qitem-up", wake: "J-a" }); rowAfter("qitem-a", { blockedOn: "qitem-up" });
+  row("qitem-b", { wake: "J-b" }); fs.writeFileSync(join(root, "show-fail-qitem-b"), "");
+  r = run("agent-seat-handover", [SEATN, "--source", "rebuild"]);
+  assert.equal(r.status, 4); assert.match(r.stderr, /WARN: qitem-b: could not read the row \(exit 1: transport failure\); its wake is not recorded/);
+  assert.match(r.stdout, /wake of qitem-a: re-armed/); assert.match(r.stderr, /CHECK BY HAND: qitem-b/);
+  handover({ out: OK }); row("qitem-c", { wake: "J-missing" });   // the wake job can't be read
+  r = run("agent-seat-handover", [SEATN, "--source", "rebuild"]);
+  assert.equal(r.status, 4); assert.match(r.stderr, /qitem-c: could not read its wake J-missing/);
+  handover({ out: OK }); job("J-a", 3600); row("qitem-a", { blockedOn: "qitem-up", wake: "J-a" });
+  fs.rmSync(join(root, "rows-after"), { recursive: true, force: true });
+  const orig = fs.readFileSync(join(stubs, "rig"), "utf8");   // the row can't be read after the handover
+  assert.ok(orig.includes(`[ -f "${root}/show-fail-$3" ]`), "stub hook point");
+  fs.writeFileSync(join(stubs, "rig"), orig.replace(`[ -f "${root}/show-fail-$3" ]`, `[ -f "${root}/show-fail-$3" ] || { [ -f "${root}/shows-$3" ] && [ -f "${root}/fail-after" ]; }`));
+  try {
+    fs.writeFileSync(join(root, "fail-after"), "");
+    r = run("agent-seat-handover", [SEATN, "--source", "rebuild"]);
+    assert.equal(r.status, 4, r.stdout + r.stderr);
+    assert.match(r.stderr, /wake of qitem-a: NOT checked: could not read the row .*rig queue update qitem-a --state blocked --blocked-on qitem-up --wake-after 3600s/);
+  } finally { fs.writeFileSync(join(stubs, "rig"), orig, { mode: 0o755 }); fs.rmSync(join(root, "fail-after"), { force: true }); }
 });
 
-test("WO56: --wakes lists the parked rows' timers and changes nothing; an UNKNOWN outcome lists them to check by hand", () => {
-  handover({ out: OK }); row("qitem-a", "blocked", "qitem-up"); row("qitem-l", "blocked", "qitem-up");
-  wd([timer("qitem-a", "arch-claude@shop", 3600), ladder("qitem-l", "arch-claude@shop", 300)], []);
-  let r = run("agent-seat-handover", ["arch-claude@shop", "--wakes"]);
+test("WO56: --wakes lists the parked rows' wakes and changes nothing; an UNKNOWN outcome lists them to check by hand", () => {
+  handover({ out: OK }); job("J-a", 3600); job("J-l", 300, { wait: true });
+  row("qitem-a", { blockedOn: "qitem-up", wake: "J-a" }); row("qitem-l", { blockedOn: "qitem-up", wake: "J-l" });
+  let r = run("agent-seat-handover", [SEATN, "--wakes"]);
   assert.equal(r.status, 0, r.stderr);
-  assert.match(r.stdout, /qitem-a: timer every 3600s \(job J-qitem-a\), blocked on qitem-up\nqitem-l: repeating wait every 300s/);
-  assert.match(r.stdout, /2 parked row\(s\) of arch-claude@shop with a park timer/);
+  assert.match(r.stdout, /qitem-a: timer every 3600s \(job J-a\), blocked on qitem-up\nqitem-l: repeating wait every 300s/);
+  assert.match(r.stdout, /2 parked row\(s\) of arch-claude@shop with a timed wake/);
   assert.doesNotMatch(r.calls, /seat handover|queue update/);
-  handover({ err: "timed out", rc: 1 }); row("qitem-a", "blocked", "qitem-up"); wd([timer("qitem-a", "arch-claude@shop", 3600)], []);
-  r = run("agent-seat-handover", ["arch-claude@shop", "--source", "rebuild", "--wait", "0.3"]);
+  handover({ err: "timed out", rc: 1 }); job("J-a", 3600); row("qitem-a", { blockedOn: "qitem-up", wake: "J-a" });
+  r = run("agent-seat-handover", [SEATN, "--source", "rebuild", "--wait", "0.3"]);
   assert.equal(r.status, 3); assert.match(r.stderr, /Parked rows whose timers a completed handover stops .*--wakes.*: qitem-a \(3600s\)/);
   assert.doesNotMatch(r.calls, /queue update/);
 });

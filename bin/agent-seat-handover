@@ -14,15 +14,17 @@ and usually completes. Retrying then would start a SECOND successor. This wrappe
      sessions first.
   4. parked rows keep their wakes (WO56): at a seat swap OpenRig stops every watchdog job the retiring generation
      registered, park timers included (`rig queue block --wake-after`); the successor is meant to re-arm its own
-     and nothing does. So before the handover the seat's blocked rows and their timers are recorded, and after
-     "complete" each row that is still blocked and has lost its timer is re-parked on the same blocker with the
-     same interval; what was re-armed is printed. A row that still has a live wake is left alone (never two).
-     A repeating wait (the wake ladder) can't be re-armed from the CLI: it is reported, to re-park by hand.
-Exit: 0 complete (or a dry run), 1 failed, 3 unknown, 4 complete but a wake could not be re-armed (listed).
+     and nothing does. So before the handover the seat's blocked rows and their timed wakes are recorded (the wake
+     the daemon itself projects for each row, waiting.nextBackstop, so a custom message or an attached watchdog
+     counts too), and after "complete" each row that is still blocked, still the seat's, and has no live wake any
+     more is re-parked on the same blocker with the same interval; what was re-armed is printed. A row that still
+     has a live wake is left alone (never two). A repeating wait (the wake ladder) can't be re-armed from the CLI:
+     it is reported, to re-park by hand. A row that can't be read, before or after, is reported too, never skipped.
+Exit: 0 complete (or a dry run), 1 failed, 3 unknown, 4 complete but a wake could not be re-armed or checked (listed).
 `agent-seat-handover <seat> --wakes` only prints the parked-row timers a handover would stop, and changes nothing.
 Before a --source rebuild handover, check the seat's chain: agent-seat-recap show --seat <seat>.
 """
-import datetime, json, os, re, subprocess, sys, time
+import datetime, json, os, subprocess, sys, time
 
 args = sys.argv[1:]
 wait = 600.0
@@ -53,84 +55,88 @@ def rig_json(*a):
         return None, "output is not JSON"
 
 
-# The messages OpenRig writes into a park-generated timer (queue-repository): a plain --wake-after timer, and the
-# repeating wait of the wake ladder.
-TIMER = re.compile(r"Wake timer fired for parked qitem (qitem-[\w-]+)\.")
-LADDER = re.compile(r"Resume parked qitem (qitem-[\w-]+) and inspect current evidence\.")
+def live_wake(row):
+    """The row's armed, still-active watchdog job id, as the daemon projects it (waiting.nextBackstop); else None.
+    This is the row's own wake record, so a custom message or an attached watchdog counts too."""
+    mech = str(((row.get("waiting") or {}).get("nextBackstop") or {}).get("mechanism") or "")
+    return mech[len("watchdog:"):] if mech.startswith("watchdog:") else None
 
 
-def park_timers(targets):
-    """{qitem: [{job, interval, ladder}]} for the active park timers aimed at the seat; or (None, why)."""
-    jobs, why = rig_json("watchdog", "list", "--full", "--json")
-    if not isinstance(jobs, list):
-        return None, why or "rig watchdog list did not return a list"
-    out = {}
-    for j in jobs:
-        if not isinstance(j, dict) or j.get("state") != "active" or j.get("targetSession") not in targets:
-            continue
-        spec = j.get("specYaml") or ""
-        m, ladder = TIMER.search(spec), False
-        if not m:
-            m, ladder = LADDER.search(spec), True
-        if m:
-            out.setdefault(m.group(1), []).append({"job": j.get("jobId"), "interval": j.get("intervalSeconds"), "ladder": ladder})
-    return out, None
+def ladder(job):
+    """A repeating wait (the wake ladder) keeps its state as JSON in the spec: the CLI can't arm one."""
+    try:
+        return bool(json.loads(job.get("specYaml") or "").get("context", {}).get("queue_wait", {}).get("qitemId"))
+    except (ValueError, AttributeError):
+        return False
 
 
 def parked_wakes(targets):
-    """The seat's blocked rows with a park timer: {qitem: {interval, ladder, blocked_on, job}}; or (None, why)."""
-    timers, why = park_timers(targets)
-    if timers is None:
-        return None, why
-    rows = {}
-    for q, ts in timers.items():
-        row, _ = rig_json("queue", "show", q, "--full", "--json")
-        if isinstance(row, dict) and row.get("state") == "blocked" and row.get("destinationSession") in targets:
-            t = ts[0]
-            rows[q] = {"interval": t["interval"], "ladder": t["ladder"], "job": t["job"], "blocked_on": row.get("blockedOn")}
-    return rows, None
+    """The seat's blocked rows that have a live wake: ({qitem: {interval, ladder, job, blocked_on}}, [problems]);
+    or (None, why) when the rows can't be listed at all."""
+    rows, problems = {}, []
+    for t in sorted(targets):
+        listed, why = rig_json("queue", "list", "-A", "--destination", t, "--state", "blocked", "--json", "--limit", "1000")
+        if not isinstance(listed, list):
+            return None, why or "rig queue list did not return a list"
+        for item in listed:
+            q = item.get("qitemId") if isinstance(item, dict) else None
+            if not q or q in rows:
+                continue
+            row, why = rig_json("queue", "show", q, "--full", "--json")
+            if not isinstance(row, dict):
+                problems.append(f"{q}: could not read the row ({why})"); continue
+            job_id = live_wake(row)
+            if row.get("state") != "blocked" or not job_id:
+                continue   # no timed wake to lose (a blocker's resolution is its wake)
+            job, why = rig_json("watchdog", "show", job_id, "--json")
+            if not isinstance(job, dict):
+                problems.append(f"{q}: could not read its wake {job_id} ({why})"); continue
+            rows[q] = {"interval": job.get("intervalSeconds"), "ladder": ladder(job), "job": job_id, "blocked_on": row.get("blockedOn")}
+    return rows, problems
 
 
 st0, _ = rig_json("seat", "status", seat, "--json")
 targets = {seat} | ({st0["current_occupant"]} if isinstance(st0, dict) and st0.get("current_occupant") else set())
-wakes, wakes_why = parked_wakes(targets)
+wakes, snap = parked_wakes(targets)   # snap: why, when wakes is None; else the rows that couldn't be read
 if "--wakes" in args:
     if wakes is None:
-        sys.exit(f"could not read the seat's park timers: {wakes_why}")
+        sys.exit(f"could not read the seat's parked rows: {snap}")
+    for p in snap:
+        print(f"WARN: {p}", file=sys.stderr)
     for q, w in sorted(wakes.items()):
         print(f"{q}: {'repeating wait' if w['ladder'] else 'timer'} every {w['interval']}s (job {w['job']}), blocked on {w['blocked_on'] or '-'}")
-    print(f"{len(wakes)} parked row(s) of {seat} with a park timer; a handover stops them and this wrapper re-arms them")
-    sys.exit(0)
+    print(f"{len(wakes)} parked row(s) of {seat} with a timed wake; a handover stops the old occupant's, and this wrapper re-arms them")
+    sys.exit(1 if snap else 0)
 if wakes is None:
-    print(f"WARN: could not record {seat}'s park timers ({wakes_why}); none will be re-armed after the handover", file=sys.stderr)
+    print(f"WARN: could not record {seat}'s parked rows ({snap}); no wake will be re-armed after the handover", file=sys.stderr)
+    snap = [f"the seat's parked rows could not be recorded ({snap})"]
+else:
+    for p in snap:
+        print(f"WARN: {p}; its wake is not recorded and won't be re-armed", file=sys.stderr)
 
 
 def rearm(occupant):
-    """After a completed handover: re-park each recorded row that lost its timer. Returns how many failed."""
-    if not wakes:
-        return 0
-    now, why = park_timers(targets | ({occupant} if occupant and occupant != "?" else set()))
-    if now is None:
-        print(f"WARN: could not read the park timers after the handover ({why}); re-arm by hand if they are gone:", file=sys.stderr)
-        for q, w in sorted(wakes.items()):
-            print(f"  rig queue update {q} --state blocked{' --blocked-on ' + w['blocked_on'] if w['blocked_on'] else ''} --wake-after {w['interval']}s", file=sys.stderr)
-        return len(wakes)
-    failed = 0
-    for q, w in sorted(wakes.items()):
-        if q in now:
-            print(f"wake of {q}: still live (job {now[q][0]['job']}), left alone")
-            continue
+    """After a completed handover: re-park each recorded row that lost its wake. Returns how many need a hand."""
+    failed = len(snap)   # rows that couldn't be recorded: the caller has to check them
+    owners = targets | ({occupant} if occupant and occupant != "?" else set())
+    for q, w in sorted((wakes or {}).items()):
         row, rwhy = rig_json("queue", "show", q, "--full", "--json")
         if not isinstance(row, dict):
-            print(f"wake of {q}: NOT re-armed: could not read the row ({rwhy})", file=sys.stderr); failed += 1; continue
+            print(f"wake of {q}: NOT checked: could not read the row ({rwhy}); re-arm by hand if it's gone: "
+                  f"rig queue update {q} --state blocked{' --blocked-on ' + w['blocked_on'] if w['blocked_on'] else ''} --wake-after {w['interval']}s",
+                  file=sys.stderr); failed += 1; continue
         if row.get("state") != "blocked":
-            print(f"wake of {q}: not needed, the row is {row.get('state')} now")
-            continue
+            print(f"wake of {q}: not needed, the row is {row.get('state')} now"); continue
+        if row.get("destinationSession") not in owners:
+            print(f"wake of {q}: left alone, the row belongs to {row.get('destinationSession')} now"); continue
+        live = live_wake(row)
+        if live:
+            print(f"wake of {q}: still live (job {live}), left alone"); continue
         if w["ladder"]:
             print(f"wake of {q}: NOT re-armed: it was a repeating wait (every {w['interval']}s), which the CLI can't arm; re-park it by hand",
                   file=sys.stderr); failed += 1; continue
         cmd = ["rig", "queue", "update", q, "--state", "blocked", "--wake-after", f"{w['interval']}s",
-               "--note", f"wake re-armed after the seat handover of {seat} (the retiring generation's timer {w['job']} was stopped)"]
+               "--note", f"wake re-armed after the seat handover of {seat} (the retiring occupant's wake {w['job']} was stopped)"]
         if row.get("blockedOn"):
             cmd[6:6] = ["--blocked-on", row["blockedOn"]]   # after --state blocked
         try:
@@ -142,6 +148,8 @@ def rearm(occupant):
             print(f"wake of {q}: re-armed, every {w['interval']}s{', blocked on ' + row['blockedOn'] if row.get('blockedOn') else ''}")
         else:
             print(f"wake of {q}: NOT re-armed: {uwhy}", file=sys.stderr); failed += 1
+    for p in snap:
+        print(f"CHECK BY HAND: {p}", file=sys.stderr)
     return failed
 
 
