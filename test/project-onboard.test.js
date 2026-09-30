@@ -62,6 +62,7 @@ test("dry run: shows every step, runs the real agent-project-new --dry-run, chan
   assert.match(r.stdout, /agent-project-new .*--name Shop --rig shop --team small --identity 'Shop Bot <bot@example\.invalid>' --no-github --dry-run/);
   assert.match(r.stdout, /existing repo: its GitHub rules stay as they are/);
   assert.match(r.stdout, /would: .*worktree add/, "the real agent-project-new dry run printed its plan");
+  assert.doesNotMatch(r.stdout, /^Next: write /m, "agent-project-new's own Next: block is not echoed (WO34)");
   assert.doesNotMatch(r.calls, /^vercel|^gh |rig up|rig send/m, "no provider or rig call in a dry run");
   assert.ok(!fs.existsSync(join(home, "Projects")), "nothing created");
 });
