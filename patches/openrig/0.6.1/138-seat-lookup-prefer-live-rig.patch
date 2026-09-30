@@ -1,0 +1,42 @@
+--- a/daemon/dist/domain/rig-repository.js
++++ b/daemon/dist/domain/rig-repository.js
+@@ -321,6 +321,15 @@
+             .all(name);
+         return rows.map((r) => this.rowToRig(r));
+     }
++    /** Rigs named `name` for resolving a SEAT: the live (non-archived) ones when any exist, else the archived ones. An
++     *  archived rig that shares a live rig's name (an older generation) can then never make a live seat ambiguous, while
++     *  a seat of a rig that only exists archived stays addressable. */
++    findRigsByNamePreferLive(name) {
++        const live = this.db
++            .prepare("SELECT * FROM rigs WHERE name = ? AND archived_at IS NULL ORDER BY created_at")
++            .all(name);
++        return live.length > 0 ? live.map((r) => this.rowToRig(r)) : this.findRigsByName(name);
++    }
+     getRigSummaries(filter) {
+         const cond = archiveWhereClause("r.archived_at", filter);
+         const where = cond ? `WHERE ${cond}` : "";
+--- a/daemon/dist/domain/seat-lifecycle-service.js
++++ b/daemon/dist/domain/seat-lifecycle-service.js
+@@ -902,7 +902,8 @@
+         const parsed = parseSessionName(ref);
+         if (parsed.kind === "canonical") {
+             const localRef = parsed.member;
+-            const rigs = this.rigRepo.findRigsByName(parsed.rig);
++            // Live rigs first: an archived same-name rig must not make a live seat ambiguous (patch 138).
++            const rigs = this.rigRepo.findRigsByNamePreferLive(parsed.rig);
+             return rigs.flatMap((rig) => getNodeInventory(this.db, rig.id).filter((entry) => entry.canonicalSessionName === ref
+                 || deriveCanonicalFromEntry(entry) === ref
+                 || entry.logicalId === localRef));
+--- a/daemon/dist/domain/seat-status-service.js
++++ b/daemon/dist/domain/seat-status-service.js
+@@ -38,7 +38,8 @@
+         if (parsed.kind === "canonical") {
+             const localRef = parsed.member;
+             const rigName = parsed.rig;
+-            const rigs = this.rigRepo.findRigsByName(rigName);
++            // Live rigs first: an archived same-name rig must not make a live seat ambiguous (patch 138).
++            const rigs = this.rigRepo.findRigsByNamePreferLive(rigName);
+             return rigs.flatMap((rig) => this.entriesForRig(rig.id).filter((entry) => entry.canonicalSessionName === ref || entry.logicalId === localRef).map((entry) => ({ entry })));
+         }
+         return this.rigRepo.listRigs().flatMap((rig) => this.entriesForRig(rig.id).filter((entry) => entry.canonicalSessionName === ref || entry.logicalId === ref).map((entry) => ({ entry })));
