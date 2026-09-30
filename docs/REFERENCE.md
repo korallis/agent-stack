@@ -306,3 +306,61 @@ After an OpenRig upgrade run `openrig-upgrade <version>` and re-check these.
 - **Provider terms may prohibit pooling consumer subscriptions through a proxy.** Anthropic's Claude Code terms explicitly do. Read your providers' terms; if you pool anyway, that is your decision and your risk. `cliproxy-authwatch` alerts you when an account starts failing authentication, and `fallback-codex.yaml` keeps you working without Claude.
 
 See `docs/ROLLBACK.md` and `docs/VALIDATION.md`.
+
+## Models and decisions
+
+### Who runs what
+
+Every team template (`rig/template/*.yaml`) and every onboarding uses these defaults. Jev compared the candidates for
+each role on 2026-09-30 (request ids below).
+
+| Seats | Model | Why |
+|---|---|---|
+| Lead | `claude-opus-5-5` (`[1m]` in full-stack) | unchanged |
+| Architect | `claude-fable-5-1` | Jev 0.62 against Opus 0.33 for planning and architecture (request `ba1a44dc`). Fable bills to the account's usage credits, outside the subscription pool. |
+| Codex implementers | `gpt-6-astra` | Jev 0.50 against `gpt-6-sol` 0.36 for implementation (request `a2fa9eef`) |
+| Claude UI implementers, test authors, QA | unchanged | |
+| Reviewers | `claude-opus-5-5`, `gpt-6-sol`, `kimi-k3[1m]` | Jev saw no clear winner (request `67b40988`); the three families stay |
+
+**Fable's one-time consent.** An account may need a one-time consent before Fable can bill usage credits. The seat
+start-up context tells a Fable seat to stop and tell the lead instead of carrying on silently, and
+`agent-project-check <Project>` WARNs when a Fable seat's screen asks for the consent or says the model is
+unavailable. The fix: run `/model fable` once in that seat, accept, then relaunch the seat at idle.
+
+### Jev as the decision layer
+
+Code gathers the evidence and owns the thresholds; Jev makes the judgment; anything short of the act band goes to
+the lead or a person. Send Jev evidence, not conclusions.
+
+- **Merge gate:** `agent-merge-evidence <pr> --mission M --slice S --deploy "..." --decide` builds the
+  `review.merge_gate` input from exact-head facts:
+  - full head and base shas, and every required check by name;
+  - the `independent-review` status and the review report its `target_url` links to (what the reviewer verified).
+    Reviewers set that link to their review comment. Without a link the report is MISSING; the latest comment naming
+    the head is passed on only as UNVERIFIED, never as the review;
+  - QA's `proof/brb-<head>.md`, and the latest blast-radius comment with its link and whether it names the head;
+  - the target branch, the deploy effect, and the rollback (a rollback nobody stated is labelled as a proposed
+    default).
+
+  A missing check, status, review, proof, blast radius or deploy effect says MISSING. Free text is redacted before it
+  goes to Jev. The helper refuses if the PR's head or base moves while it collects. Only a live, not stubbed, Jev
+  `merge` in the act band passes. Before this, the gate was asked with hand-written summaries: of 288 calls (2026-09-28 to 2026-09-30),
+  79 were act (27%), 62 review (22%) and 147 uncertain (51%). Measure the change with
+  `jev-decide stats --since <date the helper went live>` (row `review.merge_gate`).
+- **Dispatch:** `agent-dispatch pick-seat --rig R --role implementer --task "..."` lists the running seats of the role
+  that are idle with no open work, with their load notes (code), and Jev's `intake.seat` picks one. On review or uncertain the lead picks
+  and records why in the row.
+- **Stuck seats:** `agent-stuck-check` runs every 10 minutes. For a seat holding work whose screen stopped changing,
+  cycles, or repeats a line, it asks Jev's `seat.stuck` (progressing, looping, rate-limited, stalled or unclear) and
+  warns the rig's lead, at most once an hour per seat and verdict. It never acts. At most 10 Jev calls a run, the
+  seats asked longest ago first; a warning counts as sent only when `rig send` succeeded; the evidence is redacted. Checked against live Jev before
+  shipping, all act band: a real rate-limit stall (a 429 with credentials cooling down) came back `rate_limited`
+  (0.93, request `a1a04515`), a test run `progressing` (`fd6306b0`), a repeated failing build `looping`
+  (`1190d376`), and a seat idle at its prompt holding work `stalled` (0.96, `0091b260`).
+
+### No advisor, for now
+
+Claude Code's advisor ([docs](https://code.claude.com/docs/en/advisor)) is off for the fleet; Jev advised against it
+(request `58478277`). Our seats set `CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC`, which also turns off the advisor's
+feature flags, and each advisor call re-reads the conversation without the prompt cache, a cost every seat would pay
+on every turn. Revisit after the Fable architects have run for a while.

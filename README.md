@@ -41,6 +41,26 @@ Six workflow skills set how every team verifies and writes: a feature map in `do
 before merge, a blast-radius check on risky diffs, named review lenses, and plain writing. [docs/SKILLS.md](docs/SKILLS.md)
 lists them with every other skill.
 
+## Models and decisions
+
+Each seat runs the model that suits its job. These are the defaults in every team template:
+
+- architects: Claude Fable 5.1 (it bills your account's usage credits, outside the subscription pool);
+- Codex builders: GPT-6 Astra; UI builders: Claude Opus 5.5;
+- reviewers: three AI families (Claude Opus 5.5, GPT-6 Sol, Kimi K3).
+
+Jev makes the routine decisions: which seat builds a slice, whether a pull request may merge, and whether a working
+seat is stuck. Code gathers the facts and sets the bar; anything Jev isn't sure about goes to the lead or to you.
+
+```bash
+# Illustrative: needs a running team (the README test checks each command and flag exists).
+agent-dispatch pick-seat --rig shop --role implementer --task "03-login: sign-in form and session"
+agent-merge-evidence 42 --mission m01-accounts --slice 03-login --deploy "merges deploy to production" --decide
+agent-stuck-check --rig shop --dry-run
+```
+
+Why these models, and how the decisions are checked: [docs/REFERENCE.md](docs/REFERENCE.md#models-and-decisions).
+
 ## Talk to your operator
 
 Attach to the operator's terminal and type, or send it a message:

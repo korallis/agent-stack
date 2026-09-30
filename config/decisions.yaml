@@ -121,6 +121,27 @@ decisions:
     escalate_on_uncertain: false   # dispatcher falls back to the lead's default routing table
     fallback: [{kind: code, result: {role: none_fit}}]
 
+  intake.seat:
+    version: 1
+    purpose: >-
+      Pick the SEAT to dispatch a task to, from candidates CODE built: running seats of the role the task needs, each
+      with its load and recent record. The lead dispatches on act; on review or uncertain it decides itself and records
+      why. (intake.specialist picks a role and ignores who is free; this one weighs the seats' current load.)
+    inputs: {required: [task, role], optional: [evidence], candidates: required}
+    cache_ttl_s: 0                     # load changes minute to minute
+    outputs:
+      seat:
+        kind: choice
+        from_candidates: true
+        extra_labels: {none_fit: "No listed seat should take this task now"}
+        uncertain_labels: [none_fit]
+        act: 0.55
+        review: 0.3
+        question:
+          instructions: [*untrusted, "Which listed seat should own `task` (it needs a `role`)? Weigh fit for the work first, then current load: prefer a seat with no open work, and do not pick a seat that is busy on something else when an equal one is free."]
+    escalate_on_uncertain: false
+    fallback: [{kind: code, result: {seat: none_fit}}]
+
   intake.paths:
     version: 2
     purpose: Suggest which research / architecture / implementation / testing / review paths a task needs.
@@ -402,6 +423,30 @@ decisions:
             - "Same failure mode; recovery steps likely apply"
     escalate_on_uncertain: false
     fallback: [{kind: code, strategy: keep_search_order}]
+
+  seat.stuck:
+    version: 1
+    purpose: >-
+      Is a seat that holds open work still making progress, or looping, or stalled (for example stopped after a
+      rate-limit error)? CODE gathers the evidence and asks only when its thresholds say the seat looks stuck; the
+      answer only warns the lead, never acts.
+    inputs: {required: [seat, evidence]}
+    cache_ttl_s: 0
+    outputs:
+      verdict:
+        kind: choice
+        act: 0.6
+        review: 0.35
+        uncertain_labels: [unclear]
+        question:
+          instructions: [*untrusted, "`evidence` describes seat `seat`: how long it has been in its current state, whether its screen output changed between checks or repeats, how old its open queue work is, and the last lines of its screen. Is the seat making progress?"]
+          criteria:
+            progressing: "It is doing new work: output changes between checks, or a long build, test run or download is visibly running"
+            looping: "It repeats the same actions or output without getting further (the same command, error or edit over and over)"
+            rate_limited: "It stopped after a provider rate-limit or cooldown error (429, rate_limit_error, credentials cooling down, usage limit) and nothing has happened since"
+            stalled: "It stopped for another reason while holding open work: an error it did not recover from, waiting at an empty prompt, or waiting for input nobody will give"
+            unclear: "The evidence is not enough to tell"
+    fallback: [{kind: code, result: {verdict: unclear}}]
 
   comms.triage_update:
     version: 3

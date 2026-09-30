@@ -97,6 +97,32 @@ if specs:
     ps = sh("rig", "ps", "--json")
     running = bool(rig) and (f'"{rig}"' in ps or re.search(rf"^{re.escape(rig)}\s", sh("rig", "ps"), re.M) is not None)
     rep("OK" if running else "WARN", f"rig {rig} is running")
+    # Fable seats (the architect by default) bill to usage credits; an account may need a one-time consent first. A
+    # running Fable seat whose screen asks for it, or says the model is unavailable, would otherwise stall silently.
+    fable = []
+    for pod_block in re.split(r"\n  - id: ", spec or "")[1:]:
+        pod = pod_block.split("\n", 1)[0].strip()
+        for mem in re.split(r"\n      - id: ", pod_block)[1:]:
+            if re.search(r'model:\s*"?claude-fable', mem):
+                fable.append(f"{pod}-{mem.split(chr(10), 1)[0].strip()}@{rig}")
+    # A consent prompt or an unavailable-model error, not any mention of "usage credits" in ordinary work.
+    CONSENT = re.compile(r"/model fable|(usage credits|extra usage)[^\n]{0,80}(consent|confirm|enable|accept|agree|turn on)"
+                         r"|(consent|confirm|enable|accept|agree|turn on)[^\n]{0,80}(usage credits|extra usage)"
+                         r"|model[^\n]{0,40}(is not available|unavailable|not supported)|invalid model", re.I)
+    stuck_fable, unread = [], []
+    for seat in fable if running else []:
+        cap = subprocess.run(["tmux", "capture-pane", "-p", "-S", "-80", "-t", seat], capture_output=True, text=True)
+        if cap.returncode != 0:
+            unread.append(seat)
+        elif CONSENT.search(cap.stdout):
+            stuck_fable.append(seat)
+    if fable:
+        level = "WARN" if stuck_fable or unread else "OK"
+        detail = "; ".join(filter(None, [
+            f"{', '.join(stuck_fable)}: the screen asks for Fable's one-time usage-credits consent or says the model is unavailable. "
+            "In that seat run `/model fable` once, accept, then relaunch it at idle" if stuck_fable else "",
+            f"{', '.join(unread)}: screen not readable (seat not in tmux?), so not verified" if unread else ""]))
+        rep(level, f"Fable seats can use their model ({', '.join(fable)})", detail)
     try:
         wd = [j for j in json.loads(sh("rig", "watchdog", "list", "--json") or "[]")
               if j.get("state") == "active" and (j.get("targetSession") or "").endswith(f"@{rig}")]

@@ -1,0 +1,8 @@
+[Unit]
+Description=Warn a rig's lead when a seat holding work looks looping, rate-limited or stalled (never acts)
+After=openrig.service
+[Service]
+Type=oneshot
+Environment=PATH=%h/.local/bin:%h/.local/share/mise/shims:/usr/local/bin:/usr/bin:/bin
+Environment=OPENRIG_SESSION_NAME=agent-stuck-check@agent-stack
+ExecStart=%h/.local/bin/agent-stuck-check

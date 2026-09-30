@@ -71,7 +71,9 @@ test("illustrative blocks: every command exists and accepts every flag shown", (
         const [cmd, ...rest] = words;
         const flags = rest.filter((w) => /^--[a-z]/.test(w)).map((w) => w.split("=")[0]);
         const local = ["bin", "system"].map((d) => join(repo, d, cmd)).find((p) => fs.existsSync(p))
-          ?? (cmd === "./install.sh" ? join(repo, "install.sh") : cmd === "jev-decide" ? join(repo, "jev/bin/jev-decide.js") : null);
+          ?? { "./install.sh": join(repo, "install.sh"), "jev-decide": join(repo, "jev/bin/jev-decide.js"),
+            "agent-dispatch": join(repo, "orchestration/dispatch.js"), "agent-merge-evidence": join(repo, "orchestration/merge-evidence.js"),
+            "agent-stuck-check": join(repo, "orchestration/stuck.js") }[cmd] ?? null;
         if (local) {
           const src = fs.readFileSync(local, "utf8");
           for (const f of flags) assert.ok(src.includes(f), `${cmd} has no ${f} (${line})`);

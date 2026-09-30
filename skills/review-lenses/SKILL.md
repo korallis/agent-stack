@@ -63,7 +63,8 @@ Each finding gives the lens, `file:line`, what goes wrong, and the fix or the qu
 ## Output
 
 Post on the PR: the intent paragraph, the lenses applied and skipped, the findings grouped as above, and a verdict (any
-"act on" item means changes requested). Put the same verdict in the `independent-review` status description. Write it
+"act on" item means changes requested). Put the same verdict in the `independent-review` status description, and set
+the status's `target_url` to your review comment's URL: the merge gate trusts only the report the status links to. Write it
 with the `unslop` skill. If the diff touches shared code, migrations, env or jobs, check that the PR carries a
 `blast-radius` result, or run one.
 

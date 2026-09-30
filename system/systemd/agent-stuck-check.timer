@@ -1,0 +1,7 @@
+[Unit]
+Description=Check for stuck seats every 10 minutes (warns the lead only)
+[Timer]
+OnBootSec=10min
+OnUnitActiveSec=10min
+[Install]
+WantedBy=timers.target
