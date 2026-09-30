@@ -195,18 +195,17 @@ export function ownLines(body) {
 
 // Pure: what a record declares. `candidates`: the shas it names on a declaration line of its own ("head: <sha>",
 // "candidate_sha: <sha>", "reviewed head <sha>", or "confirm <sha>"); a sha mentioned inside a sentence is not one.
-// `verdicts`: each declared verdict (a "confirm <sha>" line; each "Verdict:" / "Ship:" / "Result:" line; verdict
-// words in the heading after its seat word), as success, failure or unknown (a declaration this helper can't read).
+// `verdicts`: each declared verdict, from an explicit line only: "confirm <sha>", or "Verdict: <word>". The heading
+// (first line) identifies the seat and nothing else: "evidence remedy for HOLD 7db8271e" in a heading is not a HOLD.
+// As success, failure or unknown (a declaration this helper can't read).
 export function declarations(body) {
   const lines = ownLines(body), candidates = [], verdicts = [];
-  const heading = (lines[0] || "").replace(/^#*\s*[\w.@-]+/, "");
-  for (const w of heading.split(/[^A-Za-z_]+/)) if (word(w)) verdicts.push(word(w));
-  for (const l of lines.slice(1)) {
+  for (const l of lines) {   // a heading line never matches these explicit forms, so it declares nothing
     let m = l.match(/^confirm\s+([0-9a-f]{40})$/i);
     if (m) { candidates.push(m[1].toLowerCase()); verdicts.push("success"); continue; }
     m = l.match(/^(?:reviewed\s+)?(?:head|candidate(?:[_ ]sha)?|sha|commit)\s*[:=]?\s*([0-9a-f]{40})\.?$/i);
     if (m) { candidates.push(m[1].toLowerCase()); continue; }
-    m = l.match(/^(?:verdict|ship|result)\s*[:=—-]\s*(.*)$/i);
+    m = l.match(/^verdict\s*[:=—-]\s*(.*)$/i);
     if (m) { const t = m[1].trim().split(/[\s—:;,.()]+/); verdicts.push(word(`${t[0]} ${t[1] || ""}`.trim()) || word(t[0]) || "unknown"); }
   }
   return { candidates: [...new Set(candidates)], verdicts };

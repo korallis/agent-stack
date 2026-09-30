@@ -473,12 +473,15 @@ the lead or a person. Send Jev evidence, not conclusions.
     sha, or two different shas never count.
 
   Fenced code blocks and quoted (`>`) lines are examples or citations, so they are never read as declarations. The
-  verdict comes from every declaration the record makes:
+  verdict comes only from explicit declarations:
   - a `confirm <sha>` line;
-  - each `Verdict:` / `Ship:` / `Result:` line: PASS, APPROVE, YES or MERGE for success; FAIL, BLOCK, NO, HOLD or
-    CHANGES_REQUESTED / CHANGES REQUESTED for failure;
-  - verdict words in the heading after the seat word;
+  - each `Verdict:` line: PASS, APPROVE, YES or MERGE for success; FAIL, BLOCK, NO, HOLD or CHANGES_REQUESTED /
+    CHANGES REQUESTED for failure;
   - a GitHub review's own state (APPROVED or CHANGES_REQUESTED).
+
+  The heading only identifies the seat. Words in it ("evidence remedy for HOLD 7db8271e"), request ids, and `Ship:`
+  or `Result:` lines are never a verdict. A record with no `Verdict:` line has no verdict, so the review is NONE
+  VERIFIABLE ("no verdict stated"), never an inferred failure.
 
   It is success only when every declaration says success. Any failure, and so any conflict, makes it failure. An
   unreadable value is "unclear", and a record with no verdict counts as no verdict; neither is success. Nothing is
