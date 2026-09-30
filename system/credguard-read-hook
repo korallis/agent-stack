@@ -190,7 +190,8 @@ const SPEC = {
   awk: { v: "Fvf", long: "--field-separator --assign --file", pat: true, patOpt: "f --file", files: "f --file" },
   sed: { v: "efl", long: "--expression --file --line-length", pat: true, patOpt: "e f --expression --file", inplace: true },
   perl: { v: "eEIM", long: "", pat: false, inplace: true },
-  jq: { v: "fL", long: "--from-file --arg:2 --argjson:2 --slurpfile:2 --rawfile:2 --indent --args --jsonargs", pat: true, patOpt: "f --from-file", files: "f --from-file" },
+  jq: { v: "fL", long: "--from-file --arg:2 --argjson:2 --slurpfile:2 --rawfile:2 --indent --args --jsonargs", pat: true, patOpt: "f --from-file",
+    files: "f --from-file --slurpfile --rawfile" },   // --rawfile NAME FILE: the last value is the file it reads
   head: { v: "nc", long: "--lines --bytes" }, tail: { v: "ncs", long: "--lines --bytes --sleep-interval --pid" },
   cut: { v: "bcdf", long: "--bytes --characters --delimiter --fields --output-delimiter" }, sort: { v: "kotST", long: "--key --output --field-separator --buffer-size --temporary-directory" },
 };
@@ -214,7 +215,7 @@ function parseArgs(verb, args) {
     if (a === "--") { out.operands.push(...args.slice(i + 1)); break; }
     if (a.startsWith("--") && a.length > 2) {
       const [name, eq] = [a.split("=")[0], a.includes("=") ? a.slice(a.indexOf("=") + 1) : null];
-      if (longs.has(name) && eq === null) { opt(name, args[i + 1]); i += longs.get(name); } else opt(name, eq);
+      if (longs.has(name) && eq === null) { opt(name, args[i + longs.get(name)]); i += longs.get(name); } else opt(name, eq);
       continue;
     }
     if (/^-./.test(a) && !/^-\d/.test(a)) {
@@ -280,7 +281,8 @@ function bashVerdict(command, ctx, depth = 0) {
       const dumps = verb === "printenv" || verb === "compgen"
         || (verb === "set" && args.length === 0)                                   // set with options only changes options
         || (verb === "export" && (args.length === 0 || (args.includes("-p") && !operands.length)))
-        || ((verb === "declare" || verb === "typeset") && !operands.length && (args.length === 0 || args.some((a) => /^-[a-z]*[px]/.test(a))));
+        // declare/typeset -p prints the named variables (all of them without names); -x alone lists the exported ones
+        || ((verb === "declare" || verb === "typeset") && (args.some((a) => /^-[a-zA-Z]*p/.test(a)) || (!operands.length && (args.length === 0 || args.some((a) => /^-[a-zA-Z]*x/.test(a))))));
       if (dumps) return { why: `${verb} prints the variables loaded from ${sourced.path}`, hit: sourced };
       if ((verb === "echo" || verb === "printf") && seg.words.slice(k + 1).some((w) => !w.sq && /\$[{A-Za-z_]/.test(w.text)))
         return { why: `${verb} prints a variable after ${sourced.path} was loaded`, hit: sourced };

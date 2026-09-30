@@ -38,7 +38,10 @@ test("Bash: commands that would print a credential file are denied", () => {
     "sh -ec 'cat .env'", "env -u UNUSED cat .env", "env -i PATH=/bin cat .env", 'env -S "cat .env"', "timeout -s KILL 5 cat .env",
     "cat <<EOF\n$(cat .env)\nEOF", "cat <<EOF\n`cat .env`\nEOF", "tee < .env",
     // QA WO42 f2: an option-looking pattern is a pattern; cut prints lines without "="
-    "grep -- -l .env", "grep -e -l .env", "rg -- -q .env", "rg --regexp TOKEN -- .env", "awk -F= '{print $2}' .env", "jq -r .key key.pem",
+    "grep -- -l .env", "grep -e -l .env", "rg -- -q .env",
+    // QA WO42 refresh: a named -p display after loading, and jq's file-valued options
+    "source .env; declare -p FIXTURE_KEY", "source .env; typeset -p FIXTURE_KEY", "source .env; declare -px",
+    "jq -n --rawfile secret .env '$secret'", "jq -n --slurpfile s prod.env '$s'", "jq --from-file f.jq .env", "rg --regexp TOKEN -- .env", "awk -F= '{print $2}' .env", "jq -r .key key.pem",
   ]) assert.equal(bash(c), true, c);
 });
 
@@ -52,7 +55,8 @@ test("Bash: using credentials without printing them, and ordinary commands, are 
     "tail -f log.txt 2>&1 | grep err",
     // QA WO42 f3: quiet input redirection, set options after loading, a file-looking pattern after --
     "grep -q FIXTURE_KEY < .env", "source .env; set -e; true", "source .env; set -euo pipefail; npm test", "grep -- .env README.md",
-    "rg -- prod.env docs/", "cat <<'EOF'\n$(cat .env)\nEOF", "export -n FOO", "declare -r X=1", "env | grep PATH", "git add .env.example", "git status", "chmod 600 .env",
+    "rg -- prod.env docs/", "cat <<'EOF'\n$(cat .env)\nEOF", "export -n FOO", "declare -r X=1",
+    "source .env; declare OTHER=safe", "source .env; declare -i COUNT=3", "jq -n --arg k v '$k'", "jq -n --rawfile tpl notes.txt '$tpl'", "env | grep PATH", "git add .env.example", "git status", "chmod 600 .env",
     "cat <<'EOF' > notes.md\nNever run: cat .env\nEOF", "echo 'do not cat .env'", "grep -rn 'runtime-url' docs/",
     "node scripts/migrate.js", "cat src/app.ts", "cat package.json | jq .scripts", "rg -n 'prod.env' src/",
     "grep -A 3 '.env' README.md", "awk '/runtime-url/ {print}' notes.txt", "sed -n '/.env/p' docs/setup.md",
@@ -242,7 +246,9 @@ test("agent-never-prompt-check: a wrong trusted_hash or a missing hooks feature 
 
 // Runtime evidence: Codex itself (app-server hooks/list, no model call) reports the installed guard as trusted and
 // enabled, with the hash the installer computed. Skipped where no codex binary is installed.
-const codexBin = spawnSync("sh", ["-c", "command -v codex"], { encoding: "utf8" }).stdout.trim();
+// The real codex binary: not the agent-stack seat shim (seat-bin/codex), which needs the real HOME to find it.
+const codexBin = (process.env.PATH || "").split(":").filter((d) => d && !d.includes("seat-bin"))
+  .map((d) => join(d, "codex")).find((f) => { try { fs.accessSync(f, fs.constants.X_OK); return fs.statSync(f).isFile(); } catch { return false; } }) || "";
 test("Codex accepts the installed guard as trusted (hooks/list)", { skip: !codexBin && "codex not installed" }, () => {
   const h = fs.mkdtempSync(join(root, "cx-")); fs.mkdirSync(join(h, "home")); fs.mkdirSync(join(h, "work"));
   fs.writeFileSync(join(h, "hook"), ""); fs.writeFileSync(join(h, "settings.json"), "{}");
