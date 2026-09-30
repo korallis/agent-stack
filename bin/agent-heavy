@@ -11,6 +11,11 @@
 # It is for jobs that finish. Long-lived servers (npm start / start:* / dev / serve / preview, next start|dev, vite,
 # serve, http-server) are refused: run them outside agent-heavy (Playwright's webServer starts its own inside the test
 # run). --allow-long lifts that refusal for a bounded job that only looks like a server; the max runtime still applies.
+# Nesting: the job sees AGENT_HEAVY_ACTIVE (the classes it holds, e.g. "browser") and AGENT_HEAVY_SLOT (e.g.
+# "browser.1"). A nested agent-heavy call of a class already held runs INLINE in that slot: a second slot of the same
+# class would let one run hold both, and two such runs would wait on each other until the cap. A nested call of a
+# different class (a build inside a browser run) takes its own slot as usual. That is allowed, but it holds two slots
+# at once, so two runs nesting in opposite orders can still wait on each other until --wait runs out (exit 75).
 # Budgets are ordinary code/config, never a model decision. Override with AGENT_HEAVY_<CLASS>_{SLOTS,CPU,MEM,MAX_RUNTIME}.
 set -euo pipefail
 dir=${XDG_RUNTIME_DIR:-/tmp}/agent-heavy
@@ -128,6 +133,11 @@ if [[ $allow_long == 0 ]] && server "$@"; then
   exit 2
 fi
 
+if [[ " ${AGENT_HEAVY_ACTIVE:-} " == *" $class "* ]]; then
+  echo "[agent-heavy] nested $class run: already inside ${AGENT_HEAVY_SLOT:-a $class slot}; running inline (no second slot)" >&2
+  exec "$@"
+fi
+
 mkdir -p "$dir"
 deadline=$(( $(date +%s) + wait_s ))
 while :; do
@@ -140,6 +150,7 @@ while :; do
       printf 'pid=%s\nseat=%s\ncwd=%s\nstart=%s\nmax=%s\ncmd=%s\n' "$$" "${OPENRIG_SESSION_NAME:-$USER}" "$PWD" "$start" "$max_s" \
         "$(printf '%s ' "$@" | tr '\n' ' ' | sed 's/ $//')" > "$holder"
       trap 'rm -f "$holder"' EXIT
+      export AGENT_HEAVY_ACTIVE="${AGENT_HEAVY_ACTIVE:+$AGENT_HEAVY_ACTIVE }$class" AGENT_HEAVY_SLOT="${AGENT_HEAVY_SLOT:+$AGENT_HEAVY_SLOT }$class.$i"
       systemd-run --user --scope --quiet -p CPUQuota="$cpu" -p MemoryMax="$mem" -p MemorySwapMax=0 -p RuntimeMaxSec="$max_s" \
         --unit="$unit" -- "$@" || rc=$?
       # Stopped at the limit? Ask systemd (Result=timeout) rather than trust the exit code: a job that traps SIGTERM
