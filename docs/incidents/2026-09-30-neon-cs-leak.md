@@ -22,7 +22,8 @@ branches and a redeploy with the new values (in progress then). A warning went i
     are checked where the CLI really writes (a link to the harness's capture file is refused).
 - Rollout is verified, not assumed: `agent-credguard-check` reports each running seat. Codex runs commands with its own
   PATH, where seat-bin comes before any real CLI. Claude Code seats get the env.sh functions from the shell snapshot
-  they take at launch, so they are guarded only after a relaunch at idle.
+  they take at launch, so they are guarded only after a relaunch at idle. Then a canary in one seat of each runtime:
+  `neon --credguard-status --help` (and `vercel …`) must answer "seat guard: active".
 - Rule in the rig CULTURE template and docs/PROJECT-ENV.md: never print a credential; write it to a 0600 file and use
   it by name.
 - test/credguard.test.js and test/credguard-check.test.js: stub CLIs and a fake /proc only, including a harness that

@@ -8,6 +8,9 @@ For each live seat agent (a claude or codex process with OPENRIG_NODE_ID in its 
     PATH ahead of seat-bin. What counts is env.sh's guard functions: the seat must have started after env.sh got them.
 A seat that fails needs a relaunch at idle (`rig launch <rigId> <pod.member>`) after install.sh has placed the guard.
 Exit 1 when any seat is unguarded.
+This reads process state; confirm it after install with a canary in one Claude and one Codex seat:
+`neon --credguard-status --help` and `vercel --credguard-status --help` must answer "seat guard: active" (without the
+guard the real CLI only prints its help).
 """
 import json, os, sys
 

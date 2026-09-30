@@ -18,8 +18,8 @@ flag on that command and silently ignored it) printed a production owner connect
    vercel: env ls/list with --json, --format json or --decrypt; env pull to a non-regular file (e.g. /dev/stdout, -).
 2. A `--no-secrets` the installed version doesn't have on that command is refused, never passed on to be ignored:
    support is read from the installed CLI's own `<command> --help`.
-Neon's argv is read the way yargs reads it, erring on the guarded side: booleans last-one-wins (`--x`, `--x=v`,
-`--x true|false`, `--no-x`), and EVERY bare word counts as a possible command word (yargs lets an unknown `--opt`
+Neon's argv is read the way yargs reads it, erring on the guarded side: booleans last-one-wins as yargs-parser
+reads them (`--no-x=v` never counts as a negation), and EVERY bare word counts as a possible command word (yargs lets an unknown `--opt`
 swallow the next word, so no option list can say which word is the command). So a value that happens to equal a
 guarded command word (a branch named `cs` or `api`) also needs --output-file. Destinations (`env pull` files,
 --output-file) are resolved as the CLI resolves them and refused when they are not a plain file or are open as the
@@ -61,12 +61,13 @@ VALUE_OPTS = {"--cwd", "-Q", "--global-config", "-A", "--local-config", "-S", "-
 
 
 def parse(argv):
-    """(positionals, {option: value or True}). Stops at `--`."""
+    """(positionals, {option: value or True}). Words after `--` are positionals too (Vercel's parser appends them)."""
     pos, opts, i = [], {}, 0
     while i < len(argv):
         a = argv[i]
         i += 1
         if a == "--":
+            pos.extend(argv[i:])
             break
         if a.startswith("-") and a != "-":
             name, eq, val = a.partition("=")
@@ -83,24 +84,27 @@ toks = args[:args.index("--")] if "--" in args else list(args)
 
 
 def flag(name, short=None):
-    """The value yargs ends up with for boolean --<name>, last one winning: `--x`, `--x=v`, `--x true|false`, `--no-x`,
-    `--no-x=v`, and -<short>. None when never given; UNSURE for any value it might read differently (unsafe side)."""
+    """The value yargs-parser ends up with for boolean --<name>, last one winning, or None when never given. As the
+    installed parser reads them: `--x` (and `--x true|false`, which takes the next word), `--x=true|false`, and a bare
+    `--no-x` (false; it never takes the next word). `--no-x=<anything>` sets a different property and leaves x as it
+    was; that, and any other value, gives UNSURE, which every caller treats as the guarded side."""
     val, i = None, 0
     while i < len(toks):
         t = toks[i]
         i += 1
-        neg = False
-        if t == f"-{short}" and short:
+        if short and t == f"-{short}":
             val = TRUE
-            continue
-        m = re.match(rf"^--(no-)?{re.escape(name)}(?:=(.*))?$", t)
-        if not m:
-            continue
-        neg, v = bool(m.group(1)), m.group(2)
-        if v is None and i < len(toks) and toks[i] in ("true", "false"):
-            v, i = toks[i], i + 1
-        v = TRUE if v in (None, "true") else FALSE if v == "false" else UNSURE
-        val = v if not neg or v == UNSURE else (FALSE if v == TRUE else TRUE)
+        elif t == f"--no-{name}":
+            val = FALSE
+        elif t.startswith(f"--no-{name}="):
+            val = UNSURE
+        elif t == f"--{name}":
+            val = TRUE
+            if i < len(toks) and toks[i] in ("true", "false"):
+                val, i = (TRUE if toks[i] == "true" else FALSE), i + 1
+        elif t.startswith(f"--{name}="):
+            v = t.split("=", 1)[1]
+            val = TRUE if v == "true" else FALSE if v == "false" else UNSURE
     return val
 
 
@@ -189,6 +193,11 @@ def pair(tops, subs):
     return any(w in tops and any(x in subs for x in words[i + 1:]) for i, w in enumerate(words))
 
 
+# Post-install canary: `neon --credguard-status --help` (or vercel/vc) says whether this shell reaches the guard. Without
+# the guard, the real CLI only prints its help (never a bare unknown flag: `vercel` alone would deploy).
+if "--credguard-status" in args:
+    print(f"{tool} (seat guard): active ({me})")
+    sys.exit(0)
 real = real_binary()
 if flag("help", "h") == TRUE or flag("version") == TRUE or not words:
     if not any(re.match(r"^--(no-)?(help|version)=", t) or t in ("--no-help", "--no-version") for t in toks):
@@ -229,11 +238,13 @@ elif NAME == "vercel":
     if k is not None and sub in ("ls", "list"):
         guard = any("json" in t.lower() or t.startswith("--decrypt") for t in toks)
         why = "--json/--format json prints readable values"
-    elif "pull" in words and "env" in words:
-        target = pos[k + 2] if k is not None and sub == "pull" and k + 2 < len(pos) else ".env.local"
-        bad = target_unsafe(target, last_value("--cwd"))
-        if bad:
-            refuse(f"env pull would write to {bad}")
+    elif "pull" in pos and "env" in pos:
+        # Every word after `pull` is checked, not only the first: which one Vercel takes as the file is its business.
+        j = pos.index("pull")
+        for target in pos[j + 1:] or [".env.local"]:
+            bad = target_unsafe(target, last_value("--cwd"))
+            if bad:
+                refuse(f"env pull would write to {bad}")
 
 if guard:
     out = last_value("--output-file")

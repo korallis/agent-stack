@@ -188,3 +188,46 @@ test("destinations are checked where the CLI really writes (QA round 1): default
   const ok = inHarness("neon env pull; vercel --cwd nested env pull");    // plain files, and a link to one (the worktree case)
   assert.equal(ok.status, 0, ok.err); assert.equal(ok.ran.length, 2, ok.calls);
 });
+
+// The installed neon's own yargs-parser as the oracle (QA round 2): whenever it reads an argv so that the command would
+// print a secret, the guard must refuse. Every single and pair of boolean spellings. Skipped where neon isn't installed.
+const oracleDir = [process.env.CREDGUARD_YARGS_PARSER,
+  ...(() => { const r = spawnSync("npm", ["root", "-g"], { encoding: "utf8" }); return r.status === 0 ? [join(r.stdout.trim(), "neon/node_modules/yargs-parser")] : []; })()]
+  .find((p) => p && fs.existsSync(join(p, "package.json")));
+test("guard vs the installed yargs-parser: every spelling that would print is refused", { skip: !oracleDir && "no installed yargs-parser" }, async () => {
+  const pkg = JSON.parse(fs.readFileSync(join(oracleDir, "package.json"), "utf8"));
+  const entry = typeof pkg.exports?.["."] === "object" ? (pkg.exports["."].import?.default ?? pkg.exports["."].import ?? pkg.main) : pkg.main;
+  const parser = (await import(join(oracleDir, typeof entry === "string" ? entry : "build/lib/index.js"))).default;
+  const cfg = { boolean: ["psql", "secrets", "help", "version"], default: { secrets: true, psql: false } };
+  const forms = (x) => [`--${x}`, `--${x} true`, `--${x} false`, `--${x}=true`, `--${x}=false`, `--${x}=1`, `--${x}=0`,
+    `--no-${x}`, `--no-${x}=true`, `--no-${x}=false`, `--no-${x} true`, `--no-${x} false`];
+  const combos = (x) => { const f = forms(x); return [...f.map((a) => [a]), ...f.flatMap((a) => f.map((b) => [a, b]))]; };
+  const cases = [
+    ...combos("psql").map((c) => ["cs", ...c.join(" ").split(" ")]),
+    ...combos("secrets").map((c) => ["projects", "create", ...c.join(" ").split(" ")]),
+    ...forms("help").map((c) => ["cs", ...c.split(" ")]), ...forms("version").map((c) => ["cs", ...c.split(" ")]),
+  ];
+  const leaks = [];
+  for (const argv of cases) {
+    const o = parser(argv, cfg);
+    const prints = o.help !== true && o.version !== true && (argv[0] === "cs" ? o.psql !== true : o.secrets !== false);
+    if (!prints) continue;
+    fs.rmSync(calls, { force: true });
+    const r = spawnSync(join(seat, "neon"), argv, { cwd: root, encoding: "utf8", env: { PATH, HOME: join(root, "home") } });
+    if (r.status !== 2 || new RegExp(SECRET).test(r.stdout + r.stderr)) leaks.push(argv.join(" "));
+  }
+  assert.deepEqual(leaks, []);
+});
+
+test("vercel env pull: words after -- are targets too (QA round 2)", () => {
+  for (const c of ["vercel env pull -- /dev/stdout", "vercel env pull -- /proc/self/fd/1", "vc env pull .env.local -- -"])
+    refused(run(c));
+  passed(run("vercel env pull -- .env.local"));
+});
+
+test("post-install canary: --credguard-status answers from the guard and never reaches the CLI", () => {
+  for (const t of ["neon", "neonctl", "vercel", "vc"]) {
+    const r = run(`${t} --credguard-status --help`);
+    assert.equal(r.status, 0); assert.match(r.out, /seat guard\): active/); assert.equal(r.calls, "");
+  }
+});
