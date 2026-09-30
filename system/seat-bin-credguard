@@ -34,17 +34,76 @@ args = sys.argv[1:]
 NAME = {"neonctl": "neon", "vc": "vercel"}.get(tool, tool)
 
 
-def real_binary():
-    for d in os.environ.get("PATH", "").split(os.pathsep):
-        p = os.path.join(d or ".", tool)
-        if os.path.isfile(p) and os.access(p, os.X_OK) and os.path.realpath(p) != me:
-            return p
-    if tool == "neonctl":   # the npm package `neon` only ships `neon`
+# A version manager's shim is never the real CLI. Where mise doesn't activate the tool (a project pins another node), its
+# shim execs the next `vercel`/`neon` on PATH, which is this guard again: guard -> shim -> guard, an endless loop at full
+# CPU in one process (2026-09-30, hc). So shims are skipped (mise's, and any other manager's `shims` dir), and the real
+# CLI comes from the next plain entry on PATH, else from mise's node installs, newest version first.
+def is_shim(p):
+    rp = os.path.realpath(p)
+    return "/shims/" in p or "/shims/" in rp or os.path.basename(rp) == "mise"
+
+
+def version_key(p):
+    v = p.split("/node/", 1)[1].split("/", 1)[0] if "/node/" in p else ""
+    return [int(x) if x.isdigit() else -1 for x in re.split(r"[.\-]", v)]
+
+
+def resolve_real():
+    """The real CLI this guard runs, or None. Never itself, never a shim."""
+    import glob
+    names = [tool] + (["neon"] if tool == "neonctl" else [])   # the npm package `neon` only ships `neon`
+    for name in names:
         for d in os.environ.get("PATH", "").split(os.pathsep):
-            p = os.path.join(d or ".", "neon")
-            if os.path.isfile(p) and os.access(p, os.X_OK) and os.path.realpath(p) != me:
+            p = os.path.join(d or ".", name)
+            if os.path.isfile(p) and os.access(p, os.X_OK) and os.path.realpath(p) != me and not is_shim(p):
                 return p
-    sys.exit(f"{tool} (seat guard): the real {tool} is not on PATH")
+    # Rank the canonical install dirs, not their spellings: mise's aliases (`22`, `22.10`, `latest`) are symlinks to a
+    # real version dir, and an alias's own name must not decide which install is newest.
+    installs = {os.path.realpath(d) for d in glob.glob(os.path.expanduser("~/.local/share/mise/installs/node/*"))}
+    for name in names:
+        found = [os.path.join(d, "bin", name) for d in installs if os.path.isdir(d)]
+        found = [p for p in found if os.path.isfile(p) and os.access(p, os.X_OK) and os.path.realpath(p) != me]
+        if found:
+            return max(found, key=version_key)
+    return None
+
+
+def launch_cmd(real):
+    """How to start the real CLI: a script from mise's node installs runs on that install's own node (its shebang says
+    `env node`, and the node on PATH may be another version, or none, where mise didn't activate it)."""
+    rp = os.path.realpath(real)
+    if "/mise/installs/node/" in real:
+        node = os.path.join(real.split("/bin/", 1)[0], "bin", "node")
+        if os.path.isfile(node) and os.access(node, os.X_OK):
+            return [node, rp]
+    return [real]
+
+
+def exec_real(real, argv):
+    cmd = launch_cmd(real)
+    os.execv(cmd[0], ([tool] if len(cmd) == 1 else cmd) + list(argv))
+
+
+def real_binary():
+    p = resolve_real()
+    if not p:
+        sys.exit(f"{tool} (seat guard): the real {tool} is not on PATH (shims skipped) or under mise's node installs")
+    return p
+
+
+# Loop guard, as a second line of defence: the guard execs the real CLI in the SAME process, so if this process was the
+# guard once already, nothing real ran in between (a wrapper handed the call straight back). A real CLI that starts its
+# own `vercel` or `neon` does so in a child process, with another pid, and is not stopped.
+if os.environ.get("AGENT_CREDGUARD_PID") == str(os.getpid()):
+    sys.exit(f"{tool} (seat guard): loop detected: a wrapper sent {tool} straight back to the guard; check PATH "
+             f"(agent-credguard-check)")
+os.environ["AGENT_CREDGUARD_PID"] = str(os.getpid())
+
+# `--credguard-resolve`: print the real CLI the guard would run, and run nothing (agent-credguard-check uses it).
+if args[:1] == ["--credguard-resolve"]:
+    p = resolve_real()
+    print(p or "none")
+    sys.exit(0 if p and not is_shim(p) else 1)
 
 
 def refuse(why):
@@ -180,7 +239,7 @@ def stdout_safe():
 
 def help_lists_no_secrets(real, words):
     try:
-        out = subprocess.run([real, *words, "--help"], capture_output=True, text=True, timeout=30,
+        out = subprocess.run([*launch_cmd(real), *words, "--help"], capture_output=True, text=True, timeout=30,
                              env={**os.environ, "NO_COLOR": "1"}).stdout
     except Exception:
         return False
@@ -201,7 +260,7 @@ if "--credguard-status" in args:
 real = real_binary()
 if flag("help", "h") == TRUE or flag("version") == TRUE or not words:
     if not any(re.match(r"^--(no-)?(help|version)=", t) or t in ("--no-help", "--no-version") for t in toks):
-        os.execv(real, [tool, *args])
+        exec_real(real, args)
 
 guard, why = False, ""
 if NAME == "neon":
@@ -272,9 +331,9 @@ if guard:
         print(f"{tool} (seat guard): output goes to {out} (mode 0600); use it by name, never print it", file=sys.stderr)
         os.dup2(fd, 1)
         os.close(fd)
-        os.execv(real, [tool, *rest])
+        exec_real(real, rest)
     if not stdout_safe():
         refuse(why)
 elif last_value("--output-file") is not None:
     refuse("--output-file is only for commands that print credentials")
-os.execv(real, [tool, *args])
+exec_real(real, args)
