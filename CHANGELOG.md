@@ -9,7 +9,7 @@ has no version numbers; entries are grouped by the day they merged, newest first
 - Jev as the decision layer for routine judgments: code gathers the evidence and owns the thresholds, and anything
   short of Jev's act band goes to the lead or a person.
   - `agent-merge-evidence <pr> --decide`: the merge gate's input from exact-head facts (full shas, every required check
-    by name, the independent-review status and the review that names the head, QA's bug-review-board proof, the
+    by name, the independent-review status and the review report it links to, QA's bug-review-board proof, the
     blast-radius comment, target branch, deploy effect, rollback). It refuses if the PR moves while it collects. Only
     a live (not stubbed) Jev `merge` in the act band passes.
   - `agent-dispatch pick-seat`: Jev picks the seat for a dispatch (new decision `intake.seat`) from the running seats

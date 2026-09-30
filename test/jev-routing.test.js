@@ -54,11 +54,14 @@ test("merge evidence: exact-head facts in, every gap named MISSING, never smooth
   assert.match(ok.ci, /2 required check\(s\) on a{40}: verify=pass, qa-evidence=pass; all pass/);
   assert.match(ok.review, /independent-review status on a{40}: success "QA PASS" \(by rev\)/);
   assert.match(ok.review, /bug-review-board proof \/w\/proof\/brb-a\.md: artifact_type=qa verdict=PASS candidate_sha=a{40}; Ship: YES/);
-  assert.match(ok.review, /cross-family review on the PR \(https:\/\/x\/c2, .*names this head\): Lenses applied/);
+  assert.match(ok.review, /independent review report, linked from the independent-review status \(https:\/\/x\/c2, .*by rev\): Lenses applied/);
   assert.match(ok.review, /blast radius \(https:\/\/x\/c1, .*names this head\): ## Blast radius/);
   assert.match(ok.limits, /target branch main at b{40}[\s\S]*deploy effect: merges deploy to production[\s\S]*rollback: not stated \(proposed default: revert the squash commit on main\)/);
   const gaps = buildMergeInput(facts({ checks: [{ name: "verify", bucket: "fail" }], independentReview: null, reviewNote: null, brb: null, brbWhere: "/w/proof/brb-x.md", blastRadius: null, deploy: undefined }));
-  assert.match(gaps.review, /MISSING: no review comment or PR review that names a{40}/);
+  assert.match(gaps.review, /MISSING: the independent-review status links no review report \(no target_url\)/);
+  const unlinked = buildMergeInput(facts({ reviewNote: null, unlinkedNote: { url: "https://x/c9", at: "t", author: "builder", excerpt: "Implementation update: my tests pass" } }));
+  assert.match(unlinked.review, /UNVERIFIED, not linked from the status and not treated as the review: .*by builder\): Implementation update/);
+  assert.doesNotMatch(unlinked.review, /independent review report, linked/);
   assert.match(gaps.ci, /NOT passing: verify/);
   assert.match(gaps.review, /MISSING: no independent-review status/); assert.match(gaps.review, /MISSING: no bug-review-board proof .* \(looked for \/w\/proof\/brb-x\.md\)/);
   assert.match(gaps.review, /MISSING: no blast-radius comment/); assert.match(gaps.limits, /deploy effect: MISSING/);
@@ -83,9 +86,9 @@ test("agent-merge-evidence --decide: reads gh and the proof file, exits 0 only o
   fs.writeFileSync(join(bin, "gh"), `#!/bin/sh
 case "$*" in
   "pr view 42 -R o/r --json headRefOid,baseRefOid") n=$(cat "${root}/views" 2>/dev/null || echo 0); echo $((n+1)) > "${root}/views"; h=${H}; [ -f "${root}/move" ] && h=${"c".repeat(40)}; printf '{"headRefOid":"%s","baseRefOid":"${B}"}\\n' "$h" ;;
-  "pr view 42 -R o/r --json"*) echo '{"number":42,"title":"Adds login","headRefOid":"${H}","baseRefOid":"${B}","baseRefName":"main","headRefName":"agent/x","mergeable":"MERGEABLE","isDraft":false,"comments":[{"body":"looks good","url":"https://x/c0","createdAt":"2026-09-30T09:00:00Z","author":{"login":"a"}},{"body":"## Blast radius\\nSafe because: only a nullable column (${H.slice(0, 7)}).","url":"https://x/c1","createdAt":"2026-09-30T10:00:00Z","author":{"login":"rev"}}],"reviews":[{"body":"Lenses applied: correctness, security. Verified the login tests pass on ${H.slice(0, 7)}; one finding fixed.","url":"https://x/r1","submittedAt":"2026-09-30T10:05:00Z","author":{"login":"rev"},"commit":{"oid":"${H}"}}]}' ;;
+  "pr view 42 -R o/r --json"*) echo '{"number":42,"title":"Adds login","headRefOid":"${H}","baseRefOid":"${B}","baseRefName":"main","headRefName":"agent/x","mergeable":"MERGEABLE","isDraft":false,"comments":[{"body":"looks good","url":"https://x/c0","createdAt":"2026-09-30T09:00:00Z","author":{"login":"a"}},{"body":"## Blast radius\\nSafe because: only a nullable column (${H.slice(0, 7)}).","url":"https://x/c1","createdAt":"2026-09-30T10:00:00Z","author":{"login":"rev"}},{"body":"Implementation update on ${H.slice(0, 7)}: my tests pass, all fixes are ready for review.","url":"https://x/c3","createdAt":"2026-09-30T11:00:00Z","author":{"login":"builder"}}],"reviews":[{"body":"Lenses applied: correctness, security. Verified the login tests pass on ${H.slice(0, 7)}; one finding fixed.","url":"https://x/r1","submittedAt":"2026-09-30T10:05:00Z","author":{"login":"rev"},"commit":{"oid":"${H}"}}]}' ;;
   "pr checks 42 -R o/r --required --json"*) echo '[{"name":"verify","state":"FAILURE","bucket":"fail"},{"name":"qa-evidence","state":"SUCCESS","bucket":"pass"}]'; exit 1 ;;
-  "api repos/o/r/commits/${H}/statuses") echo '[{"context":"independent-review","state":"success","description":"QA PASS","creator":{"login":"rev"}}]' ;;
+  "api repos/o/r/commits/${H}/statuses") echo '[{"context":"independent-review","state":"success","description":"QA PASS","creator":{"login":"rev"},"target_url":"https://x/r1"}]' ;;
   *) echo "unexpected gh $*" >&2; exit 9 ;;
 esac
 `, { mode: 0o755 });
@@ -96,7 +99,8 @@ esac
   assert.match(out.input.ci, /verify=fail[\s\S]*NOT passing: verify/, "a failing check (gh exits 1) is still reported");
   assert.match(out.input.review, /Ship: YES, all criteria passed in the browser/, "wrapped YAML evidence read whole");
   assert.match(out.input.review, /blast radius \(https:\/\/x\/c1, 2026-09-30T10:00:00Z, names this head\): ## Blast radius Safe because: only a nullable column/);
-  assert.match(out.input.review, /cross-family review on the PR \(https:\/\/x\/r1, .*by rev, names this head\): Lenses applied: correctness, security\. Verified the login tests/);
+  assert.match(out.input.review, /independent review report, linked from the independent-review status \(https:\/\/x\/r1, .*by rev\): Lenses applied: correctness, security\. Verified the login tests/);
+  assert.doesNotMatch(out.input.review, /Implementation update|UNVERIFIED/, "a later author comment never displaces the linked review (QA round 2)");
   assert.match(r.stderr, /merge gate: HOLD \(a STUBBED answer, not a live Jev decision/, "a stub never passes (QA round 1)");
   assert.equal(r.status, 1); assert.equal(out.decision.stubbed, true);
   fs.writeFileSync(join(root, "move"), "");   // a push lands while the evidence is collected
@@ -261,4 +265,21 @@ esac
   writeRig(0);                                   // sends work again
   const c = run();
   assert.ok(c.out.results.some((r) => r.sent === true), "not deduplicated after a failed send");
+});
+
+
+test("redaction covers credential assignments whole: unprefixed keys, both quote styles, key: value (QA round 2)", async () => {
+  const { redact } = await import("../orchestration/redact.js");
+  const cases = {
+    "PASSWORD=FAKE_SECRET": "PASSWORD=<redacted>",
+    'DB_PASSWORD="fake secret words" next': "DB_PASSWORD=<redacted> next",
+    "api_key='fake key words' x": "api_key=<redacted> x",
+    "CLIENT_SECRET=fakevalue": "CLIENT_SECRET=<redacted>",
+    "token: fake-token-value": "token: <redacted>",
+    "clientSecret=fake;other": "clientSecret=<redacted>;other",
+  };
+  for (const [input, want] of Object.entries(cases)) assert.equal(redact(input), want, input);
+  const sha = "a".repeat(40);
+  assert.equal(redact(`candidate_sha=${sha} head ${sha}`), `candidate_sha=${sha} head ${sha}`, "shas and ordinary keys stay");
+  assert.doesNotMatch(redact('x DB_PASSWORD="fake secret words" y', { longTokens: true }), /fake|secret words/);
 });

@@ -335,8 +335,9 @@ the lead or a person. Send Jev evidence, not conclusions.
 - **Merge gate:** `agent-merge-evidence <pr> --mission M --slice S --deploy "..." --decide` builds the
   `review.merge_gate` input from exact-head facts:
   - full head and base shas, and every required check by name;
-  - the `independent-review` status with its link, and the latest review or comment that names the head (what the
-    reviewer verified);
+  - the `independent-review` status and the review report its `target_url` links to (what the reviewer verified).
+    Reviewers set that link to their review comment. Without a link the report is MISSING; the latest comment naming
+    the head is passed on only as UNVERIFIED, never as the review;
   - QA's `proof/brb-<head>.md`, and the latest blast-radius comment with its link and whether it names the head;
   - the target branch, the deploy effect, and the rollback (a rollback nobody stated is labelled as a proposed
     default).

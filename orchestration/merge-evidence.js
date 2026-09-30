@@ -33,9 +33,16 @@ export function buildMergeInput(f) {
     f.independentReview
       ? `independent-review status on ${f.head}: ${f.independentReview.state} "${f.independentReview.description}" (by ${f.independentReview.creator}${f.independentReview.url ? `, ${f.independentReview.url}` : ""})`
       : `MISSING: no independent-review status on ${f.head}`,
+    // Provenance comes only from the status's own link (target_url): a comment that merely mentions the head could be
+    // anyone's, the author's included, so it is shown as UNVERIFIED and never as the review.
     f.reviewNote
-      ? `cross-family review on the PR (${f.reviewNote.url}, ${f.reviewNote.at}, by ${f.reviewNote.author}, names this head): ${f.reviewNote.excerpt}`
-      : `MISSING: no review comment or PR review that names ${f.head} (what the reviewer verified)`,
+      ? `independent review report, linked from the independent-review status (${f.reviewNote.url}, ${f.reviewNote.at}, by ${f.reviewNote.author}): ${f.reviewNote.excerpt}`
+      : f.independentReview?.url
+        ? `independent review report: ${f.independentReview.url} (linked from the status, outside this PR; not read)`
+        : `MISSING: the independent-review status links no review report (no target_url), so what the reviewer verified is not established`,
+    ...(!f.reviewNote && f.unlinkedNote
+      ? [`UNVERIFIED, not linked from the status and not treated as the review: the latest PR comment naming ${f.head.slice(0, 7)} (${f.unlinkedNote.url}, ${f.unlinkedNote.at}, by ${f.unlinkedNote.author}): ${f.unlinkedNote.excerpt}`]
+      : []),
     f.brb
       ? `bug-review-board proof ${f.brb.file}: artifact_type=${f.brb.artifact_type} verdict=${f.brb.verdict} candidate_sha=${f.brb.candidate_sha}${f.brb.candidate_sha === f.head ? "" : " (NOT this head)"}; ${f.brb.money_evidence}`
       : `MISSING: no bug-review-board proof for ${f.head}${f.brbWhere ? ` (looked for ${f.brbWhere})` : " (no --mission/--slice given)"}`,
@@ -85,10 +92,12 @@ export function gather(pr, { repo, mission, slice, change, deploy, rollback } = 
   const br = [...notes].reverse().find((c) => /^## Blast radius/m.test(c.body || ""));
   const blast = br ? { url: br.url, at: br.at, namesHead: namesHead(br.body) || br.commit === v.headRefOid,
     excerpt: br.body.slice(br.body.search(/^## Blast radius/m)).replace(/\s+/g, " ").slice(0, 700) } : null;
-  // What the cross-family reviewer verified: the latest review or comment that names this head (or was made on it).
-  const rn = [...notes].reverse().find((c) => (c.body || "").length > 40
-    && (namesHead(c.body) || c.commit === v.headRefOid) && /review|lens|verdict|finding|verified|tests?\b/i.test(c.body));
-  const reviewNote = rn ? { url: rn.url, at: rn.at, author: rn.author || "?", excerpt: rn.body.replace(/\s+/g, " ").slice(0, 900) } : null;
+  // What the cross-family reviewer verified: the report the independent-review status links to (target_url), and
+  // nothing else. Without a link, the latest comment naming the head is passed on only as UNVERIFIED.
+  const note = (c) => c && { url: c.url, at: c.at, author: c.author || "?", excerpt: c.body.replace(/\s+/g, " ").slice(0, 900) };
+  const link = ir?.target_url || null;
+  const reviewNote = link ? note(notes.find((c) => c.url && c.url === link)) || null : null;
+  const unlinkedNote = note([...notes].reverse().find((c) => (c.body || "").length > 40 && (namesHead(c.body) || c.commit === v.headRefOid)));
   // Checks are read by PR number: if a push landed while we collected, the facts would mix two heads. Re-read and refuse.
   const again = ghJson("pr", "view", String(pr), ...R, "--json", "headRefOid,baseRefOid");
   if (again.headRefOid !== v.headRefOid || again.baseRefOid !== v.baseRefOid)
@@ -97,7 +106,7 @@ export function gather(pr, { repo, mission, slice, change, deploy, rollback } = 
     pr: v.number, head: v.headRefOid, base: v.baseRefOid, baseRef: v.baseRefName, headRef: v.headRefName,
     mergeable: v.mergeable, isDraft: v.isDraft, change: change || v.title, checks,
     independentReview: ir ? { state: ir.state, description: ir.description || "", creator: ir.creator?.login || "?", url: ir.target_url || null } : null,
-    reviewNote, brb, brbWhere, blastRadius: blast, deploy, rollback,
+    reviewNote, unlinkedNote, brb, brbWhere, blastRadius: blast, deploy, rollback,
   };
 }
 
