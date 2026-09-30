@@ -6,6 +6,11 @@ has no version numbers; entries are grouped by the day they merged, newest first
 ## [Unreleased]
 
 ### Added
+- Credential read guard: a PreToolUse hook for Claude Code (Bash, Read, Grep) and Codex (its shell tool) refuses a
+  command or read that would print a credential file (`.env*`, `*runtime-url*`, `*.pem`, `prod.env`, the secrets
+  directory, plus local globs) into a seat's transcript, and says how to use the values by name. Installed
+  idempotently by `install.sh` (the Codex hook with its trust hash); `agent-never-prompt-check` reports it. After two
+  printed credential files on 2026-09-30.
 - Jev as the decision layer for routine judgments: code gathers the evidence and owns the thresholds, and anything
   short of Jev's act band goes to the lead or a person.
   - `agent-merge-evidence <pr> --decide`: the merge gate's input from exact-head facts (full shas, every required check

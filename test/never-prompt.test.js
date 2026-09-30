@@ -113,12 +113,19 @@ test("fixer: a valid config without a final newline gets the keys on their own l
 
 // ---- bin/agent-never-prompt-check -----------------------------------------------------------------------
 const chk = join(repo, "bin/agent-never-prompt-check");
-function machine({ approval = "never", sandbox = "danger-full-access", claude = "bypassPermissions", shimText = '["-a", "never"]' } = {}) {
+function machine({ approval = "never", sandbox = "danger-full-access", claude = "bypassPermissions", shimText = '["-a", "never"]', guard = true } = {}) {
   const h = fs.mkdtempSync(join(root, "m-"));
-  write(join(h, ".codex/config.toml"), `approval_policy = "${approval}"\nsandbox_mode = "${sandbox}"\n`);
+  write(join(h, ".codex/config.toml"), `approval_policy = "${approval}"\nsandbox_mode = "${sandbox}"\n\n[features]\nhooks = true\n`);
   write(join(h, ".codex/pool-x.config.toml"), 'approval_policy = "never"\n');
   write(join(h, ".claude/settings.json"), JSON.stringify({ skipDangerousModePermissionPrompt: true, permissions: { defaultMode: claude } }));
   write(join(h, ".local/share/agent-stack/seat-bin/codex"), `extra += ${shimText}\n`);
+  if (guard) {   // the credential read guard, installed by the real installer into this fake HOME
+    const hook = join(h, ".local/share/agent-stack/bin/agent-credguard-read-hook");
+    write(hook, "#!/bin/sh\n");
+    const r = spawnSync(process.execPath, [join(repo, "system/credguard-read-install"), "--hook", hook,
+      "--claude-settings", join(h, ".claude/settings.json"), "--codex-config", join(h, ".codex/config.toml")], { encoding: "utf8" });
+    assert.equal(r.status, 0, r.stdout + r.stderr);
+  }
   fs.mkdirSync(join(h, "proc"));
   return h;
 }
@@ -141,12 +148,12 @@ test("check: a correctly set machine and rig pass; each missing piece FAILs on i
   write(join(good, "rig.yaml"), "name: r\npermission_policy: builtin:yolo\npods: []\n");
   const ok = runCheck(good, "--rig", "r", "--spec", join(good, "rig.yaml"));
   assert.equal(ok.status, 0, JSON.stringify(ok.rows));
-  const bad = machine({ approval: "on-request", sandbox: "workspace-write", claude: "default", shimText: "[]" });
+  const bad = machine({ approval: "on-request", sandbox: "workspace-write", claude: "default", shimText: "[]", guard: false });
   write(join(bad, "rig.yaml"), "name: r\npods: []\n");
   const r = runCheck(bad, "--spec", join(bad, "rig.yaml"));
   assert.equal(r.status, 1);
-  assert.equal(failed(r.rows).length, 4);
-  assert.match(failed(r.rows).join("|"), /Codex config.*\|Claude.*\|seat shim.*\|RigSpec rig.yaml/);
+  assert.equal(failed(r.rows).length, 6);
+  assert.match(failed(r.rows).join("|"), /Codex config.*\|Claude.*\|seat shim.*\|Claude: credential read guard.*\|Codex: credential read guard.*\|RigSpec rig.yaml/);
 });
 
 test("check: live Codex seats of the rig must run with approval never (flag, profile or config)", () => {

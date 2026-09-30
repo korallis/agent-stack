@@ -291,7 +291,9 @@ agent-credguard-check
 `install.sh --check` lists what is missing and installs or configures nothing. It is not read-only: in a fresh HOME it
 creates empty directories, sets the secrets directory to 0700, fills the npm cache while it checks the Playwright
 browser, and Claude Code may create its own `~/.claude.json` when asked for its MCP servers. `agent-skills-check` prints one line per skill
-source. `agent-credguard-check` shows which running seats have `neon` and `vercel` behind the credential guard.
+source. `agent-credguard-check` shows which running seats have `neon` and `vercel` behind the credential guard. The
+credential read guard (a PreToolUse hook for Claude and Codex seats) refuses printing `.env`, `*runtime-url*`, `*.pem`
+and secrets files into a transcript: [docs/REFERENCE.md](docs/REFERENCE.md#credential-read-guard).
 
 ## FAQ
 
