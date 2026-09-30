@@ -24,15 +24,45 @@ const gh = (...a) => execFileSync("gh", a, { encoding: "utf8", stdio: ["ignore",
 const ghJson = (...a) => JSON.parse(gh(...a) || "null");
 
 // ---- Applicability: N/A only from verified facts (the diff, the PR's creation time, the configured cutoff) ---------
-// Pure: a unified diff (gh pr diff) -> [{ path, oldPath, added: [lines], removed: [lines] }].
+// Git C-quotes paths with special or non-ASCII characters ("a/src/caf\\303\\251.js"): undo it (octal bytes are UTF-8).
+export function gitUnquote(q) {
+  if (!q.startsWith('"')) return q;
+  const bytes = [];
+  const esc = { a: 7, b: 8, t: 9, n: 10, v: 11, f: 12, r: 13, '"': 34, "\\": 92 };
+  for (let i = 1; i < q.length - 1; i++) {
+    const c = q[i];
+    if (c !== "\\") { bytes.push(...Buffer.from(c, "utf8")); continue; }
+    const n = q[++i];
+    if (/[0-7]/.test(n)) { bytes.push(parseInt(q.slice(i, i + 3), 8)); i += 2; }
+    else bytes.push(esc[n] ?? n.charCodeAt(0));
+  }
+  return Buffer.from(bytes).toString("utf8");
+}
+
+// Pure: a unified diff (gh pr diff) -> [{ path, oldPath, added, removed, renamed, newFile, deleted, modeChange, binary,
+// unknown }]. A file header it cannot parse becomes an `unknown` entry: never guessed, never N/A (fails closed).
 export function parseDiff(text) {
   const files = [];
   let cur = null;
+  const PATH = String.raw`("(?:[^"\\]|\\.)*"|\S+)`;
   for (const line of String(text || "").split("\n")) {
-    const m = line.match(/^diff --git a\/(.+?) b\/(.+)$/);
-    if (m) { cur = { path: m[2], oldPath: m[1], added: [], removed: [] }; files.push(cur); continue; }
-    if (!cur || line.startsWith("+++ ") || line.startsWith("--- ")) continue;
-    if (line.startsWith("+")) cur.added.push(line.slice(1));
+    if (line.startsWith("diff --git ")) {
+      const m = line.match(new RegExp(`^diff --git ${PATH} ${PATH}$`));
+      const a = m && gitUnquote(m[1]), b = m && gitUnquote(m[2]);
+      cur = a?.startsWith("a/") && b?.startsWith("b/")
+        ? { path: b.slice(2), oldPath: a.slice(2), added: [], removed: [] }
+        : { path: "<unparsed diff header>", oldPath: "<unparsed diff header>", added: [], removed: [], unknown: true, header: line.slice(0, 200) };
+      files.push(cur);
+      continue;
+    }
+    if (!cur) continue;
+    if (/^(rename|copy) (from|to) /.test(line) || /^similarity index /.test(line)) cur.renamed = true;
+    else if (line.startsWith("new file mode")) cur.newFile = true;
+    else if (line.startsWith("deleted file mode")) cur.deleted = true;
+    else if (/^(old|new) mode /.test(line)) cur.modeChange = true;
+    else if (/^Binary files /.test(line) || line.startsWith("GIT binary patch")) cur.binary = true;
+    else if (line.startsWith("+++ ") || line.startsWith("--- ")) continue;
+    else if (line.startsWith("+")) cur.added.push(line.slice(1));
     else if (line.startsWith("-")) cur.removed.push(line.slice(1));
   }
   return files;
@@ -51,17 +81,20 @@ export function brbCutoff({ env = process.env, culture = "" } = {}) {
 }
 
 const isDocs = (p) => /^docs\//i.test(p) || /\.md$/i.test(p);
+const known = (f) => !f.unknown;
 const FLAG_LINE = /^\s*"[\w.-]+"\s*:\s*(true|false)\s*,?\s*$/;
 const flagKeys = (lines) => lines.map((l) => l.match(/"([\w.-]+)"/)[1]).sort().join(",");
 // A features.json change that only flips boolean flags: every changed line is `"key": true|false`, same keys on both sides.
-export const flagOnly = (f) => /(^|\/)features\.json$/.test(f.path) && f.added.length > 0
+// Only an in-place text edit of the same features.json: no rename or copy, no new, deleted or binary file, no mode change.
+export const flagOnly = (f) => /(^|\/)features\.json$/.test(f.path) && f.oldPath === f.path
+  && !(f.unknown || f.renamed || f.newFile || f.deleted || f.modeChange || f.binary) && f.added.length > 0
   && [...f.added, ...f.removed].every((l) => FLAG_LINE.test(l)) && flagKeys(f.added) === flagKeys(f.removed);
 
 // Pure: why the bug-review-board proof doesn't apply, or null (it is required).
 export function brbNotApplicable({ createdAt, cutoff, files }) {
   if (cutoff && createdAt && Date.parse(createdAt) < Date.parse(cutoff.iso))
     return `N/A: PR created ${createdAt}, before the bug-review-board cutoff ${cutoff.iso} (${cutoff.source})`;
-  if (files?.length && files.every((f) => isDocs(f.path) && isDocs(f.oldPath)))
+  if (files?.length && files.every((f) => known(f) && isDocs(f.path) && isDocs(f.oldPath)))
     return `N/A: ${files.length} changed path(s), all docs (docs/** or *.md): ${files.map((f) => f.path).slice(0, 8).join(", ")}`;
   return null;
 }
@@ -69,7 +102,7 @@ export function brbNotApplicable({ createdAt, cutoff, files }) {
 // Pure: why a blast-radius check doesn't apply, or null (it is required).
 export function blastNotApplicable({ files }) {
   if (!files?.length) return null;
-  const why = (f) => /^tests\/acceptance\//.test(f.path) && /^tests\/acceptance\//.test(f.oldPath) ? "tests/acceptance/"
+  const why = (f) => !known(f) ? null : /^tests\/acceptance\//.test(f.path) && /^tests\/acceptance\//.test(f.oldPath) ? "tests/acceptance/"
     : isDocs(f.path) && isDocs(f.oldPath) ? "docs" : flagOnly(f) ? "features.json flag flips only" : null;
   const kinds = files.map(why);
   if (kinds.some((k) => !k)) return null;
@@ -203,7 +236,7 @@ export function outcome(rec, facts) {
     const problems = gateProblems(facts);
     return problems.length
       ? { code: 1, text: `merge gate: HOLD (Jev merge below the act bar, ${rec.band} band, and a gate this helper checks is not green: ${problems.join("; ")})` }
-      : { code: 3, text: `merge gate: NEEDS CONFIRM (Jev merge below the act bar, ${rec.band} band; the gates this helper checks are green: required checks, independent-review, QA's qa PASS for this head, not a draft, mergeable, up to date). Check the repository's own gates too (integrator role: starter-kit journeys, risk tier, owner OK), then ask the other-family independent reviewer for a one-line exact-head "confirm ${facts.head}", and merge with --match-head-commit ${facts.head}` };
+      : { code: 3, text: `merge gate: NEEDS CONFIRM (Jev merge below the act bar, ${rec.band} band; the gates this helper checks are green: required checks, independent-review, ${facts.brbNA ? `QA verdict not required (${facts.brbNA.replace(/^N\/A: /, "")})` : "QA's qa PASS for this head"}, not a draft, mergeable, up to date). Check the repository's own gates too (integrator role: starter-kit journeys, risk tier, owner OK), then ask the other-family independent reviewer for a one-line exact-head "confirm ${facts.head}", and merge with --match-head-commit ${facts.head}` };
   }
   return { code: 1, text: `merge gate: HOLD (${rec?.decided_by}/${rec?.band}/${rec?.result?.decision})` };
 }

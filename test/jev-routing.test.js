@@ -392,3 +392,38 @@ esac
   r = run();
   assert.match(r.review, /MISSING: no bug-review-board proof/); assert.match(r.review, /MISSING: no blast-radius comment/);
 });
+
+
+test("diff parsing fails closed: quoted (non-ASCII) paths, binary files and unparseable headers never make a mixed change docs-only (QA round 1)", async () => {
+  const { gitUnquote } = await import("../orchestration/merge-evidence.js");
+  assert.equal(gitUnquote('"a/src/caf\\303\\251.js"'), "a/src/café.js");
+  assert.equal(gitUnquote('"b/a \\"q\\" \\\\x"'), 'b/a "q" \\x');
+  const readme = "diff --git a/README.md b/README.md\n--- a/README.md\n+++ b/README.md\n@@ -1 +1 @@\n-a\n+b\n";
+  const quoted = readme + 'diff --git "a/src/caf\\303\\251.js" "b/src/caf\\303\\251.js"\n--- "a/src/caf\\303\\251.js"\n+++ "b/src/caf\\303\\251.js"\n@@ -1 +1 @@\n-x\n+y\n';
+  const binary = readme + 'diff --git "a/src/caf\\303\\251.png" "b/src/caf\\303\\251.png"\nindex 1..2 100644\nBinary files "a/src/caf\\303\\251.png" and "b/src/caf\\303\\251.png" differ\n';
+  const garbled = readme + "diff --git something odd\n@@ -1 +1 @@\n-x\n+y\n";
+  for (const [name, d, path] of [["quoted text", quoted, "src/café.js"], ["quoted binary", binary, "src/café.png"], ["unparseable header", garbled, "<unparsed diff header>"]]) {
+    const files = parseDiff(d);
+    assert.deepEqual(files.map((f) => f.path), ["README.md", path], name);
+    assert.deepEqual(files[0].added, ["b"], `${name}: README keeps only its own lines`);
+    assert.equal(brbNotApplicable({ createdAt: "2026-10-01T00:00:00Z", cutoff: null, files }), null, `${name}: BRB required`);
+    assert.equal(blastNotApplicable({ files }), null, `${name}: blast radius required`);
+  }
+  assert.ok(parseDiff(binary)[1].binary);
+});
+
+test("features.json exemption needs an in-place text edit: a rename into it, a new file or a mode change needs a blast radius (QA round 1)", () => {
+  const flip = '@@ -1 +1 @@\n-    "passes": false,\n+    "passes": true,\n';
+  const renamed = parseDiff(`diff --git a/runtime-config.json b/features.json\nsimilarity index 95%\nrename from runtime-config.json\nrename to features.json\n--- a/runtime-config.json\n+++ b/features.json\n${flip}`);
+  const created = parseDiff(`diff --git a/features.json b/features.json\nnew file mode 100644\n--- /dev/null\n+++ b/features.json\n${flip}`);
+  const moded = parseDiff(`diff --git a/features.json b/features.json\nold mode 100644\nnew mode 100755\n--- a/features.json\n+++ b/features.json\n${flip}`);
+  for (const [name, files] of [["rename", renamed], ["new file", created], ["mode change", moded]]) {
+    assert.ok(!flagOnly(files[0]), name); assert.equal(blastNotApplicable({ files }), null, name);
+  }
+  assert.ok(flagOnly(parseDiff(`diff --git a/features.json b/features.json\nindex 1..2 100644\n--- a/features.json\n+++ b/features.json\n${flip}`)[0]), "an in-place flip still qualifies");
+});
+
+test("NEEDS CONFIRM names an N/A QA verdict as not required, not as a PASS (QA round 1)", () => {
+  const o = outcome({ decided_by: "jev", band: "review", result: { decision: "merge" } }, facts({ brb: null, brbNA: "N/A: 2 changed path(s), all docs" }));
+  assert.equal(o.code, 3); assert.match(o.text, /QA verdict not required \(2 changed path\(s\), all docs\)/); assert.doesNotMatch(o.text, /qa PASS/);
+});
