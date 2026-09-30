@@ -392,10 +392,18 @@ the lead or a person. Send Jev evidence, not conclusions.
     NOT passing and holds the gate. Any protection keeps MISSING: a required check not yet reported, and also rules
     with no status checks (signatures, reviews). So does unreadable or incomplete check-run data. Only push-side
     rules (deletion, non-fast-forward, creation) count as unprotected;
-  - the `independent-review` status and the review report its `target_url` links to (what the reviewer verified).
+  - the `independent-review` status and the review report its `target_url` links to (what the reviewer verified). A
+    link to a GitHub review on this PR (`…/pull/<n>#pullrequestreview-<id>`) is read from the API, together with the
+    commit it was submitted on ("submitted on this head" or "on commit <sha>, not this head").
     Reviewers set that link to their review comment. Without a link the report is MISSING; the latest comment naming
     the head is passed on only as UNVERIFIED, never as the review;
-  - QA's `proof/brb-<head>.md`, and the latest blast-radius comment with its link and whether it names the head;
+  - QA's `proof/brb-<head>.md`, and the latest blast-radius comment with its link and whether it names the head. If
+    no proof file exists for this head, which happens after a branch refresh leaves `brb-<old head>.md`, a QA seat's
+    PR comment can carry the verdict. Its first line names a `qa-` seat, and it declares `Head: <this head>` and
+    `Verdict: SHIP|PASS`. It is shown as a self-declared seat, with any proof file on record for another head. A QA
+    comment for another head never carries;
+  - `change`: `--change "<1–3 lines>"`, else the PR title plus the body's first section (up to its first heading, at
+    most 600 characters);
   - the target branch, the deploy effect, and the rollback (a rollback nobody stated is labelled as a proposed
     default).
 
@@ -413,9 +421,11 @@ the lead or a person. Send Jev evidence, not conclusions.
   A mixed change (one docs file and one source file) still needs both.
 
   GitHub reports a PR as BLOCKED while any merge requirement is unmet, including `jev-merge`, the status this gate
-  posts. The helper reads every requirement on the base branch (rulesets and classic protection) and reports
-  "pending this gate" only when all of these hold:
-  - `jev-merge` has posted nothing for the head;
+  posts. The helper reads every requirement on the base branch (rulesets and classic protection). It says nothing
+  about the merge state (the limits line reads just `mergeable: MERGEABLE; draft: false`) only when all of these
+  hold. Any wording about the gate's own status, "pending this gate" included, read to the gate as a missing gate
+  and made it hold on every project rig (WO50):
+  - `jev-merge`, the gate's own status, is the only thing unmet, whatever it says;
   - every other required context passes. Every same-name result counts: a failing check is not hidden by a successful
     status of the same name. A context bound to an app (a ruleset's `integration_id`, protection's `app_id`) is met
     only by that app's latest check run;
@@ -432,9 +442,9 @@ the lead or a person. Send Jev evidence, not conclusions.
   - unreadable data says so.
 
   The gate's own context is never among them. The gate's own `jev-merge` is never evidence against
-  itself: an earlier run's result on the same head reads "pending this gate (jev-merge holds an earlier run's result,
-  which this run replaces; …)". It is dropped from the required checks in `ci` and from the gate's problems, so a
-  re-gate after its own HOLD (or MERGE) reads like a first run. Otherwise every hold would re-hold itself. Those
+  itself, and never mentioned. An earlier run's result on the same head is not a merge-state reason. It is dropped
+  from the required checks in `ci` and from the gate's problems, so a re-gate after its own HOLD (or MERGE) reads like
+  a first run. Otherwise every hold would re-hold itself. Those
   earlier runs on this head (statuses, or gate comments declaring the head) are listed in a separate `history` field
   of the command's output, for people. It is never sent to Jev, and an older head's runs never appear. The command
   prints `{"input": {…}, "history": […]}` (with `--decide`, plus `"decision"`): `input` is exactly what Jev decides
@@ -442,8 +452,11 @@ the lead or a person. Send Jev evidence, not conclusions.
   doesn't collect, write it to a file and pass `--extra-evidence <file>`. It goes into `input.review` as "additional
   evidence supplied by the caller (<file>; not verified by this helper)", whitespace-collapsed, at most 1500
   characters, and redacted like other free text. An empty or missing file stops the command (exit 2). The gate's own
-  reports (a comment a gate status links to, one under the configured gate heading, or one headed `## jev-merge`) are
-  kept out of every other collector too: the review fallback, the blast radius, and the review and QA comment sources. Free text is
+  reports are kept out of every other collector too: the review fallback, the blast radius, and the review and QA
+  comment sources. A gate report is a comment a gate status links to, one under the configured gate heading, one
+  headed `## jev-merge`, or one reporting a gate result: its first line mentions Jev or the merge gate
+  ("integ-codex: live Jev merge gate HOLD"), or it holds the helper's own "merge gate: HOLD (…)" line. One signed by a
+  review or QA seat stays evidence. Free text is
   redacted before it
   goes to Jev. The helper refuses if the PR's head or base moves while it collects. A live, not stubbed, Jev `merge`
   in the act band merges on its own (exit 0). A live `merge` below the act bar (review or uncertain band) is NEEDS
