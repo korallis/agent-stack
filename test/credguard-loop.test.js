@@ -1,5 +1,5 @@
 // WO32: the credential guard must never loop. Where mise doesn't activate `vercel`/`neon` in a project, its shim execs
-// the next one on PATH, which was the guard again: guard -> shim -> guard at full CPU (hc, 2026-09-30). These tests use
+// the next one on PATH, which was the guard again: guard -> shim -> guard at full CPU (a live project, 2026-09-30). These tests use
 // shims that behave like mise's (exec the next same-named command on PATH, skipping their own dir). Every run has a hard
 // timeout, so a regression fails instead of hanging the suite.
 import { test } from "node:test";

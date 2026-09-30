@@ -12,7 +12,7 @@ metadata:
     version: "2026-09-29"
     stage: shipped
     last_verified: "2026-09-29"
-    source_evidence: "agent-project-check MTA / HC-Prime: 0 FAIL 0 WARN; rig spec audit clean; rig doctor --spec conformance OK; OpenRig 0.5.17 references"
+    source_evidence: "agent-project-check on two live projects: 0 FAIL 0 WARN; rig spec audit clean; rig doctor --spec conformance OK; OpenRig 0.5.17 references"
 ---
 
 # OpenRig project setup (agent-stack)
@@ -45,6 +45,9 @@ Remaining INDETERMINATEs that are by design: `reviewed` in project views (review
 binding) and `adopted` (compares with OpenRig's own build) — not project faults.
 
 ## The order
+The kernel operator runs all of this from one request with the `project-onboarding` skill and `agent-project-onboard`
+(an answers file, dry run first). The steps below are what it does, and what to check by hand.
+
 1. `agent-project-new …` (machine prerequisites come from `~/Projects/agent-stack/install.sh`).
 2. The owner writes `docs/PLAN.md`; send ONLY the lead: `rig send coord-lead-claude@<rig> "Build docs/PLAN.md"`.
 3. The lead + architect produce, before any build dispatch:
@@ -138,7 +141,7 @@ New projects get these from the template. `agent-project-check` WARNs when an ex
   - never prompt (below);
   - the merge gate (cross-family review, live Jev act band, merge pinned to head; integrator role).
 
-## Adopting an existing repo (worked example: fortis-secure, trunk `master`)
+## Adopting an existing repo (worked example: an existing Next.js app on `master` with Vercel and Neon)
 `agent-project-new` detects an existing repo (commits + origin) and adopts it as it is:
 - **Trunk:** `origin/HEAD` (e.g. `master`). Worktrees start from `origin/<trunk>`; PRs target the trunk; `@TRUNK@` fills
   the seats' startup context and the CULTURE specifics.
@@ -149,7 +152,7 @@ New projects get these from the template. `agent-project-check` WARNs when an ex
   repo's own AGENTS.md, README, .gitignore, Playwright config) is the lead's first slice, as a PR.
 - **Merge gate:** the repo's own gate is adopted, not replaced.
   - `agent-project-new` keeps an existing ruleset or branch protection (it adds the kit's only when there is none).
-  - Record the required checks and the merge path in CULTURE specifics. Fortis: ruleset checks `verify` +
+  - Record the required checks and the merge path in CULTURE specifics. In the example: ruleset checks `verify` +
     `qa-evidence`, squash only, and a `jev-approved` label that arms GitHub auto-merge.
   - The merge owner applies such a label only after the cross-family review and the live Jev `review.merge_gate` act
     band on the exact head. Never merge around the ruleset.

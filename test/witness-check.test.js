@@ -20,7 +20,7 @@ const mission = (m, status, waves) => {
   const wy = waves.map(w => `  - id: ${w.id}\n    slices: [${w.slices.join(", ")}]\n${w.extra ?? ""}`).join("");
   write(join(W, "missions", m, "mission.yaml"), `kind: mission\nmetadata:\n  name: ${m}\n  status: ${status}\n${waves.length ? `arrangement:\n  waves:\n${wy}` : ""}`);
 };
-// m1: w01 witnessed by a member (hc layout); w02 not; w03 opts out; w04 finished; w06 has only a feature NAMED witness
+// m1: w01 witnessed by a member (project A layout); w02 not; w03 opts out; w04 finished; w06 has only a feature NAMED witness
 mission("m1", "active", [
   { id: "w01", slices: ["A1", "A2", "AW"] }, { id: "w02", slices: ["B1"] },
   { id: "w03", slices: ["C1"], extra: "    no-witness: docs only\n" }, { id: "w04", slices: ["D1"] },
@@ -45,7 +45,7 @@ mission("m6", "active", [
 slice("m6", "01-u0", "U0", "status: building\nui: true");
 for (const [d, id] of [["02-j1", "J1"], ["03-k1", "K1"], ["04-l1", "L1"]]) slice("m6", d, id, "status: building");
 slice("m6", "05-n1", "N1", "status: building\nui: true # a screen");
-// m2 shares global wave w02 (still unwitnessed) and witnesses w05 with a follow-on wave (mta layout)
+// m2 shares global wave w02 (still unwitnessed) and witnesses w05 with a follow-on wave (project B layout)
 mission("m2", "active", [{ id: "w02", slices: ["E1"] }, { id: "w05", slices: ["F1"] }, { id: "w05w", slices: ["FW"] }]);
 slice("m2", "01-e1", "E1", "status: building"); slice("m2", "02-f1", "F1", "status: building");
 slice("m2", "03-m2-w-witness", "FW", "status: shaped");

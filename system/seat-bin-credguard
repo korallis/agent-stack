@@ -36,7 +36,7 @@ NAME = {"neonctl": "neon", "vc": "vercel"}.get(tool, tool)
 
 # A version manager's shim is never the real CLI. Where mise doesn't activate the tool (a project pins another node), its
 # shim execs the next `vercel`/`neon` on PATH, which is this guard again: guard -> shim -> guard, an endless loop at full
-# CPU in one process (2026-09-30, hc). So shims are skipped (mise's, and any other manager's `shims` dir), and the real
+# CPU in one process (2026-09-30, one project). So shims are skipped (mise's, and any other manager's `shims` dir), and the real
 # CLI comes from the next plain entry on PATH, else from mise's node installs, newest version first.
 def is_shim(p):
     rp = os.path.realpath(p)

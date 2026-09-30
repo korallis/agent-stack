@@ -26,7 +26,7 @@ fs.writeFileSync(list, JSON.stringify([
   row("unsent", "lee@external", null, null),
   row("failed", "lee@external", null, "failed"),
   row("never", "lee@external", null, "never-posted"),
-  row("agent", "impl@hc", null, "posted"),
+  row("agent", "impl@shop", null, "posted"),
 ]));
 function run(args = [], env = {}) {
   fs.rmSync(calls, { force: true });

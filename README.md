@@ -1,16 +1,101 @@
 # agent-stack
 
-**Write a plan. Get working, user-tested software back.**
+**Tell it what to build. Get tested, reviewed, merged software back.**
 
-agent-stack turns one Linux computer into a software team made of AI coding agents. You describe what you want in
-`docs/PLAN.md`. The team splits it into features, writes browser tests first, builds, uses the result the way a person
-would, reviews it with a second AI family, and merges it through a gate. You approve the feature list once, sign off
-risky changes, and answer the questions only you can answer.
+agent-stack turns one Linux computer into a software team of AI coding agents. You talk to one agent, the operator:
+"onboard this repo, here is what I want". It sets up a team for the project, the team plans the work, writes the tests
+first, builds, uses the result the way a person would, has a second AI family review it, and merges it through a gate.
+You approve the plan and the risky steps. Everything else runs on its own.
 
 It is glue and configuration around existing tools: [OpenRig](https://www.npmjs.com/package/@openrig/cli) runs the
-team, Claude Code and Codex CLI are the agents' workspaces, [CLIProxyAPI](https://github.com/router-for-me/CLIProxyAPI)
+teams, Claude Code and Codex CLI are the agents' workspaces, [CLIProxyAPI](https://github.com/router-for-me/CLIProxyAPI)
 pools your subscriptions, [TypeSafe Jev](https://typesafe.ai) makes the small typed decisions (who builds this, may
 this merge), and Playwright gives the agents a real browser.
+
+## How it works
+
+```mermaid
+flowchart LR
+  you([You]) -- "onboard shop" --> op[Operator]
+  op -- "sets up" --> team[Project team]
+  team -- "plan ready" --> op
+  op -- "plan, questions, daily summary" --> you
+  team --> pr[Pull request]
+  pr --> gate{Merge gate}
+  gate -- "CI + other-family review + QA ship verdict + live Jev" --> trunk[(Trunk)]
+  trunk --> witness[Fresh agent uses it on the deployed app]
+```
+
+- **Operator.** An always-on agent in OpenRig's kernel rig. You talk to it; it sets up and watches the project teams.
+- **Rig.** One project's team: a lead, an architect, test authors, builders, QA, reviewers of two AI families, and a
+  merge owner. Four sizes: `core` (4 seats), `small` (10), `build` (14), `full-stack` (27).
+- **Seat.** One agent with a role, its own git worktree and its own conversation, named `<pod>-<member>@<rig>` (for
+  example `coord-lead-claude@shop`).
+- **Queue.** Seats hand work to each other as queue rows; every row has one owner (`rig queue list`).
+- **Merge gate.** A pull request merges only when CI, a review by the other AI family, QA's ship verdict for that exact
+  commit and a live Jev decision all agree.
+- **Witness.** After a wave of features merges, a fresh agent that built none of it uses them on the deployed app and
+  records what it saw.
+
+Six workflow skills set how every team verifies and writes: a feature map in `docs/VERIFY.md`, a real-user bug review
+before merge, a blast-radius check on risky diffs, named review lenses, and plain writing. [docs/SKILLS.md](docs/SKILLS.md)
+lists them with every other skill.
+
+## Talk to your operator
+
+Attach to the operator's terminal and type, or send it a message:
+
+```bash
+# Illustrative: needs a running kernel rig (the README test checks each command and flag exists).
+tmux attach -t operator-agent@kernel
+rig send operator-agent@kernel "Onboard github.com/acme/shop: an existing Next.js app on Vercel and Neon. Small team. Fix issues #12 and #14."
+```
+
+Some conversations, and what happens next:
+
+> **You:** Onboard github.com/acme/shop. It's an existing Next.js app on Vercel with a Neon database. Small team. Here
+> are the issues to fix: #12 and #14.
+>
+> **Operator:** reads the repo (its README, CI, branch rules, the two issues), then asks in one message only what it
+> can't find out: whether merges deploy to production, who approves the plan and the merges (default for merges: the
+> other-family review plus live Jev, no approval per PR from you), and whether #14 may touch production data.
+
+> **You:** Merges deploy to production, that's fine for now. No approval per PR. #14 needs my go before production.
+>
+> **Operator:** clones the repo, sets up a development database branch with its own password so no agent ever holds a
+> production credential, runs `agent-project-onboard` (dry run first), starts a 10-seat team, writes your answers into
+> the team's rules, and briefs the lead. When the lead reports the plan ready, the operator checks it (research in every
+> slice, waves, a witness at the end of each wave, `docs/VERIFY.md`) and sends it to you to approve, unless you told it
+> to approve plans for you. Builders start only after that.
+
+> **You:** How is shop going?
+>
+> **Operator:** answers from the queue and the team's progress: what merged (with QA evidence), what is being built, and
+> anything waiting for you.
+
+> **You:** Start a new project: a booking site for a yoga studio. Here is my plan. Use a build team.
+>
+> **Operator:** creates a private GitHub repo with the starter kit, a 14-seat team, and the same plan review before any
+> builder starts.
+
+The operator follows the `project-onboarding` skill ([skills/project-onboarding/SKILL.md](skills/project-onboarding/SKILL.md)),
+and asks you before anything in [What it never does without you](#what-does-it-never-do-without-me).
+
+### A worked example
+
+A real onboarding, anonymised: an existing Next.js app on Vercel and Neon, trunk `master`, deploy on merge, two GitHub
+issues assigned to the owner. One was a scheduling change (store the actual job duration and use it for crew
+allocation). The other was a production data cleanup.
+
+1. The operator adopted the repo as it was: trunk `master`, its own required checks and its label-armed auto-merge.
+   A local `main` ref mirrors `master` for OpenRig.
+2. It created a Neon `dev` branch with its own password and a development Blob store. Seats got only `.env.local`.
+   Production and preview env files stayed with the owner.
+3. It started a `small` team (10 seats), wrote the plan from the owner's words and the issues, and recorded the owner's
+   decisions in the team's CULTURE: never close an issue (comment and hand it back to its creator to re-test), no
+   production data change without the owner's go, and merges deploy to production.
+4. The lead turned the plan into one mission per issue. The schema change got its own wave. The data cleanup was
+   rehearsed on a fresh database branch, and its report went to the owner as one decision request.
 
 ## Quick start
 
@@ -33,34 +118,24 @@ agent-login claude claude-a        # once per Claude subscription (claude-b, ...
 agent-login codex codex-a          # once per ChatGPT subscription
 ```
 
-Paste your TypeSafe key into `~/.config/agent-stack/secrets/typesafe.env`, then start a project (below).
-
-## How it works
-
-```text
-you --> docs/PLAN.md --> lead --> queue --> architect, test author, implementers
-                                                          |
-                                                     pull request
-                                                          |
-                      QA (real browser) + reviewer (other AI family) + Jev merge gate
-                                                          |
-                                               merge --> witness (fresh agent)
-```
-
-- **Rig.** One project's team, started from a spec in `~/Projects/<Project>-work/rig/`. `rig ps` lists the running rigs.
-- **Seat.** One agent with a role, its own git worktree and its own conversation. A seat's name is
-  `<pod>-<member>@<rig>`, for example `coord-lead-claude@myapp`.
-- **Queue.** Seats hand work to each other as queue rows. Every row has one owner (`rig queue list`).
-- **Merge gate.** A pull request merges only when CI, a review by the other AI family, QA's ship verdict and a live Jev
-  decision agree on the exact commit.
-- **Witness.** After a wave of features merges, a fresh agent that built none of it uses them on the deployed app and
-  records what it saw.
-
-Every rig also follows six workflow skills: a feature map in `docs/VERIFY.md`, a real-user bug review before merge,
-a blast-radius check on risky diffs, named review lenses, and plain writing. [docs/SKILLS.md](docs/SKILLS.md) lists
-them with every other skill.
+Paste your TypeSafe key into `~/.config/agent-stack/secrets/typesafe.env`. Then talk to your operator (above), or
+create a project yourself (examples below).
 
 ## Examples
+
+### Onboard a project from an answers file
+
+The operator writes a small answers file from your conversation and runs the helper, a dry run first:
+
+```bash
+# Illustrative: needs your answers, plan and decisions files (the README test checks each command and flag exists).
+cp ~/Projects/agent-stack/rig/template/onboarding/answers.example.env shop.env
+agent-project-onboard shop.env
+agent-project-onboard shop.env --apply
+```
+
+The dry run shows every step. `--apply` clones the repo, pulls only the Development env, creates the team, puts your
+plan and decisions in place, and renders the lead's brief for the operator to review and send.
 
 ### Create a project for a new repo
 
@@ -197,6 +272,34 @@ agent-credguard-check
 creates empty directories, sets the secrets directory to 0700, fills the npm cache while it checks the Playwright
 browser, and Claude Code may create its own `~/.claude.json` when asked for its MCP servers. `agent-skills-check` prints one line per skill
 source. `agent-credguard-check` shows which running seats have `neon` and `vercel` behind the credential guard.
+
+## FAQ
+
+### What does it cost?
+Your AI subscriptions (Claude and ChatGPT; Kimi optional), pooled through CLIProxyAPI, plus a TypeSafe key for Jev and a
+machine that stays on. A bigger team can work on more slices in parallel and uses subscription time faster: pick
+`small` for a handful of issues and `full-stack` only for a large new product. `agent-proxy-status` shows how each account is doing.
+
+### Is it safe to run?
+Seats run with permission checks off so they can work unattended, so run it on a machine and accounts you are
+comfortable letting agents use. Agents get development credentials only: a development database branch with its own
+password, a development file store, and browser logins typed by name so values never reach a transcript. A guard in
+front of `neon` and `vercel` refuses to print connection strings or tokens.
+
+### What does it never do without me?
+It never touches production data or production env files, never changes branch protection or merge settings on an
+existing repo, never adds seats beyond the agreed team, and never closes issues, publishes releases or changes
+billing and domains. Risky pull requests (logins, payments, data deletion, database changes) wait for your OK unless
+you gave standing approval.
+
+### How do I watch it work?
+`rig ps` lists the teams, `rig ps --nodes --rig <rig>` shows what each seat is doing, and `tmux attach -t <seat>`
+shows one seat live. The lead sends a daily summary; decisions reach you as desktop notifications (and Slack, if set
+up).
+
+### What kinds of projects fit?
+Web apps, CLIs and APIs, new or existing. The team proves each feature through the interface its users use: a browser
+for web apps, the command for a CLI, the HTTP API for an API.
 
 ## Read more
 

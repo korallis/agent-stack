@@ -79,7 +79,7 @@ place "$S/system/seat-bin-credguard" "$L/seat-bin/credguard" 755
 for f in neon neonctl vercel vc; do link "$L/seat-bin/credguard" "$L/seat-bin/$f"; done
 mkdir -p "$L/seat-tools"; place "$S/system/seat-tools-rig" "$L/seat-tools/rig" 755   # queue writes get the project tag + EC-3 worktree_path
 link "$L/bin/agent-login" "$B/agent-login"
-for f in claude-pool agent-heavy openrig-ensure playwright-browsers agent-claude-trust openrig-upgrade openrig-update agent-project-new agent-project-check agent-never-prompt-check agent-credguard-check agent-skills-check agent-seat-recap agent-seat-handover agent-human-inbox-tidy openrig-daemon-cycle openrig-tmux-adopt agent-queue-backfill agent-refresh-guidance agent-project-repair agent-waves-sync; do link "$S/bin/$f" "$B/$f"; done
+for f in claude-pool agent-heavy openrig-ensure playwright-browsers agent-claude-trust openrig-upgrade openrig-update agent-project-new agent-project-onboard agent-project-check agent-never-prompt-check agent-credguard-check agent-skills-check agent-seat-recap agent-seat-handover agent-human-inbox-tidy openrig-daemon-cycle openrig-tmux-adopt agent-queue-backfill agent-refresh-guidance agent-project-repair agent-waves-sync; do link "$S/bin/$f" "$B/$f"; done
 link "$S/proxy/status.py" "$B/agent-proxy-status"
 if [ $CHECK = 0 ] || mise where "node@$NODE_FOR_JEV" >/dev/null 2>&1; then
   launcher jev-mcp "$NODE_FOR_JEV" "$S/jev/bin/jev-mcp.js"
@@ -209,6 +209,10 @@ claude mcp get playwright 2>/dev/null | grep -qF -- "Args: -y @playwright/mcp@$P
 codex plugin list 2>/dev/null | grep -q "superpowers.*installed" && ok "Superpowers (Codex)" || todo "Superpowers (Codex)"
 command -v toon >/dev/null && ok "toon CLI" || todo "toon CLI"
 command -v neon >/dev/null && ok "Neon CLI + skills" || todo "Neon CLI (npm i -g neon; then neon login)"
+
+step "Kernel operator: the project-onboarding pointer"
+og=(); [ $CHECK = 1 ] && og=(--check)
+{ "$S/system/operator-guidance" "${og[@]}" || true; } | while IFS= read -r l; do case $l in "ok   "*) ok "${l#ok   }";; *) todo "${l#--   }";; esac; done
 
 step "Skills (one line per source; docs/SKILLS.md)"
 { "$S/bin/agent-skills-check" || true; } | while IFS= read -r l; do   # its WARN exit must not stop install.sh
