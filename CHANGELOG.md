@@ -39,6 +39,9 @@ has no version numbers; entries are grouped by the day they merged, newest first
 - The lead's and the merge owner's role texts and the CULTURE template use the new Jev helpers.
 
 ### Fixed
+- `agent-merge-evidence` explains GitHub's UNSTABLE merge state. It says whether only non-required checks are red
+  ("every required check passes") or a required one is, and names each non-passing check. Before, a red optional
+  check read as a bare "UNSTABLE". The gate's own status is never listed.
 - `agent-merge-evidence` works where every seat posts to GitHub as one shared login. A login mapped to `"shared"`
   (or unmapped) takes the reviewer's family from the review's first-line heading via `identityHeadings`, and the
   exact-head rule is unchanged. A status description naming a seat of the author's own family no longer counts as

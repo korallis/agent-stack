@@ -410,6 +410,13 @@ export function contextState(req, { checks, statuses, checkRuns }) {
 export const GATE_CONTEXT = "jev-merge";
 export function mergeStateLine(f) {
   const GATE = f.gateContext || GATE_CONTEXT;
+  if (f.mergeState === "UNSTABLE" && f.unstable !== undefined) {
+    const u = f.unstable;
+    if (!u) return "merge state: UNSTABLE (the checks behind it could not be read)";
+    if (u.required.length) return `merge state: UNSTABLE (required check(s) not passing: ${u.required.join(", ")}${u.other.length ? `; also non-required: ${u.other.join(", ")}` : ""})`;
+    if (u.other.length) return `merge state: UNSTABLE (only non-required checks not passing: ${u.other.join(", ")}; every required check passes)`;
+    return "merge state: UNSTABLE (no failing or pending check visible to this helper)";
+  }
   if (f.mergeState !== "BLOCKED") return `merge state: ${f.mergeState || "unknown"}`;
   const reasons = [];
   if (f.mergeable && f.mergeable !== "MERGEABLE") reasons.push(`mergeable ${f.mergeable}`);
@@ -555,17 +562,31 @@ export function gather(pr, { repo, mission, slice, change, deploy, rollback, con
   }
   // No required checks reported: when the base has no required contexts at all (an unprotected integration branch),
   // report what actually ran on the exact head instead of a bare MISSING. Unreadable -> null (MISSING stands).
+  // Every check run on the head, all pages; throws when the list can't be read in full.
+  const readCheckRuns = () => {
+    const pages = ghJson("api", `repos/${nwo}/commits/${v.headRefOid}/check-runs?per_page=100`, "--paginate", "--slurp") || [];
+    const runs = (Array.isArray(pages) ? pages : [pages]).flatMap((p) => p.check_runs || []);
+    const total = Math.max(0, ...(Array.isArray(pages) ? pages : [pages]).map((p) => p.total_count || 0));
+    if (runs.length < total) throw new Error("check runs incomplete");
+    return runs;
+  };
   let observedChecks = null;
   if (!checks.length) {
     try {
-      if (!readBaseRequirements().protected) {   // no ruleset or protection: nothing is required, so show what ran
-        const pages = ghJson("api", `repos/${nwo}/commits/${v.headRefOid}/check-runs?per_page=100`, "--paginate", "--slurp") || [];
-        const runs = (Array.isArray(pages) ? pages : [pages]).flatMap((p) => p.check_runs || []);
-        const total = Math.max(0, ...(Array.isArray(pages) ? pages : [pages]).map((p) => p.total_count || 0));
-        if (runs.length < total) throw new Error("check runs incomplete");
-        observedChecks = observedFrom(runs, statuses, [cfg.review.context, cfg.gate.context]);
-      }
+      if (!readBaseRequirements().protected)   // no ruleset or protection: nothing is required, so show what ran
+        observedChecks = observedFrom(readCheckRuns(), statuses, [cfg.review.context, cfg.gate.context]);
     } catch { observedChecks = null; }
+  }
+  // GitHub's UNSTABLE: mergeable, but some check or status on the head isn't passing. Say which, and whether any of
+  // them is required, so a red optional check doesn't read as a blocker (nor a required one hide behind the word).
+  let unstable;
+  if (v.mergeStateStatus === "UNSTABLE") {
+    try {
+      const required = new Set(readBaseRequirements().contexts.map((c) => c.context));
+      unstable = { required: [], other: [] };
+      for (const c of observedFrom(readCheckRuns(), statuses, [cfg.gate.context]).filter((x) => x.bucket !== "pass"))
+        (required.has(c.name.replace(/ \(status\)$/, "")) ? unstable.required : unstable.other).push(`${c.name} (${c.result})`);
+    } catch { unstable = null; }
   }
   let brb = null, brbWhere = null;
   if (mission && slice && cfg.qa.source === "proof") {
@@ -627,7 +648,7 @@ export function gather(pr, { repo, mission, slice, change, deploy, rollback, con
   return {
     pr: v.number, head: v.headRefOid, base: v.baseRefOid, baseRef: v.baseRefName, headRef: v.headRefName,
     mergeable: v.mergeable, mergeState: v.mergeStateStatus, reviewDecision: v.reviewDecision || null, isDraft: v.isDraft, change: change || v.title, checks,
-    requirements, observedChecks, gateHistory: gateRuns, gateContext: cfg.gate.context, reviewContext: cfg.review.context, sources: { review: cfg.review.source, qa: cfg.qa.source, gate: cfg.gate.source },
+    requirements, observedChecks, unstable, gateHistory: gateRuns, gateContext: cfg.gate.context, reviewContext: cfg.review.context, sources: { review: cfg.review.source, qa: cfg.qa.source, gate: cfg.gate.source },
     authorFamily: author.family, independentReview, reviewProblem, reviewNote,
     reviewVerdict: reviewVerdictFacts,
     // The report of the source the verdict came from, when the lines below don't already carry it (a fallback source).

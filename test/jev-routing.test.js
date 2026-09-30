@@ -999,3 +999,48 @@ process.stdout.write(typeof out === "string" ? out : JSON.stringify(out));
   // gateProblems never counts the gate's own check.
   assert.deepEqual(gateProblems(facts({ checks: [{ name: "verify", bucket: "pass" }] })), []);
 });
+
+// ---- WO45 addendum: UNSTABLE says which checks, and whether any is required ---------------------------------------
+test("merge state UNSTABLE: explained from non-required checks only, from a required one, or unreadable", () => {
+  const u = (unstable) => mergeStateLine({ mergeState: "UNSTABLE", unstable });
+  assert.equal(u({ required: [], other: ["lint (failure)", "preview (pending)"] }),
+    "merge state: UNSTABLE (only non-required checks not passing: lint (failure), preview (pending); every required check passes)");
+  assert.equal(u({ required: ["verify (failure)"], other: ["lint (failure)"] }), "merge state: UNSTABLE (required check(s) not passing: verify (failure); also non-required: lint (failure))");
+  assert.equal(u({ required: ["verify (failure)"], other: [] }), "merge state: UNSTABLE (required check(s) not passing: verify (failure))");
+  assert.equal(u(null), "merge state: UNSTABLE (the checks behind it could not be read)");
+  assert.equal(u({ required: [], other: [] }), "merge state: UNSTABLE (no failing or pending check visible to this helper)");
+  assert.equal(mergeStateLine({ mergeState: "UNSTABLE" }), "merge state: UNSTABLE", "facts without the explanation: as before");
+});
+
+test("agent-merge-evidence end to end: UNSTABLE from a non-required check, from a required one; the gate's own is not a reason", () => {
+  const ghDir = join(root, "gh-unstable"); fs.mkdirSync(ghDir, { recursive: true });
+  fs.writeFileSync(join(ghDir, "gh"), `#!${process.execPath}
+const f = JSON.parse(require("fs").readFileSync(process.env.GH_FIXTURE, "utf8")), a = process.argv.slice(2).join(" ");
+if (a.includes("/protection")) { process.stderr.write("gh: Branch not protected (HTTP 404)"); process.exit(1); }
+if (a.includes("/check-runs") && f.runsFail) { process.stderr.write("HTTP 502"); process.exit(1); }
+const out = a.startsWith("pr view") ? f.view : a.startsWith("pr diff") ? f.diff : a.startsWith("pr checks") ? f.checks : a.includes("/statuses") ? f.statuses
+  : a.includes("/rules/branches/") ? f.rules : a.includes("/check-runs") ? f.checkRuns : undefined;
+if (out === undefined) { process.stderr.write("unexpected gh " + a); process.exit(9); }
+process.stdout.write(typeof out === "string" ? out : JSON.stringify(out));
+`, { mode: 0o755 });
+  const cr = (id, name, conclusion) => ({ id, name, status: conclusion ? "completed" : "in_progress", conclusion });
+  const fixture = { view: { number: 9, title: "x", createdAt: "2026-09-30T09:00:00Z", headRefOid: H, baseRefOid: B, baseRefName: "main", headRefName: "agent/impl-codex-1",
+      mergeable: "MERGEABLE", mergeStateStatus: "UNSTABLE", reviewDecision: "", isDraft: false, comments: [], reviews: [] },
+    diff: "diff --git a/src/a.ts b/src/a.ts\n--- a/src/a.ts\n+++ b/src/a.ts\n@@ -1 +1 @@\n-x\n+y\n",
+    checks: [{ name: "verify", state: "SUCCESS", bucket: "pass" }],
+    statuses: [{ context: "independent-review", state: "success", description: "PASS", creator: { login: "rev" } }, { context: "jev-merge", state: "failure", description: "earlier hold" }],
+    rules: [{ type: "required_status_checks", parameters: { required_status_checks: [{ context: "verify" }] } }],
+    checkRuns: [{ total_count: 3, check_runs: [cr(1, "verify", "success"), cr(2, "lint", "failure"), cr(3, "preview", null)] }] };
+  const fx = join(root, "unstable-fixture.json");
+  const run = (over = {}) => { fs.writeFileSync(fx, JSON.stringify({ ...fixture, ...over }));
+    const r = spawnSync(process.execPath, [join(repo, "orchestration/merge-evidence.js"), "9", "--repo", "o/r"], { encoding: "utf8",
+      env: { PATH: `${ghDir}:${process.env.PATH}`, OPENRIG_WORK_ROOT: join(root, "unstable-work"), GH_FIXTURE: fx, AGENT_BRB_REQUIRED_SINCE: "" } });
+    assert.equal(r.status, 0, r.stderr); return JSON.parse(r.stdout); };
+  assert.match(run().limits, /merge state: UNSTABLE \(only non-required checks not passing: preview \(in_progress\), lint \(failure\); every required check passes\)/,
+    "non-required only; the gate's own earlier jev-merge failure is not listed");
+  const req = run({ checks: [{ name: "verify", state: "FAILURE", bucket: "fail" }],
+    checkRuns: [{ total_count: 2, check_runs: [cr(1, "verify", "failure"), cr(2, "lint", "success")] }] });
+  assert.match(req.limits, /merge state: UNSTABLE \(required check\(s\) not passing: verify \(failure\)\)/);
+  assert.match(run({ runsFail: true }).limits, /merge state: UNSTABLE \(the checks behind it could not be read\)/);
+  assert.match(run({ view: { ...fixture.view, mergeStateStatus: "CLEAN" } }).limits, /merge state: CLEAN;/, "other states unchanged");
+});
