@@ -77,10 +77,17 @@ def loop_risk(path):
             try:
                 r = subprocess.run([os.path.join(os.path.dirname(GUARD), t), "--credguard-resolve"], capture_output=True,
                                    text=True, timeout=15, env={"HOME": HOME, "PATH": path})
-                out = r.stdout.strip()
-            except (OSError, subprocess.TimeoutExpired):
-                bad.append(f"{t}: resolving timed out"); continue
-            if out != "none" and ("/shims/" in out or os.path.basename(os.path.realpath(out)) == "mise"):
+                out, rc = r.stdout.strip(), r.returncode
+            except (OSError, subprocess.TimeoutExpired) as e:
+                bad.append(f"{t}: resolution not verified ({type(e).__name__})"); continue
+            # Only two answers are valid: exit 0 with the real CLI's path, or exit 1 with "none" (no real CLI installed:
+            # the guard then stops with an error, it can't loop). Anything else is an unverified resolution.
+            if rc == 1 and out == "none":
+                continue
+            if rc != 0 or not out.startswith("/") or "\n" in out:
+                err = " ".join((r.stderr or "").split())[:120]
+                bad.append(f"{t}: resolution not verified (exit {rc}{': ' + err if err else ''})"); continue
+            if "/shims/" in out or os.path.basename(os.path.realpath(out)) == "mise":
                 bad.append(f"{t} -> {out} (a shim)")
         _resolved[path] = "; ".join(bad)
     return _resolved[path]

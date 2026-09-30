@@ -57,14 +57,14 @@ def resolve_real():
             p = os.path.join(d or ".", name)
             if os.path.isfile(p) and os.access(p, os.X_OK) and os.path.realpath(p) != me and not is_shim(p):
                 return p
+    # Rank the canonical install dirs, not their spellings: mise's aliases (`22`, `22.10`, `latest`) are symlinks to a
+    # real version dir, and an alias's own name must not decide which install is newest.
+    installs = {os.path.realpath(d) for d in glob.glob(os.path.expanduser("~/.local/share/mise/installs/node/*"))}
     for name in names:
-        found = {}
-        for p in glob.glob(os.path.expanduser(f"~/.local/share/mise/installs/node/*/bin/{name}")):
-            rp = os.path.realpath(p)
-            if os.path.isfile(rp) and os.access(rp, os.X_OK) and rp != me:
-                found.setdefault(rp, p)
+        found = [os.path.join(d, "bin", name) for d in installs if os.path.isdir(d)]
+        found = [p for p in found if os.path.isfile(p) and os.access(p, os.X_OK) and os.path.realpath(p) != me]
         if found:
-            return max(found.values(), key=version_key)
+            return max(found, key=version_key)
     return None
 
 

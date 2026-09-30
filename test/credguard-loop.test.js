@@ -85,3 +85,15 @@ test("a CLI from mise's node installs runs on that install's own node, even with
   assert.equal(r.status, 0, r.out); assert.match(r.out, /^node-30 ran vercel whoami/);
   fs.rmSync(join(home, ".local/share/mise/installs/node/30.0.0"), { recursive: true });
 });
+
+test("mise's aliases (22, 22.10, latest) never make an older install win (QA round 1)", () => {
+  const node = join(home, ".local/share/mise/installs/node");
+  fs.rmSync(node, { recursive: true, force: true });
+  for (const v of ["22.9.0", "22.10.0", "20.19.1"]) exe(join(node, v, "bin/vercel"), `echo "real vercel ${v}"`);
+  for (const [alias, to] of [["22", "22.10.0"], ["22.10", "22.10.0"], ["latest", "22.10.0"], ["20", "20.19.1"], ["lts", "20.19.1"]])
+    fs.symlinkSync(join(node, to), join(node, alias));
+  const r = run("vercel --credguard-resolve", [seat, shims]);
+  assert.equal(r.status, 0, r.out); assert.equal(r.out.trim(), join(node, "22.10.0/bin/vercel"));
+  assert.match(run("vercel whoami", [seat, shims]).out, /^real vercel 22\.10\.0/);
+  fs.rmSync(node, { recursive: true, force: true });
+});
