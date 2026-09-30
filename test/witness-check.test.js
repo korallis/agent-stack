@@ -269,6 +269,12 @@ test("agent-project-check: a failed queue read WARNs with the exit code; an empt
     assert.equal(find(r, "queue rows").length, 0);
     rigStub(`echo 'not json'`);
     assert.match(find(rows(), "could not read the queue")[0].detail, /not JSON/);
+    rigStub(`exit 0`);   // QA PR60: exit 0 with no output is not an empty queue
+    assert.match(find(rows(), "could not read the queue")[0].detail, /exited 0 with no output/);
+    for (const [out, kind] of [["null", "NoneType"], ['{"rows": []}', "dict"]]) {
+      rigStub(`echo '${out}'`);
+      assert.match(find(rows(), "could not read the queue")[0].detail, new RegExp(`not a list of rows \\(${kind}\\)`), out);
+    }
     rigStub(`echo '${JSON.stringify([row(iso(3 * 86400e3))])}'`);   // only rows older than the 24h window
     r = rows();
     assert.equal(find(r, "could not read the queue").length, 0);

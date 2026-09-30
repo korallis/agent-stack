@@ -305,8 +305,14 @@ try:
     qr = subprocess.run(["rig", "queue", "list", "-A", "-a", "--full", "--json", "--limit", "20000"], capture_output=True, text=True, timeout=180)
     if qr.returncode != 0:
         rep("WARN", "could not read the queue", f"rig queue list exit {qr.returncode}: {(qr.stderr or qr.stdout).strip()[-200:]}")
+    elif not qr.stdout.strip():
+        rep("WARN", "could not read the queue", "rig queue list exited 0 with no output")
     else:
-        q = json.loads(qr.stdout or "[]")
+        parsed = json.loads(qr.stdout)
+        if isinstance(parsed, list):
+            q = parsed
+        else:
+            rep("WARN", "could not read the queue", f"rig queue list returned JSON that is not a list of rows ({type(parsed).__name__})")
 except (OSError, subprocess.TimeoutExpired) as e:
     rep("WARN", "could not read the queue", f"rig queue list: {e}")
 except json.JSONDecodeError:
