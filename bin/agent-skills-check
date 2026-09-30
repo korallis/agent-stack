@@ -35,9 +35,10 @@ def has_skill(path):
 
 
 # 1. Ours: this repo's skills, linked (not copied) into both skill dirs.
-bad = [f"{d}/{n}" for n in OURS for d in DIRS if os.path.realpath(f"{d}/{n}") != os.path.realpath(f"{S}/skills/{n}")]
+bad = [f"{d}/{n}" for n in OURS for d in DIRS
+       if os.path.realpath(f"{d}/{n}") != os.path.realpath(f"{S}/skills/{n}") or not has_skill(f"{d}/{n}")]
 row("WARN" if bad else "ok", "ours (skills/ in this repo)",
-    f"missing or not linked to {S}/skills: {', '.join(bad)}" if bad else f"{', '.join(OURS)} linked for Claude and Codex")
+    f"missing, not linked to {S}/skills, or without SKILL.md: {', '.join(bad)}" if bad else f"{', '.join(OURS)} linked for Claude and Codex")
 
 # 2. OpenRig core: every skill of the installed openrig-core plugin, linked into both dirs.
 core = f"{OPENRIG}/daemon/assets/plugins/openrig-core/skills"

@@ -117,3 +117,39 @@ test("install.sh's skills step: WARN lines become todos and a failing check neve
   assert.equal(r.status, 0, r.stderr);
   assert.match(r.stdout, /ok  A: fine\n--  WARN: B: missing\n   info  C: x\nAFTER/);
 });
+
+test("ours: a link to the right path with no skill behind it is a WARN (QA round 1)", () => {
+  // Restore the real check script (the previous test replaced it with a stub).
+  fs.copyFileSync(join(repo, "bin/agent-skills-check"), join(S, "bin/agent-skills-check"));
+  setUpAll(); ln(shared, join(S, "rig/template/openrig-shared")); skill(join(shared, "skills/process/dogfood"));
+  fs.writeFileSync(join(stubs, "codex"), "#!/bin/sh\necho 'superpowers@openai-api-curated  installed, enabled  x  /x'\n", { mode: 0o755 });
+  fs.rmSync(join(S, "skills/agent-stack/SKILL.md"));
+  const { status, by } = check();
+  assert.equal(status, 1); assert.equal(by["ours (skills/ in this repo)"].level, "WARN");
+  assert.match(by["ours (skills/ in this repo)"].detail, /without SKILL.md/);
+  skill(join(S, "skills/agent-stack"));
+});
+
+test("install.sh's TypeSafe copy for Codex follows the INSTALLED plugin, never the cache dir that sorts last (QA round 1)", () => {
+  const src = fs.readFileSync(join(repo, "install.sh"), "utf8");
+  const a = src.indexOf("  # Codex has no Claude plugins"), b = src.indexOf("\n  fi\n", a) + 6;
+  const h = join(root, "tshome"), L = join(root, "tsL"), cache = join(h, ".claude/plugins/cache/typesafe-ai/typesafe");
+  const copy = join(h, ".agents/skills/typesafe-ai");
+  const put = (dir, v) => { fs.mkdirSync(dir, { recursive: true }); fs.writeFileSync(join(dir, "SKILL.md"), `version ${v}\n`); };
+  const json = (v) => { fs.mkdirSync(join(h, ".claude/plugins"), { recursive: true });
+    fs.writeFileSync(join(h, ".claude/plugins/installed_plugins.json"), JSON.stringify({ version: 2, plugins: { "typesafe@typesafe-ai":
+      [{ scope: "user", version: v, installPath: join(cache, v) }] } })); };
+  const runBlock = () => spawnSync("bash", ["-c", `set -euo pipefail\nHOME=${h}; L=${L}\n${src.slice(a, b)}\necho AFTER`], { encoding: "utf8" });
+  const backups = () => (fs.existsSync(join(L, "backups/skills")) ? fs.readdirSync(join(L, "backups/skills")).length : 0);
+  put(join(cache, "0.5.9/skills/typesafe-ai"), "0.5.9"); put(join(cache, "0.5.10/skills/typesafe-ai"), "0.5.10");   // "0.5.9" sorts last
+  json("0.5.10"); put(copy, "0.5.10");
+  let r = runBlock(); assert.match(r.stdout, /AFTER/, r.stderr);
+  assert.equal(fs.readFileSync(join(copy, "SKILL.md"), "utf8"), "version 0.5.10\n"); assert.equal(backups(), 0);   // current: untouched
+  put(copy, "0.5.9");
+  r = runBlock(); assert.match(r.stdout, /AFTER/, r.stderr);
+  assert.equal(fs.readFileSync(join(copy, "SKILL.md"), "utf8"), "version 0.5.10\n"); assert.equal(backups(), 1);   // stale: replaced, backed up
+  fs.rmSync(join(h, ".claude/plugins/installed_plugins.json"));
+  r = runBlock(); assert.match(r.stdout, /AFTER/, r.stderr); assert.equal(backups(), 1);                         // no record: no abort, no change
+  json("0.6.0");                                                                                                    // record points at a missing dir
+  r = runBlock(); assert.match(r.stdout, /AFTER/, r.stderr); assert.equal(fs.readFileSync(join(copy, "SKILL.md"), "utf8"), "version 0.5.10\n");
+});

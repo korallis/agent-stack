@@ -174,9 +174,12 @@ if [ $CHECK = 0 ]; then
   claude plugin install superpowers@claude-plugins-official >/dev/null 2>&1 || todo "claude plugin superpowers"
   claude plugin install vercel@claude-plugins-official >/dev/null 2>&1 || todo "claude plugin vercel@claude-plugins-official"
   codex plugin add superpowers@openai-api-curated >/dev/null 2>&1 || todo "codex plugin superpowers"
-  ts=$(ls -d "$HOME"/.claude/plugins/cache/typesafe-ai/typesafe/*/skills/typesafe-ai 2>/dev/null | tail -1)
   # Codex has no Claude plugins: it gets the plugin's typesafe-ai skill as a copy, refreshed when the plugin updates.
-  if [ -n "$ts" ] && ! diff -rq "$ts" "$HOME/.agents/skills/typesafe-ai" >/dev/null 2>&1; then
+  # The source is the version Claude has installed (installed_plugins.json), never whichever cache dir sorts last.
+  ts=$(jq -r '[.plugins["typesafe@typesafe-ai"][]? | select(.scope == "user")][0].installPath // empty' \
+    "$HOME/.claude/plugins/installed_plugins.json" 2>/dev/null || true)
+  ts=${ts:+$ts/skills/typesafe-ai}
+  if [ -n "$ts" ] && [ -f "$ts/SKILL.md" ] && ! diff -rq "$ts" "$HOME/.agents/skills/typesafe-ai" >/dev/null 2>&1; then
     mkdir -p "$HOME/.agents/skills" "$L/backups/skills"
     [ -e "$HOME/.agents/skills/typesafe-ai" ] && mv "$HOME/.agents/skills/typesafe-ai" "$L/backups/skills/agents-typesafe-ai-$(date +%Y%m%d%H%M%S)"
     cp -r "$ts" "$HOME/.agents/skills/"
