@@ -355,12 +355,15 @@ export function gateHistory(cfg, { statuses, notes, head }) {
 export function isGateReport(n, cfg, statuses = []) {
   const first = String(n.body || "").split("\n", 1)[0];
   const ctx = cfg.gate.context.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
-  // A comment reporting a merge-gate result (the merge owner's "live Jev merge gate HOLD", the helper's own
-  // "merge gate: HOLD (…)" pasted in): its first line mentions Jev or the merge gate, and it isn't signed by a review
-  // or QA seat (a reviewer's "re-review after the merge gate hold" is review evidence, not a gate report).
-  const signer = (first.replace(/^#+\s*/, "").match(/^([\w.@-]+)/) || [])[1] || "";
-  const reportsGate = (/\bjev\b|\bmerge[ _.-]?gate\b/i.test(first) || /^\s*merge gate: (PASS|HOLD|NEEDS CONFIRM)\b/im.test(String(n.body || "")))
-    && !/^(review|qa|reviewer)[-_]/i.test(signer);
+  // A PR comment reporting a merge-gate result (the merge owner's "live Jev merge gate HOLD", the helper's own
+  // "merge gate: HOLD (…)" pasted in): its first line names the merge gate, or Jev with a gate outcome word, or one of
+  // its own lines (not fenced or quoted) is the helper's outcome line; and it isn't signed by a review or QA seat. A
+  // GitHub review is never a gate report: its state is review evidence ("Review of Jev retry behaviour" included).
+  const own = ownLines(n.body), lead = own.find((l) => l) || "";   // the comment's own first line (not quoted or fenced)
+  const signer = (lead.replace(/^#+\s*/, "").match(/^([\w.@-]+)/) || [])[1] || "";
+  const reportsGate = n.kind !== "review" && !/^(review|qa|reviewer)[-_]/i.test(signer)
+    && (/\bmerge[ _.-]?gate\b/i.test(lead) || /\bjev\b.*\b(hold|merge|decision|band|gate)\b/i.test(lead)
+      || own.some((l) => /^merge gate: (PASS|HOLD|NEEDS CONFIRM)\b/.test(l)));
   return (statuses || []).some((s) => s.context === cfg.gate.context && s.target_url && s.target_url === n.url)
     || !!cfg.gate.headingRe?.test(first) || new RegExp(`^#+\\s*${ctx}\\b`, "i").test(first) || reportsGate;
 }
@@ -550,7 +553,9 @@ export function firstSection(body) {
     if (/^\s*(🤖|Co-Authored-By:)/.test(l)) continue;
     if (l.trim()) out.push(l.trim());
   }
-  return out.join(" ").replace(/\s+/g, " ").trim().slice(0, 600);
+  // Redacted whole, before and after joining lines (joining can form a credential), and only then cut: a cut can
+  // split a credential past the redactor.
+  return redact(redact(out.join("\n")).replace(/\s+/g, " ").trim()).slice(0, 600);
 }
 
 export function gather(pr, { repo, mission, slice, change, deploy, rollback, config, configPath, authorFamily } = {}) {
@@ -667,7 +672,8 @@ export function gather(pr, { repo, mission, slice, change, deploy, rollback, con
     excerpt: br.body.slice(br.body.search(/^## Blast radius/m)).replace(/\s+/g, " ").slice(0, 700) } : null;
   // What the cross-family reviewer verified: the report the independent-review status links to (target_url), and
   // nothing else. Without a link, the latest comment naming the head is passed on only as UNVERIFIED.
-  const note = (c) => c && { url: c.url, at: c.at, author: c.author || "?", excerpt: c.body.replace(/\s+/g, " ").slice(0, 900), limits: statedLimits(c.body) };
+  const note = (c) => c && { url: c.url, at: c.at, author: c.author || "?", excerpt: c.body.replace(/\s+/g, " ").slice(0, 900), limits: statedLimits(c.body),
+    ...(c.commit ? { commit: c.commit } : {}) };   // a GitHub review keeps its commit: "submitted on this head" or not
   let independentReview = null, reviewNote = null, unlinkedNote = null, reviewProblem = null, reviewLinkProblem = null;
   const commentReview = cfg.review.headingRe
     ? reviewFromComments(comments, cfg.review.headingRe, v.headRefOid, author.family) : null;

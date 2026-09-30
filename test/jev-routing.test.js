@@ -106,7 +106,7 @@ esac
   assert.match(out.input.ci, /verify=fail[\s\S]*NOT passing: verify/, "a failing check (gh exits 1) is still reported");
   assert.match(out.input.review, /Ship: YES, all criteria passed in the browser/, "wrapped YAML evidence read whole");
   assert.match(out.input.review, /blast radius \(https:\/\/x\/c1, 2026-09-30T10:00:00Z, names this head\): ## Blast radius Safe because: only a nullable column/);
-  assert.match(out.input.review, /independent review report, linked from the independent-review status \(https:\/\/x\/r1, .*by rev\): Lenses applied: correctness, security\. Verified the login tests/);
+  assert.match(out.input.review, /independent review report, linked from the independent-review status \(https:\/\/x\/r1, .*by rev(; submitted on [^)]*)?\): Lenses applied: correctness, security\. Verified the login tests/);
   assert.doesNotMatch(out.input.review, /Implementation update|UNVERIFIED/, "a later author comment never displaces the linked review (QA round 2)");
   assert.match(r.stderr, /merge gate: HOLD \(a STUBBED answer, not a live Jev decision/, "a stub never passes (QA round 1)");
   assert.equal(r.status, 1); assert.equal(out.decision.stubbed, true);
@@ -1199,6 +1199,12 @@ test("gate-result comments are gate reports; a reviewer's comment mentioning the
   assert.equal(g(`qa-codex-1@shop\nHead: ${H}\nVerdict: SHIP`), false);
   assert.equal(g(`review-claude-2: blast radius for PR #9\n## Blast radius\n…`), false);
   assert.equal(g(`Fixed the lint job`), false);
+  // QA PR54 f1: a GitHub review is never a gate report; Jev alone isn't a gate word; fenced examples don't count.
+  assert.equal(isGateReport({ body: "Review of Jev retry behavior\nVerdict: FAIL", url: "r", kind: "review" }, cfg, []), false);
+  assert.equal(isGateReport({ body: "integ-codex: live Jev merge gate HOLD", url: "r", kind: "review" }, cfg, []), false);
+  assert.equal(g("Notes on Jev retry behaviour"), false, "a mention of Jev without a gate outcome");
+  assert.equal(g("Example output\n```\nmerge gate: HOLD (uncertain band)\n```"), false, "a fenced example is not a report");
+  assert.equal(g("> merge gate: HOLD (quoted)"), false);
 });
 
 test("the default change is the title plus the PR body's first section (WO50 defect 5)", () => {
@@ -1207,6 +1213,9 @@ test("the default change is the title plus the PR body's first section (WO50 def
   assert.equal(firstSection("🤖 Generated with a tool\n\nCo-Authored-By: x"), "");
   assert.equal(firstSection(null), "");
   assert.equal(firstSection("x ".repeat(400)).length, 600);
+  // QA PR54 f3: redacted whole before the cut, so a credential at the cap never leaves a prefix.
+  assert.doesNotMatch(firstSection("x ".repeat(290) + 'password="fixtureSecretForQA"'), /fixtureSec/);
+  assert.doesNotMatch(firstSection("x ".repeat(290) + 'password="fixture\nSecretForQA"'), /fixture\s*Sec/);
 });
 
 test("agent-merge-evidence end to end: a project-rig PR reads without the four defects (WO50)", () => {
@@ -1261,6 +1270,17 @@ process.stdout.write(typeof out === "string" ? out : JSON.stringify(out));
   // honest when the review is on another commit, or can't be read
   assert.match(run({ review: { ...fixture.review, commit_id: OLD } }).review, /by owner; submitted on commit cccccccccccc, not this head\)/);
   assert.match(run({ reviewFail: true }).review, /independent review report: https:\/\/github\.com\/o\/r\/pull\/14#pullrequestreview-555 \(linked from the status, a review on this PR, but it could not be read\)/);
+  // QA PR54 f2: a linked review already loaded by `gh pr view` keeps its commit label too.
+  const loaded = run({ reviewFail: true, view: { ...fixture.view, reviews: [{ id: "PRR_x", url: "https://github.com/o/r/pull/14#pullrequestreview-555", author: { login: "owner" },
+    body: "review-claude-2: carry\nVerdict: PASS", state: "COMMENTED", submittedAt: "2026-09-30T19:00:00Z", commit: { oid: OLD } }] } });
+  assert.match(loaded.review, /by owner; submitted on commit cccccccccccc, not this head\): review-claude-2: carry/);
+  // QA PR54 f1 end to end: a rejecting, mapped cross-family GitHub review mentioning Jev still rejects.
+  fs.mkdirSync(join(work, ".agent-stack"), { recursive: true });
+  fs.writeFileSync(join(work, ".agent-stack", "merge-evidence.json"), JSON.stringify({ identities: { "rev-claude": "claude" } }));
+  const rejecting = run({ view: { ...fixture.view, reviews: [{ id: "PRR_y", url: "https://github.com/o/r/pull/14#pullrequestreview-777", author: { login: "rev-claude" },
+    body: "Review of Jev retry behavior\nVerdict: FAIL", state: "CHANGES_REQUESTED", submittedAt: "2026-09-30T19:05:00Z", commit: { oid: H } }] } });
+  assert.match(rejecting.review, /^review verdict: CONFLICT \(success from independent-review status .*; failure from GitHub PR review CHANGES_REQUESTED by rev-claude/, "the rejection isn't hidden");
+  fs.rmSync(join(work, ".agent-stack"), { recursive: true, force: true });
   // a QA comment for another head doesn't carry
   const staleQA = run({ view: { ...fixture.view, comments: [c(`qa-codex-1@shop\nHead: ${OLD}\nVerdict: SHIP`, 1)] } });
   assert.match(staleQA.review, /MISSING: no bug-review-board proof for a{40}/);
