@@ -364,3 +364,17 @@ test("QA PR59 scope: { … } after && / ||, env F=x cmd, X=1 before cd/cp/shopt/
     'IFS=: read -r F rest <<< "app/safe.txt:app/.env"; cat "$F"', 'read -r -n 4 F <<< "app/.env"; cat "$F"',
     "X=1 true; cat app/safe.txt"]) assert.equal(dec(c), false, c);
 });
+
+// QA PR59 boundary (45f6af0f): F=x cmd "$F" expands the OLD value; read without -r removes backslashes.
+test("QA PR59 boundary: a prefix reaches the child's environment, not the command's own words; read without -r unescapes", () => {
+  const h = fs.mkdtempSync(join(root, "qa59b-")), app = join(h, "app");
+  fs.mkdirSync(app); fs.writeFileSync(join(app, ".env"), "K=v\n"); fs.writeFileSync(join(app, "safe.txt"), "hi\n");
+  const dec = (command) => g.decide({ tool_name: "Bash", tool_input: { command }, cwd: h }, { home: h, pats: g.DEFAULT_PATTERNS }).deny;
+  for (const c of ['F=app/.env; F=app/safe.txt cat "$F"', 'F=app/.env; F=app/safe.txt cat < "$F"', 'F=app/.env; env F=app/safe.txt cat "$F"',
+    "F=app/safe.txt; F=app/.env bash -c 'cat \"$F\"'", "F=app/safe.txt; F=app/.env env -S 'cat ${F}'", "read F <<< 'app/\\.env'; cat \"$F\"",
+    "read F rest <<< 'app/.e\\nv x'; cat \"$F\"", "IFS=: read -r F rest <<< \"app/.env:ignore\"; cat \"$F\"", "read -rd : F <<< 'app/.env:x'; cat \"$F\""])
+    assert.equal(dec(c), true, c);
+  for (const c of ["F=app/.env; F=app/safe.txt bash -c 'cat \"$F\"'", 'F=app/safe.txt; F=app/.env cat "$F"', "read -r F <<< 'app/\\.env'; cat \"$F\"",
+'read -rn12 F <<< "app/safe.txtJUNK"; cat "$F"', "read F <<< 'app/safe\\.txt'; cat \"$F\""])
+    assert.equal(dec(c), false, c);
+});
