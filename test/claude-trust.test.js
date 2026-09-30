@@ -99,3 +99,11 @@ test("agent-never-prompt-check --spec FAILs an untrusted Claude seat with the fi
   trust("--spec", spec);
   assert.equal(chk().level, "OK");
 });
+
+test("a spec without Claude seats needs nothing: exit 0, file untouched", () => {
+  fixture(); const before = fs.readFileSync(conf, "utf8");
+  const codexOnly = join(home, "codex.yaml");
+  fs.writeFileSync(codexOnly, `name: c\npods:\n  - id: qa\n    members:\n      - { id: codex, runtime: codex, cwd: "${wt}/qa-codex" }\n`);
+  for (const a of [["--check", "--json"], []]) assert.equal(trust("--spec", codexOnly, ...a).status, 0);
+  assert.equal(fs.readFileSync(conf, "utf8"), before);
+});

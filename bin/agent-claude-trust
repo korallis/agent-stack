@@ -42,8 +42,8 @@ if "--spec" in argv:
 else:
     rest = argv
 targets = (targets if "--spec" in argv else []) + [(d, d) for d in rest if not d.startswith("--")]
-if not targets:
-    sys.exit(__doc__.strip().splitlines()[0])
+if not targets and "--spec" not in argv:
+    sys.exit(__doc__.strip().splitlines()[0])   # (a spec without Claude seats is fine: nothing to trust)
 want = {os.path.realpath(os.path.expanduser(d)): name for name, d in targets}
 
 
