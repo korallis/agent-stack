@@ -1,12 +1,22 @@
 #!/usr/bin/env bash
 # Upgrade (or reinstall) OpenRig and re-apply the local adjustments an upgrade overwrites.
-# usage: openrig-upgrade [--no-restart] [version]   (default: OPENRIG_VERSION in config/versions.env)
-#   --no-restart  install, patch and pin only; the running daemon is restarted separately after observing (docs/UPGRADE.md)
+# usage: openrig-upgrade [--no-restart] [--allow-downgrade] [version]   (default: OPENRIG_VERSION, config/versions*.env)
+#   --no-restart       install, patch and pin only; the running daemon is restarted separately after observing (docs/UPGRADE.md)
+#   --allow-downgrade  permit installing a version OLDER than the one installed (refused otherwise, before npm runs:
+#                      an older OpenRig against a database the newer one migrated is not a supported state)
 # Stops with exit 1, before any restart, when the installed package is not the version asked for.
 set -euo pipefail
-S=$(cd "$(dirname "$(readlink -f "$0")")/.." && pwd); source "$S/config/versions.env"
-restart=1; [ "${1:-}" = "--no-restart" ] && { restart=0; shift; }
+S=$(cd "$(dirname "$(readlink -f "$0")")/.." && pwd)
+source "$S/config/versions.defaults.env"; [ -f "$S/config/versions.env" ] && source "$S/config/versions.env"   # tracked defaults, local override
+restart=1 downgrade=0
+while [ $# -gt 0 ]; do case $1 in --no-restart) restart=0; shift ;; --allow-downgrade) downgrade=1; shift ;; *) break ;; esac; done
 V=${1:-$OPENRIG_VERSION}; N22=$(mise where node@$NODE_FOR_OPENRIG); P=$HOME/.local/share/agent-stack/openrig
+have=$(jq -r '.version // empty' "$P/lib/node_modules/@openrig/cli/package.json" 2>/dev/null || true)
+if [[ $V =~ ^[0-9]+\.[0-9]+\.[0-9]+ ]] && [ -n "$have" ] && [ "$V" != "$have" ] \
+   && [ "$(printf '%s\n%s\n' "$V" "$have" | sort -V | tail -n1)" = "$have" ] && [ $downgrade = 0 ]; then
+  echo "openrig-upgrade: $V is OLDER than the installed $have; refusing to downgrade (nothing changed). If you really mean it: openrig-upgrade --allow-downgrade $V" >&2
+  exit 1
+fi
 PATH=$N22/bin:$PATH npm install -g --prefix "$P" --allow-scripts=@openrig/cli,better-sqlite3 "@openrig/cli@$V"
 # Local fixes upstream has not released yet (patches/openrig/<version>/); warns but never fails the upgrade.
 "$S/bin/openrig-apply-patches" "$P/lib/node_modules/@openrig/cli"
@@ -20,7 +30,8 @@ if [[ $V =~ ^[0-9]+\.[0-9]+\.[0-9]+ ]] && [ "$got" != "$V" ]; then
   exit 1
 fi
 # Record what is installed, so install.sh (which reinstalls OPENRIG_VERSION when they differ) can't downgrade it later.
-sed -i "s/^OPENRIG_VERSION=.*/OPENRIG_VERSION=$got/" "$S/config/versions.env"
+if grep -q '^OPENRIG_VERSION=' "$S/config/versions.env" 2>/dev/null; then sed -i "s/^OPENRIG_VERSION=.*/OPENRIG_VERSION=$got/" "$S/config/versions.env"
+else echo "OPENRIG_VERSION=$got" >> "$S/config/versions.env"; fi
 # OpenRig has no global permission default: re-record YOLO into every built-in rig preset (upgrades replace them).
 for f in "$P"/lib/node_modules/@openrig/cli/daemon/specs/rigs/*/*/rig*.yaml; do
   grep -q '^permission_policy: builtin:yolo' "$f" || rig policy apply yolo --spec "$f"

@@ -6,7 +6,8 @@
 #                             (OPENRIG_UPGRADE_OWNER, default operator-agent@kernel), at most one per version per week
 #   openrig-update --validate validate every rig/template spec against the installed OpenRig (an UPGRADE.md step)
 set -uo pipefail
-S=$(cd "$(dirname "$(readlink -f "$0")")/.." && pwd); source "$S/config/versions.env"
+S=$(cd "$(dirname "$(readlink -f "$0")")/.." && pwd)
+source "$S/config/versions.defaults.env"; [ -f "$S/config/versions.env" ] && source "$S/config/versions.env"   # tracked defaults, local override
 OWNER=${OPENRIG_UPGRADE_OWNER:-operator-agent@kernel}
 note() { logger -t openrig-update "$2"; notify-send --app-name="Agent stack" ${3:+--urgency=$3} "$1" "$2" 2>/dev/null || true; echo "$2"; }
 

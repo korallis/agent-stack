@@ -203,7 +203,7 @@ with `agent-login` and the pool uses it straight away.
   once stopped every seat. Restart the daemon with `openrig-daemon-cycle` (the health check does too), never with
   systemctl. `openrig-tmux-adopt` moves an older server out of `openrig.service` without stopping seats.
 - Proxy config `~/.cli-proxy-api/config.yaml`; services `cliproxyapi`, `openrig`, `openrig-tmux` and timers `cliproxyapi-health`, `cliproxy-usage`, `openrig-health`, `cliproxy-authwatch` (alerts on repeated 401/403 for one account), `cliproxy-quotawatch` (warns at 80% of any 5-hour or weekly allowance, critical when a whole provider is past it), `openrig-update` (weekly: raises an "upgrade window due" queue item for operator-agent@kernel; never upgrades by itself, see docs/UPGRADE.md) (user units, linger on).
-- Pinned versions: `config/versions.env`.
+- Pinned versions: `config/versions.defaults.env` (tracked) with an optional local override in `config/versions.env` (untracked; `openrig-upgrade` records the installed OpenRig there). OpenRig is never downgraded by a lower pin: `install.sh` (via `openrig-ensure`) keeps a newer install and moves the pin, and `openrig-upgrade` refuses an older version without `--allow-downgrade`.
 - Jev decisions (single source of truth): `config/decisions.yaml`; evaluation: `eval/` (`node eval/run.js`); unit tests: `node --test 'test/*.test.js'`.
 - Decision log: `~/.local/state/agent-stack/jev.sqlite` + `jev-decisions.jsonl` (state hash only, no raw payloads).
 - Routing log: `~/.local/share/agent-stack/logs/proxy-usage.jsonl` (account, model, status, latency, quota; no content).

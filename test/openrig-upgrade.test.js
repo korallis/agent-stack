@@ -23,12 +23,16 @@ write(join(bin, "mise"), `#!/bin/sh\necho ${root}/node\n`, 0o755);
 write(join(bin, "npm"), `#!/bin/sh\necho "npm $*" >> ${log}\nmkdir -p ${dirname(pkg)}/daemon/specs/rigs/x/y\necho "permission_policy: builtin:yolo" > ${dirname(pkg)}/daemon/specs/rigs/x/y/rig.yaml\nprintf '{"version":"%s"}' "$NPM_INSTALLS" > ${pkg}\n`, 0o755);
 for (const t of ["rig", "systemctl"]) write(join(bin, t), `#!/bin/sh\necho "${t} $*" >> ${log}\n`, 0o755);
 
-function run(args, installs, extra = {}) {
+write(join(stack, "config/versions.defaults.env"), "NODE_FOR_OPENRIG=22\nOPENRIG_VERSION=0.6.0\n");
+// installed: the version already on disk before the run (null = none); localPin: config/versions.env content (null = absent)
+function run(args, installs, extra = {}, installed = null, localPin = "NODE_FOR_OPENRIG=22\nOPENRIG_VERSION=0.6.0\n") {
   fs.rmSync(log, { force: true });
-  write(join(stack, "config/versions.env"), "NODE_FOR_OPENRIG=22\nOPENRIG_VERSION=0.6.0\n");
+  fs.rmSync(dirname(pkg), { recursive: true, force: true });
+  if (installed) write(pkg, JSON.stringify({ version: installed }));
+  if (localPin === null) fs.rmSync(join(stack, "config/versions.env"), { force: true }); else write(join(stack, "config/versions.env"), localPin);
   const r = spawnSync(join(stack, "bin/openrig-upgrade"), args, { encoding: "utf8",
     env: { PATH: `${bin}:${process.env.PATH}`, HOME: root, NPM_INSTALLS: installs, ...extra } });
-  return { ...r, calls: fs.existsSync(log) ? fs.readFileSync(log, "utf8") : "", pinned: fs.readFileSync(join(stack, "config/versions.env"), "utf8").match(/OPENRIG_VERSION=(.*)/)[1] };
+  return { ...r, calls: fs.existsSync(log) ? fs.readFileSync(log, "utf8") : "", pinned: (fs.existsSync(join(stack, "config/versions.env")) ? fs.readFileSync(join(stack, "config/versions.env"), "utf8").match(/OPENRIG_VERSION=(.*)/)?.[1] : undefined) };
 }
 
 test("a package that isn't the requested version stops with exit 1 before any restart or pin", () => {
@@ -78,4 +82,27 @@ test("a missing or unreadable package identity stops before any restart", () => 
 
 test("the upgrade never suggests tearing seats down", () => {
   assert.doesNotMatch(fs.readFileSync(join(repo, "bin/openrig-upgrade"), "utf8"), /rig down/);
+});
+
+// WO23: a stale pin downgraded 0.6.1 to 0.5.17 (2026-09-30). openrig-upgrade refuses an older version unless asked.
+test("an OLDER version than the installed one is refused before npm runs; nothing changes", () => {
+  const r = run(["0.5.17"], "0.5.17", {}, "0.6.1");
+  assert.equal(r.status, 1);
+  assert.match(r.stderr, /0\.5\.17 is OLDER than the installed 0\.6\.1; refusing to downgrade \(nothing changed\)\. If you really mean it: openrig-upgrade --allow-downgrade 0\.5\.17/);
+  assert.doesNotMatch(r.calls, /npm|patches|cycle/);
+  assert.equal(JSON.parse(fs.readFileSync(pkg, "utf8")).version, "0.6.1");
+});
+
+test("--allow-downgrade permits it explicitly", () => {
+  const r = run(["--allow-downgrade", "--no-restart", "0.5.17"], "0.5.17", {}, "0.6.1");
+  assert.equal(r.status, 0, r.stderr);
+  assert.match(r.calls, /^npm install .*@openrig\/cli@0\.5\.17$/m);
+  assert.equal(r.pinned, "0.5.17");
+});
+
+test("the same or a newer version installs normally; with no local config/versions.env the pin is created there", () => {
+  assert.equal(run(["--no-restart", "0.6.1"], "0.6.1", {}, "0.6.1").status, 0);
+  const r = run(["--no-restart", "0.6.2"], "0.6.2", {}, "0.6.1", null);
+  assert.equal(r.status, 0, r.stderr);
+  assert.equal(r.pinned, "0.6.2");
 });

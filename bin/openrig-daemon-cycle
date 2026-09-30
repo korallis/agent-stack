@@ -60,7 +60,10 @@ if [ $do_start = 1 ]; then
     new=""; sleep 1
   done
   [ -n "$new" ] || { say "START FAILED: no new running daemon owns the listener and answers /healthz (daemon.json pid=$(field pid) port=$(field port); listener pid(s) $(owners "$(field port)" | paste -sd, -))$(ss_note "$(field port)" unverified)"; exit 1; }
-  "$RIG" up kernel --existing >/dev/null 2>&1 || say "rig up kernel --existing returned non-zero (kernel may need attention)"
+  # The kernel normally is already up: that answers HTTP 409 "has live sessions", which is fine. Only a real failure warns.
+  if ! kout=$("$RIG" up kernel --existing 2>&1); then
+    grep -qiE '409|has live sessions|already (up|running)' <<<"$kout" || say "rig up kernel --existing failed (kernel may need attention): $(tail -n1 <<<"$kout" | cut -c1-200)"
+  fi
   say "running: pid $new owns port $port and answers /healthz; $("$RIG" --version 2>/dev/null)"
 fi
 exit 0

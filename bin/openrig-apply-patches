@@ -1,6 +1,8 @@
 #!/usr/bin/env bash
 # Re-apply local fixes that upstream OpenRig has not released yet. Called by openrig-upgrade after every install.
-# usage: openrig-apply-patches [package-dir]   (default: the installed @openrig/cli)
+# usage: openrig-apply-patches [--check] [package-dir]   (default: the installed @openrig/cli)
+#   --check  report only: how many of the installed version's patches are applied (the same ordered-stack judgment);
+#            exit 1 when any is not. Never writes, never alerts. install.sh --check and agent-project-check use it.
 # Patches live in patches/openrig/<version>/*.patch as -p1 diffs against the published package root, one per fix.
 # Each is dry-run first. An already-applied patch is skipped (judged for the ordered stack, so patches that edit the
 # same file are recognised); one that doesn't apply is left out.
@@ -8,12 +10,14 @@
 # unpatched. When upstream releases a fix, delete that version's patch rather than carrying it forward.
 set -uo pipefail
 S=$(cd "$(dirname "$(readlink -f "$0")")/.." && pwd)
+CHECK=0; [ "${1:-}" = --check ] && { CHECK=1; shift; }
 PKG=${1:-$HOME/.local/share/agent-stack/openrig/lib/node_modules/@openrig/cli}
 note() { logger -t openrig-patches "$2" 2>/dev/null || true; notify-send --app-name="Agent stack" ${3:+--urgency=$3} "$1" "$2" 2>/dev/null || true; echo "$2"; }
-V=$(jq -r .version "$PKG/package.json" 2>/dev/null) || { note "OpenRig patches not applied" "No OpenRig package at $PKG" critical; exit 0; }
+V=$(jq -r .version "$PKG/package.json" 2>/dev/null) || { [ $CHECK = 1 ] && { echo "no OpenRig package at $PKG"; exit 1; }; note "OpenRig patches not applied" "No OpenRig package at $PKG" critical; exit 0; }
 D=$S/patches/openrig/$V
 shopt -s nullglob; patches=("$D"/*.patch); tracked=("$S"/patches/openrig/*/*.patch)
 if [ ${#patches[@]} -eq 0 ]; then
+  [ $CHECK = 1 ] && { echo "OpenRig $V: no local patches carried for this version"; exit 0; }
   # Only worth a warning while local fixes are being carried for some version.
   [ ${#tracked[@]} -gt 0 ] && note "OpenRig $V is unpatched" "No local patches for $V in $S/patches/openrig (have: $(cd "$S/patches/openrig" && ls -d */ | tr -d / | tr '\n' ' ')). Port them or confirm upstream fixed them." critical
   exit 0
@@ -36,6 +40,11 @@ for (( k = ${#patches[@]} - 1; k >= 0; k-- )); do
     patch -p1 -d "$scratch" --reverse --forward --silent --no-backup-if-mismatch < "$p" >/dev/null 2>&1 && present[$p]=1
   fi
 done
+if [ $CHECK = 1 ]; then
+  miss=(); for p in "${patches[@]}"; do [ -n "${present[$p]:-}" ] || miss+=("$(basename "$p" .patch)"); done
+  if [ ${#miss[@]} -eq 0 ]; then echo "OpenRig $V patches: all ${#patches[@]} applied"; exit 0; fi
+  echo "OpenRig $V patches: $(( ${#patches[@]} - ${#miss[@]} ))/${#patches[@]} applied; NOT applied: ${miss[*]} (run openrig-apply-patches)"; exit 1
+fi
 for p in "${patches[@]}"; do
   n=$(basename "$p" .patch)
   if [ -n "${present[$p]:-}" ]; then
