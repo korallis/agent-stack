@@ -380,21 +380,23 @@ export function mergeStateLine(f) {
   return `merge state: BLOCKED (${[...new Set(reasons)].join("; ") || "reason not visible to this helper"})`;
 }
 
-// Pure: every check that ran on the head, for a base without required checks: each check run's latest result by
-// name, and each status context's latest state (newest first), minus this helper's own contexts (the review and the
-// gate). bucket: pass (success, neutral, skipped), pending (not finished), fail (anything else).
+// Pure: every check that ran on the head, for an unprotected base: each check run's latest result by name, and each
+// status context's latest state (newest first), kept apart (a check run and a status can share a name, and either
+// failing counts), minus this helper's own contexts (the review and the gate) from both. bucket: pass (success,
+// neutral, skipped), pending (not finished), fail (anything else).
 export function observedFrom(checkRuns, statuses, own = []) {
-  const out = new Map();
+  const runs = new Map(), sts = new Map();
   for (const r of [...(checkRuns || [])].sort((a, b) => b.id - a.id)) {
-    if (out.has(r.name)) continue;
+    if (own.includes(r.name) || runs.has(r.name)) continue;
     const c = r.conclusion;
-    out.set(r.name, { name: r.name, result: c || r.status || "pending", bucket: !c ? "pending" : ["success", "neutral", "skipped"].includes(c) ? "pass" : "fail" });
+    runs.set(r.name, { name: r.name, source: "check", result: c || r.status || "pending", bucket: !c ? "pending" : ["success", "neutral", "skipped"].includes(c) ? "pass" : "fail" });
   }
   for (const s of statuses || []) {
-    if (own.includes(s.context) || out.has(s.context)) continue;
-    out.set(s.context, { name: s.context, result: s.state, bucket: s.state === "success" ? "pass" : s.state === "pending" ? "pending" : "fail" });
+    if (own.includes(s.context) || sts.has(s.context)) continue;
+    sts.set(s.context, { name: runs.has(s.context) ? `${s.context} (status)` : s.context, source: "status", result: s.state,
+      bucket: s.state === "success" ? "pass" : s.state === "pending" ? "pending" : "fail" });
   }
-  return [...out.values()];
+  return [...runs.values(), ...sts.values()];
 }
 
 // Pure: this gate's own record for the head, worded like mergeStateLine: nothing posted = "pending this gate".
@@ -491,7 +493,8 @@ export function gather(pr, { repo, mission, slice, change, deploy, rollback, con
     let prot = null;
     try { prot = ghJson("api", `repos/${nwo}/branches/${v.baseRefName}/protection`); }
     catch (e) { if (!/HTTP 404|Branch not protected/.test(String(e.stderr || e.message))) throw e; }
-    return requirementsFrom(rules, prot, v.reviewDecision || null);
+    // Protected at all: any rule that governs merging (not only push-side rules) or any classic protection.
+    return { ...requirementsFrom(rules, prot, v.reviewDecision || null), protected: !!prot || rules.some((r) => !MERGE_NEUTRAL_RULES.has(r.type)) };
   })();
   let requirements = null;
   if (v.mergeStateStatus === "BLOCKED") {
@@ -510,7 +513,7 @@ export function gather(pr, { repo, mission, slice, change, deploy, rollback, con
   let observedChecks = null;
   if (!checks.length) {
     try {
-      if (!readBaseRequirements().contexts.length) {
+      if (!readBaseRequirements().protected) {   // no ruleset or protection: nothing is required, so show what ran
         const pages = ghJson("api", `repos/${nwo}/commits/${v.headRefOid}/check-runs?per_page=100`, "--paginate", "--slurp") || [];
         const runs = (Array.isArray(pages) ? pages : [pages]).flatMap((p) => p.check_runs || []);
         const total = Math.max(0, ...(Array.isArray(pages) ? pages : [pages]).map((p) => p.total_count || 0));

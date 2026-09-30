@@ -28,7 +28,9 @@ has no version numbers; entries are grouped by the day they merged, newest first
 ### Fixed
 - `agent-merge-evidence` no longer says CI is MISSING when the base branch has no required checks (no ruleset or
   protection). It reports the check runs and statuses observed on the exact head, and names any failing or
-  unfinished one. Protected bases are unchanged.
+  unfinished one. A check run and a status sharing a name are both shown, and the helper's own review and gate are
+  never counted as CI. Any protected base, including one protected only by rules like signatures or required
+  reviews, is unchanged.
 - `agent-merge-evidence` always states the review verdict with its source and head binding, so it reaches Jev even
   when the report the status links to can't be read. The sources, in order: the status's own state and description
   on the exact head; GitHub reviews submitted on the exact head by a login mapped (`identities`) to another family;

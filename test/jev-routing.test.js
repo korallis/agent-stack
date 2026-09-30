@@ -794,6 +794,13 @@ test("observed checks: each check run's latest result and each status's latest s
   const statuses = [{ context: "deploy/preview", state: "success" }, { context: "deploy/preview", state: "failure" }, { context: "independent-review", state: "success" }, { context: "jev-merge", state: "pending" }];
   assert.deepEqual(observedFrom(runs, statuses, ["independent-review", "jev-merge"]).map((c) => [c.name, c.result, c.bucket]),
     [["e2e", "in_progress", "pending"], ["lint", "skipped", "pass"], ["verify", "success", "pass"], ["deploy/preview", "success", "pass"]]);
+  // QA WO44 f1: a check run and a status sharing a name are both kept; the failing one counts.
+  assert.deepEqual(observedFrom([{ id: 1, name: "verify", conclusion: "success" }], [{ context: "verify", state: "failure" }]).map((c) => [c.name, c.result, c.bucket]),
+    [["verify", "success", "pass"], ["verify (status)", "failure", "fail"]]);
+  assert.deepEqual(observedFrom([{ id: 1, name: "verify", conclusion: "success" }], [{ context: "verify", state: "pending" }]).map((c) => c.bucket), ["pass", "pending"]);
+  // QA WO44 f2: the helper's own review and gate are not CI, as check runs either.
+  assert.deepEqual(observedFrom([{ id: 1, name: "jev-merge", conclusion: null, status: "in_progress" }, { id: 2, name: "independent-review", conclusion: "success" }],
+    [], ["independent-review", "jev-merge"]), []);
   const green = facts({ checks: [], baseRef: "tests/integration", observedChecks: [{ name: "verify", result: "success", bucket: "pass" }, { name: "lint", result: "skipped", bucket: "pass" }] });
   assert.equal(buildMergeInput(green).ci, `base tests/integration has no required checks; observed on exact head ${H}: verify=success, lint=skipped; all pass`);
   assert.deepEqual(gateProblems(green), []);
@@ -838,5 +845,15 @@ process.stdout.write(typeof out === "string" ? out : JSON.stringify(out));
   assert.equal(run(protectedBase).ci, "MISSING: no required checks reported for this head");
   assert.equal(run({ protection: { required_status_checks: { contexts: ["verify"] } } }).ci, "MISSING: no required checks reported for this head");
   assert.equal(run({ checkRunsFail: true }).ci, "MISSING: no required checks reported for this head", "unreadable check runs: MISSING stands");
+  // QA WO44 f3: protection without status contexts is still protection: MISSING, not the unprotected fallback.
+  assert.equal(run({ rules: [{ type: "required_signatures" }] }).ci, "MISSING: no required checks reported for this head");
+  assert.equal(run({ rules: [{ type: "pull_request", parameters: { required_approving_review_count: 1 } }] }).ci, "MISSING: no required checks reported for this head");
+  assert.equal(run({ protection: { required_pull_request_reviews: { required_approving_review_count: 1 } } }).ci, "MISSING: no required checks reported for this head");
+  assert.match(run({ rules: [{ type: "deletion" }, { type: "non_fast_forward" }] }).ci, /^base tests\/integration has no required checks; observed/, "push-only rules don't protect merging");
+  // QA WO44 f1/f2 end to end: a same-name failing status, and our own check runs, are never read as green CI.
+  const o1 = run({ statuses: [{ context: "verify", state: "failure" }], checkRuns: [{ total_count: 1, check_runs: [run_(5, "verify", "success")] }] });
+  assert.equal(o1.ci, `base tests/integration has no required checks; observed on exact head ${H}: verify=success, verify (status)=failure; NOT passing: verify (status) (failure)`);
+  assert.equal(run({ statuses: [], checkRuns: [{ total_count: 2, check_runs: [run_(5, "jev-merge", "success"), run_(6, "independent-review", "success")] }] }).ci,
+    `base tests/integration has no required checks; no check ran on exact head ${H}`);
   assert.equal(run({ checkRuns: [{ total_count: 150, check_runs: [run_(5, "verify", "success")] }] }).ci, "MISSING: no required checks reported for this head", "incomplete runs");
 });
