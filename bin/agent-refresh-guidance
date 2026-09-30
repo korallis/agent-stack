@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""agent-refresh-guidance <Project> [--apply]
+"""agent-refresh-guidance <Project | workspace path> [--apply] [--json]
 
 OpenRig writes CULTURE.md and the rig's startup files into each seat's instruction file (CLAUDE.local.md for
 Claude seats with managed_blocks, CLAUDE.md otherwise; AGENTS.md for Codex) as
@@ -26,7 +26,12 @@ if not arg:
     sys.exit(__doc__)
 APPLY = "--apply" in sys.argv
 JSON = "--json" in sys.argv
-W = f"{H}/Projects/{arg}-work"
+# A project name means ~/Projects/<name>-work; a path to a workspace (a directory with rig/) is used as given.
+if os.path.isdir(os.path.join(arg, "rig")):
+    W = os.path.abspath(arg)
+    arg = os.path.basename(W)[:-5] if W.endswith("-work") else os.path.basename(W)
+else:
+    W = f"{H}/Projects/{arg}-work"
 specs = sorted(glob.glob(f"{W}/rig/*.yaml"), key=lambda f: open(f).read().count("cwd:"), reverse=True)
 spec = open(specs[0]).read()
 cwds = re.findall(r'cwd:\s*"?([^"\n]+)"?', spec)

@@ -100,5 +100,25 @@ esac
   setup(own + B("CULTURE.md", "culture v1") + "\n" + B("openrig-start.md", "shipped"));
   const stale = row(check(), "seat instructions carry the current CULTURE.md and startup files");
   assert.equal(stale.level, "WARN");
-  assert.match(stale.detail, /^run agent-refresh-guidance --apply: coord-lead \(missing block startup\/context\.md; CULTURE\.md out of date\)$/);
+  assert.match(stale.detail, /^run agent-refresh-guidance --apply: coord-lead\/CLAUDE\.local\.md \(missing block startup\/context\.md; CULTURE\.md out of date\)$/);
+});
+
+test("an explicit workspace path is checked, not ~/Projects/<name>-work (QA PR50)", () => {
+  // A current namesake under ~/Projects and a stale workspace elsewhere with the same name.
+  setup(own + B("CULTURE.md", "culture v2") + "\n" + B("startup/context.md", "context v2"));
+  const ext = join(home, "external/P-work"), extWT = join(home, "external/P.worktrees");
+  fs.mkdirSync(join(ext, "rig/startup"), { recursive: true }); fs.mkdirSync(join(extWT, "coord-lead"), { recursive: true });
+  fs.writeFileSync(join(ext, "project.yaml"), "kind: project\n");
+  fs.writeFileSync(join(ext, "rig/CULTURE.md"), "culture v3"); fs.writeFileSync(join(ext, "rig/startup/context.md"), "context v3");
+  fs.writeFileSync(join(ext, "rig/team.yaml"), fs.readFileSync(join(W, "rig/team.yaml"), "utf8").replaceAll(WT, extWT));
+  fs.writeFileSync(join(extWT, "coord-lead/CLAUDE.local.md"), own + B("CULTURE.md", "culture v2") + "\n" + B("startup/context.md", "context v2"));
+  const j = JSON.parse(spawnSync(join(repo, "bin/agent-refresh-guidance"), [ext, "--json"], { encoding: "utf8", env: { PATH: process.env.PATH, HOME: home } }).stdout);
+  assert.deepEqual(j.changed.map((c) => [c.seat, c.reasons]), [["coord-lead", ["CULTURE.md out of date", "startup/context.md out of date"]]]);
+  assert.deepEqual(JSON.parse(run("--json").stdout).changed, [], "the namesake by project name is still current");
+  const bin = join(home, "bin"); fs.mkdirSync(bin, { recursive: true });
+  fs.writeFileSync(join(bin, "rig"), `#!/bin/sh\ncase "$1 $2" in\n  "ps --json") echo '[{"name":"p","status":"running"}]' ;;\n  "doctor --spec") echo "[OK] spec_live_conformance" ;;\n  *) exit 0 ;;\nesac\n`, { mode: 0o755 });
+  const rows = JSON.parse(spawnSync("python3", [join(repo, "bin/agent-project-check"), ext, "--json"], { encoding: "utf8", timeout: 120000,
+    env: { PATH: `${bin}:${process.env.PATH}`, HOME: home, OPENRIG_URL: "http://127.0.0.1:9", AGENT_OWNER_ADDRESS: "owner@external" } }).stdout);
+  const row = rows.find((x) => x.check.startsWith("seat instructions carry the current CULTURE.md and startup files"));
+  assert.equal(row.level, "WARN"); assert.match(row.detail, /coord-lead\/CLAUDE\.local\.md \(CULTURE\.md out of date; startup\/context\.md out of date\)/);
 });

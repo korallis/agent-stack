@@ -442,12 +442,12 @@ if specs:
                 noskills.append(f"{seat}:{'/'.join(miss)}")
     # Stale blocks: exactly what agent-refresh-guidance would change (it names blocks by their path under rig/, as
     # OpenRig does, e.g. startup/context.md), so this check and the refresh can't disagree.
-    rg = subprocess.run([os.path.join(os.path.dirname(os.path.realpath(__file__)), "agent-refresh-guidance"), P, "--json"],
+    rg = subprocess.run([os.path.join(os.path.dirname(os.path.realpath(__file__)), "agent-refresh-guidance"), W, "--json"],
                         capture_output=True, text=True)
     try:
-        stale = [f"{c['seat']} ({'; '.join(c['reasons'])})" for c in json.loads(rg.stdout)["changed"]]
+        stale = [f"{c['seat']}/{c['file']} ({'; '.join(c['reasons'])})" for c in json.loads(rg.stdout)["changed"]]
     except (ValueError, KeyError, TypeError):
-        stale = [f"agent-refresh-guidance {P} --json failed: {(rg.stderr or rg.stdout).strip()[-200:]}"]
+        stale = [f"agent-refresh-guidance {W} --json failed: {(rg.stderr or rg.stdout).strip()[-200:]}"]
     if not running:  # OpenRig writes instruction blocks and projects skills at launch
         noblocks, stale, noskills = [], [], []
         rep("WARN", "seat instructions and skills not checked: the rig is not running (rig up, then re-check)")
