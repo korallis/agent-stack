@@ -24,17 +24,37 @@ test("every bash block says whether it runs as shown or is illustrative", () => 
 
 // Split a line into commands (| && ;) and words, keeping quoted strings whole.
 const commands = (line) => {
-  const toks = line.replace(/\s+#\s.*$/, "").match(/'[^']*'|"[^"]*"|\|\||&&|[|;]|[^\s|;&'"]+(?:'[^']*'|"[^"]*"|[^\s|;&'"]+)*/g) || [];
+  const DQ = String.raw`"(?:[^"\\]|\\.)*"`;   // a double-quoted string, escapes allowed
+  const re = new RegExp(String.raw`'[^']*'|${DQ}|\|\||&&|[|;]|[^\s|;&'"]+(?:'[^']*'|${DQ}|[^\s|;&'"]+)*`, "g");
+  const toks = line.replace(/\s+#\s.*$/, "").match(re) || [];
   const out = [[]];
   for (const t of toks) (["|", "||", "&&", ";"].includes(t) ? out.push([]) : out[out.length - 1].push(t));
   return out.filter((c) => c.length);
 };
 
+// The commands on one line: $(...) substitutions count as commands of their own; subshell parens, `set`, variable
+// assignments and `[ ... ]` tests are shell syntax, not commands to check.
+function lineCommands(line) {
+  line = line.replace(/\s+#\s.*$/, "");
+  const subs = [];
+  let out = "", i = 0;
+  while (i < line.length) {
+    if (line.startsWith("$(", i)) {
+      let depth = 1, j = i + 2;
+      while (j < line.length && depth) { if (line[j] === "(") depth++; else if (line[j] === ")") depth--; j++; }
+      subs.push(line.slice(i + 2, j - 1)); out += "X"; i = j;
+    } else out += line[i++];
+  }
+  let rest = out.trim().replace(/^(\w+=('[^']*'|"[^"]*"|\S+)\s*)+/, "");
+  const own = !rest || ["(", ")"].includes(rest) || /^set\s/.test(rest) || rest.startsWith("[") ? [] : commands(rest);
+  return [...own, ...subs.flatMap(lineCommands)];
+}
+
 test("illustrative blocks: every command exists and accepts every flag shown", () => {
   const help = (argv) => { const r = spawnSync(argv[0], [...argv.slice(1), "--help"], { encoding: "utf8", timeout: 30000 }); return (r.stdout || "") + (r.stderr || ""); };
   for (const b of blocks.filter((x) => x.startsWith(ILLUSTRATIVE))) {
     for (const line of b.split("\n").filter((l) => l.trim() && !l.startsWith("#"))) {
-      for (const words of commands(line)) {
+      for (const words of lineCommands(line)) {
         const [cmd, ...rest] = words;
         const flags = rest.filter((w) => /^--[a-z]/.test(w)).map((w) => w.split("=")[0]);
         const local = ["bin", "system"].map((d) => join(repo, d, cmd)).find((p) => fs.existsSync(p))
@@ -102,4 +122,45 @@ test("agent-project-new on a machine with no git identity says so and stops (it 
       { encoding: "utf8", env: { HOME: home, PATH: process.env.PATH, USER: "u" }, timeout: 60000 });
     assert.equal(r.status, 2); assert.match(r.stderr, /no commit identity\. Pass --identity/);
   } finally { fs.rmSync(home, { recursive: true, force: true }); }
+});
+
+
+test("the merge-gate example merges only when every gate passes (stub gh and jev-decide)", () => {
+  const b = blocks.find((x) => x.includes("gh pr merge"));
+  const dir = fs.mkdtempSync(join(fs.existsSync("/tmp/claude-1000") ? "/tmp/claude-1000" : "/tmp", "gate-"));
+  try {
+    const calls = join(dir, "calls");
+    fs.mkdirSync(join(dir, "bin"));
+    fs.writeFileSync(join(dir, "bin/gh"), `#!/bin/sh
+echo "gh $*" >> "${calls}"
+case "$1 $2" in
+  "pr view") case "$*" in *headRefOid*) echo aaaa1111;; *) echo bbbb2222;; esac ;;
+  "pr checks") exit "\${CHECKS_RC:-0}" ;;
+  "api "*) echo "\${REVIEW_STATE:-success}" ;;
+  "pr merge") echo merged ;;
+esac
+`, { mode: 0o755 });
+    fs.writeFileSync(join(dir, "bin/jev-decide"), `#!/bin/sh
+echo "jev $*" >> "${calls}"
+printf '{"decided_by":"%s","band":"%s","result":{"decision":"%s"}}\\n' "\${JEV_BY:-jev}" "\${JEV_BAND:-act}" "\${JEV_DECISION:-merge}"
+`, { mode: 0o755 });
+    const run = (extra) => {
+      fs.rmSync(calls, { force: true });
+      const r = spawnSync("bash", ["-c", b], { cwd: dir, encoding: "utf8", env: { PATH: `${join(dir, "bin")}:${process.env.PATH}`, ...extra } });
+      const c = fs.existsSync(calls) ? fs.readFileSync(calls, "utf8") : "";
+      return { status: r.status, merged: /gh pr merge/.test(c), calls: c };
+    };
+    const ok = run({});
+    assert.equal(ok.status, 0, ok.calls); assert.ok(ok.merged);
+    assert.match(ok.calls, /gh pr merge 42 --squash --match-head-commit aaaa1111/);
+    assert.match(ok.calls, /gh pr checks 42 --required/);
+    assert.match(ok.calls, /"head":"aaaa1111","base":"bbbb2222"/);
+    for (const [why, env] of [["a required check failed", { CHECKS_RC: "1" }], ["checks pending", { CHECKS_RC: "8" }],
+      ["review failed", { REVIEW_STATE: "failure" }], ["no review status", { REVIEW_STATE: "null" }],
+      ["Jev says hold", { JEV_DECISION: "hold", JEV_BAND: "uncertain" }], ["merge only in the review band", { JEV_BAND: "review" }],
+      ["a fallback, not live Jev", { JEV_BY: "fallback_model" }], ["a cached answer", { JEV_BY: "cache" }]]) {
+      const r = run(env);
+      assert.notEqual(r.status, 0, why); assert.ok(!r.merged, `${why}: merged anyway\n${r.calls}`);
+    }
+  } finally { fs.rmSync(dir, { recursive: true, force: true }); }
 });

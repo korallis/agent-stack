@@ -71,8 +71,9 @@ Research -> plan -> implement (owner standard, 2026-09-30): every slice, feature
 Six skills from agent-stack are installed for every seat. Each has a fixed moment:
 - `verification-guide`: the architect writes `docs/VERIFY.md` (feature map, exact steps, test data) at project setup
   and updates it in the wave that adds a user-facing area. QA, the bug review board and witnesses follow it.
-- `bug-review-board`: QA runs a real-user pass in the Playwright MCP browser before a PR or wave merges. Each bug is a
-  queue row to the lead (P0/P1/P2, steps, screenshot). The ship YES/NO verdict is recorded with `rig proof add`, and
+- `bug-review-board`: QA runs a real-user pass before a PR or wave merges, through the interface its users use: the
+  Playwright MCP browser for web, the public command or HTTP API for CLI and API work. Each bug is a queue row to the
+  lead with `--mission` and `--slice` (P0/P1/P2, steps, evidence). The ship YES/NO verdict is recorded with `rig proof add`, and
   the integrator puts it in the Jev merge-gate input. A NO blocks the merge.
 - `blast-radius`: before signing off a PR that touches shared code, SQL, migrations, env or jobs, the reviewer lists
   what it could break outside the edited files and proves the key safety fact by running code or a read-only query.

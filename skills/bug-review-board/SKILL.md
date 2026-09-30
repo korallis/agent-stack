@@ -1,6 +1,6 @@
 ---
 name: bug-review-board
-description: Real-user bug hunt on a running web app in the Playwright MCP browser, ending in a ship YES/NO verdict. Use when QA checks a PR or a wave before merge, or when someone asks "is this ready to ship?". Files P0/P1/P2 bugs as queue rows to the lead and records the verdict as proof for the merge gate.
+description: Real-user bug hunt on the running app (the Playwright MCP browser for a web app, the public command or HTTP API for CLI and API work), ending in a ship YES/NO verdict. Use when QA checks a PR or a wave before merge, or when someone asks "is this ready to ship?". Files P0/P1/P2 bugs as queue rows to the lead and records the verdict as proof for the merge gate.
 ---
 
 # Bug review board (BRB)
@@ -16,28 +16,37 @@ not read the source to decide whether something works. The user never sees the s
 3. Read the open bugs for this area (queue rows tagged `bug`). Re-test those first: regressions are the most valuable
    finds.
 4. Test accounts come from `~/.config/agent-stack/secrets/playwright.env` and are typed BY NAME through the Playwright
-   MCP's `--secrets`. Never type, paste or echo a credential value into a tool input, a queue row, a PR or a proof. If a
-   login you need is missing, ask the lead; don't guess.
+   MCP's `--secrets`. For CLI and API work, the app or your command reads credentials from env by name. Never type,
+   paste or echo a credential value into a tool input, a queue row, a PR or a proof. If a login you need is missing,
+   ask the lead; don't guess.
 
 ## Run the pass
 
-- Drive the real UI in the Playwright MCP browser: read the screen, click by visible names, type into labelled fields.
-  One browser tab per agent.
-- Cover three viewports: mobile 375 x 812, tablet 768 x 1024, desktop 1280 x 800. Start with the app's primary one
-  (from the SPEC; if unclear, say which you assumed).
-- Walk every acceptance criterion, then what real users get wrong: empty and invalid input, double clicks, very long
-  text, back and forward, refresh mid-flow, starting over.
-- Keep sessions clean. A fresh-user scenario starts with cleared cookies and storage. Use a new persona or run-tag for
-  each fresh signup. Leave 30 s between repeated auth attempts, because auth providers throttle. Sign out and clear
-  storage when you switch roles.
-- Capture evidence at the moment of failure: a screenshot, the console errors verbatim, the URL.
+Use the interface a user of this feature uses, with the steps in `docs/VERIFY.md`:
+
+- **Web:** the real UI in the Playwright MCP browser. Read the screen, click by visible names, type into labelled
+  fields. One browser tab per agent. Cover three viewports: mobile 375 x 812, tablet 768 x 1024, desktop 1280 x 800,
+  starting with the app's primary one (from the SPEC; if unclear, say which you assumed). Keep sessions clean: a
+  fresh-user scenario starts with cleared cookies and storage, each fresh signup gets a new persona or run-tag, repeated
+  auth attempts are 30 s apart, and you sign out and clear storage when you switch roles.
+- **CLI:** the documented command, as a user runs it, from a clean state.
+- **API:** the public HTTP endpoints a client calls, not internal functions or test-only routes.
+
+Walk every acceptance criterion, then what real users get wrong: empty and invalid input, repeated actions, very long
+input, interruption halfway, starting over. Capture evidence at the moment of failure:
+
+- web: a screenshot, the console errors verbatim, the URL;
+- CLI: the command, stdout, stderr and exit code;
+- API: the request (method, path, body, never a credential), the status and the response body.
+
+Never make up browser evidence for work that has no UI, and never add UI work just to test through it.
 
 ## File each bug when it happens
 
 File on FAIL, not at the end. One queue row per bug to the lead:
 
 ```bash
-rig queue create --destination <lead seat> --tags bug,P1,<slice> --body-file bug.md
+rig queue create --destination <lead seat> --mission <mission> --slice <slice> --tags bug,P1 --body-file bug.md
 ```
 
 The body, every section filled:
@@ -48,7 +57,8 @@ The body, every section filled:
 - **Expected** (from the acceptance criterion or VERIFY.md) and **Actual** (what the screen showed).
 - **Steps:** exact and repeatable by a fresh agent: persona (the secret's NAME, never its value), start URL, each click
   and typed value, what to wait for.
-- **Evidence:** the screenshot, attached with `rig proof add --media <file>`, and the console lines.
+- **Evidence:** as captured above. A screenshot goes into the slice's `proof/` dir, attached with `rig proof add
+  --media <file>` next to a text note.
 
 | Level | Meaning | Effect |
 |---|---|---|
@@ -60,17 +70,24 @@ Between P0 and P1, pick P0 if a user could lose data or get stuck with no way ba
 
 ## Verdict
 
-Ship YES only when every acceptance criterion passed in the browser, no P0 or P1 is open against this PR or wave, and
-each earlier bug you re-tested is fixed. Otherwise NO, with the open P0/P1 list and anything you could not run.
+Ship YES only when every acceptance criterion passed through its user interface (browser, command or HTTP, as above),
+no P0 or P1 is open against this PR or wave, and each earlier bug you re-tested is fixed. Otherwise NO, with the open
+P0/P1 list and every criterion you could not run. A criterion you could not reach (a missing login, a broken
+environment) is "not run", which means NO. It is not a product bug, so say what blocked it instead of filing one.
 
-Record it as proof on the slice, against the exact head:
+Record it as proof on the slice, against the exact head. In a seat, `OPENRIG_WORK_ROOT` points `rig proof add` at the
+project's missions:
 
 ```bash
-rig proof add <mission>/slices/<slice> --artifact-type qa --verdict PASS   --candidate-sha <head> --file brb.md   # YES
-rig proof add <mission>/slices/<slice> --artifact-type qa --verdict BLOCKING --candidate-sha <head> --file brb.md # NO
+rig proof add <mission>/slices/<slice> --artifact-type qa --verdict PASS --candidate-sha <head> \
+  --money-evidence "Ship: YES, <n> criteria passed, no open P0/P1" --file brb.md       # YES
+rig proof add <mission>/slices/<slice> --artifact-type qa --verdict BLOCKING --candidate-sha <head> \
+  --money-evidence "Ship: NO, <open P0/P1 or not-run criteria>" --file brb.md          # NO
+rig proof show <project-id>:<mission>/slices/<slice>                                   # read it back (catalog id)
 ```
 
-`brb.md` holds the verdict line (`Ship: YES` or `Ship: NO`), the viewports and scenarios covered, and the bug row ids.
+`brb.md` holds the verdict line (`Ship: YES` or `Ship: NO`), the interfaces and scenarios covered (viewports for web),
+and the bug row ids.
 Post the same verdict line on the PR. The integrator puts it in the `review` input of the Jev merge gate. A NO blocks the
 merge like a failing check.
 

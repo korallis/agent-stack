@@ -15,7 +15,7 @@ this merge), and Playwright gives the agents a real browser.
 ## Quick start
 
 You need Linux, git, and accounts for GitHub and at least one of Claude or ChatGPT. Clone the repo and see what is
-missing. The check installs nothing:
+missing. The check installs and configures nothing (its small side effects are listed under "Check the machine"):
 
 ```bash
 # Runs as shown (the README test runs this block in a throwaway HOME).
@@ -108,17 +108,28 @@ rig queue list --destination impl-codex-1@myapp
 
 ### Run the merge gate
 
-The merge owner (the integrator seat) does this for every pull request, on its exact head commit:
+The merge owner (the integrator seat) does this for every pull request, on its exact head commit. Each step stops the
+run when its gate fails, so the last line runs only when every gate passed:
 
 ```bash
-# Illustrative: needs a real pull request (the README test checks each command and flag exists).
-gh pr checks 42
-gh api repos/<owner>/<repo>/commits/<head-sha>/statuses --jq '.[] | "\(.context) \(.state)"'
-jev-decide review.merge_gate --json '{"pr":42,"head":"<head-sha>","base":"<base-sha>","change":"Adds login","review":"independent-review success; bug review board: ship YES","ci":"all required checks pass"}'
-gh pr merge 42 --squash --match-head-commit <head-sha>
+# Illustrative: needs a real pull request (the README test also runs it with stub gh and jev-decide, failing each gate).
+(
+  set -euo pipefail
+  pr=42 repo='<owner>/<repo>'
+  head=$(gh pr view "$pr" --json headRefOid --jq .headRefOid)
+  base=$(gh pr view "$pr" --json baseRefOid --jq .baseRefOid)
+  gh pr checks "$pr" --required
+  [ "$(gh api "repos/$repo/commits/$head/statuses" --jq '[.[] | select(.context == "independent-review")][0].state')" = success ]
+  jev-decide review.merge_gate --json "{\"pr\":$pr,\"head\":\"$head\",\"base\":\"$base\",\"change\":\"Adds login\",\"review\":\"independent-review success; bug review board: ship YES\",\"ci\":\"required checks pass\"}" > gate.json
+  jq -e '.decided_by == "jev" and .band == "act" and .result.decision == "merge"' gate.json
+  gh pr merge "$pr" --squash --match-head-commit "$head"
+)
 ```
 
-It merges only when the review status is `success`, the checks pass and Jev answers `merge` in the act band.
+`gh pr checks --required` fails unless every required check passed. The status line fails unless the latest
+`independent-review` status on that head is `success`. The `jq -e` line fails unless live Jev (not a cache or a
+fallback) answered `merge` in the act band; `jev-decide` itself exits 0 for the review band too, so its exit code is
+not the gate. `--match-head-commit` refuses the merge if the branch moved after the checks.
 
 ### Relaunch a seat
 
@@ -158,7 +169,9 @@ agent-skills-check
 agent-credguard-check
 ```
 
-`install.sh --check` lists what is missing and changes no configuration. `agent-skills-check` prints one line per skill
+`install.sh --check` lists what is missing and installs or configures nothing. It is not read-only: in a fresh HOME it
+creates empty directories, sets the secrets directory to 0700, fills the npm cache while it checks the Playwright
+browser, and Claude Code may create its own `~/.claude.json` when asked for its MCP servers. `agent-skills-check` prints one line per skill
 source. `agent-credguard-check` shows which running seats have `neon` and `vercel` behind the credential guard.
 
 ## Read more

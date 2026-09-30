@@ -41,3 +41,35 @@ test("the workflow skills contain no credential values and point credentials at 
     assert.doesNotMatch(md, /password\s*[:=]\s*\S+|sk-[A-Za-z0-9]{10,}|postgres(ql)?:\/\/\S+:\S+@/i, name);
   }
 });
+
+// Every rig command the skills tell a seat to copy must be one the installed rig accepts (QA round 1: a queue row
+// without --mission/--slice, a proof add without its required --money-evidence).
+import { spawnSync } from "node:child_process";
+test("the skills' rig commands use real flags, and proof add carries every required option", { skip: spawnSync("bash", ["-c", "command -v rig"]).status !== 0 && "rig not installed" }, () => {
+  const help = (subs) => { const r = spawnSync("rig", [...subs, "--help"], { encoding: "utf8", timeout: 30000 }); return (r.stdout || "") + (r.stderr || ""); };
+  let checked = 0;
+  for (const name of Object.keys(SKILLS)) {
+    const md = fs.readFileSync(join(repo, "skills", name, "SKILL.md"), "utf8");
+    for (const [, block] of md.matchAll(/```bash\n([\s\S]*?)```/g)) {
+      for (const cmd of block.replace(/\\\n\s*/g, " ").split("\n").map((l) => l.replace(/\s+#\s.*$/, "").trim()).filter((l) => l.startsWith("rig "))) {
+        const words = cmd.split(/\s+/);
+        const subs = words.slice(1, 3).filter((w) => /^[a-z][a-z-]*$/.test(w));
+        const text = help(subs);
+        const flags = [...cmd.matchAll(/(?:^|\s)(--[a-z][a-z-]*)/g)].map((m) => m[1]);
+        for (const f of flags) assert.ok(text.includes(f), `${name}: rig ${subs.join(" ")} has no ${f}`);
+        if (subs.join(" ") === "proof add") for (const req of ["--artifact-type", "--verdict", "--candidate-sha", "--money-evidence"]) assert.ok(flags.includes(req), `${name}: proof add lacks ${req}`);
+        if (subs.join(" ") === "queue create") for (const req of ["--destination", "--mission", "--slice"]) assert.ok(flags.includes(req), `${name}: queue create lacks ${req}`);
+        checked++;
+      }
+    }
+  }
+  assert.ok(checked >= 4, `checked ${checked}`);
+});
+
+test("bug-review-board has a truthful path for CLI and API work, not only the browser", () => {
+  const md = fs.readFileSync(join(repo, "skills/bug-review-board/SKILL.md"), "utf8");
+  assert.match(md, /\*\*CLI:\*\*/); assert.match(md, /\*\*API:\*\*/);
+  assert.match(md, /CLI: the command, stdout, stderr and exit code/);
+  assert.match(md, /Never make up browser evidence/);
+  assert.match(md, /passed through its user interface \(browser, command or HTTP/);
+});
