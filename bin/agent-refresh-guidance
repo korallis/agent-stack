@@ -8,11 +8,16 @@ reach running seats until a relaunch or restore. This refreshes the content of e
 file is in <workspace>/rig/ (CULTURE.md, startup/*.md), and adds blocks for rig-level guidance_merge startup
 files added to the spec after launch, so compactions and restarts load the current text.
 A seat whose file lost all its blocks (a git reset/checkout of AGENTS.md) gets them back from a sibling seat.
-Only block contents change; blocks OpenRig ships itself (CULTURE-default.md, openrig-*.md) are left alone.
+Blocks are named the way OpenRig names them at launch: by the path declared in the spec, relative to the rig folder
+(`CULTURE.md`, `startup/context.md`). An earlier version keyed startup files by basename and appended a stray
+`context.md` copy next to `startup/context.md`. That stray is removed, or renamed to the declared path when the real
+block is missing.
+Only managed blocks change; text outside them is never touched. Blocks OpenRig ships itself (CULTURE-default.md,
+openrig-*.md) are left alone. --apply backs up every file it changes to ~/.local/share/agent-stack/backups/ first.
 Running sessions still need to re-read the file: tell the lead ("re-read CLAUDE.local.md / AGENTS.md").
 Dry run unless --apply.
 """
-import glob, os, re, sys
+import glob, os, re, shutil, sys, time
 
 H = os.path.expanduser("~")
 arg = next((a for a in sys.argv[1:] if not a.startswith("--")), None)
@@ -24,7 +29,13 @@ specs = sorted(glob.glob(f"{W}/rig/*.yaml"), key=lambda f: open(f).read().count(
 spec = open(specs[0]).read()
 cwds = re.findall(r'cwd:\s*"?([^"\n]+)"?', spec)
 claude_file = (re.search(r"managed_blocks:\s*\n\s*claude-code:\s*(\S+)", spec) or [0, "CLAUDE.md"])[1]
-sources = {os.path.basename(p): p for p in glob.glob(f"{W}/rig/*.md") + glob.glob(f"{W}/rig/startup/*.md")}
+# keyed by the path relative to the rig folder, as OpenRig names the blocks (CULTURE.md, startup/context.md)
+sources = {os.path.relpath(p, f"{W}/rig"): p for p in glob.glob(f"{W}/rig/*.md") + glob.glob(f"{W}/rig/startup/*.md")}
+declared = re.findall(r"-\s*path:\s*(\S+\.md)[^\n]*\n\s*delivery_hint:\s*guidance_merge", spec)
+# stray blocks an earlier version wrote under a declared startup file's basename
+strays = {os.path.basename(rel): rel for rel in declared if os.path.basename(rel) != rel}
+BLOCK = lambda n: re.compile(rf"\n*<!-- BEGIN OpenRig MANAGED BLOCK: {re.escape(n)} -->.*?<!-- END OpenRig MANAGED BLOCK: {re.escape(n)} -->\n?", re.S)
+backup_dir = os.path.join(H, ".local/share/agent-stack/backups", f"guidance-{arg}-{time.strftime('%Y%m%d-%H%M%S')}")
 def blocks_of(text):
     return "".join(re.findall(r"<!-- BEGIN OpenRig MANAGED BLOCK: \S+ -->.*?<!-- END OpenRig MANAGED BLOCK: \S+ -->\n?", text, re.S))
 
@@ -39,6 +50,7 @@ for cwd in cwds:
 restored = []
 
 changed = total = 0
+fixed_strays = []
 for cwd in cwds:
     for fn in (claude_file, "AGENTS.md"):
         path = os.path.join(cwd, fn)
@@ -50,12 +62,19 @@ for cwd in cwds:
         if "OpenRig MANAGED BLOCK" not in text and fn == ("AGENTS.md" if seat_is_codex else claude_file) and fn in donor:
             new = text.rstrip("\n") + "\n\n" + donor[fn]
             restored.append(os.path.basename(cwd))
-        present = re.findall(r"<!-- BEGIN OpenRig MANAGED BLOCK: (\S+) -->", text)
+        present = re.findall(r"<!-- BEGIN OpenRig MANAGED BLOCK: (\S+) -->", new)
+        for stray, rel in strays.items():   # repair: drop the basename copy, or make it the declared block
+            if stray in present:
+                if rel in present:
+                    new = BLOCK(stray).sub("\n", new, count=1)
+                else:
+                    new = new.replace(f"MANAGED BLOCK: {stray} -->", f"MANAGED BLOCK: {rel} -->")
+                fixed_strays.append(f"{os.path.basename(cwd)}/{fn}")
+        present = re.findall(r"<!-- BEGIN OpenRig MANAGED BLOCK: (\S+) -->", new)
         if present:  # add blocks for rig-level guidance_merge startup files that arrived after launch
-            for rel in re.findall(r"-\s*path:\s*(\S+\.md)[^\n]*\n\s*delivery_hint:\s*guidance_merge", spec):
-                name = os.path.basename(rel)
-                if name in sources and name not in present:
-                    new = new.rstrip("\n") + f"\n\n<!-- BEGIN OpenRig MANAGED BLOCK: {name} -->\n\n<!-- END OpenRig MANAGED BLOCK: {name} -->\n"
+            for rel in declared:
+                if rel in sources and rel not in present:
+                    new = new.rstrip("\n") + f"\n\n<!-- BEGIN OpenRig MANAGED BLOCK: {rel} -->\n\n<!-- END OpenRig MANAGED BLOCK: {rel} -->\n"
         for name in re.findall(r"<!-- BEGIN OpenRig MANAGED BLOCK: (\S+) -->", new):
             if name not in sources:
                 continue
@@ -66,8 +85,15 @@ for cwd in cwds:
         if new != text:
             changed += 1
             if APPLY:
+                dest = os.path.join(backup_dir, os.path.basename(cwd), fn)
+                os.makedirs(os.path.dirname(dest), exist_ok=True)
+                shutil.copy2(path, dest)
                 open(path, "w").write(new)
 if restored:
     print("restored lost blocks for:", ", ".join(restored))
+if fixed_strays:
+    print(f"{'removed' if APPLY else 'would remove'} stray basename blocks ({', '.join(sorted(strays))}) in:", ", ".join(fixed_strays))
+if APPLY and changed:
+    print(f"backups: {backup_dir}")
 print(f"{'APPLIED' if APPLY else 'DRY RUN'}: {changed}/{total} seat instruction files {'updated' if APPLY else 'would change'} "
       f"(sources: {', '.join(sorted(sources))})")
