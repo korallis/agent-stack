@@ -354,10 +354,24 @@ if specs:
     rep("OK" if not stale else "WARN", "seat instructions carry the current CULTURE.md and startup files",
         "run agent-refresh-guidance --apply: " + ", ".join(stale[:6]) if stale else "")
     rep("OK" if not noskills else "WARN", "every seat has the skills its role declares", ", ".join(noskills[:6]))
-behind = subprocess.run(["git", "-C", REPO, "rev-list", "--count", "main..origin/main"], capture_output=True, text=True).stdout.strip()
+def git(*a):
+    return subprocess.run(["git", "-C", REPO, *a], capture_output=True, text=True).stdout.strip()
+TRUNK = (git("symbolic-ref", "-q", "--short", "refs/remotes/origin/HEAD").removeprefix("origin/")
+         or git("branch", "--show-current") or "main")
+behind = git("rev-list", "--count", f"{TRUNK}..origin/{TRUNK}")
 rep("OK" if behind in ("0", "") else ("WARN" if behind.isdigit() and int(behind) < 20 else "FAIL"),
-    "shared checkout's main is current (the daemon judges 'merged' against it; agent-repos-sync.timer)",
-    f"{behind} commits behind origin/main" if behind not in ("0", "") else "")
+    f"shared checkout's {TRUNK} is current (new worktrees start from the trunk; agent-repos-sync.timer)",
+    f"{behind} commits behind origin/{TRUNK}" if behind not in ("0", "") else "")
+if TRUNK != "main":
+    # OpenRig judges "merged" against a local ref named main: it must mirror origin/<trunk> (agent-project-new sets it,
+    # agent-repos-sync keeps it current, the pre-push hook keeps it off the remote).
+    mirror, want = git("rev-parse", "-q", "--verify", "refs/heads/main"), git("rev-parse", "-q", "--verify", f"refs/remotes/origin/{TRUNK}")
+    rep("OK" if mirror and mirror == want else "FAIL", f"local main mirrors origin/{TRUNK} (OpenRig judges 'merged' against main)",
+        "" if mirror and mirror == want else
+        (f"main is {mirror[:8]}, origin/{TRUNK} is {want[:8]}: run agent-repos-sync" if mirror else "no local main: run agent-project-new again"))
+    pp = read(f"{REPO}/.git/hooks/pre-push") or ""
+    rep("OK" if "agent-stack.mainMirror" in pp else "FAIL", "pre-push hook keeps the main mirror off the remote",
+        "" if "agent-stack.mainMirror" in pp else "install system/git-hooks/pre-push")
 tim = subprocess.run(["systemctl", "--user", "is-active", "agent-repos-sync.timer"], capture_output=True, text=True).stdout.strip()
 rep("OK" if tim == "active" else "FAIL", "agent-repos-sync.timer active (keeps every project's main current)")
 hook = read(f"{REPO}/.git/hooks/pre-commit") or ""

@@ -1,0 +1,13 @@
+#!/usr/bin/env bash
+# agent-stack: in a repo whose trunk isn't `main`, the local `main` is a MIRROR of origin/<trunk> that OpenRig needs (its
+# execution view judges "merged" against a local ref named main). It must never reach the remote: refuse any push to
+# refs/heads/main while this repo is marked as mirroring (git config agent-stack.mainMirror = true). Other repos: no-op.
+[ "$(git config --bool agent-stack.mainMirror 2>/dev/null)" = true ] || exit 0
+while read -r _local_ref _local_sha remote_ref _remote_sha; do
+  if [ "$remote_ref" = refs/heads/main ]; then
+    echo "pre-push: refusing to push 'main': in this repo it only mirrors origin/$(git config agent-stack.trunk 2>/dev/null || echo '<trunk>') for OpenRig." >&2
+    echo "Push your own branch (git push -u origin <branch>) and open a PR against the trunk." >&2
+    exit 1
+  fi
+done
+exit 0

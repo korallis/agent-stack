@@ -41,13 +41,44 @@ LEAD=$(seats_for lead | head -1); MERGE=$(seats_for integrator | head -1); QA=$(
 [ -n "$LEAD" ] && [ -n "$MERGE" ] || { echo "rig/template/$TEAM.yaml needs a lead (agents/lead) and a merge owner (agents/integrator)" >&2; exit 2; }
 [ "$(seats_for integrator | wc -l)" = 1 ] || echo "note: several merge owners in $TEAM.yaml; the merge sweep goes to $MERGE" >&2
 JUDGES=$(printf '%s\n' $QA "$MERGE" "$LEAD" | sed "s/\$/@$RIG/" | paste -sd, - | sed 's/,/, /g')
+# The repo's trunk: origin/HEAD, else the checked-out branch, else main. An EXISTING repo (commits and an origin) is
+# adopted as it is: the starter kit goes to the workspace for the lead to bring in by PR, never into the working tree.
+trunk_of() { local t; t=$(git -C "$1" symbolic-ref -q --short refs/remotes/origin/HEAD 2>/dev/null); t=${t#origin/}
+  [ -n "$t" ] || t=$(git -C "$1" branch --show-current 2>/dev/null); echo "${t:-main}"; }
+# OpenRig judges "merged" against a LOCAL ref named main (execution view). When the trunk isn't main, keep
+# refs/heads/main as a mirror of origin/<trunk>: a ref only, never checked out, never pushed (the pre-push hook refuses).
+# Only a main this created (agent-stack.mainMirror) is ever moved.
+mirror_main() { local r=$1 t=$2
+  [ "$t" != main ] || return 0
+  git -C "$r" rev-parse -q --verify "refs/remotes/origin/$t" >/dev/null || { echo "  $r: no origin/$t; main mirror not set" >&2; return 1; }
+  [ "$(git -C "$r" symbolic-ref -q --short HEAD)" != main ] || { echo "  $r: main is checked out; mirror not set" >&2; return 1; }
+  if git -C "$r" rev-parse -q --verify refs/heads/main >/dev/null && [ "$(git -C "$r" config --bool agent-stack.mainMirror)" != true ]; then
+    echo "  $r: a local main exists that agent-stack didn't create; not overwriting it (delete it, or set agent-stack.mainMirror=true)" >&2; return 1; fi
+  git -C "$r" config agent-stack.mainMirror true; git -C "$r" config agent-stack.trunk "$t"
+  git -C "$r" update-ref -m "agent-stack: main mirrors origin/$t" refs/heads/main "refs/remotes/origin/$t"; }
+EXISTING=0; TRUNK=main
+if [ -d "$R/.git" ] && git -C "$R" rev-parse -q --verify HEAD >/dev/null && git -C "$R" remote get-url origin >/dev/null 2>&1; then
+  EXISTING=1; TRUNK=$(trunk_of "$R"); fi
 say() { printf '\033[1m==\033[0m %s\n' "$*"; }
 run() { if [ $DRY = 1 ]; then echo "  would: $*"; else "$@"; fi; }
 ID=${ID:-$(git config --global user.name 2>/dev/null) <$(git config --global user.email 2>/dev/null)>}
 
-say "repo $R (starter kit, existing files kept)"
+if [ $EXISTING = 1 ]; then say "repo $R (existing, trunk $TRUNK: adopted as is; starter kit goes to $W/starter-kit)"
+else say "repo $R (starter kit, existing files kept; trunk $TRUNK)"; fi
 run mkdir -p "$R" "$H"
-if [ $DRY = 0 ]; then
+if [ $DRY = 0 ] && [ $EXISTING = 1 ]; then
+  ex="$R/.git/info/exclude"; mkdir -p "$(dirname "$ex")"
+  for hk in pre-commit pre-push; do   # never replace a hook the project has of its own
+    if [ ! -e "$R/.git/hooks/$hk" ] || grep -q '^# agent-stack:' "$R/.git/hooks/$hk"; then install -m 755 "$AS/system/git-hooks/$hk" "$R/.git/hooks/$hk"
+    else echo "  $R/.git/hooks/$hk is the project's own; not replaced (add the agent-stack check to it by hand)" >&2; fi; done
+  for e in /.codex/ /.claude/settings.local.json /.claude/skills/ /.claude/plugins/ /.openrig/ /.mcp.json /CLAUDE.local.md /.agents/skills/; do
+    grep -qxF "$e" "$ex" 2>/dev/null || echo "$e" >> "$ex"; done
+  git -C "$R" fetch -q origin "$TRUNK" || echo "  could not fetch origin $TRUNK" >&2
+  mirror_main "$R" "$TRUNK" || true
+elif [ $DRY = 1 ] && [ "$TRUNK" != main ]; then
+  echo "  would: set refs/heads/main := origin/$TRUNK (a mirror for OpenRig; never checked out or pushed) + pre-push guard"
+fi
+if [ $DRY = 0 ] && [ $EXISTING = 0 ]; then
   cp -rn "$AS/starter-kit/." "$R/"; rm -f "$R/README.md.kit"
   [ -f "$R/README.md" ] && cmp -s "$R/README.md" "$AS/starter-kit/README.md" && rm "$R/README.md"
   for f in AGENTS.md docs/PLAN.md; do [ -f "$R/$f" ] && sed -i "s#@PROJECT@#$P#g; s#@HELDOUT@#$H#g; s#@COMMIT_IDENTITY@#$ID#g" "$R/$f"; done
@@ -66,7 +97,15 @@ if [ $GITHUB = 1 ] && [ -n "$GH" ]; then
     run git -C "$R" remote add origin "https://github.com/$GH/$P.git"
     run git -C "$R" push -q -u origin main
   fi
-  [ -x "$R/scripts/setup-github.sh" ] && run "$R/scripts/setup-github.sh" "$GH/$P"
+  if [ $EXISTING = 1 ]; then
+    # An existing repo keeps its own GitHub rules: skip the kit's protection when the trunk already has any.
+    prot=$(gh api "repos/$GH/$P/branches/$TRUNK/protection" --silent >/dev/null 2>&1 && echo "branch protection" || true)
+    rules=$(gh api "repos/$GH/$P/rules/branches/$TRUNK" --jq '[.[].type] | join(", ")' 2>/dev/null || true)
+    if [ -n "$prot$rules" ]; then say "GitHub: $TRUNK already protected (${prot}${prot:+${rules:+; }}${rules:+ruleset: $rules}); kit protection skipped"
+    else run "$AS/starter-kit/scripts/setup-github.sh" "$GH/$P" "$TRUNK"; fi
+  else
+    [ -x "$R/scripts/setup-github.sh" ] && run "$R/scripts/setup-github.sh" "$GH/$P" "$TRUNK"
+  fi
 fi
 
 say "workspace $W"
@@ -82,6 +121,15 @@ if [ $DRY = 0 ]; then
   grep -qE '^ *- conventions.md' "$W/project.yaml" || sed -i 's/^  context: \[\]/  context:\n    - conventions.md/' "$W/project.yaml"
   grep -qF "$W" "$U/workspace.yaml" 2>/dev/null || printf '  - id: %s\n    root: %s\n' "$RIG" "$W" >> "$U/workspace.yaml"
 fi
+if [ $EXISTING = 1 ]; then
+  if [ $DRY = 1 ]; then echo "  would: copy the starter kit to $W/starter-kit (for the lead's adoption PR)"
+  elif [ ! -d "$W/starter-kit" ]; then
+    mkdir -p "$W/starter-kit" && cp -r "$AS/starter-kit/." "$W/starter-kit/"
+    for f in AGENTS.md docs/PLAN.md; do [ -f "$W/starter-kit/$f" ] && sed -i "s#@PROJECT@#$P#g; s#@HELDOUT@#$H#g; s#@COMMIT_IDENTITY@#$ID#g" "$W/starter-kit/$f"; done
+  fi
+  echo "  The starter kit is in $W/starter-kit, NOT in the repo. Adopting it (AGENTS.md, guards, journeys; merge with the"
+  echo "  project's own AGENTS.md, README, .gitignore, playwright.config.ts) is the lead's first slice, as a PR to $TRUNK."
+fi
 changed=0
 for k in files.allowlist progress.scan_roots; do
   c=$(rig config get $k 2>/dev/null || true)
@@ -96,23 +144,31 @@ if [ $DRY = 0 ]; then
   for f in "$TEAM.yaml" CULTURE.md merge-sweep.watchdog.yaml daily-summary.watchdog.yaml; do
     [ -f "$W/rig/$f" ] || cp "$AS/rig/template/$f" "$W/rig/$f"; done
   mkdir -p "$W/rig/startup"
-  [ -f "$W/rig/startup/context.md" ] || sed "s#@REPO@#$R#g; s#@WT@#$WT#g" "$AS/rig/template/startup/context.md" > "$W/rig/startup/context.md"
+  [ -f "$W/rig/startup/context.md" ] || sed "s#@REPO@#$R#g; s#@WT@#$WT#g; s#@TRUNK@#$TRUNK#g" "$AS/rig/template/startup/context.md" > "$W/rig/startup/context.md"
   sed -i "s#@RIG@#$RIG#g; s#@REPO@#$R#g; s#@WT@#$WT#g; s#@AGENT_STACK@#$AS#g; s#@LEAD_SEAT@#$LEAD#g; s#@MERGE_SEAT@#$MERGE#g" \
     "$W/rig/$TEAM.yaml" "$W/rig/merge-sweep.watchdog.yaml" "$W/rig/daily-summary.watchdog.yaml"
-  grep -q "^## $P specifics" "$W/rig/CULTURE.md" || printf '\n## %s specifics\n- (status names, commit identity, repo procedures; owner decisions go in "Owner decisions" above)\n' "$P" >> "$W/rig/CULTURE.md"
+  grep -q "^## $P specifics" "$W/rig/CULTURE.md" || printf '\n## %s specifics\n- Trunk: `%s`. Branch from origin/%s; every PR targets %s.\n- (status names, commit identity, repo procedures; owner decisions go in "Owner decisions" above)\n' "$P" "$TRUNK" "$TRUNK" "$TRUNK" >> "$W/rig/CULTURE.md"
 fi
 
-say "worktrees $WT (one per seat)"
+# Worktrees start from the trunk: local main for a main-trunk repo (as always), origin/<trunk> otherwise.
+BASE=main; [ "$TRUNK" = main ] || BASE="origin/$TRUNK"
+say "worktrees $WT (one per seat, from $BASE)"
 run mkdir -p "$WT"
 if [ $DRY = 1 ]; then
   for cwd in $(grep -oE 'cwd: *"?[^"]+' "$AS/rig/template/$TEAM.yaml" | sed 's/cwd: *"\{0,1\}//; s#@WT@#'"$WT"'#'); do
-    seat=$(basename "$cwd"); case "$seat" in impl-*) run git -C "$R" worktree add -q "$cwd" -b "agent/$seat" main ;; *) run git -C "$R" worktree add -q --detach "$cwd" main ;; esac
+    seat=$(basename "$cwd"); case "$seat" in impl-*) run git -C "$R" worktree add -q --no-track "$cwd" -b "agent/$seat" "$BASE" ;; *) run git -C "$R" worktree add -q --detach "$cwd" "$BASE" ;; esac
+    [ -f "$R/.env.local" ] && echo "  would: ln -s $R/.env.local $cwd/.env.local"
   done
 else
   for cwd in $(grep -oE 'cwd: *"?[^"]+' "$W/rig/$TEAM.yaml" | sed 's/cwd: *"\{0,1\}//'); do
-    seat=$(basename "$cwd"); [ -d "$cwd" ] && continue
-    case "$seat" in impl-*) git -C "$R" worktree add -q "$cwd" -b "agent/$seat" main ;; *) git -C "$R" worktree add -q --detach "$cwd" main ;; esac
-    [ $DEPS = 1 ] && [ -f "$cwd/package-lock.json" ] && (cd "$cwd" && npm ci --silent >/dev/null 2>&1 || echo "  npm ci failed in $seat (install later)")
+    seat=$(basename "$cwd")
+    if [ ! -d "$cwd" ]; then
+      case "$seat" in impl-*) git -C "$R" worktree add -q --no-track "$cwd" -b "agent/$seat" "$BASE" ;; *) git -C "$R" worktree add -q --detach "$cwd" "$BASE" ;; esac
+      [ $DEPS = 1 ] && [ -f "$cwd/package-lock.json" ] && (cd "$cwd" && npm ci --silent >/dev/null 2>&1 || echo "  npm ci failed in $seat (install later)")
+    fi
+    # The project's dev env (e.g. the dev-branch database URL): .env.local ONLY, as a link, so seats share the owner's
+    # file. Never .env.*.local or .env.production*. An existing file in the worktree is left alone.
+    if [ -f "$R/.env.local" ] && [ ! -e "$cwd/.env.local" ] && [ ! -L "$cwd/.env.local" ]; then ln -s "$R/.env.local" "$cwd/.env.local"; fi
   done
 fi
 
