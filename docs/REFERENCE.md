@@ -351,9 +351,11 @@ Paths are resolved the way the shell will run the command:
 - A name the command gave a protected file (`cp`, `ln`, `mv`, `dd of=`, `tee < file`, `cp -t DIR`, a copied
   directory and everything under it) is protected for the rest of the command, globs over it included.
 - `$'…'` escapes (`\x`, `\u`, `\U`, octal), simple `{a,b}` braces, and variables the command sets are expanded:
-  `F=…`, a prefix `F=… cmd`, `export`, `declare`, `local`, `readonly`, `read A B <<< …` (split into fields) and
-  `for f in …`. An assignment that may not reach the shell (in a `( … )` subshell, a pipeline, `&`, an `if`/loop body
-  or after `&&`/`||`) only adds a value, and a prefix `F=… cmd` holds for that command only. `shopt -u dotglob` counts
+  `F=…`, a prefix `F=… cmd` or `env F=… cmd`, `export`, `declare`, `local`, `readonly`, `read … <<< …` (split into
+  fields by `IFS`, with `-n`/`-N`/`-d`/`-a`) and `for f in …`; `${F}` and `${F[i]}` too, while other `${F…}` forms
+  count as unresolved. An assignment that may not reach the shell (in a `( … )` subshell, a pipeline, `&`, an
+  `if`/loop body, or after `&&`/`||`, a `{ … }` group there included) only adds a value. A prefix `F=… cmd` holds for
+  that command only; the command's own redirections, `cd`, copies and `shopt` still count. `shopt -u dotglob` counts
   only where it surely applies.
 - Backstop: if the command names a protected path anywhere, a print whose operand still holds a value the guard can't
   resolve (a variable it didn't see set, a substitution) is refused.

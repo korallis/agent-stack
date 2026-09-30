@@ -344,3 +344,23 @@ test("QA PR59 refresh: subshell / prefix / branch scope, dotglob off in a subshe
     "shopt -s dotglob; shopt -u dotglob; cat app/*", "read -r F rest <<< 'app/safe.txt app/.env'; cat \"$F\"",
     "cp app/.env out/; cp app/safe.txt out/; cat out/safe.txt"]) assert.equal(dec(c), false, c);
 });
+
+// QA PR59 scope (79ae3e1b): conditional groups, env assignments, prefixed commands keep their effects, read options and IFS.
+test("QA PR59 scope: { … } after && / ||, env F=x cmd, X=1 before cd/cp/shopt/redirections, read -n / -d / IFS", () => {
+  const h = fs.mkdtempSync(join(root, "qa59s-")), app = join(h, "app"), sec = join(h, ".config/agent-stack/secrets");
+  fs.mkdirSync(app); fs.mkdirSync(sec, { recursive: true });
+  fs.writeFileSync(join(app, ".env"), "K=v\n"); fs.writeFileSync(join(app, "safe.txt"), "hi\n"); fs.writeFileSync(join(sec, "token.txt"), "t\n");
+  const dec = (command) => g.decide({ tool_name: "Bash", tool_input: { command }, cwd: h }, { home: h, pats: g.DEFAULT_PATTERNS }).deny;
+  for (const c of [
+    'F=app/.env; false && { true; F=app/safe.txt; }; cat "$F"', 'F=app/.env; true || { true; F=app/safe.txt; }; cat "$F"',
+    'F=app/.env; false && { { true; }; F=app/safe.txt; }; cat "$F"', "shopt -s dotglob; false && { true; shopt -u dotglob; }; cat app/*",
+    'F=app/.env; env F=app/safe.txt true; cat "$F"', 'F=app/.env; env -i F=app/safe.txt true; cat "$F"',
+    "X=1 cat < app/.env", "X=1 cp app/.env copied; cat copied", 'X=1 cd "$HOME/.config/agent-stack/secrets"; cat token.txt',
+    "X=1 shopt -s dotglob; cat app/*", "F=app/.env bash -c 'cat \"$F\"'",
+    'read -r -n 8 F <<< "app/.envJUNK"; cat "$F"', 'read -rn8 F <<< "app/.envJUNK"; cat "$F"', 'IFS=: read -r F rest <<< "app/.env:ignore"; cat "$F"',
+    'read -r -d , F <<< "app/.env,x"; cat "$F"', 'read -r <<< app/.env; cat "$REPLY"', 'read -r -a A <<< "x app/.env"; cat ${A[1]}',
+  ]) assert.equal(dec(c), true, c);
+  for (const c of ['F=app/.env; { F=app/safe.txt; }; cat "$F"', "X=1 cat app/safe.txt", 'F=app/safe.txt; env F=app/.env true; cat "$F"',
+    'IFS=: read -r F rest <<< "app/safe.txt:app/.env"; cat "$F"', 'read -r -n 4 F <<< "app/.env"; cat "$F"',
+    "X=1 true; cat app/safe.txt"]) assert.equal(dec(c), false, c);
+});

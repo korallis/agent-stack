@@ -79,7 +79,9 @@ function expand(word, ctx) {
     const next = [];
     let changed = false;
     for (const w of words) {
-      const m = w.match(/\$\{?([A-Za-z_][A-Za-z0-9_]*)\}?/);
+      // $NAME, ${NAME}, ${NAME[i]} / ${NAME[@]} (any element: every value it may hold). Other ${…} forms stay unresolved.
+      const m = w.match(/\$(?:([A-Za-z_][A-Za-z0-9_]*)|\{([A-Za-z_][A-Za-z0-9_]*)(?:\[[^\]]*\])?\})/);
+      if (m) m[1] = m[1] ?? m[2];
       const vals = m && (m[1] === "HOME" ? [ctx.home] : ctx.vars?.get(m[1]));
       if (!vals) { next.push(w); continue; }
       changed = true;
@@ -363,7 +365,24 @@ function bashVerdict(command, ctx, depth = 0) {
   // An assignment that certainly happened in this shell replaces the value; one that may not have (a subshell, an
   // if/loop body, after && or ||) only adds its value to the possibilities.
   const setVar = (name, raw, scoped = false) => ctx.vars.set(name, scoped ? [...new Set([...(ctx.vars.get(name) || []), ...expand(raw, ctx)])] : expand(raw, ctx));
-  let blockDepth = 0;
+  let blockDepth = 0, restore = null;
+  const groups = [];   // for each open { … } group: whether it opened in conditional scope
+  // Read fields as bash does: IFS whitespace trims and runs together, any other IFS character ends one field;
+  // the last name takes the rest of the line.
+  const readFields = (line, names, ifs) => {
+    const ws = [...ifs].filter((c) => /\s/.test(c)).join(""), isWs = (c) => ws.includes(c), isIfs = (c) => ifs.includes(c);
+    const trim = (x) => { let a = 0, b = x.length; while (a < b && isWs(x[a])) a++; while (b > a && isWs(x[b - 1])) b--; return x.slice(a, b); };
+    let rest = trim(line); const out = [];
+    for (let i = 0; i < names.length - 1; i++) {
+      let j = 0; while (j < rest.length && !isIfs(rest[j])) j++;
+      out.push(rest.slice(0, j)); rest = rest.slice(j);
+      let m = 0; while (m < rest.length && isWs(rest[m])) m++;
+      if (m < rest.length && isIfs(rest[m]) && !isWs(rest[m])) m++;
+      while (m < rest.length && isWs(rest[m])) m++;
+      rest = rest.slice(m);
+    }
+    out.push(rest); return out;
+  };
   const addDirs = (w) => { for (const t of expand(w, ctx)) if (!unresolved(t)) { const x = t.replace(/^~(?=\/|$)/, ctx.home);
     for (const c of path.isAbsolute(x) ? [path.normalize(x)] : [...ctx.cwds].map((c) => path.join(c, x))) ctx.cwds.add(c); } };
   const resolveAll = (w) => expand(w, ctx).flatMap((t) => { const x = t.replace(/^~(?=\/|$)/, ctx.home);
@@ -379,9 +398,12 @@ function bashVerdict(command, ctx, depth = 0) {
   let sourced = null;
   for (const seg of segs) {
     let words = seg.words.map((w) => w.text), k = 0;
+    if (restore) { for (const [n, v] of restore) if (v === undefined) ctx.vars.delete(n); else ctx.vars.set(n, v); restore = null; }
     if (/^(fi|done|esac)$/.test(words[0] || "")) blockDepth = Math.max(0, blockDepth - 1);
+    for (let j = 0; words[j] === "}"; j++) if (groups.pop()) blockDepth = Math.max(0, blockDepth - 1);
     const scoped = seg.sub || seg.cond || blockDepth > 0;
     if (/^(if|while|until|for|case|select)$/.test(words[0] || "")) blockDepth++;
+    for (let j = 0; words[j] === "{"; j++) { groups.push(scoped); if (scoped) blockDepth++; }   // `false && { …; F=x; }`: all of it may not run
     const prefix = [];   // FOO=bar before a command: that command's environment only
     for (;;) {   // prefixes: FOO=bar, sudo/exec/nohup/…, shell keywords and braces, env [opts], timeout [opts] N
       if (k < words.length && ASSIGN.test(words[k])) { prefix.push(words[k]); k++; continue; }
@@ -392,7 +414,7 @@ function bashVerdict(command, ctx, depth = 0) {
           const w = words[k];
           if (w === "-S" || w === "--split-string") { const r = bashVerdict(words.slice(k + 1).join(" "), ctx, depth + 1); if (r) return r; k = words.length; break; }
           if (/^--split-string=/.test(w) || /^-S./.test(w)) { const r = bashVerdict([w.replace(/^--split-string=|^-S/, ""), ...words.slice(k + 1)].join(" "), ctx, depth + 1); if (r) return r; k = words.length; break; }
-          if (ASSIGN.test(w)) setVar(w.slice(0, w.indexOf("=")), w.slice(w.indexOf("=") + 1));
+          if (ASSIGN.test(w)) prefix.push(w);   // env F=x cmd: cmd's environment only
           if (w === "-C" || w === "--chdir") addDirs(words[k + 1] || "");
           if (/^--chdir=/.test(w)) addDirs(w.slice(8));
           if (/^-C./.test(w)) addDirs(w.slice(2));   // -CDIR
@@ -407,13 +429,10 @@ function bashVerdict(command, ctx, depth = 0) {
     if (k >= words.length) {   // only assignments: plain assignments in this shell
       for (const w of prefix) setVar(w.slice(0, w.indexOf("=")), w.slice(w.indexOf("=") + 1), scoped);
       if (!seg.redirs.length) continue;
-    } else if (prefix.length) {   // the command (and any shell it starts) sees them; this shell doesn't keep them
-      const saved = new Map(ctx.vars);
-      for (const w of prefix) setVar(w.slice(0, w.indexOf("=")), w.slice(w.indexOf("=") + 1));
-      const r = bashVerdict(seg.words.slice(k).map((w) => w.sq ? `'${w.text.replace(/'/g, "'\\''")}'` : w.text).join(" "), ctx, depth + 1);
-      ctx.vars = saved;
-      if (r) return r;
-      continue;
+    } else if (prefix.length) {   // the command (and any shell it starts) sees them; this shell doesn't keep them.
+      // The command itself is judged here as usual (its redirections, cd, cp, shopt all count); only the names revert.
+      restore = new Map();
+      for (const w of prefix) { const n = w.slice(0, w.indexOf("=")); if (!restore.has(n)) restore.set(n, ctx.vars.get(n)); setVar(n, w.slice(w.indexOf("=") + 1)); }
     }
     const verb = path.basename(words[k] || ""), args = words.slice(k + 1);
     const hitIn = (list) => { for (const w of list) { const h = protectedPath(w, ctx); if (h) return h; } return null; };
@@ -424,13 +443,30 @@ function bashVerdict(command, ctx, depth = 0) {
     if (["export", "declare", "typeset", "local", "readonly"].includes(verb)) for (const a of args) if (ASSIGN.test(a)) setVar(a.slice(0, a.indexOf("=")), a.slice(a.indexOf("=") + 1), scoped);
     if (verb === "for" && args[1] === "in") { setVar(args[0], "", true); ctx.vars.set(args[0], [...new Set([...(ctx.vars.get(args[0]) || []).filter(Boolean), ...args.slice(2).flatMap((w) => expand(w, ctx))])]); continue; }
     if (verb === "read" || verb === "mapfile" || verb === "readarray") {   // read A B <<< "x y z": A=x, B="y z"; else unknown
-      const names = args.filter((a) => /^[A-Za-z_][A-Za-z0-9_]*$/.test(a)), here = seg.redirs.find((r) => r.op === "<<<");
-      if (here) {
-        for (const value of expand(here.target, ctx)) {
-          const fields = value.trim().split(/\s+/);
-          names.forEach((n, i) => setVar(n, i === names.length - 1 ? fields.slice(i).join(" ") : (fields[i] ?? ""), true));
+      const names = [], opt = {};
+      for (let i = 0; i < args.length; i++) {   // -r -s -e; -n N -N N -d D -a NAME -p P -t T -u FD -i T, clustered or not
+        const a = args[i];
+        if (/^-./.test(a) && !opt.done) {
+          if (a === "--") { opt.done = true; continue; }
+          for (let c = 1; c < a.length; c++) if ("nNdaptui".includes(a[c])) { opt[a[c]] = c + 1 < a.length ? a.slice(c + 1) : args[++i] ?? ""; break; }
+          continue;
         }
-      } else for (const n of names) if (!scoped) ctx.vars.delete(n);
+        if (/^[A-Za-z_][A-Za-z0-9_]*$/.test(a)) names.push(a);
+      }
+      if (opt.a) names.length = 0;
+      const here = seg.redirs.find((r) => r.op === "<<<");
+      if (here && verb === "read") {
+        const ifsList = ctx.vars.has("IFS") ? ctx.vars.get("IFS") : [" \t\n"];
+        for (const value of expand(here.target, ctx)) for (const ifs of ifsList) {
+          let line = value;
+          const delim = opt.d !== undefined ? (opt.d[0] ?? "\0") : "\n";
+          if (opt.N === undefined && line.includes(delim)) line = line.slice(0, line.indexOf(delim));
+          const n = Number(opt.N ?? opt.n); if (Number.isFinite(n) && n >= 0) line = line.slice(0, n);
+          if (opt.a) { for (const f of readFields(line, Array(64).fill(0), ifs).filter(Boolean)) setVar(opt.a, f, true); continue; }
+          const names1 = names.length ? names : ["REPLY"];
+          readFields(line, names1, ifs).forEach((f, i) => setVar(names1[i], f, true));
+        }
+      } else for (const n of [...names, opt.a].filter(Boolean)) if (!scoped) ctx.vars.delete(n);
       continue;
     }
     // bash -c / -lc / --norc -c …, sh -c, eval: the command string is a command of its own.
