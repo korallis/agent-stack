@@ -35,18 +35,20 @@ def read(p):
         return None
 
 
-OWNER_SOURCE = re.compile(r"\(owner, (?:Slack [^)]*\d{1,2}:\d{2}Z|via operator relay of [^)]+)\)\.?\s*$")
+OWNER_SOURCE = re.compile(r"\(owner, (?:Slack [^)]*\d{1,2}:\d{2}Z|via operator relay of [^)\s][^)]*)\)\.?\s*$")
 
 
 def owner_decision_problems(culture):
     """The Owner decisions bullets without an owner source at their end, and those citing a lead doc (docs/decisions/*)."""
     m = re.search(r"^## Owner decisions[^\n]*\n(.*?)(?=^## |\Z)", culture, re.M | re.S)
-    bullets, cur = [], None
+    bullets, cur, gap = [], None, False
     for line in (m.group(1) if m else "").split("\n"):
-        if line.startswith("- "):
-            cur = [line[2:].strip()]; bullets.append(cur)
+        if re.match(r"[-*+] ", line):                       # every Markdown bullet marker
+            cur, gap = [line[2:].strip()], False; bullets.append(cur)
         elif cur is not None and line.startswith("  ") and line.strip():
-            cur.append(line.strip())
+            cur.append(line.strip()); gap = False            # a continuation, also after a blank line inside the item
+        elif cur is not None and not line.strip() and not gap:
+            gap = True
         else:
             cur = None
     texts = [" ".join(b) for b in bullets if " ".join(b) != "(none yet)"]

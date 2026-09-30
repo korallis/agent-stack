@@ -7,6 +7,7 @@ import { spawnSync } from "node:child_process";
 import * as fs from "node:fs";
 import { join, dirname } from "node:path";
 import { fileURLToPath } from "node:url";
+import { tmpdir } from "node:os";
 
 const repo = join(dirname(fileURLToPath(import.meta.url)), "..");
 const home = fs.mkdtempSync(join(fs.existsSync("/tmp/claude-1000") ? "/tmp/claude-1000" : "/tmp", "onboard-"));
@@ -179,4 +180,24 @@ test("an existing repo gets agent-project-new's GitHub setup only with GITHUB_SE
   const r = onboard([answers("GITHUB_SETUP=yes\n")]);
   assert.equal(r.status, 0, r.stderr);
   assert.match(r.stdout, /GITHUB_SETUP=yes, the owner agreed/); assert.match(r.stdout, /--github acme --dry-run/);
+});
+
+// QA WO41 f1: adding a decision's source must not duplicate a decision already in CULTURE.
+test("add_bullets: a decision already present (sourced or not) is never added again; an unsourced one is reported", () => {
+  const src = fs.readFileSync(join(repo, "bin/agent-project-onboard"), "utf8");
+  const fns = src.slice(src.indexOf("def decision_core"), src.indexOf("def bullets_of"));
+  const regex = src.split("\n").find((l) => l.startsWith("OWNER_SOURCE = "));
+  const culturePath = join(fs.mkdtempSync(join(tmpdir(), "onb-")), "CULTURE.md");
+  fs.writeFileSync(culturePath, "# x\n\n## Owner decisions (binding)\nintro\n- 2026-09-30: Keep review independent.\n- 2026-09-30: Ship weekly. (owner, Slack 10:00Z)\n\n## Operating rules\n- r\n");
+  const py = `import re\n${regex}\n${fns}\nimport sys\nS = " (owner, via operator relay of the onboarding answers)"\n` +
+    `bs = ["- 2026-09-30: Keep review independent." + S, "- 2026-09-30: Ship weekly." + S, "- 2026-09-30: New one." + S]\n` +
+    `print(add_bullets(sys.argv[1], "Owner decisions", bs, same=decision_core)); print(add_bullets(sys.argv[1], "Owner decisions", bs, same=decision_core))`;
+  const r = spawnSync("python3", ["-c", py, culturePath], { encoding: "utf8" });
+  assert.equal(r.status, 0, r.stderr);
+  assert.deepEqual(r.stdout.split("\n").filter((l) => /^\d+$/.test(l)), ["1", "0"], "only the new decision, once");
+  assert.match(r.stdout, /note: already in "Owner decisions" without its owner source; add it there by hand: - 2026-09-30: Keep review independent\./);
+  const c = fs.readFileSync(culturePath, "utf8");
+  assert.equal((c.match(/Keep review independent/g) || []).length, 1); assert.equal((c.match(/Ship weekly/g) || []).length, 1);
+  assert.match(c, /- 2026-09-30: New one\. \(owner, via operator relay of the onboarding answers\)\n\n## Operating rules/);
+  fs.rmSync(dirname(culturePath), { recursive: true, force: true });
 });

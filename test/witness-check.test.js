@@ -222,6 +222,16 @@ test("agent-project-check WARNs on an unsourced Owner decisions bullet and on on
     const doc = find(r, "no Owner decisions bullet rests on a lead doc");
     assert.equal(doc.level, "WARN"); assert.match(doc.detail, /Only a confident Jev hold blocks.*a lead's doc is not the owner's word/);
     assert.equal(find(r, "CULTURE.md has the Owner decisions, Operator and lead rules and Operating rules sections").level, "OK");
+    // QA WO41 f2: a blank relay reference is no source; * and + bullets are bullets; a paragraph after a blank line
+    // inside an item still belongs to it.
+    for (const [bullets, level] of [
+      ["- 2026-09-30: Policy. (owner, via operator relay of    )\n", "WARN"],
+      ["* 2026-09-30: Policy.\n", "WARN"], ["+ 2026-09-30: Policy.\n", "WARN"],
+      ["- 2026-09-30: Policy with a long reason\n\n  (owner, Slack 09:10Z)\n", "OK"],
+      ["* 2026-09-30: Policy. (owner, via operator relay of qitem-7)\n", "OK"]]) {
+      fs.writeFileSync(join(specDir, "CULTURE.md"), withDecisions(bullets));
+      assert.equal(find(rows(), "every Owner decisions bullet ends with its owner source").level, level, JSON.stringify(bullets));
+    }
     fs.writeFileSync(join(specDir, "CULTURE.md"), tmpl);
     r = rows();
     assert.equal(find(r, "every Owner decisions bullet ends with its owner source").level, "OK", "(none yet) is fine");

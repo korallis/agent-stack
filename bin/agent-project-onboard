@@ -80,8 +80,16 @@ def put(path, text):
     return path
 
 
-def add_bullets(culture, heading, bullets):
-    """Append bullets at the end of the `## <heading>` section, skipping any already present. Returns the count added."""
+def decision_core(b):
+    """A decision's content, without its list marker, owner source or final period: the same decision matches itself
+    whether or not a source was added to one copy."""
+    t = " ".join(l.strip() for l in b.strip().splitlines())
+    return OWNER_SOURCE.sub("", re.sub(r"^[-*+]\s+", "", t)).strip().rstrip(".").strip()
+
+
+def add_bullets(culture, heading, bullets, same=None):
+    """Append bullets at the end of the `## <heading>` section, skipping any already present (by `same`, when given,
+    compared with the section's existing bullets). Returns the count added."""
     text = open(culture).read()
     m = re.search(rf"^## {re.escape(heading)}.*$", text, re.M)
     if not m:
@@ -89,7 +97,17 @@ def add_bullets(culture, heading, bullets):
         m = re.search(rf"^## {re.escape(heading)}.*$", text, re.M)
     nxt = re.search(r"^## ", text[m.end():], re.M)
     end = m.end() + (nxt.start() if nxt else len(text) - m.end())
-    new = [b for b in bullets if b.strip() and b.strip() not in text]
+    existing = [x for x in re.split(r"\n(?=[-*+] )", text[m.end():end]) if re.match(r"\s*[-*+] ", x)] if same else []
+    new = []
+    for b in bullets:
+        if not b.strip() or b.strip() in text:
+            continue
+        twin = next((e for e in existing if same(e) == same(b)), None) if same else None
+        if twin is not None:
+            if not OWNER_SOURCE.search(" ".join(twin.split())):
+                print(f"  note: already in \"{heading}\" without its owner source; add it there by hand: {twin.strip().splitlines()[0][:90]}")
+            continue
+        new.append(b)
     if new:
         section = text[:end].rstrip("\n") + "\n" + "\n".join(new) + "\n"
         text = section + ("\n" + text[end:] if text[end:] else "")
@@ -165,7 +183,7 @@ if "Plan approval:" not in (open(culture).read() if os.path.isfile(culture) else
         "operator sends 'plan approved' with the owner's OK."))
 # Owner decisions carry their source (CULTURE "Owner decisions"): these came from the owner through the operator's
 # onboarding answers. A bullet that already names its owner source keeps it.
-OWNER_SOURCE = re.compile(r"\(owner, (?:Slack [^)]*\d{1,2}:\d{2}Z|via operator relay of [^)]+)\)\.?\s*$")
+OWNER_SOURCE = re.compile(r"\(owner, (?:Slack [^)]*\d{1,2}:\d{2}Z|via operator relay of [^)\s][^)]*)\)\.?\s*$")
 decisions = [d if OWNER_SOURCE.search(d) else d.rstrip().rstrip(".") + ". (owner, via operator relay of the onboarding answers)" for d in decisions]
 specifics = bullets_of(files["SPECIFICS"]) if "SPECIFICS" in files else []
 workflow = ("4. Done per issue: merged through the gate, deployed, witnessed where the creator re-tests. Then comment on "
@@ -195,7 +213,7 @@ if APPLY:
         sys.exit(f"agent-project-onboard: {culture} is missing after agent-project-new")
     if "PLAN" in files:
         print("  " + put(f"{W}/docs/PLAN.md", open(files["PLAN"]).read()))
-    print(f"  {add_bullets(culture, 'Owner decisions', decisions)} owner decision(s) added")
+    print(f"  {add_bullets(culture, 'Owner decisions', decisions, same=decision_core)} owner decision(s) added")
     print(f"  {add_bullets(culture, f'{P} specifics', specifics)} specifics line(s) added")
     print("  " + put(f"{W}/docs/lead-brief.md", brief))
 say("agent-project-new again: start the team and its watchdogs; agent-refresh-guidance for seats already running")
