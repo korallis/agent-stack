@@ -200,7 +200,8 @@ with `agent-login` and the pool uses it straight away.
   installed yet.
 - **Test credentials:** Playwright MCP runs with `--secrets ~/.config/agent-stack/secrets/playwright.env` (0600,
   `NAME=value`). An agent types a login BY NAME (`browser_type` text `"WITNESS_PASSWORD"`); the MCP types the value and
-  shows `<secret>WITNESS_PASSWORD</secret>` in every snapshot and code line instead of it. Without it, a filled
+  shows `<secret>WITNESS_PASSWORD</secret>` in every snapshot and code line instead of it. The MCP also echoes tool
+  input, so no env or credential value is ever inlined in `browser_run_code`/`browser_evaluate` either. Without it, a filled
   password shows in the snapshot. `install.sh` sets it up (`system/playwright-mcp-config`); seats get it when their MCP
   restarts.
 - **Seats never depend on the daemon unit.** Every seat lives in the tmux server of `openrig-tmux.service`, not in

@@ -211,6 +211,7 @@ test("QA role, witness slice and the skill: credentials in playwright.env, typed
     assert.match(t, /~\/\.config\/agent-stack\/secrets\/playwright\.env/, p);
     assert.match(t, /type them BY NAME: `browser_type` with `text: "WITNESS_PASSWORD"`/, p);
     assert.match(t, /Never type a literal password through the MCP, never paste or echo a credential/, p);
+    assert.match(t, /never inline an env or credential value .* in `browser_run_code`, `browser_evaluate` or any other tool input/s, p);
   }
   assert.match(read("skills/agent-stack/SKILL.md"), /typed BY NAME/);
 });
