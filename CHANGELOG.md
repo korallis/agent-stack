@@ -26,6 +26,9 @@ has no version numbers; entries are grouped by the day they merged, newest first
 - The lead's and the merge owner's role texts and the CULTURE template use the new Jev helpers.
 
 ### Fixed
+- `agent-merge-evidence` no longer says CI is MISSING when the base branch has no required checks (no ruleset or
+  protection). It reports the check runs and statuses observed on the exact head, and names any failing or
+  unfinished one. Protected bases are unchanged.
 - `agent-merge-evidence` always states the review verdict with its source and head binding, so it reaches Jev even
   when the report the status links to can't be read. The sources, in order: the status's own state and description
   on the exact head; GitHub reviews submitted on the exact head by a login mapped (`identities`) to another family;

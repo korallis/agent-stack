@@ -334,7 +334,12 @@ the lead or a person. Send Jev evidence, not conclusions.
 
 - **Merge gate:** `agent-merge-evidence <pr> --mission M --slice S --deploy "..." --decide` builds the
   `review.merge_gate` input from exact-head facts:
-  - full head and base shas, and every required check by name;
+  - full head and base shas, and every required check by name. When the base branch has no required checks at all
+    (no ruleset or protection, e.g. an integration branch), it reports what ran on the exact head instead:
+    `base <branch> has no required checks; observed on exact head <sha>: <name>=<result>, …`. That is each check
+    run's latest result and each status's latest state, without the review and gate statuses. A failing or
+    unfinished one is named as NOT passing and holds the gate. A protected base with a required check not yet
+    reported stays MISSING, and so does unreadable or incomplete check-run data;
   - the `independent-review` status and the review report its `target_url` links to (what the reviewer verified).
     Reviewers set that link to their review comment. Without a link the report is MISSING; the latest comment naming
     the head is passed on only as UNVERIFIED, never as the review;

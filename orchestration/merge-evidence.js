@@ -380,6 +380,23 @@ export function mergeStateLine(f) {
   return `merge state: BLOCKED (${[...new Set(reasons)].join("; ") || "reason not visible to this helper"})`;
 }
 
+// Pure: every check that ran on the head, for a base without required checks: each check run's latest result by
+// name, and each status context's latest state (newest first), minus this helper's own contexts (the review and the
+// gate). bucket: pass (success, neutral, skipped), pending (not finished), fail (anything else).
+export function observedFrom(checkRuns, statuses, own = []) {
+  const out = new Map();
+  for (const r of [...(checkRuns || [])].sort((a, b) => b.id - a.id)) {
+    if (out.has(r.name)) continue;
+    const c = r.conclusion;
+    out.set(r.name, { name: r.name, result: c || r.status || "pending", bucket: !c ? "pending" : ["success", "neutral", "skipped"].includes(c) ? "pass" : "fail" });
+  }
+  for (const s of statuses || []) {
+    if (own.includes(s.context) || out.has(s.context)) continue;
+    out.set(s.context, { name: s.context, result: s.state, bucket: s.state === "success" ? "pass" : s.state === "pending" ? "pending" : "fail" });
+  }
+  return [...out.values()];
+}
+
 // Pure: this gate's own record for the head, worded like mergeStateLine: nothing posted = "pending this gate".
 export function gateLine(f) {
   const G = f.gateContext || GATE_CONTEXT, g = f.gate, from = g.source === "comment" ? "gate comment" : "status";
@@ -392,7 +409,12 @@ export function buildMergeInput(f) {
   const RC = f.reviewContext || "independent-review";
   const checks = f.checks || [];
   const failed = checks.filter((c) => c.bucket !== "pass");
-  const ci = !checks.length
+  const obs = f.observedChecks, bad = (obs || []).filter((c) => c.bucket !== "pass");
+  const ci = !checks.length && obs
+    ? `base ${f.baseRef} has no required checks; ` + (obs.length
+      ? `observed on exact head ${f.head}: ${obs.map((c) => `${c.name}=${c.result}`).join(", ")}${bad.length ? `; NOT passing: ${bad.map((c) => `${c.name} (${c.result})`).join(", ")}` : "; all pass"}`
+      : `no check ran on exact head ${f.head}`)
+    : !checks.length
     ? "MISSING: no required checks reported for this head"
     : `${checks.length} required check(s) on ${f.head}: ` + checks.map((c) => `${c.name}=${c.bucket}`).join(", ")
       + (failed.length ? `; NOT passing: ${failed.map((c) => c.name).join(", ")}` : "; all pass");
@@ -461,15 +483,20 @@ export function gather(pr, { repo, mission, slice, change, deploy, rollback, con
   const statuses = pages.every(Array.isArray) ? pages.flat() : pages;
   // Every merge requirement on the base branch (rulesets + classic protection) and its state on this head. When
   // BLOCKED, these tell a real block apart from "only the gate itself hasn't posted". Unreadable -> null (keeps BLOCKED).
+  // The base branch's merge requirements (rulesets + classic protection); throws when they can't be read in full.
+  let baseReq;
+  const readBaseRequirements = () => baseReq ??= (() => {
+    const rules = ghJson("api", `repos/${nwo}/rules/branches/${v.baseRefName}?per_page=100`) || [];
+    if (rules.length >= 100) throw new Error("more rules than one page");
+    let prot = null;
+    try { prot = ghJson("api", `repos/${nwo}/branches/${v.baseRefName}/protection`); }
+    catch (e) { if (!/HTTP 404|Branch not protected/.test(String(e.stderr || e.message))) throw e; }
+    return requirementsFrom(rules, prot, v.reviewDecision || null);
+  })();
   let requirements = null;
   if (v.mergeStateStatus === "BLOCKED") {
     try {
-      const rules = ghJson("api", `repos/${nwo}/rules/branches/${v.baseRefName}?per_page=100`) || [];
-      if (rules.length >= 100) throw new Error("more rules than one page");
-      let prot = null;
-      try { prot = ghJson("api", `repos/${nwo}/branches/${v.baseRefName}/protection`); }
-      catch (e) { if (!/HTTP 404|Branch not protected/.test(String(e.stderr || e.message))) throw e; }
-      const found = requirementsFrom(rules, prot, v.reviewDecision || null);
+      const found = readBaseRequirements();
       let checkRuns = null;
       if (found.contexts.some((c) => c.app != null && c.app !== -1)) {
         try { const cr = ghJson("api", `repos/${nwo}/commits/${v.headRefOid}/check-runs?per_page=100`); if (cr.total_count <= cr.check_runs.length) checkRuns = cr.check_runs; }
@@ -477,6 +504,20 @@ export function gather(pr, { repo, mission, slice, change, deploy, rollback, con
       }
       requirements = { unverified: found.unverified, contexts: found.contexts.map((c) => ({ ...c, state: contextState(c, { checks, statuses, checkRuns }) })) };
     } catch { requirements = null; }
+  }
+  // No required checks reported: when the base has no required contexts at all (an unprotected integration branch),
+  // report what actually ran on the exact head instead of a bare MISSING. Unreadable -> null (MISSING stands).
+  let observedChecks = null;
+  if (!checks.length) {
+    try {
+      if (!readBaseRequirements().contexts.length) {
+        const pages = ghJson("api", `repos/${nwo}/commits/${v.headRefOid}/check-runs?per_page=100`, "--paginate", "--slurp") || [];
+        const runs = (Array.isArray(pages) ? pages : [pages]).flatMap((p) => p.check_runs || []);
+        const total = Math.max(0, ...(Array.isArray(pages) ? pages : [pages]).map((p) => p.total_count || 0));
+        if (runs.length < total) throw new Error("check runs incomplete");
+        observedChecks = observedFrom(runs, statuses, [cfg.review.context, cfg.gate.context]);
+      }
+    } catch { observedChecks = null; }
   }
   let brb = null, brbWhere = null;
   if (mission && slice && cfg.qa.source === "proof") {
@@ -534,7 +575,7 @@ export function gather(pr, { repo, mission, slice, change, deploy, rollback, con
   return {
     pr: v.number, head: v.headRefOid, base: v.baseRefOid, baseRef: v.baseRefName, headRef: v.headRefName,
     mergeable: v.mergeable, mergeState: v.mergeStateStatus, reviewDecision: v.reviewDecision || null, isDraft: v.isDraft, change: change || v.title, checks,
-    requirements, gate, gateContext: cfg.gate.context, reviewContext: cfg.review.context, sources: { review: cfg.review.source, qa: cfg.qa.source, gate: cfg.gate.source },
+    requirements, observedChecks, gate, gateContext: cfg.gate.context, reviewContext: cfg.review.context, sources: { review: cfg.review.source, qa: cfg.qa.source, gate: cfg.gate.source },
     authorFamily: author.family, independentReview, reviewProblem, reviewNote,
     reviewVerdict: reviewVerdictFacts,
     // The report of the source the verdict came from, when the lines below don't already carry it (a fallback source).
@@ -556,7 +597,10 @@ export function gateProblems(f) {
   if (f.isDraft !== false) p.push(f.isDraft ? "the PR is a draft" : "draft state unknown");
   if (f.mergeable !== "MERGEABLE") p.push(`GitHub mergeable: ${f.mergeable || "unknown"}`);
   if (["BEHIND", "DIRTY", "UNKNOWN", undefined, null, ""].includes(f.mergeState)) p.push(`merge state ${f.mergeState || "unknown"} (the branch must be up to date with its base and free of conflicts)`);
-  if (!f.checks?.length) p.push("no required checks reported");
+  if (!f.checks?.length && f.observedChecks) {
+    if (!f.observedChecks.length) p.push(`the base has no required checks and no check ran on this head`);
+    else if (f.observedChecks.some((c) => c.bucket !== "pass")) p.push(`checks on this head not passing: ${f.observedChecks.filter((c) => c.bucket !== "pass").map((c) => `${c.name} (${c.result})`).join(", ")}`);
+  } else if (!f.checks?.length) p.push("no required checks reported");
   else if (f.checks.some((c) => c.bucket !== "pass")) p.push(`required checks not passing: ${f.checks.filter((c) => c.bucket !== "pass").map((c) => c.name).join(", ")}`);
   if (f.reviewVerdict) { if (f.reviewVerdict.state !== "success") p.push(f.reviewVerdict.state ? `review verdict ${f.reviewVerdict.state}` : `no verifiable review verdict (${f.reviewVerdict.why})`); }
   else if (f.independentReview?.state !== "success") p.push(f.independentReview ? `independent review is ${f.independentReview.state}` : `independent review missing${f.reviewProblem ? ` (${f.reviewProblem})` : ""}`);
