@@ -181,8 +181,10 @@ const rowObj = (q, { state = "blocked", blockedOn = null, dest = SEATN, wake = n
   waiting: { nextBackstop: wake ? { mechanism: `watchdog:${wake}`, intervalSeconds: 1 } : { mechanism: blockedOn ? "blocker-transition / queue-stuck-sweep" : "UNVERIFIED: no timed backstop" } } });
 const row = (q, o) => put("rows", q, rowObj(q, o));            // before the handover
 const rowAfter = (q, o) => put("rows-after", q, rowObj(q, o));  // after it
-const job = (id, interval, { wait = false } = {}) => put("jobs", id, { jobId: id, policy: "periodic-reminder", intervalSeconds: interval, state: "active",
-  specYaml: wait ? JSON.stringify({ message: "custom", context: { queue_wait: { qitemId: "q" } } }) : "policy: periodic-reminder\nmessage: \"anything, custom too\"\n" });
+const DEFAULT = (q) => `Wake timer fired for parked qitem ${q}. Resume the recorded continuation and update the row.`;
+const job = (id, interval, { wait = false, q = null, msg = null, policy = "periodic-reminder" } = {}) => put("jobs", id, { jobId: id, policy, intervalSeconds: interval, state: "active",
+  specYaml: wait ? JSON.stringify({ message: "custom", context: { queue_wait: { qitemId: "q" } } })
+    : `policy: ${policy}\ntarget:\n  session: "${SEATN}"\n` + (msg ?? (q && DEFAULT(q)) ? `message: ${JSON.stringify(msg ?? DEFAULT(q))}\n` : "") });
 const OK = JSON.stringify({ ok: true, currentStatus: { currentOccupant: SEATN } });
 
 test("WO56: after a completed handover, each parked row that lost its wake is re-armed (same row, blocker, interval); a live wake is left alone", () => {
@@ -272,4 +274,20 @@ test("WO56: --wakes lists the parked rows' wakes and changes nothing; an UNKNOWN
   r = run("agent-seat-handover", [SEATN, "--source", "rebuild", "--wait", "0.3"]);
   assert.equal(r.status, 3); assert.match(r.stderr, /Parked rows whose timers a completed handover stops .*--wakes.*: qitem-a \(3600s\)/);
   assert.doesNotMatch(r.calls, /queue update/);
+});
+
+test("WO56 (QA PR61 f3): a custom wake message is re-armed but reported as not kept; a non-timer watchdog is reported, not re-armed", () => {
+  handover({ out: OK });
+  job("J-c", 1200, { msg: "Wake timer fired for parked qitem qitem-c. Check the provider limit first." });
+  job("J-d", 600, { q: "qitem-d" }); job("J-w", 60, { policy: "artifact-gate" });
+  row("qitem-c", { blockedOn: "qitem-up", wake: "J-c" }); rowAfter("qitem-c", { blockedOn: "qitem-up" });
+  row("qitem-d", { wake: "J-d" }); rowAfter("qitem-d", {});
+  row("qitem-w", { blockedOn: "qitem-up", wake: "J-w" }); rowAfter("qitem-w", { blockedOn: "qitem-up" });
+  const r = run("agent-seat-handover", [SEATN, "--source", "rebuild"]);
+  assert.equal(r.status, 4, r.stdout + r.stderr);
+  assert.match(r.stdout, /wake of qitem-c: re-armed, every 1200s, blocked on qitem-up/);
+  assert.match(r.stderr, /wake of qitem-c: its custom wake message was NOT kept .*: Wake timer fired for parked qitem qitem-c\. Check the provider limit first\./);
+  assert.match(r.stdout, /wake of qitem-d: re-armed, every 600s/); assert.doesNotMatch(r.stderr, /qitem-d/);   // the default message: nothing lost
+  assert.match(r.stderr, /wake of qitem-w: NOT re-armed: its wake was watchdog J-w \(policy artifact-gate\)/);
+  assert.doesNotMatch(r.calls, /queue update qitem-w/);
 });

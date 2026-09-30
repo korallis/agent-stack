@@ -43,7 +43,7 @@ has no version numbers; entries are grouped by the day they merged, newest first
   seat swap, including the timers of `rig queue block --wake-after`, so after a handover the seat's parked rows had no
   live wake. The wrapper now records them before the handover and re-arms each one that is still the seat's and lost
   its wake afterwards (same row, blocker and interval; never a second wake). A repeating wait, a refused re-park or a
-  row it can't read is reported (exit 4).
+  row it can't read is reported (exit 4), and so is a custom wake message the CLI can't carry over.
   `--wakes` lists them without changing anything.
 - `agent-merge-evidence` no longer makes the merge gate hold on project-rig PRs. The operator's live A/B test showed
   what flipped Jev:

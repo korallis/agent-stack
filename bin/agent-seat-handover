@@ -70,6 +70,21 @@ def ladder(job):
         return False
 
 
+def wake_message(job):
+    """The message a periodic-reminder job delivers (its spec's `message:` line), or None."""
+    for line in str(job.get("specYaml") or "").splitlines():
+        if line.startswith("message: "):
+            try:
+                return str(json.loads(line[len("message: "):]))
+            except ValueError:
+                return line[len("message: "):]
+    return None
+
+
+def default_message(q):   # what OpenRig writes for a plain `--wake-after` (queue-repository)
+    return f"Wake timer fired for parked qitem {q}. Resume the recorded continuation and update the row."
+
+
 def parked_wakes(targets):
     """The seat's blocked rows that have a live wake: ({qitem: {interval, ladder, job, blocked_on}}, [problems]);
     or (None, why) when the rows can't be listed at all."""
@@ -91,7 +106,8 @@ def parked_wakes(targets):
             job, why = rig_json("watchdog", "show", job_id, "--json")
             if not isinstance(job, dict):
                 problems.append(f"{q}: could not read its wake {job_id} ({why})"); continue
-            rows[q] = {"interval": job.get("intervalSeconds"), "ladder": ladder(job), "job": job_id, "blocked_on": row.get("blockedOn")}
+            rows[q] = {"interval": job.get("intervalSeconds"), "ladder": ladder(job), "job": job_id, "blocked_on": row.get("blockedOn"),
+                       "policy": job.get("policy"), "message": wake_message(job)}
     return rows, problems
 
 
@@ -135,6 +151,9 @@ def rearm(occupant):
         if w["ladder"]:
             print(f"wake of {q}: NOT re-armed: it was a repeating wait (every {w['interval']}s), which the CLI can't arm; re-park it by hand",
                   file=sys.stderr); failed += 1; continue
+        if w.get("policy") != "periodic-reminder" or not w["interval"]:
+            print(f"wake of {q}: NOT re-armed: its wake was watchdog {w['job']} (policy {w.get('policy')}), not a timer the CLI can arm; "
+                  f"attach a live one by hand (rig queue block {q} --wake-watchdog <job>)", file=sys.stderr); failed += 1; continue
         cmd = ["rig", "queue", "update", q, "--state", "blocked", "--wake-after", f"{w['interval']}s",
                "--note", f"wake re-armed after the seat handover of {seat} (the retiring occupant's wake {w['job']} was stopped)"]
         if row.get("blockedOn"):
@@ -146,6 +165,9 @@ def rearm(occupant):
             ok, uwhy = False, str(e)
         if ok:
             print(f"wake of {q}: re-armed, every {w['interval']}s{', blocked on ' + row['blockedOn'] if row.get('blockedOn') else ''}")
+            if w["message"] is not None and w["message"] != default_message(q):   # the CLI can't set a wake message
+                print(f"wake of {q}: its custom wake message was NOT kept (the CLI can't set one); it said: {w['message']}", file=sys.stderr)
+                failed += 1
         else:
             print(f"wake of {q}: NOT re-armed: {uwhy}", file=sys.stderr); failed += 1
     for p in snap:
