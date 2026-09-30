@@ -85,20 +85,26 @@ Six skills from agent-stack are installed for every seat. Each has a fixed momen
   filler, hype or hedging. Reviewers flag slop in PR text.
 
 ## Done means a person could use it (binding)
-- Every feature is proven from the user's side. Acceptance tests are browser journeys (Playwright) that do what a person
-  does: open the page, read what is on screen, click buttons and links by their visible names, type into labelled
-  fields, and check what the person would see next. No test that decides "done" may call internal functions, APIs or
-  the database, mock the network, inject scripts, set cookies to skip login, or find elements by CSS, XPath or test ids.
+- Every feature is proven from the user's side, through the interface its users use.
+  - A web feature: acceptance tests are browser journeys (Playwright) that do what a person does: open the page, read
+    what is on screen, click buttons and links by their visible names, type into labelled fields, and check what the
+    person would see next. No test that decides "done" for a web feature may call internal functions, APIs or the
+    database, mock the network, inject scripts, set cookies to skip login, or find elements by CSS, XPath or test ids.
+  - A feature with no UI (a CLI, or an API that clients call): acceptance tests run the public command, or call the
+    public HTTP endpoints, as the user or client would, and check what they get back: output, exit code, files
+    written, status and response body. Never internal functions, test-only routes or the database directly.
   Setup a person could not do (seed data, test accounts) goes through documented fixtures, never through the page.
 - Unit and integration tests are welcome for the implementer's own safety, but they never count as proof of done.
 - Acceptance tests live in `tests/acceptance/` and are written BEFORE the implementation by the test-author seat of the
   other model family. Implementers never edit them; CI fails any implementation PR that touches them. A held-out
   journey suite kept outside the repo is run only by the merge owner before merge.
-- The QA seat then uses the running app like a person (Playwright MCP browser), follows the acceptance criteria by hand,
-  tries the obvious mistakes a real user makes, and records screenshots or video as evidence on the PR.
+- The QA seat then uses the running app like a person (the Playwright MCP browser for web; the command or the HTTP API
+  otherwise), follows the acceptance criteria by hand, tries the obvious mistakes a real user makes, and records
+  evidence on the PR: screenshots or video for web, commands with their output and exit codes, or requests with their
+  responses.
 - Done also needs an AGENT WITNESS: a fresh agent (one that built, reviewed or tested none of it) walks the feature end
-  to end through the real UI on the deployed environment and records `agent-witnessed (YYYY-MM-DD, by <agent>, <model>)`
-  with evidence. Tests, merges and deploys are not witnesses.
+  to end through the interface its users use (the real UI for web; the released command or the deployed API otherwise)
+  and records `agent-witnessed (YYYY-MM-DD, by <agent>, <model>)` with evidence. Tests, merges and deploys are not witnesses.
 - Every wave with user-facing slices ends with a W witness slice (template: agent-stack `rig/template/witness-slice/`,
   `witness: true`, depends on that wave's slices) that witnesses the wave's features and gates the next wave. The
   mission's last wave W doubles as the mission gate. A docs/infra-only wave may skip it with an explicit

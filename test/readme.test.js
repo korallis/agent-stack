@@ -50,10 +50,21 @@ function lineCommands(line) {
   return [...own, ...subs.flatMap(lineCommands)];
 }
 
+// A block's logical lines: backslash continuations joined, and a single-quoted string that spans lines kept whole.
+function logicalLines(block) {
+  const out = []; let cur = "";
+  for (const raw of block.replace(/\\\n\s*/g, " ").split("\n")) {
+    cur = cur ? `${cur} ${raw.trim()}` : raw;
+    if (((cur.replace(/"(?:[^"\\]|\\.)*"/g, "").match(/'/g) || []).length % 2) === 0) { out.push(cur); cur = ""; }
+  }
+  if (cur) out.push(cur);
+  return out;
+}
+
 test("illustrative blocks: every command exists and accepts every flag shown", () => {
   const help = (argv) => { const r = spawnSync(argv[0], [...argv.slice(1), "--help"], { encoding: "utf8", timeout: 30000 }); return (r.stdout || "") + (r.stderr || ""); };
   for (const b of blocks.filter((x) => x.startsWith(ILLUSTRATIVE))) {
-    for (const line of b.split("\n").filter((l) => l.trim() && !l.startsWith("#"))) {
+    for (const line of logicalLines(b).filter((l) => l.trim() && !l.startsWith("#"))) {
       for (const words of lineCommands(line)) {
         const [cmd, ...rest] = words;
         const flags = rest.filter((w) => /^--[a-z]/.test(w)).map((w) => w.split("=")[0]);
@@ -69,7 +80,7 @@ test("illustrative blocks: every command exists and accepts every flag shown", (
           assert.doesNotMatch(text, /unknown command|is not a .* command/i, `${cmd} ${subs.join(" ")}`);
           for (const f of flags) assert.ok(text.includes(f), `${cmd} ${subs.join(" ")} has no ${f}`);
         } else {
-          assert.ok(["jq", "git", "cd", "echo"].includes(cmd), `unknown command in the README: ${cmd} (${line})`);
+          assert.ok(["jq", "git", "cd", "echo", "awk", "grep", "sed"].includes(cmd), `unknown command in the README: ${cmd} (${line})`);
         }
       }
     }
@@ -142,11 +153,17 @@ esac
 `, { mode: 0o755 });
     fs.writeFileSync(join(dir, "bin/jev-decide"), `#!/bin/sh
 echo "jev $*" >> "${calls}"
+[ "$2" = --input ] && { cat "$3" >> "${calls}"; echo >> "${calls}"; }
 printf '{"decided_by":"%s","band":"%s","result":{"decision":"%s"}}\\n' "\${JEV_BY:-jev}" "\${JEV_BAND:-act}" "\${JEV_DECISION:-merge}"
 `, { mode: 0o755 });
-    const run = (extra) => {
+    const proofDir = join(dir, "work/missions/m01-accounts/slices/03-login/proof");
+    fs.mkdirSync(proofDir, { recursive: true });
+    const proof = (fm) => { fs.rmSync(proofDir, { recursive: true, force: true }); fs.mkdirSync(proofDir, { recursive: true });
+      if (fm) fs.writeFileSync(join(proofDir, fm.name ?? "brb-aaaa1111.md"), `---\nslice: m01.03\ncandidate_sha: ${fm.sha ?? "aaaa1111"}\nartifact_type: ${fm.type ?? "qa"}\nverdict: ${fm.verdict ?? "PASS"}\nmoney_evidence: "Ship: YES, 5 criteria passed"\n---\n\nverdict: PASS\nartifact_type: qa\n`); };
+    const run = (extra, fm = {}) => {
       fs.rmSync(calls, { force: true });
-      const r = spawnSync("bash", ["-c", b], { cwd: dir, encoding: "utf8", env: { PATH: `${join(dir, "bin")}:${process.env.PATH}`, ...extra } });
+      proof(fm);
+      const r = spawnSync("bash", ["-c", b], { cwd: dir, encoding: "utf8", env: { PATH: `${join(dir, "bin")}:${process.env.PATH}`, OPENRIG_WORK_ROOT: join(dir, "work"), ...extra } });
       const c = fs.existsSync(calls) ? fs.readFileSync(calls, "utf8") : "";
       return { status: r.status, merged: /gh pr merge/.test(c), calls: c };
     };
@@ -154,7 +171,19 @@ printf '{"decided_by":"%s","band":"%s","result":{"decision":"%s"}}\\n' "\${JEV_B
     assert.equal(ok.status, 0, ok.calls); assert.ok(ok.merged);
     assert.match(ok.calls, /gh pr merge 42 --squash --match-head-commit aaaa1111/);
     assert.match(ok.calls, /gh pr checks 42 --required/);
-    assert.match(ok.calls, /"head":"aaaa1111","base":"bbbb2222"/);
+    assert.match(ok.calls, /"head": "aaaa1111"/); assert.match(ok.calls, /"base": "bbbb2222"/);
+    assert.match(ok.calls, /"review": "independent-review success; bug review board: \\"Ship: YES, 5 criteria passed\\""/);
+    assert.doesNotMatch(b, /ship YES/, "no QA verdict baked into the example");
+    for (const [why, fm] of [["no QA proof", null], ["QA said NO", { verdict: "BLOCKING" }], ["QA proof for an older head", { sha: "0ld0ld00" }],
+      ["QA proof under another head's name only", { name: "brb-0ld0ld00.md" }], ["not a qa artifact", { type: "guard" }],
+      ["quoted but right", null]].slice(0, 5)) {
+      const r = run({}, fm);
+      assert.notEqual(r.status, 0, why); assert.ok(!r.merged, `${why}: merged anyway\n${r.calls}`);
+    }
+    const quoted = (() => { fs.rmSync(calls, { force: true }); proof({ sha: '"aaaa1111"' });
+      const r = spawnSync("bash", ["-c", b], { cwd: dir, encoding: "utf8", env: { PATH: `${join(dir, "bin")}:${process.env.PATH}`, OPENRIG_WORK_ROOT: join(dir, "work") } });
+      return /gh pr merge/.test(fs.existsSync(calls) ? fs.readFileSync(calls, "utf8") : ""); })();
+    assert.ok(quoted, "a YAML-quoted candidate_sha still matches");
     for (const [why, env] of [["a required check failed", { CHECKS_RC: "1" }], ["checks pending", { CHECKS_RC: "8" }],
       ["review failed", { REVIEW_STATE: "failure" }], ["no review status", { REVIEW_STATE: "null" }],
       ["Jev says hold", { JEV_DECISION: "hold", JEV_BAND: "uncertain" }], ["merge only in the review band", { JEV_BAND: "review" }],

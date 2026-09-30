@@ -80,16 +80,18 @@ project's missions:
 
 ```bash
 rig proof add <mission>/slices/<slice> --artifact-type qa --verdict PASS --candidate-sha <head> \
-  --money-evidence "Ship: YES, <n> criteria passed, no open P0/P1" --file brb.md       # YES
+  --money-evidence "Ship: YES, <n> criteria passed, no open P0/P1" --file brb.md --name brb-<head>.md       # YES
 rig proof add <mission>/slices/<slice> --artifact-type qa --verdict BLOCKING --candidate-sha <head> \
-  --money-evidence "Ship: NO, <open P0/P1 or not-run criteria>" --file brb.md          # NO
+  --money-evidence "Ship: NO, <open P0/P1 or not-run criteria>" --file brb.md --name brb-<head>.md          # NO
 rig proof show <project-id>:<mission>/slices/<slice>                                   # read it back (catalog id)
 ```
 
-`brb.md` holds the verdict line (`Ship: YES` or `Ship: NO`), the interfaces and scenarios covered (viewports for web),
+The file is named after the head it judges, so the merge gate finds exactly the verdict for the commit it merges; a
+new head needs a new pass. Re-running on the same head: add `--replace`. `brb.md` holds the verdict line (`Ship: YES` or `Ship: NO`), the interfaces and scenarios covered (viewports for web),
 and the bug row ids.
-Post the same verdict line on the PR. The integrator puts it in the `review` input of the Jev merge gate. A NO blocks the
-merge like a failing check.
+Post the same verdict line on the PR. The integrator's merge gate reads `proof/brb-<head>.md` and stops unless it says
+`artifact_type: qa`, `verdict: PASS` and `candidate_sha: <head>`. Its `money_evidence` goes into the `review` input of
+the Jev merge gate. A NO, a missing verdict or one for an older head blocks the merge like a failing check.
 
 ## Never
 

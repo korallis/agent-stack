@@ -73,3 +73,19 @@ test("bug-review-board has a truthful path for CLI and API work, not only the br
   assert.match(md, /Never make up browser evidence/);
   assert.match(md, /passed through its user interface \(browser, command or HTTP/);
 });
+
+test("the binding guidance agrees with bug-review-board: non-web work has a real path, only P0/P1 block (QA round 2)", () => {
+  const culture = fs.readFileSync(join(repo, "rig/template/CULTURE.md"), "utf8");
+  const done = culture.split(/^## /m).find((s) => s.startsWith("Done means a person could use it"));
+  assert.match(done, /A web feature: acceptance tests are browser journeys/);
+  assert.match(done, /A feature with no UI \(a CLI, or an API that clients call\): acceptance tests run the public command/);
+  assert.match(done, /No test that decides "done" for a web feature may call internal functions/, "the strict web rule is kept");
+  assert.match(done, /the real UI for web; the released command or the deployed API otherwise/);
+  const qa = fs.readFileSync(join(repo, "rig/template/agents/qa/guidance/role.md"), "utf8");
+  assert.doesNotMatch(qa, /and open it in the Playwright MCP browser\./, "no unconditional browser step");
+  assert.match(qa, /the documented command for a CLI, the public HTTP endpoints for an API/);
+  assert.match(qa, /P0 and P1 problems block the PR/); assert.doesNotMatch(qa, /^- Problems block the PR/m);
+  assert.match(qa, /for a CLI, each command with its stdout, stderr and exit code/);
+  const integ = fs.readFileSync(join(repo, "rig/template/agents/integrator/guidance/role.md"), "utf8");
+  assert.match(integ, /proof\/brb-<head>\.md/);
+});
