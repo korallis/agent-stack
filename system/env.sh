@@ -45,6 +45,15 @@ fi
 if [ -n "${OPENRIG_NODE_ID:-}" ] && [ -d "$HOME/.local/share/agent-stack/seat-tools" ]; then
   case ":$PATH:" in *":$HOME/.local/share/agent-stack/seat-tools:"*) ;; *) export PATH="$HOME/.local/share/agent-stack/seat-tools:$PATH" ;; esac
 fi
+# Seats: the credential guard (seat-bin/credguard) in front of the Neon and Vercel CLIs, as shell functions so it wins
+# over any PATH order (mise puts the real CLIs first in interactive shells). It refuses to print connection strings,
+# passwords and tokens into the seat's output, i.e. its transcript (2026-09-30).
+if [ -n "${OPENRIG_NODE_ID:-}" ] && [ -x "$HOME/.local/share/agent-stack/seat-bin/credguard" ]; then
+  neon() { "$HOME/.local/share/agent-stack/seat-bin/neon" "$@"; }
+  neonctl() { "$HOME/.local/share/agent-stack/seat-bin/neonctl" "$@"; }
+  vercel() { "$HOME/.local/share/agent-stack/seat-bin/vercel" "$@"; }
+  vc() { "$HOME/.local/share/agent-stack/seat-bin/vc" "$@"; }
+fi
 # Seats: use the Node major the project asks for (.node-version / .nvmrc in the worktree), newest installed
 # patch of it, ahead of the daemon's Node 22 and the global mise Node. Projects without the file are untouched.
 if [ -n "${OPENRIG_NODE_ID:-}" ]; then

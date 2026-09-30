@@ -1,0 +1,193 @@
+#!/usr/bin/env python3
+"""OpenRig seats only: installed as seat-bin/{neon,neonctl,vercel,vc}, and called by env.sh's seat functions of the same
+names (mise-activated shells put the real CLIs ahead of seat-bin on PATH; a shell function wins either way).
+
+A seat's command output IS its transcript. On 2026-09-30 `neon connection-string --no-secrets` (neon 6.3.0 has no such
+flag on that command and silently ignored it) printed a production owner connection string into a seat transcript. So:
+
+1. Commands that print credentials run only when their output cannot reach the transcript:
+   - `--output-file <path>` is given: the guard creates <path> with mode 0600 (never through a symlink), sends the
+     command's stdout there and strips the flag; or
+   - stdout is /dev/null.
+   Anything else is refused with a one-line explanation, exit 2: a terminal, a pipe, `$(…)`, and also a plain
+   `> file`. Claude Code's Bash tool itself captures a command's stdout in a regular file that becomes the transcript,
+   so a regular-file stdout can't be told apart from a redirect the seat chose.
+   neon:   connection-string/cs (not --psql), roles reset-password/get-password/reveal-password, credentials
+           create/reveal/rotate, api-keys create, api (raw responses can hold connection URIs), and projects/branches
+           create unless --no-secrets; env pull only when --file is not a regular file (e.g. /dev/stdout).
+   vercel: env ls/list with --json, --format json or --decrypt; env pull to a non-regular file (e.g. /dev/stdout, -).
+2. A `--no-secrets` the installed version doesn't have on that command is refused, never passed on to be ignored:
+   support is read from the installed CLI's own `<command> --help`.
+Everything else runs unchanged. The real CLI is the next one on PATH after this guard.
+"""
+import os, re, stat, subprocess, sys
+
+me = os.path.realpath(__file__)
+tool = os.path.basename(sys.argv[0])
+args = sys.argv[1:]
+NAME = {"neonctl": "neon", "vc": "vercel"}.get(tool, tool)
+
+
+def real_binary():
+    for d in os.environ.get("PATH", "").split(os.pathsep):
+        p = os.path.join(d or ".", tool)
+        if os.path.isfile(p) and os.access(p, os.X_OK) and os.path.realpath(p) != me:
+            return p
+    if tool == "neonctl":   # the npm package `neon` only ships `neon`
+        for d in os.environ.get("PATH", "").split(os.pathsep):
+            p = os.path.join(d or ".", "neon")
+            if os.path.isfile(p) and os.access(p, os.X_OK) and os.path.realpath(p) != me:
+                return p
+    sys.exit(f"{tool} (seat guard): the real {tool} is not on PATH")
+
+
+def refuse(why):
+    print(f"{tool} (seat guard): refused: {why}. Credentials never go to a seat's output (it is the transcript): add "
+          f"--output-file <path> (written 0600; a plain `> file` is not enough) and use the values by name, never print "
+          f"them. See docs/PROJECT-ENV.md.", file=sys.stderr)
+    sys.exit(2)
+
+
+# Options that take a value, so their value is never mistaken for a command word.
+VALUE_OPTS = {
+    "neon": {"-o", "--output", "--config-dir", "--profile", "--api-key", "--context-file", "--project-id", "--org-id",
+             "--branch", "--role-name", "--database-name", "--endpoint-type", "--ssl", "--name", "--parent", "--compute",
+             "--type", "--cu", "--suspend-timeout", "--region-id", "--database", "--role", "--file", "--config", "-s",
+             "--service", "--services", "-e", "--env", "--scope", "--method", "-X", "--data", "-d", "--output-file"},
+    "vercel": {"--cwd", "-Q", "--global-config", "-A", "--local-config", "-S", "--scope", "-t", "--token",
+               "--environment", "--git-branch", "--id", "--project", "-F", "--format", "--output-file"},
+}[NAME] if NAME in ("neon", "vercel") else set()
+
+
+def parse(argv):
+    """(positionals, {option: value or True}). Stops at `--`."""
+    pos, opts, i = [], {}, 0
+    while i < len(argv):
+        a = argv[i]
+        i += 1
+        if a == "--":
+            break
+        if a.startswith("-") and a != "-":
+            name, eq, val = a.partition("=")
+            if not eq and name in VALUE_OPTS and i < len(argv):
+                val, i = argv[i], i + 1
+            opts[name] = val if (eq or name in VALUE_OPTS) else True
+        else:
+            pos.append(a)
+    return pos, opts
+
+
+def is_regular_target(path):
+    """True when writing to `path` lands in a regular file (existing or new), not a device, fd, pipe or stdout."""
+    if path in ("-", "") or re.match(r"^/(dev|proc)/", os.path.abspath(path)):
+        return False
+    try:
+        st = os.stat(path)
+    except FileNotFoundError:
+        return True
+    except OSError:
+        return False
+    return stat.S_ISREG(st.st_mode) and not re.match(r"^/(dev|proc)/", os.path.realpath(path))
+
+
+def stdout_safe():
+    """Only /dev/null (or no stdout at all). Not a regular file: that may be the harness's transcript capture."""
+    try:
+        st = os.fstat(1)
+    except OSError:
+        return True
+    try:
+        return stat.S_ISCHR(st.st_mode) and st.st_rdev == os.stat("/dev/null").st_rdev
+    except OSError:
+        return False
+
+
+def help_lists_no_secrets(real, words):
+    try:
+        out = subprocess.run([real, *words, "--help"], capture_output=True, text=True, timeout=30,
+                             env={**os.environ, "NO_COLOR": "1"}).stdout
+    except Exception:
+        return False
+    return bool(re.search(r"--no-secrets|^\s*--secrets\b", out, re.M))
+
+
+pos, opts = parse(args)
+if "--help" in opts or "-h" in opts or "--version" in opts or "-v" in opts or not pos:
+    os.execv(real_binary(), [tool, *args])
+
+guard, why = False, ""
+real = real_binary()
+if NAME == "neon":
+    NEON_TOP = {"auth", "login", "profile", "profiles", "api-keys", "api-key", "api", "me", "orgs", "org", "projects",
+                "project", "ip-allow", "vpc", "neon-auth", "branches", "branch", "databases", "database", "db", "roles",
+                "role", "operations", "operation", "logs", "snapshots", "snapshot", "inspect", "inspection",
+                "connection-string", "cs", "psql", "set-context", "checkout", "git", "link", "open", "claim", "claimable",
+                "init", "mcp", "plugins", "plugin", "skills", "skill", "ask", "data-api", "functions", "function",
+                "triggers", "trigger", "credentials", "credential", "dev", "diff", "config", "status", "deploy", "env",
+                "buckets", "bucket", "bootstrap", "completion"}
+    k = next((j for j, w in enumerate(pos) if w in NEON_TOP), None)
+    top = pos[k] if k is not None else ""
+    sub = pos[k + 1] if k is not None and k + 1 < len(pos) else ""
+    words = [w for w in (top, sub) if w]
+    no_secrets = opts.get("--no-secrets") not in (None, "false") or opts.get("--secrets") in ("false", "0")
+    if no_secrets and not help_lists_no_secrets(real, words):
+        refuse(f"`{NAME} {' '.join(words)}` has no --no-secrets in the installed version; it would be ignored and the "
+               f"secret printed")
+    if top in ("connection-string", "cs"):
+        guard, why = not opts.get("--psql"), "it prints a connection string with its password"
+    elif top in ("roles", "role") and sub in ("reset-password", "get-password", "reveal-password"):
+        guard, why = True, "it prints a role password"
+    elif top in ("credentials", "credential") and sub in ("create", "reveal", "rotate"):
+        guard, why = True, "it prints an api_token and an S3 secret key"
+    elif top in ("api-keys", "api-key") and sub == "create":
+        guard, why = True, "it prints the new API key"
+    elif top == "api":
+        guard, why = True, "raw API responses can hold connection URIs and passwords"
+    elif top in ("projects", "project", "branches", "branch") and sub == "create":
+        guard, why = not no_secrets, "it prints connection URIs unless --no-secrets"
+    elif top == "env" and sub == "pull" and "--file" in opts and not is_regular_target(str(opts["--file"])):
+        refuse(f"--file {opts['--file']} is not a regular file; env pull would print the values")
+elif NAME == "vercel":
+    k = next((j for j, w in enumerate(pos) if w == "env"), None)
+    sub = pos[k + 1] if k is not None and k + 1 < len(pos) else ""
+    if k is not None and sub in ("ls", "list"):
+        fmt = str(opts.get("--format", opts.get("-F", ""))).lower()
+        guard = "--json" in opts or fmt == "json" or "--decrypt" in opts
+        why = "--json/--format json prints readable values"
+    elif k is not None and sub == "pull":
+        target = pos[k + 2] if k + 2 < len(pos) else ".env.local"
+        if not is_regular_target(target):
+            refuse(f"{target} is not a regular file; env pull would print the values")
+
+if guard:
+    out = opts.get("--output-file")
+    if isinstance(out, str) and out:
+        if os.path.islink(out) or not is_regular_target(out):
+            refuse(f"--output-file {out} is a symlink or not a regular file")
+        try:
+            fd = os.open(out, os.O_WRONLY | os.O_CREAT | os.O_TRUNC | os.O_NOFOLLOW, 0o600)
+        except OSError as e:
+            sys.exit(f"{tool} (seat guard): cannot write {out}: {e.strerror}")
+        if not stat.S_ISREG(os.fstat(fd).st_mode):
+            refuse(f"--output-file {out} is not a regular file")
+        os.fchmod(fd, 0o600)
+        # Drop the guard's own flag (both spellings) before handing over.
+        rest, i = [], 0
+        while i < len(args):
+            if args[i] == "--output-file":
+                i += 2
+                continue
+            if args[i].startswith("--output-file="):
+                i += 1
+                continue
+            rest.append(args[i])
+            i += 1
+        print(f"{tool} (seat guard): output goes to {out} (mode 0600); use it by name, never print it", file=sys.stderr)
+        os.dup2(fd, 1)
+        os.close(fd)
+        os.execv(real, [tool, *rest])
+    if not stdout_safe():
+        refuse(why)
+elif isinstance(opts.get("--output-file"), str):
+    refuse("--output-file is only for commands that print credentials")
+os.execv(real, [tool, *args])

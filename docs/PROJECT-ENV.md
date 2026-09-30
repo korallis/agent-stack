@@ -74,5 +74,11 @@ Check hosts by name (for example `sed -n 's/^DATABASE_URL=.*@\([^/]*\)\/.*/\1/p'
 
 ## For seats (in the rig CULTURE and QA guidance)
 - Use only `.env.local`. Never look for, copy or request production or preview env files.
+- **Never print a credential.** A command's output is the seat's transcript. Write connection strings, passwords and
+  tokens to a 0600 file and use them by name: `neon cs <branch> --output-file <path>`. The seat guard in front of
+  `neon`/`neonctl` and `vercel`/`vc` (`seat-bin/credguard`) refuses credential-printing commands without
+  `--output-file` (a plain `> file` too: Claude Code captures a command's stdout in a file of its own), and refuses a
+  `--no-secrets` that the installed version doesn't have. After the 2026-09-30 leak
+  ([docs/incidents/2026-09-30-neon-cs-leak.md](incidents/2026-09-30-neon-cs-leak.md)).
 - Browser logins go in `~/.config/agent-stack/secrets/playwright.env` and are typed BY NAME (the Playwright MCP's
   `--secrets`). Never inline an env or credential value into a tool input, because the MCP echoes tool input.

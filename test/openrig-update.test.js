@@ -68,3 +68,11 @@ test("the timer only runs the notifier, weekly, as its own queue identity", () =
   assert.match(svc, /^Environment=OPENRIG_SESSION_NAME=openrig-update@agent-stack$/m);
   assert.match(timer, /^OnCalendar=Mon /m);
 });
+
+test("--validate covers every team template (each rig/template/*.yaml with pods:)", () => {
+  const src = fs.readFileSync(join(repo, "bin/openrig-update"), "utf8");
+  const listed = src.match(/rig\/template\/\{([^}]+)\}\.yaml/)[1].split(",").sort();
+  const teams = fs.readdirSync(join(repo, "rig/template")).filter((f) => f.endsWith(".yaml"))
+    .filter((f) => /^pods:/m.test(fs.readFileSync(join(repo, "rig/template", f), "utf8"))).map((f) => f.replace(/\.yaml$/, "")).sort();
+  assert.deepEqual(listed, teams);
+});
