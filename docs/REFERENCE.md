@@ -343,14 +343,18 @@ Paths are resolved the way the shell will run the command:
   matched only by a pattern starting with `.`, or with `shopt -s dotglob` / `bash -O dotglob`. So `grep x bin/*`
   passes, while `cat app/.*` and `shopt -s dotglob; cat app/*` are refused. `**`, a glob in a directory part, or an
   unreadable directory are judged against sample names, dotfiles included.
-- Bracket classes (`.[e]nv`, `[!x]`) match the way bash matches them.
+- Bracket classes (`.[e]nv`, `[!x]`, `[[:alpha:]]`) match the way bash matches them.
 - Every directory the command may be in counts: each `cd`/`pushd`/`env -C` target is added and none is dropped, so a
-  subshell's `cd`, `popd` or `cd -` can't hide one.
+  subshell's `cd`, `popd` or `cd -` can't hide one. The cost: `cd` into a secrets directory and back out, then a read
+  of an ordinary file by the same bare name, is refused too; run it as its own command.
 - An existing symlink is followed to what it names.
 - A name the command gave a protected file (`cp`, `ln`, `mv`, `dd of=`, `tee < file`, `cp -t DIR`, a copied
   directory and everything under it) is protected for the rest of the command, globs over it included.
 - `$'…'` escapes (`\x`, `\u`, `\U`, octal), simple `{a,b}` braces, and variables the command sets are expanded:
-  `F=…`, a prefix `F=… cmd`, `export`, `declare`, `local`, `readonly`, `read F <<< …` and `for f in …`.
+  `F=…`, a prefix `F=… cmd`, `export`, `declare`, `local`, `readonly`, `read A B <<< …` (split into fields) and
+  `for f in …`. An assignment that may not reach the shell (in a `( … )` subshell, a pipeline, `&`, an `if`/loop body
+  or after `&&`/`||`) only adds a value, and a prefix `F=… cmd` holds for that command only. `shopt -u dotglob` counts
+  only where it surely applies.
 - Backstop: if the command names a protected path anywhere, a print whose operand still holds a value the guard can't
   resolve (a variable it didn't see set, a substitution) is refused.
 

@@ -325,3 +325,22 @@ test("QA PR59: bracket classes, every visited directory, tainted names in globs,
   for (const c of ["cat app/n[o]tes", "cat app/[!.]otes", "cd app; cat notes", "cp app/notes n2; cat n*", "for f in app/notes; do cat \"$f\"; done",
     "cat \"$UNSET\"", "ls app/.[e]nv", "cp -t out app/notes; cat out/notes"]) assert.equal(dec(c), false, c);
 });
+
+// QA PR59 refresh (9225d851): an assignment that may not reach this shell must not replace a protected value.
+test("QA PR59 refresh: subshell / prefix / branch scope, dotglob off in a subshell, [[:class:]], env -CDIR, read field splitting", () => {
+  const h = fs.mkdtempSync(join(root, "qa59r-")), app = join(h, "app"), sec = join(h, ".config/agent-stack/secrets");
+  fs.mkdirSync(app); fs.mkdirSync(sec, { recursive: true }); fs.mkdirSync(join(h, "out"));
+  fs.writeFileSync(join(app, ".env"), "K=v\n"); fs.writeFileSync(join(app, "safe.txt"), "hi\n"); fs.writeFileSync(join(sec, "token.txt"), "t\n");
+  const dec = (command) => g.decide({ tool_name: "Bash", tool_input: { command }, cwd: h }, { home: h, pats: g.DEFAULT_PATTERNS }).deny;
+  for (const c of [
+    'F=app/.env; (F=app/safe.txt); cat "$F"', 'F=app/.env; F=app/safe.txt true; cat "$F"',
+    'F=app/.env; if false; then F=app/safe.txt; fi; cat "$F"', 'F=app/.env; false && F=app/safe.txt; cat "$F"',
+    'F=app/.env; echo x | F=app/safe.txt; cat "$F"', 'F=app/.env; export F=app/safe.txt & cat "$F"',
+    "shopt -s dotglob; (shopt -u dotglob); cat app/*", "cat app/.[[:alpha:]]nv", "cat app/.[[:lower:]]n[[:alpha:]]",
+    'env -C"$HOME/.config/agent-stack/secrets" cat token.txt', "read -r F rest <<< 'app/.env ignore'; cat \"$F\"",
+    "read -r A B <<< 'x app/.env'; cat $B", "cp -t out app/.[e]nv; cat out/.env",
+  ]) assert.equal(dec(c), true, c);
+  for (const c of ['F=app/.env; F=app/safe.txt; cat "$F"', 'F=app/safe.txt true; cat app/safe.txt', "cat app/.[[:digit:]]nv",
+    "shopt -s dotglob; shopt -u dotglob; cat app/*", "read -r F rest <<< 'app/safe.txt app/.env'; cat \"$F\"",
+    "cp app/.env out/; cp app/safe.txt out/; cat out/safe.txt"]) assert.equal(dec(c), false, c);
+});
