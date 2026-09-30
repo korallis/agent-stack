@@ -63,7 +63,7 @@ def say(msg):
 
 def run(cmd, **kw):
     print("  $ " + " ".join(shlex.quote(c) for c in cmd))
-    r = subprocess.run(cmd, **kw)
+    r = subprocess.run(cmd, env={**os.environ, "AGENT_PROJECT_ONBOARD": "1"}, **kw)   # agent-project-new: no "Next:" block
     if r.returncode != 0:
         sys.exit(f"agent-project-onboard: step failed (exit {r.returncode}): {' '.join(cmd)}")
     return r

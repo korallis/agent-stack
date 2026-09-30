@@ -2,7 +2,7 @@
 """agent-human-inbox-tidy [--dry-run]: close informational rows in the owner's inbox once Slack has posted them.
 
 The stuck sweep pages about any pending row left unclaimed for an hour. A human can't claim, so an FYI to the owner
-(lee@external) that the sender forgot to close came back as an alarm. Runs every 5 minutes (agent-human-inbox-tidy.timer).
+(`<owner>@external`) that the sender forgot to close came back as an alarm. Runs every 5 minutes (agent-human-inbox-tidy.timer).
 For each PENDING row addressed to a *@external human:
   - delivered (deliveryOutcome=posted) and explicitly informational (humanIntent=update) -> close it done/no-follow-on
     with the note "informational; auto-closed after posting". The post already happened, so closing cancels nothing.

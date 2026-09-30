@@ -12,6 +12,7 @@ import { fileURLToPath } from "node:url";
 const repo = join(dirname(fileURLToPath(import.meta.url)), "..");
 const FORBIDDEN = new Set([   // client projects and people (lower-case words)
   "1296caae771fe519", "e0f67474fc1a3036", "850f9ef8d53cf476", "f3787cb0fcafe15c", "fc274819fb7e02e6", "1372c63b35ea72a5",
+  "1508b697895abf03", "5a9cea259640cac7",   // the owner's own name: the owner address is per machine (agent-owner-address)
 ]);
 const hash = (w) => createHash("sha256").update(w).digest("hex").slice(0, 16);
 
