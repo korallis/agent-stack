@@ -7,8 +7,10 @@
 // Prints the review.merge_gate input as JSON: pr, full head and base shas, the change, every required check by name,
 // the independent-review status on that head, QA's bug-review-board proof (proof/brb-<head>.md), the blast-radius
 // comment, and the target branch, deploy effect and rollback as limits. Anything missing says MISSING, never
-// "fine". --decide also asks Jev and exits 0 only for decided_by jev, band act, decision merge (1 otherwise); code
-// still re-checks the head and merges with --match-head-commit.
+// "fine". --decide also asks Jev. Exit 0: live Jev merge in the act band. Exit 3: live Jev merge below the act bar with
+// every deterministic gate green: NEEDS CONFIRM, a one-line exact-head "confirm <sha>" from the other-family
+// independent reviewer (the integrator role's below-bar path). Exit 1: hold. Code still re-checks the head and merges
+// with --match-head-commit.
 import { execFileSync } from "node:child_process";
 import { existsSync, readFileSync } from "node:fs";
 import { join } from "node:path";
@@ -114,6 +116,31 @@ export function gather(pr, { repo, mission, slice, change, deploy, rollback } = 
 // A stubbed answer (AGENT_JEV_STUB, tests) is never a live decision, so it never passes.
 export const passes = (rec) => !rec?.stubbed && rec?.decided_by === "jev" && rec?.band === "act" && rec?.result?.decision === "merge";
 
+// The deterministic gates code can check from the evidence: required checks pass, the independent-review status is
+// success, QA's bug-review-board verdict is PASS for exactly this head. Returns what is not green.
+export function gateProblems(f) {
+  const p = [];
+  if (!f.checks?.length) p.push("no required checks reported");
+  else if (f.checks.some((c) => c.bucket !== "pass")) p.push(`required checks not passing: ${f.checks.filter((c) => c.bucket !== "pass").map((c) => c.name).join(", ")}`);
+  if (f.independentReview?.state !== "success") p.push(`independent-review is ${f.independentReview?.state || "missing"}`);
+  if (!(f.brb && f.brb.verdict === "PASS" && f.brb.candidate_sha === f.head)) p.push("no bug-review-board PASS for this head");
+  return p;
+}
+
+// The integrator's standing below-bar path: live Jev merge in the review band, every deterministic gate green ->
+// ask the other-family independent reviewer for a one-line exact-head "confirm <sha>", then merge.
+export function outcome(rec, facts) {
+  if (passes(rec)) return { code: 0, text: `merge gate: PASS (live Jev merge, act band) for ${facts.head}` };
+  if (rec?.stubbed) return { code: 1, text: `merge gate: HOLD (a STUBBED answer, not a live Jev decision: ${rec.decided_by}/${rec.band}/${rec.result?.decision})` };
+  if (rec?.decided_by === "jev" && rec?.band === "review" && rec?.result?.decision === "merge") {
+    const problems = gateProblems(facts);
+    return problems.length
+      ? { code: 1, text: `merge gate: HOLD (Jev merge below the act bar, and not every deterministic gate is green: ${problems.join("; ")})` }
+      : { code: 3, text: `merge gate: NEEDS CONFIRM (Jev merge below the act bar, every deterministic gate green): ask the other-family independent reviewer for a one-line exact-head "confirm ${facts.head}", then merge with --match-head-commit ${facts.head}` };
+  }
+  return { code: 1, text: `merge gate: HOLD (${rec?.decided_by}/${rec?.band}/${rec?.result?.decision})` };
+}
+
 if (import.meta.url === `file://${process.argv[1]}` || process.argv[1]?.endsWith("agent-merge-evidence")) {
   const a = process.argv.slice(2);
   const flag = (n) => { const i = a.indexOf(n); return i >= 0 ? a[i + 1] : undefined; };
@@ -126,8 +153,7 @@ if (import.meta.url === `file://${process.argv[1]}` || process.argv[1]?.endsWith
   if (!a.includes("--decide")) { console.log(JSON.stringify(input, null, 2)); process.exit(0); }
   const rec = await decideOrStub("review.merge_gate", input, { caller: process.env.OPENRIG_SESSION_NAME || "agent-merge-evidence" });
   console.log(JSON.stringify({ input, decision: { decided_by: rec.decided_by, band: rec.band, result: rec.result, request_id: rec.request_id, ...(rec.stubbed ? { stubbed: true } : {}) } }, null, 2));
-  console.error(passes(rec) ? `merge gate: PASS (live Jev merge, act band) for ${input.head}`
-    : rec.stubbed ? `merge gate: HOLD (a STUBBED answer, not a live Jev decision: ${rec.decided_by}/${rec.band}/${rec.result?.decision})`
-    : `merge gate: HOLD (${rec.decided_by}/${rec.band}/${rec.result?.decision})`);
-  process.exit(passes(rec) ? 0 : 1);
+  const o = outcome(rec, facts);
+  console.error(o.text);
+  process.exit(o.code);
 }
