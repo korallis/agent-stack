@@ -7,6 +7,7 @@
 //   agent-dispatch triage-update --text "..."
 //   agent-dispatch record --seat S --outcome completed|returned|failed      (quality ledger)
 //   agent-dispatch pick-seat --rig R --role ROLE --task "one line" [--evidence "..."]   (Jev picks the seat; see pickseat.js)
+//     ROLE: implementer|reviewer|qa|architect|integrator|test-author|recovery|lead|deputy, or a pod name (impl, review, …)
 //
 // Jev supplies bounded judgments (type, gaps, role, duplicates, reviews, tests). Code supplies
 // capacity, account availability, dependencies and the final seat. Without --apply nothing changes.
@@ -15,7 +16,7 @@ import { execFileSync } from "node:child_process";
 import { join } from "node:path";
 import { tmpdir } from "node:os";
 import { decide, decideBatch } from "../jev/lib/engine.js";
-import { rig, seats, pickSeat, eligibleFamilies, queueItems, lexicalTop, recordQuality, odb, normQ } from "./lib.js";
+import { rig, seats, pickSeat, eligibleFamilies, queueItems, lexicalTop, recordQuality, odb, normQ, normalizeRole } from "./lib.js";
 import { seatCandidates, nextStep } from "./pickseat.js";
 import { decideOrStub } from "./jevcall.js";
 
@@ -172,8 +173,9 @@ async function triage() {
 }
 
 async function pickSeatCmd() {
-  const rigName = flag("--rig"), role = flag("--role"), task = flag("--task");
-  if (!rigName || !role || !task) throw new Error("--rig, --role and --task are required");
+  const rigName = flag("--rig"), task = flag("--task");
+  if (!rigName || !flag("--role") || !task) throw new Error("--rig, --role and --task are required");
+  const role = normalizeRole(flag("--role"));   // impl -> implementer, qa -> qa, …; an unknown role fails loudly
   const candidates = seatCandidates(seats(rigName), role, eligibleFamilies());
   if (!candidates.length) return out({ action: "none free", note: `no running ${role} seat without open work in ${rigName}: queue it to the least-loaded ${role} seat or wait` });
   const rec = await decideOrStub("intake.seat", { task, role, ...(flag("--evidence") ? { evidence: flag("--evidence") } : {}), candidates }, { caller });
@@ -183,7 +185,7 @@ async function pickSeatCmd() {
 const cmds = { intake, "pick-seat": pickSeatCmd, "review-plan": reviewPlan, "triage-update": triage,
   record: async () => { recordQuality(flag("--seat"), flag("--outcome")); out({ ok: true }); } };
 try {
-  if (!cmds[args[0]]) { console.log(readFileSync(new URL(import.meta.url), "utf8").split("\n").slice(1, 12).join("\n").replace(/^\/\/ ?/gm, "")); process.exit(args[0] ? 2 : 0); }
+  if (!cmds[args[0]]) { console.log(readFileSync(new URL(import.meta.url), "utf8").split("\n").slice(1, 13).join("\n").replace(/^\/\/ ?/gm, "")); process.exit(args[0] ? 2 : 0); }
   await cmds[args[0]]();
 } catch (e) {
   console.error(JSON.stringify({ error: e.message }));

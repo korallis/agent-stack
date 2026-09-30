@@ -39,6 +39,10 @@ has no version numbers; entries are grouped by the day they merged, newest first
 - The lead's and the merge owner's role texts and the CULTURE template use the new Jev helpers.
 
 ### Fixed
+- `agent-dispatch pick-seat` finds seats for short role names and QA. `--role impl`, `review`, `qa`, `arch`,
+  `integ`, `tests` and `ops` are accepted as aliases. QA, test-author and recovery seats get their role from their
+  pod (before, QA seats could never be picked). An unknown role is an error listing the valid ones, instead of
+  "none free".
 - `agent-merge-evidence` no longer makes the merge gate hold on project-rig PRs. The operator's live A/B test showed
   what flipped Jev:
   - The limits line no longer says "merge state: pending this gate …" when the gate's own `jev-merge` is the only

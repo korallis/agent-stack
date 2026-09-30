@@ -17,7 +17,23 @@ export function rig(args, { json = false, allowFail = false } = {}) {
 }
 
 // Role and model family come from the seat's pod/member naming (see rig/agent_team.py ROSTER).
-const POD_ROLE = { coord: null, arch: "architect", impl: "implementer", review: "reviewer", integ: "integrator" };
+// Pod id -> role, as the team templates lay them out (rig/template/*.yaml; the roles are rig/template/agents/*).
+// OpenRig's node data has no agent ref, so the pod is what tells the role. (team.yaml's integ pod also holds a
+// recovery member under a neutral id: it reads as integrator.)
+const POD_ROLE = { coord: null, arch: "architect", impl: "implementer", review: "reviewer", integ: "integrator",
+  qa: "qa", tests: "test-author", ops: "recovery" };
+export const ROLES = ["lead", "deputy", "architect", "implementer", "reviewer", "integrator", "qa", "test-author", "recovery"];
+// What --role accepts: a role, or its pod's short name (impl, review, qa, arch, integ, tests, ops) and a few spellings.
+const ROLE_ALIASES = { arch: "architect", impl: "implementer", review: "reviewer", integ: "integrator", tests: "test-author",
+  test: "test-author", tester: "qa", ops: "recovery", coord: "lead" };
+// Pure: the role for a --role value; throws, naming the valid ones, for anything else (never a silent "none free").
+export function normalizeRole(role) {
+  const r = String(role || "").trim().toLowerCase();
+  if (ROLES.includes(r)) return r;
+  if (ROLE_ALIASES[r]) return ROLE_ALIASES[r];
+  const aka = (x) => Object.entries(ROLE_ALIASES).filter(([, v]) => v === x).map(([k]) => k);
+  throw new Error(`unknown role "${role}": use one of ${ROLES.map((x) => (aka(x).length ? `${x} (${aka(x).join(", ")})` : x)).join(", ")}`);
+}
 export function seatInfo(node) {
   const [pod, member] = node.logicalId.split(".");
   let role = POD_ROLE[pod];
