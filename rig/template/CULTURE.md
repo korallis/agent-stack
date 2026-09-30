@@ -45,6 +45,18 @@ adds every new owner decision here the day it is made. A decision recorded here 
 - Merge gate: an independent review from the other model family, then live Jev `review.merge_gate` in the act band,
   then a merge pinned to the reviewed head. The merge owner's procedure is in the integrator role guidance.
 
+## Research, plan, implement (binding)
+Research -> plan -> implement (owner standard, 2026-09-30): every slice, feature, fix and wave starts with research and
+  a plan, before any code.
+  1. Research: read the code, tests, data and docs the work touches; reproduce the bug or current behaviour; note the
+     findings with file:line, and say what you could not confirm.
+  2. Plan: the approach, the files to change (inside the Territory), the tests to write first, and the risks and
+     rollback. Size it to the work: a few lines for a small fix.
+  3. Only then implement.
+  Record both under `## Research` and `## Plan` in the slice's PROGRESS.md before the first code commit. The architect
+  records a wave's research and plan in the mission SPEC before the wave is dispatched. The lead doesn't dispatch
+  builders on a slice whose SPEC lacks research; reviewers send back a PR whose slice has no Research/Plan.
+
 ## Done means a person could use it (binding)
 - Every feature is proven from the user's side. Acceptance tests are browser journeys (Playwright) that do what a person
   does: open the page, read what is on screen, click buttons and links by their visible names, type into labelled
