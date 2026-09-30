@@ -904,6 +904,15 @@ process.stdout.write(typeof out === "string" ? out : JSON.stringify(out));
   const merged = run({ checks: [...fixture.checks, { name: "jev-merge", state: "SUCCESS", bucket: "pass" }], statuses: [{ ...hold, state: "success", description: "Jev merge, act band, req r2" }, irS] });
   assert.equal(merged.ci, first.ci);
   assert.deepEqual(merged.history, ['success: "Jev merge, act band, req r2" (status https://x/run1, 2026-09-30T10:00:00Z)']);
+  // QA WO45 refresh: the gate's own reports never reach the input through the generic collectors either.
+  const gateReport = { body: `## jev-merge\nhead: ${H}\nVerdict: HOLD. GATE_ONLY_MARKER\n\n## Blast radius\nGATE_ONLY_MARKER blast`, url: "https://x/gate1", createdAt: "2026-09-30T10:00:00Z", author: { login: "owner" } };
+  const linkedOnly = { body: `Gate run on ${H}: HOLD, GATE_ONLY_MARKER, see details below in this long enough comment`, url: "https://x/gate2", createdAt: "2026-09-30T10:01:00Z", author: { login: "owner" } };
+  for (const over of [
+    { statuses: [{ ...hold, target_url: "https://x/gate2" }, irS], view: { ...fixture.view, comments: [linkedOnly] } },   // linked from the gate status
+    { view: { ...fixture.view, comments: [gateReport] } }]) {                                                           // headed with the gate's name
+    const o = run(over), input = JSON.stringify({ ...o, history: undefined });
+    assert.doesNotMatch(input, /GATE_ONLY_MARKER/, "no collector (unlinked note, blast radius) picks up the gate's own report");
+  }
   // gateProblems never counts the gate's own check.
   assert.deepEqual(gateProblems(facts({ checks: [{ name: "verify", bucket: "pass" }] })), []);
 });

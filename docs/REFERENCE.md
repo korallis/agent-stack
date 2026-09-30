@@ -376,7 +376,9 @@ the lead or a person. Send Jev evidence, not conclusions.
   which this run replaces; …)". It is dropped from the required checks in `ci` and from the gate's problems, so a
   re-gate after its own HOLD (or MERGE) reads like a first run. Otherwise every hold would re-hold itself. Those
   earlier runs on this head (statuses, or gate comments declaring the head) are listed in a separate `history` field
-  of the command's output, for people. It is never sent to Jev, and an older head's runs never appear. Free text is
+  of the command's output, for people. It is never sent to Jev, and an older head's runs never appear. The gate's own
+  reports (a comment a gate status links to, one under the configured gate heading, or one headed `## jev-merge`) are
+  kept out of every other collector too: the review fallback, the blast radius, and the review and QA comment sources. Free text is
   redacted before it
   goes to Jev. The helper refuses if the PR's head or base moves while it collects. A live, not stubbed, Jev `merge`
   in the act band merges on its own (exit 0). A live `merge` below the act bar (review or uncertain band) is NEEDS

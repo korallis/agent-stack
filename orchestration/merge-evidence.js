@@ -305,6 +305,14 @@ export function gateHistory(cfg, { statuses, notes, head }) {
     `${x.state}: "${x.description || ""}" (status${x.target_url ? ` ${x.target_url}` : ""}, ${x.created_at || "?"})`);
 }
 
+// Pure: is this PR comment or review one of the gate's own reports?
+export function isGateReport(n, cfg, statuses = []) {
+  const first = String(n.body || "").split("\n", 1)[0];
+  const ctx = cfg.gate.context.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+  return (statuses || []).some((s) => s.context === cfg.gate.context && s.target_url && s.target_url === n.url)
+    || !!cfg.gate.headingRe?.test(first) || new RegExp(`^#+\\s*${ctx}\\b`, "i").test(first);
+}
+
 // ---- Branch requirements when GitHub says BLOCKED -----------------------------------------------------------------
 // Rule types that govern pushes to the branch itself, never merging a PR into it.
 const MERGE_NEUTRAL_RULES = new Set(["deletion", "non_fast_forward", "creation"]);
@@ -530,14 +538,18 @@ export function gather(pr, { repo, mission, slice, change, deploy, rollback, con
   }
   const short = v.headRefOid.slice(0, 7);
   const namesHead = (body) => (body || "").includes(short);
-  const notes = [
+  const allNotes = [
     ...(v.comments || []).map((c) => ({ body: c.body, url: c.url, at: c.createdAt, author: c.author?.login })),
     ...(v.reviews || []).map((r) => ({ body: r.body, url: r.url || `review ${r.id}`, at: r.submittedAt, author: r.author?.login, commit: r.commit?.oid, reviewState: r.state, kind: "review" })),
   ].sort((a, b) => String(a.at).localeCompare(String(b.at)));
+  const gateRuns = gateHistory(cfg, { statuses, notes: allNotes.filter((n) => n.kind !== "review"), head: v.headRefOid });
+  // The gate's own reports are history only (WO45): no evidence collector below (review fallback, blast radius,
+  // comment sources) may pick one up. A gate report is one a gate status links to, one under the configured gate
+  // heading, or one headed with the gate's context name ("## jev-merge").
+  const notes = allNotes.filter((n) => !isGateReport(n, cfg, statuses));
   // Comment sources read PR comments only. A GitHub review is its own source with its own eligibility (exact-head
   // commit, not dismissed or pending, a mapped login of another family), so it never re-enters as a "comment".
   const comments = notes.filter((n) => n.kind !== "review");
-  const gateRuns = gateHistory(cfg, { statuses, notes: comments, head: v.headRefOid });
   const author = { family: authorFamily || cfg.authorFamily || familyOf((v.headRefName || "").match(/^agent\/([\w.-]+)/)?.[1]) || null };
   if (cfg.qa.source === "comments") { brb = qaFromComments(comments, cfg.qa.headingRe, v.headRefOid); brbWhere = `PR comments headed /${cfg.qa.heading}/`; }
   const br = [...notes].reverse().find((c) => /^## Blast radius/m.test(c.body || ""));
