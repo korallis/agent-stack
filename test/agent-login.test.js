@@ -28,6 +28,10 @@ const server = http.createServer((req, res) => {
   req.on("end", () => {
     requests.push({ method: req.method, url: req.url, auth: req.headers.authorization, body });
     if (req.headers.authorization !== `Bearer ${KEY}`) { res.writeHead(401); return res.end('{"error":"unauthorized"}'); }
+    if (answer.truncate) {   // promise a longer body than is sent, then drop the connection
+      res.writeHead(answer.code, { "Content-Length": "1000" }); res.flushHeaders(); res.write(answer.body);
+      return setTimeout(() => res.socket.destroy(), 100);
+    }
     res.writeHead(answer.code); res.end(answer.body);
   });
 });
@@ -63,7 +67,7 @@ test("a refused label (404 auth file not found, 500) fails loudly with exit 4 an
     answer = a;
     const r = await login();
     assert.equal(r.code, 4, `${a.code}: ${r.err}`);
-    assert.match(r.err, new RegExp(`!! Could not label claude-a@example\\.com-\\d+\\.json as 'claude-a' \\(HTTP ${a.code}: .*${JSON.parse(a.body).error}.*\\)\\. The credential itself is saved and in use\\.`));
+    assert.match(r.err, new RegExp(`!! Could not label claude-a@example\\.com-\\d+\\.json as 'claude-a' \\(HTTP ${a.code}, curl exit 0: .*${JSON.parse(a.body).error}.*\\)\\. The credential itself is saved and in use\\.`));
     assert.match(r.err, /Label it later: .*credentials\/fields with \{"name":"claude-a@example\.com-\d+\.json","note":"claude-a"\}/);
     assert.doesNotMatch(r.out, /^OK /m);
     assert.equal(fs.readdirSync(r.dir).filter((f) => f.endsWith(".json")).length, 1, "the credential is kept");
@@ -73,7 +77,7 @@ test("a refused label (404 auth file not found, 500) fails loudly with exit 4 an
 test("an unreachable management API also fails loudly (HTTP 000), exit 4", async () => {
   const r = await login({ AGENT_LOGIN_MGMT: "http://127.0.0.1:9/v8/management" });
   assert.equal(r.code, 4, r.err);
-  assert.match(r.err, /!! Could not label .* \(HTTP 000: .*\)\. The credential itself is saved and in use\./);
+  assert.match(r.err, /!! Could not label .* \(HTTP 000, curl exit 7: .*\)\. The credential itself is saved and in use\./);
 });
 
 test("the management key is sent as the header but never on curl's command line or in any output", async () => {
@@ -88,4 +92,13 @@ test("no new credential file is still exit 3, with no label call", async () => {
   const r = await login({ FAKE_NO_NEW: "1" });
   assert.equal(r.code, 3);
   assert.equal(requests.length, 0);
+});
+
+// QA round 1 (PR #18): a 2xx status line followed by a broken transfer is not a confirmed label.
+test("a 200 whose body is cut off (curl transfer error) fails loudly with exit 4, never OK", async () => {
+  answer = { code: 200, body: '{"status":"o', truncate: true };
+  const r = await login();
+  assert.equal(r.code, 4, r.out + r.err);
+  assert.match(r.err, /!! Could not label .* \(HTTP 200, curl exit 18: .*\)\. The credential itself is saved and in use\./);
+  assert.doesNotMatch(r.out, /^OK /m);
 });

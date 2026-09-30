@@ -20,10 +20,11 @@ chmod 600 "$new"; name=$(basename "$new")
 sleep 2
 out=$(curl -sS -m 20 -w '\n%{http_code}' -X PATCH -H @<(printf 'Authorization: Bearer %s\n' "$CLIPROXY_MGMT_KEY") \
   -H 'Content-Type: application/json' "$M/credentials/fields" \
-  -d "$(jq -nc --arg n "$name" --arg l "$label" '{name:$n, note:$l}')" 2>&1) || true
+  -d "$(jq -nc --arg n "$name" --arg l "$label" '{name:$n, note:$l}')" 2>&1) && rc=0 || rc=$?
 code=$(tail -n1 <<<"$out"); body=$(head -n -1 <<<"$out" | tr -d '\n' | cut -c1-200)
-if [[ $code != 2?? ]]; then
-  echo "!! Could not label $name as '$label' (HTTP $code${body:+: $body}). The credential itself is saved and in use." >&2
+# Success needs both a 2xx answer AND a complete transfer: a 200 whose body was cut off is not a confirmed label.
+if [[ $rc != 0 || $code != 2?? ]]; then
+  echo "!! Could not label $name as '$label' (HTTP $code, curl exit $rc${body:+: $body}). The credential itself is saved and in use." >&2
   echo "   Label it later: agent-login's PATCH $M/credentials/fields with {\"name\":\"$name\",\"note\":\"$label\"}." >&2
   exit 4
 fi
