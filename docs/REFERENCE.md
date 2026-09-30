@@ -293,6 +293,56 @@ Details are in the `agent-stack` skill. What went wrong before: [docs/incidents/
 
 After an OpenRig upgrade run `openrig-upgrade <version>` and re-check these.
 
+### Credential read guard
+
+Seats never stop for permission, so instructions alone don't stop a seat printing a credential file into its
+transcript (two leaks on 2026-09-30, both `cat` of a runtime-url file). `system/credguard-read-hook` is a PreToolUse
+hook that refuses the tool call instead. `install.sh` places it at `~/.local/share/agent-stack/bin/agent-credguard-read-hook`
+and `system/credguard-read-install` merges it idempotently, keeping every other hook and backing up a changed file:
+- **Claude Code:** `~/.claude/settings.json` `hooks.PreToolUse`, matcher `Bash|Read|Grep`. It answers with a JSON
+  `permissionDecision: "deny"`, which blocks even under `bypassPermissions` (per the hooks guide). Running sessions
+  pick up settings-file hook changes through Claude Code's file watcher, so seats need no relaunch.
+- **Codex:** a managed block in `~/.codex/config.toml`: `[[hooks.PreToolUse]]`, matcher `Bash`. That is the name
+  Codex gives its `exec_command` shell tool in hooks, and Codex reads files only through that shell. The block also
+  holds the hook's `[hooks.state."<config>:pre_tool_use:<n>:0"] trusted_hash`: Codex runs a config hook only when
+  that hash matches, and it is Codex's own (sha256 of the canonical JSON of the hook's identity; checked against a
+  hash Codex wrote itself). The installer finds the group's position by parsing the TOML (Python's `tomllib`), then
+  parses the result again to prove the guard sits there with its trust recorded; a file it can't parse, or can't
+  extend safely, is left unchanged and reported. Codex's own `hooks/list` (app-server) reports the installed guard as
+  `trusted` and `enabled` (a test runs it where `codex` is installed). A deny is exit 2 with the reason on stderr. Codex reads its config at start, so Codex
+  seats get the guard at their next launch. `[features] hooks = true` must be set (OpenRig sets it).
+
+What is refused: a read or print verb (`cat`, `head`, `tail`, `less`, `bat`, `jq`, `grep`, `rg`, `awk`, `sed`
+without `-i`, `xxd`, `od`, `strings`, `base64`, `cut`, `diff`, …) with a protected file as an operand or `<` input;
+`$(< file)`; `cp`/`mv`/`dd` to the terminal; `git show|diff|log|blame` of one; `bash -c`/`sh -c`/`eval` of any of
+these, in any spelling (`bash --norc -lc`, `env -u X`, `env -S`, a `( … )` subshell or `{ …; }` group, `if`/`while`
+bodies, `timeout`, `sudo`); command substitutions inside an unquoted heredoc (`<<EOF` runs them; `<<'EOF'` doesn't);
+and `source`/`.` of one followed by `env`, `printenv`, bare `export`/`set`/`declare`, `export -p` or `echo`/`printf`
+of a variable. Options are read as each tool reads them: `--` ends them, value-taking options take their value, and
+a pattern operand is a pattern (`grep -- -l .env` prints; `grep -- .env README.md` names no protected file). The Read tool on one, and a Grep content search of one, are refused too. What is allowed:
+- using it without printing: `set -a; . .env; set +a; <cmd>`, `--env-file`, `docker run --env-file`;
+- `grep -q`/`-c`/`-l` on it (also as `grep -q X < .env`), `wc`, `sha256sum`, `test -f`, `stat`, `ls`, and
+  `agent-credguard-read-hook --keys <file>`, which prints only the key names (nothing for a key file). `cut -d= -f1`
+  is refused: it prints every line without a `=` whole;
+- `set -e` and other shell options after loading (bare `set` dumps variables and is refused);
+- `cp` to another file, `sed -i`, and writing to it;
+- a grep/rg/awk/sed pattern that merely looks like a file name (`grep -rn runtime-url docs/`);
+- heredoc bodies, which are data, not commands.
+
+Protected paths: `**/.env`, `**/.env.*` (not `.env.example`, `.sample` or `.template`), `**/*runtime-url*`,
+`**/*.pem`, `~/.config/agent-stack/secrets/**` and `**/prod.env`. Add machine- or project-specific globs, one per
+line, in `~/.config/agent-stack/credguard-read-paths`. That file is local and never committed: put paths that name a
+project there.
+
+The deny message says how to use the values by name. `agent-never-prompt-check` (and so `agent-project-check`)
+FAILs when the guard is missing from either runtime, or when Codex would skip it: `[features] hooks = true` unset, or
+no `trusted_hash` equal to the hash of the guard as written (it recomputes it, the way Codex does).
+
+Limits (honest): it stops accidental printing by a seat, not a determined one. A script that reads and prints a
+file itself (`node -e`, `python -c`, a project script) isn't parsed, and neither is a variable holding a path. A
+broken hook allows the call rather than stopping every seat. `export $(grep -v '^#' .env | xargs)` is refused
+(conservatively); use `set -a; . .env; set +a` instead.
+
 ### Known limits (honest)
 
 - CLIProxyAPI answers `400 unknown provider for model …` when **no** account of a family is eligible; `agent-recover`
@@ -371,9 +421,15 @@ the lead or a person. Send Jev evidence, not conclusions.
   - there is no review requirement outstanding, and no conflict.
 
   Otherwise the merge state stays BLOCKED and lists each reason ("not verified by this helper: ..." for the kinds
-  above). A `jev-merge` that already failed reads as failed, never as "not yet posted". Unreadable requirements or
-  check runs keep BLOCKED. A separate line gives the gate's own record for the head: "pending this gate (nothing
-  posted)" or "<state> already posted". Free text is redacted before it
+  above). Unreadable requirements or check runs keep BLOCKED. The gate's own `jev-merge` is never evidence against
+  itself: an earlier run's result on the same head reads "pending this gate (jev-merge holds an earlier run's result,
+  which this run replaces; …)". It is dropped from the required checks in `ci` and from the gate's problems, so a
+  re-gate after its own HOLD (or MERGE) reads like a first run. Otherwise every hold would re-hold itself. Those
+  earlier runs on this head (statuses, or gate comments declaring the head) are listed in a separate `history` field
+  of the command's output, for people. It is never sent to Jev, and an older head's runs never appear. The gate's own
+  reports (a comment a gate status links to, one under the configured gate heading, or one headed `## jev-merge`) are
+  kept out of every other collector too: the review fallback, the blast radius, and the review and QA comment sources. Free text is
+  redacted before it
   goes to Jev. The helper refuses if the PR's head or base moves while it collects. A live, not stubbed, Jev `merge`
   in the act band merges on its own (exit 0). A live `merge` below the act bar (review or uncertain band) is NEEDS
   CONFIRM (exit 3) when every gate the helper checks is green: required checks pass, the review verdict is success,
@@ -427,7 +483,7 @@ the lead or a person. Send Jev evidence, not conclusions.
   review counts and the review is MISSING, saying why. The selected review's body goes into the evidence, with its
   link, time and seat, and redacted like every other free text. Limits it states (`LIMIT:`, `Caveat:`,
   `Not verified:`, `Untested:`) are repeated in the limits field. QA's latest record stands in for the proof file
-  (PASS, BLOCKING or UNCLEAR), and the gate's latest record gives its line in the merge state. Commit statuses are
+  (PASS, BLOCKING or UNCLEAR), and the gate's own comments on the head go into `history` (never into Jev's input). Commit statuses are
   read across all pages. A bad config (unknown source, missing or invalid heading) stops the helper with exit 2.
 - **The review verdict:** the first line of the review evidence is always
   `review verdict: <success|failure>, from <source>; bound to head <sha>`. The verdict reaches Jev even when the

@@ -6,6 +6,11 @@ has no version numbers; entries are grouped by the day they merged, newest first
 ## [Unreleased]
 
 ### Added
+- Credential read guard: a PreToolUse hook for Claude Code (Bash, Read, Grep) and Codex (its shell tool) refuses a
+  command or read that would print a credential file (`.env*`, `*runtime-url*`, `*.pem`, `prod.env`, the secrets
+  directory, plus local globs) into a seat's transcript, and says how to use the values by name. Installed
+  idempotently by `install.sh` (the Codex hook with its trust hash); `agent-never-prompt-check` reports it. After two
+  printed credential files on 2026-09-30.
 - Jev as the decision layer for routine judgments: code gathers the evidence and owns the thresholds, and anything
   short of Jev's act band goes to the lead or a person.
   - `agent-merge-evidence <pr> --decide`: the merge gate's input from exact-head facts (full shas, every required check
@@ -39,6 +44,10 @@ has no version numbers; entries are grouped by the day they merged, newest first
   unfinished one. A check run and a status sharing a name are both shown, and the helper's own review and gate are
   never counted as CI. Any protected base, including one protected only by rules like signatures or required
   reviews, is unchanged.
+- `agent-merge-evidence` no longer feeds the gate's own earlier result back to Jev. A re-gate after its own HOLD on
+  the same head used to read "failure already posted", so every hold re-held itself. The gate's own status or
+  comment is now left out of `ci`, of the merge-state reasons and of the gate's problems. Earlier runs on the head
+  are listed in a separate `history` output field that is never sent to Jev.
 - `agent-merge-evidence` always states the review verdict with its source and head binding, so it reaches Jev even
   when the report the status links to can't be read. The sources, in order: the status's own state and description
   on the exact head; GitHub reviews submitted on the exact head by a login mapped (`identities`) to another family;
@@ -49,7 +58,7 @@ has no version numbers; entries are grouped by the day they merged, newest first
   context, a review requirement or a conflict keeps BLOCKED, with the reasons. Requirements it can't verify
   (deployments, signatures, merge queue, conversations, linear history, locks, restrictions) keep BLOCKED and are
   named. A same-name success never masks a failing required check, and an app-bound context needs that app's check
-  run. A `jev-merge` that already failed is reported as failed.
+  run.
 - `agent-merge-evidence` can read the independent review, QA's verdict and the gate's own record from PR comments,
   for repositories that record them there, configured per repository (`.agent-stack/merge-evidence.json`). A comment
   counts only with its configured heading and exactly one declared candidate equal to the full head sha. Its verdict

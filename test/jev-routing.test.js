@@ -10,7 +10,7 @@ import { fileURLToPath } from "node:url";
 
 const repo = join(dirname(fileURLToPath(import.meta.url)), "..");
 const { buildMergeInput, passes, outcome, gateProblems, parseDiff, brbCutoff, brbNotApplicable, blastNotApplicable, flagOnly, mergeStateLine,
-  requirementsFrom, contextState, gateLine, verdictOf, records, reviewFromComments, qaFromComments, resolveConfig, loadConfig, familyOf,
+  requirementsFrom, contextState, gateHistory, verdictOf, records, reviewFromComments, qaFromComments, resolveConfig, loadConfig, familyOf,
   reviewFromPrReviews, reviewVerdict, observedFrom } = await import("../orchestration/merge-evidence.js");
 const { seatCandidates, nextStep } = await import("../orchestration/pickseat.js");
 const st = await import("../orchestration/stuck.js");
@@ -470,13 +470,21 @@ test("merge state: only an unposted jev-merge reads as pending this gate; anythi
   assert.match(mergeStateLine({ ...base, requirements: null }), /BLOCKED \(the branch requirements could not be read\)/, "unknown facts keep BLOCKED");
   assert.match(mergeStateLine({ ...base, requirements: req([ctx("verify", "pass")]) }), /BLOCKED \(reason not visible to this helper\)/, "BLOCKED with nothing unmet: not called pending");
   assert.match(mergeStateLine({ ...base, requirements: req(base.requirements.contexts, ["ruleset rule merge_queue"]) }), /BLOCKED \(not verified by this helper: ruleset rule merge_queue; jev-merge not yet posted\)/);
-  // QA WO38 f3: a gate that already failed is reported as failed, never "not yet posted", and is not pending.
-  const failedGate = mergeStateLine({ ...base, requirements: req([ctx("verify", "pass"), ctx("jev-merge", "jev-merge: status failure")]) });
-  assert.equal(failedGate, "merge state: BLOCKED (jev-merge: status failure)"); assert.doesNotMatch(failedGate, /not yet posted|pending/);
+  // WO45: the gate's own earlier result is this run's to replace, never a reason (it would make holds re-hold themselves).
+  const ownEarlier = mergeStateLine({ ...base, requirements: req([ctx("verify", "pass"), ctx("jev-merge", "jev-merge: status failure")]) });
+  assert.equal(ownEarlier, "merge state: pending this gate (jev-merge holds an earlier run's result, which this run replaces; every other requirement verified)");
+  assert.equal(mergeStateLine({ ...base, requirements: req([ctx("verify", "verify: check fail"), ctx("jev-merge", "jev-merge: status failure")]) }),
+    "merge state: BLOCKED (verify: check fail)", "other gates still block; the gate's own result is not listed");
   for (const st of ["CLEAN", "BEHIND", "UNSTABLE"]) assert.equal(mergeStateLine({ ...base, mergeState: st }), `merge state: ${st}`);
   assert.match(buildMergeInput(facts({ ...base })).limits, /merge state: pending this gate/);
-  assert.equal(gateLine({ head: H, gate: { state: null, source: "status" } }), `merge gate jev-merge (status): pending this gate (nothing posted for ${H})`);
-  assert.equal(gateLine({ head: H, gate: { state: "failure", source: "comment", url: "https://x/g" } }), `merge gate jev-merge (gate comment): failure already posted for ${H} (https://x/g)`);
+  const cfgS = resolveConfig(null), cfgC = resolveConfig({ gate: { source: "comments", heading: "^## jev-merge" } });
+  assert.deepEqual(gateHistory(cfgS, { statuses: [{ context: "jev-merge", state: "failure", description: "Jev hold, review band, req r2", target_url: "https://x/g2", created_at: "t2" },
+    { context: "verify", state: "success" }, { context: "jev-merge", state: "failure", description: "Jev hold, uncertain, req r1", created_at: "t1" }], head: H }),
+    ['failure: "Jev hold, review band, req r2" (status https://x/g2, t2)', 'failure: "Jev hold, uncertain, req r1" (status, t1)']);
+  assert.deepEqual(gateHistory(cfgS, { statuses: [], head: H }), []);
+  assert.deepEqual(gateHistory(cfgC, { notes: [{ body: `## jev-merge\nhead: ${H}\nVerdict: HOLD`, url: "https://x/c1", at: "t1" },
+    { body: `## jev-merge\nhead: ${"c".repeat(40)}\nVerdict: MERGE`, url: "https://x/c0", at: "t0" }], head: H }),
+    ["failure: ## jev-merge (gate comment https://x/c1, t1)"], "another head's gate comment is omitted");
 });
 
 test("branch requirements: non-status requirements are never assumed satisfied (QA WO38 f1)", () => {
@@ -638,7 +646,7 @@ process.stdout.write(typeof out === "string" ? out : JSON.stringify(out));
   let o = JSON.parse(r.stdout);
   assert.match(o.review, /MISSING: no independent-review status on a{40}/);
   assert.match(o.limits, /merge state: pending this gate \(jev-merge not yet posted; every other requirement verified\)/, "app-bound verify met by its app's run");
-  assert.match(o.limits, /merge gate jev-merge \(status\): pending this gate/);
+  assert.equal(o.history, undefined, "no earlier run of the gate: no history");
   // The workspace file switches this repo to comments.
   fs.writeFileSync(join(work, ".agent-stack", "merge-evidence.json"), JSON.stringify({ repos: { "o/r": {
     review: { source: "comments", heading: "^## review-(claude|codex|kimi)" }, qa: { source: "comments", heading: "^## qa-" },
@@ -650,10 +658,11 @@ process.stdout.write(typeof out === "string" ? out : JSON.stringify(out));
   assert.doesNotMatch(o.review, /MISSING: no independent|UNVERIFIED/);
   assert.match(o.review, /independent review report, the selected comment itself \(https:\/\/x\/c2, .*seat review-claude-1\): .*verified the API contract\. LIMIT: concurrent writers untested/, "QA WO39 f6: the body travels with the verdict");
   assert.match(o.limits, /limits stated by the independent review: concurrent writers untested/);
-  assert.match(o.limits, /merge gate jev-merge \(gate comment\): pending this gate \(nothing posted for a{40}\)/);
+  assert.doesNotMatch(o.limits, /merge gate jev-merge/);
   const gateC = c(`## jev-merge\nhead ${H}\nVerdict: HOLD`, 5);
   r = run({ view: { ...fixture.view, comments: [...fixture.view.comments, gateC] } }); o = JSON.parse(r.stdout);
-  assert.match(o.limits, /merge gate jev-merge \(gate comment\): failure already posted for a{40} \(https:\/\/x\/c5\)/);
+  assert.deepEqual(o.history, ["failure: ## jev-merge (gate comment https://x/c5, 2026-09-30T15:00:00Z)"], "WO45: the own earlier HOLD is history");
+  assert.doesNotMatch(JSON.stringify({ ...o, history: undefined }), /c5|HOLD|failure already/, "…and nowhere in the input Jev reads");
   // An unknown author family (no agent/<seat> branch) never verifies a comment review; --author-family supplies it.
   const plain = { view: { ...fixture.view, headRefName: "feature/login" } };
   o = JSON.parse(run(plain).stdout);
@@ -666,12 +675,12 @@ process.stdout.write(typeof out === "string" ? out : JSON.stringify(out));
   assert.match(o.limits, /merge state: BLOCKED \(verify: no result from its required app 15368 \(another producer's result does not count\); jev-merge not yet posted\)/);
   o = JSON.parse(run({ checkRuns: { total_count: 150, check_runs: [] } }).stdout);
   assert.match(o.limits, /verify: bound to app 15368 and the check runs could not be read/, "a truncated list is unreadable");
-  // QA WO39 f7: every status page is read; a failed gate behind 100 newer statuses is still seen.
+  // QA WO39 f7: every status page is read: the gate's earlier run behind 100 newer statuses is still found (as history).
   const many = Array.from({ length: 100 }, () => ({ context: "verify", state: "success" }));
   fs.rmSync(join(work, ".agent-stack", "merge-evidence.json"));
   o = JSON.parse(run({ statuses: [many, [{ context: "jev-merge", state: "failure", target_url: "https://x/g" }]] }).stdout);
-  assert.match(o.limits, /merge state: BLOCKED \(jev-merge: status failure\)/);
-  assert.match(o.limits, /merge gate jev-merge \(status\): failure already posted/);
+  assert.match(o.limits, /merge state: pending this gate \(jev-merge holds an earlier run's result, which this run replaces/);
+  assert.deepEqual(o.history, ['failure: "" (status https://x/g, ?)']);
   const bad = join(root, "bad.json"); fs.writeFileSync(bad, JSON.stringify({ review: { source: "comments" } }));
   r = run({}, ["--config", bad]); assert.equal(r.status, 2); assert.match(r.stderr, /review\.heading is required/);
 });
@@ -856,4 +865,54 @@ process.stdout.write(typeof out === "string" ? out : JSON.stringify(out));
   assert.equal(run({ statuses: [], checkRuns: [{ total_count: 2, check_runs: [run_(5, "jev-merge", "success"), run_(6, "independent-review", "success")] }] }).ci,
     `base tests/integration has no required checks; no check ran on exact head ${H}`);
   assert.equal(run({ checkRuns: [{ total_count: 150, check_runs: [run_(5, "verify", "success")] }] }).ci, "MISSING: no required checks reported for this head", "incomplete runs");
+});
+
+// ---- WO45: the gate's own earlier result is history, never evidence -----------------------------------------------
+test("agent-merge-evidence end to end: a re-gate after its own HOLD (or MERGE) on the same head reads like a first run", () => {
+  const ghDir = join(root, "gh-wo45"); fs.mkdirSync(ghDir, { recursive: true });
+  fs.writeFileSync(join(ghDir, "gh"), `#!${process.execPath}
+const f = JSON.parse(require("fs").readFileSync(process.env.GH_FIXTURE, "utf8")), a = process.argv.slice(2).join(" ");
+if (a.includes("/protection")) { process.stderr.write("gh: Branch not protected (HTTP 404)"); process.exit(1); }
+const out = a.startsWith("pr view") ? f.view : a.startsWith("pr diff") ? f.diff : a.startsWith("pr checks") ? f.checks : a.includes("/statuses") ? f.statuses
+  : a.includes("/rules/branches/") ? f.rules : undefined;
+if (out === undefined) { process.stderr.write("unexpected gh " + a); process.exit(9); }
+process.stdout.write(typeof out === "string" ? out : JSON.stringify(out));
+`, { mode: 0o755 });
+  const irS = { context: "independent-review", state: "success", description: "PASS", creator: { login: "rev" } };
+  const fixture = { view: { number: 7, title: "Docs only", createdAt: "2026-09-30T09:00:00Z", headRefOid: H, baseRefOid: B, baseRefName: "main", headRefName: "agent/impl-codex-1",
+      mergeable: "MERGEABLE", mergeStateStatus: "BLOCKED", reviewDecision: "", isDraft: false, comments: [], reviews: [] },
+    diff: "diff --git a/docs/a.md b/docs/a.md\n--- a/docs/a.md\n+++ b/docs/a.md\n@@ -1 +1 @@\n-x\n+y\n",
+    checks: [{ name: "verify", state: "SUCCESS", bucket: "pass" }], statuses: [irS],
+    rules: [{ type: "required_status_checks", parameters: { required_status_checks: [{ context: "verify" }, { context: "jev-merge" }] } }] };
+  const fx = join(root, "wo45-fixture.json");
+  const run = (over = {}) => { fs.writeFileSync(fx, JSON.stringify({ ...fixture, ...over }));
+    const r = spawnSync(process.execPath, [join(repo, "orchestration/merge-evidence.js"), "7", "--repo", "o/r"], { encoding: "utf8",
+      env: { PATH: `${ghDir}:${process.env.PATH}`, OPENRIG_WORK_ROOT: join(root, "wo45-work"), GH_FIXTURE: fx, AGENT_BRB_REQUIRED_SINCE: "" } });
+    assert.equal(r.status, 0, r.stderr); return JSON.parse(r.stdout); };
+  const first = run();
+  assert.match(first.limits, /merge state: pending this gate \(jev-merge not yet posted; every other requirement verified\)/);
+  assert.equal(first.history, undefined);
+  // Re-run after its own HOLD on this head: gh lists jev-merge as a failing required check and the status as failure.
+  const hold = { context: "jev-merge", state: "failure", description: "Jev hold, review band, req r1", target_url: "https://x/run1", created_at: "2026-09-30T10:00:00Z" };
+  const again = run({ checks: [...fixture.checks, { name: "jev-merge", state: "FAILURE", bucket: "fail" }], statuses: [hold, irS] });
+  assert.equal(again.ci, first.ci, "CI says what the other checks say, exactly as on the first run");
+  assert.doesNotMatch(again.ci, /jev-merge/); assert.equal(again.review, first.review);
+  assert.match(again.limits, /merge state: pending this gate \(jev-merge holds an earlier run's result, which this run replaces; every other requirement verified\)/);
+  assert.doesNotMatch(again.limits, /failure|already posted/);
+  assert.deepEqual(again.history, ['failure: "Jev hold, review band, req r1" (status https://x/run1, 2026-09-30T10:00:00Z)']);
+  // Its own earlier MERGE on this head is history too, not a passing check.
+  const merged = run({ checks: [...fixture.checks, { name: "jev-merge", state: "SUCCESS", bucket: "pass" }], statuses: [{ ...hold, state: "success", description: "Jev merge, act band, req r2" }, irS] });
+  assert.equal(merged.ci, first.ci);
+  assert.deepEqual(merged.history, ['success: "Jev merge, act band, req r2" (status https://x/run1, 2026-09-30T10:00:00Z)']);
+  // QA WO45 refresh: the gate's own reports never reach the input through the generic collectors either.
+  const gateReport = { body: `## jev-merge\nhead: ${H}\nVerdict: HOLD. GATE_ONLY_MARKER\n\n## Blast radius\nGATE_ONLY_MARKER blast`, url: "https://x/gate1", createdAt: "2026-09-30T10:00:00Z", author: { login: "owner" } };
+  const linkedOnly = { body: `Gate run on ${H}: HOLD, GATE_ONLY_MARKER, see details below in this long enough comment`, url: "https://x/gate2", createdAt: "2026-09-30T10:01:00Z", author: { login: "owner" } };
+  for (const over of [
+    { statuses: [{ ...hold, target_url: "https://x/gate2" }, irS], view: { ...fixture.view, comments: [linkedOnly] } },   // linked from the gate status
+    { view: { ...fixture.view, comments: [gateReport] } }]) {                                                           // headed with the gate's name
+    const o = run(over), input = JSON.stringify({ ...o, history: undefined });
+    assert.doesNotMatch(input, /GATE_ONLY_MARKER/, "no collector (unlinked note, blast radius) picks up the gate's own report");
+  }
+  // gateProblems never counts the gate's own check.
+  assert.deepEqual(gateProblems(facts({ checks: [{ name: "verify", bucket: "pass" }] })), []);
 });
