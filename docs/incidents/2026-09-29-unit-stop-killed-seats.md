@@ -6,7 +6,8 @@ Stopping the daemon's unit stopped every seat on the machine (84), not just the 
 ## Why
 The tmux server that holds every seat had been started inside `openrig.service`. tmux creates each pane's scope with
 `PartOf=<the unit its server was started in>`, so stopping the unit stopped every pane scope, and with them every
-Claude and Codex seat. (A `restart` was harmless only because `PartOf` doesn't propagate restarts.)
+Claude and Codex seat. `PartOf=` propagates restarts too (systemd.unit(5)), so a restart of the unit is just as
+dangerous.
 
 ## Recovery
 Every seat was restored from OpenRig's snapshots onto its own conversation: 0 fresh starts, so no seat lost its

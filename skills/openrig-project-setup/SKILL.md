@@ -166,7 +166,8 @@ Seats run with permission checks off, so they only ever get development credenti
   parent's, so without the reset the dev URL also opens production. Previews get a branch per deployment.
 - Files (e.g. Blob) get a store per environment. Seats never touch production data.
 - Only `<repo>/.env.local` is linked into worktrees (agent-project-new does it), never `.env.*.local` or `.env.production*`.
-- Verify by hash (`sha256sum`), never by printing a value.
+- Verify by hash, never by printing a value: hash the dev and production database PASSWORDS (not only the URLs; a
+  different host can hide an inherited password). docs/PROJECT-ENV.md has the check.
 - Expect Vercel to rewrite things:
   - saving a store connection re-issues its tokens as Sensitive: re-pull, and prove the first deploy still uploads;
   - `vercel blob create-store` rewrites `.env.local`: re-check the database and store it points at.

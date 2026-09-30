@@ -12,6 +12,10 @@ hosts work the same way.
 | Preview | a Neon branch per deployment (Vercel's Neon integration) | a preview Blob store | not on disk | Vercel only |
 | Production | the Neon main branch | the production Blob store | an owner-only dir outside the repo, e.g. `~/.config/<project>/env/` (0700) | the owner only |
 
+The 0700 dir keeps production values out of the repo and out of worktrees. It is a handling convention, not a wall:
+seats run as the same user and could read it. What keeps them out is that they never look for it (the CULTURE rule
+below), and that the dev credentials they do have open nothing else.
+
 ## Set it up (owner, once per project)
 1. **Pull env per environment**, never one file for all: `vercel env pull .env.local --environment=development`.
    Pull production or preview only when you need them, into the owner-only dir, never into the repo or a worktree.
@@ -28,12 +32,27 @@ hosts work the same way.
    files are not in the repo, and that seats never look for, copy or request them.
 
 ## Verify without printing values
-Compare values by hash, never by eye, and never echo them into a transcript or log:
+Compare values by hash, never by eye, and never echo them into a transcript or log. Compare the **password**, not
+only the whole URL: a dev branch that kept its parent's password has a different host, so its URL differs, but the
+same password still opens production.
 ```bash
-# Is the dev DATABASE_URL different from production's? (same hash = the same credential)
-for f in .env.local ~/.config/<project>/env/.env.production; do
-  sed -n 's/^DATABASE_URL=//p' "$f" | sha256sum | cut -c1-12
-done
+# Hash the password inside DATABASE_URL; fails (and prints no value) when the file, the key or a password is missing.
+pwhash() { python3 - "$1" <<'PY'
+import hashlib, sys, urllib.parse
+try:
+    lines = open(sys.argv[1]).read().splitlines()
+    url = next(l.split("=", 1)[1].strip().strip("'\"") for l in lines if l.startswith("DATABASE_URL="))
+    pw = urllib.parse.urlsplit(url).password
+except Exception:
+    pw = None
+if not pw:
+    sys.exit(f"{sys.argv[1]}: no DATABASE_URL with a password")
+print(hashlib.sha256(pw.encode()).hexdigest()[:12])
+PY
+}
+if dev=$(pwhash .env.local) && prod=$(pwhash ~/.config/<project>/env/.env.production); then
+  [ "$dev" != "$prod" ] && echo "OK: the dev password differs" || echo "FAIL: same password; reset it on the dev branch"
+else echo "FAIL: could not compare"; fi
 ```
 Check hosts by name (for example `sed -n 's/^DATABASE_URL=.*@\([^/]*\)\/.*/\1/p'`), not whole URLs.
 
