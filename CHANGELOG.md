@@ -39,6 +39,10 @@ has no version numbers; entries are grouped by the day they merged, newest first
 - The lead's and the merge owner's role texts and the CULTURE template use the new Jev helpers.
 
 ### Fixed
+- `rig/template/openrig-shared` is no longer tracked: it was a symlink to an absolute path in the owner's home, which
+  the public tree exposed. `install.sh` creates it as a local link, `openrig-upgrade` refreshes it, and git ignores
+  it. A test now fails on any tracked absolute symlink or real `/home/<name>` path. After pulling this, run
+  `./install.sh` once to recreate the link.
 - `agent-merge-evidence` no longer makes the merge gate hold on project-rig PRs. The operator's live A/B test showed
   what flipped Jev:
   - The limits line no longer says "merge state: pending this gate …" when the gate's own `jev-merge` is the only
