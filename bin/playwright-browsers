@@ -1,0 +1,50 @@
+#!/usr/bin/env bash
+# playwright-browsers [--check]: make sure the Chrome for Testing build that the pinned Playwright MCP needs is installed
+# AND launches. The pin is the @playwright/mcp@<version> in system/codex/config.toml. Everything goes through THAT
+# release's own Playwright (npx -p @playwright/mcp@<version> …), never playwright@latest, whose browser build can differ.
+#   1. its install plan (playwright install --dry-run chromium) must be recognisable: a Chrome for Testing build and
+#      install locations; anything else is an error, never "present";
+#   2. ready means that Playwright really launches Chromium headless (headless shell and full Chromium) and closes it.
+#      Directories alone prove nothing: a partial or interrupted download leaves them behind;
+#   3. not ready: --check reports it (exit 1); otherwise it (re)installs with --force and launches again to verify.
+# Runs from install.sh and daily from playwright-browsers.timer, because any other Playwright install on this machine can
+# garbage-collect browser builds it doesn't know about. The launch is one short headless start at low priority, not a
+# test run, so it doesn't take an agent-heavy slot.
+set -uo pipefail
+S=$(cd "$(dirname "$(readlink -f "$0")")/.." && pwd)
+pin=$(sed -n 's/.*"@playwright\/mcp@\([^"]*\)".*/\1/p' "$S/system/codex/config.toml" | head -1)
+[ -n "$pin" ] || { echo "playwright-browsers: no @playwright/mcp@<version> pin in $S/system/codex/config.toml" >&2; exit 2; }
+say() { echo "playwright-browsers: $*"; logger -t playwright-browsers "$*" 2>/dev/null || true; }
+# Always from an empty directory, so no project's node_modules (a different playwright/playwright-core) can shadow the
+# pinned release's own copy, for npx and for node's module resolution alike.
+neutral=$(mktemp -d); trap 'rm -rf "$neutral"' EXIT
+pw() { (cd "$neutral" && npx -y -p "@playwright/mcp@$pin" "$@"); }
+
+plan=$(pw playwright install --dry-run chromium 2>/dev/null) || { say "could not ask @playwright/mcp@$pin which browser it needs"; exit 1; }
+build=$(grep -m1 -oE 'Chrome for Testing [0-9.]+ \(playwright chromium v[0-9]+\)' <<<"$plan")
+grep -q '^ *Install location: *[^ ]' <<<"$plan" && [ -n "$build" ] ||
+  { say "unrecognised install plan from @playwright/mcp@$pin (no Chrome for Testing build or install location); not treating it as present"; exit 1; }
+
+# Launch with the release's own playwright-core, loaded by ABSOLUTE path from the npx install that holds
+# @playwright/mcp@<pin> (the tree behind its `playwright` binary), after checking that tree really is that release.
+launch() {
+  PW_PIN=$pin pw sh -c 'nm=$(dirname "$(dirname "$(readlink -f "$(command -v playwright)")")")
+    exec nice -n 10 timeout 120 node -e "
+    const fs = require(\"fs\"), path = require(\"path\"), nm = process.argv[1];
+    const mcp = JSON.parse(fs.readFileSync(path.join(nm, \"@playwright/mcp/package.json\"), \"utf8\")).version;
+    if (mcp !== process.env.PW_PIN) { console.log(\"the playwright found is not from @playwright/mcp@\" + process.env.PW_PIN + \" (found \" + mcp + \" in \" + nm + \")\"); process.exit(1); }
+    const { chromium } = require(path.join(nm, \"playwright-core\"));
+    (async () => {
+      const bad = [];
+      for (const [what, opts] of [[\"headless shell\", { headless: true }], [\"chromium\", { headless: true, channel: \"chromium\" }]]) {
+        try { const b = await chromium.launch(opts); await b.close(); } catch (e) { bad.push(what + \": \" + e.message.split(\"\\n\")[0]); }
+      }
+      if (bad.length) { console.log(bad.join(\"; \")); process.exit(1); }
+    })();" "$nm"' 2>&1
+}
+if why=$(launch); then echo "playwright-browsers: @playwright/mcp@$pin browser ready (launches): $build"; exit 0; fi
+if [ "${1:-}" = --check ]; then say "@playwright/mcp@$pin needs $build, which does not launch: ${why:0:300}"; exit 1; fi
+say "installing $build for @playwright/mcp@$pin (it did not launch: ${why:0:200})"
+pw playwright install --force chromium >/dev/null 2>&1 || { say "install FAILED for $build"; exit 1; }
+if why=$(launch); then say "installed $build; it launches"; exit 0; fi
+say "installed $build but it still does not launch: ${why:0:300}"; exit 1

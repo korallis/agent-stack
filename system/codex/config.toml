@@ -42,10 +42,14 @@ default_tools_approval_mode = "approve"
 type = "http"
 url = "https://mcp.neon.tech/mcp"
 
-# Real browser for hands-on QA and user-journey checks.
+# Real browser for hands-on QA and user-journey checks: Playwright's own Chrome for Testing (--browser chromium), not
+# the system Chromium, which lags behind (152 when apps required 153+). The MCP version is PINNED: each release bundles
+# one Playwright and needs that Playwright's browser build, so @latest can move to a browser that isn't installed (0.0.83
+# needed CfT 155 while 153 was installed). This line is the one pin: install.sh and bin/playwright-browsers read it.
+# Bump it deliberately (0.0.80 = CfT 153, 0.0.82 = CfT 154).
 [mcp_servers.playwright]
 command = "npx"
-args = ["-y", "@playwright/mcp@latest", "--headless", "--executable-path", "/usr/bin/chromium"]
+args = ["-y", "@playwright/mcp@0.0.80", "--headless", "--browser", "chromium"]
 # Browser actions are pre-approved so QA seats never stall on per-action prompts.
 default_tools_approval_mode = "approve"
 

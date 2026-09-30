@@ -382,6 +382,68 @@ try:
 except (OSError, json.JSONDecodeError) as e:
     rep("FAIL", "never-prompt check ran", str(e))
 
+# ---- 7. Playwright MCP: pinned release, Playwright's own browser (not an older system one) -------------------------
+def playwright_mcps():
+    """(where, args) for every Playwright MCP entry: Codex, Claude user/project scopes, the repo's .mcp.json."""
+    out = []
+    try:
+        import tomllib
+        with open(f"{HOME}/.codex/config.toml", "rb") as f:
+            for name, srv in (tomllib.load(f).get("mcp_servers") or {}).items():
+                out.append((f"~/.codex/config.toml [{name}]", srv.get("args") or []))
+    except (OSError, ValueError, ImportError):
+        pass
+    try:
+        cj = json.load(open(f"{HOME}/.claude.json"))
+        scopes = [("~/.claude.json (user)", cj.get("mcpServers") or {})]
+        scopes += [(f"~/.claude.json ({proj})", (v or {}).get("mcpServers") or {}) for proj, v in (cj.get("projects") or {}).items()]
+        for where, srvs in scopes:
+            out += [(f"{where} {name}", srv.get("args") or []) for name, srv in srvs.items()]
+    except (OSError, ValueError, AttributeError):
+        pass
+    try:
+        out += [(f".mcp.json {name}", srv.get("args") or []) for name, srv in (json.load(open(f"{REPO}/.mcp.json")).get("mcpServers") or {}).items()]
+    except (OSError, ValueError, AttributeError):
+        pass
+    return [(w, [str(a) for a in args]) for w, args in out if any(str(a).startswith("@playwright/mcp") for a in args)]
+
+_bundled = {}
+def bundled_major(pkg):
+    """Chrome for Testing major version that this @playwright/mcp release's own Playwright installs (None if unknown)."""
+    if pkg not in _bundled:
+        try:
+            plan = subprocess.run(["npx", "-y", "-p", pkg, "playwright", "install", "--dry-run", "chromium"],
+                                  capture_output=True, text=True, timeout=180).stdout
+            m = re.search(r"Chrome for Testing (\d+)\.", plan)
+            _bundled[pkg] = int(m.group(1)) if m else None
+        except (OSError, subprocess.TimeoutExpired):
+            _bundled[pkg] = None
+    return _bundled[pkg]
+
+def browser_major(path):
+    try:
+        m = re.search(r"(\d+)\.\d+", subprocess.run([path, "--version"], capture_output=True, text=True, timeout=20).stdout)
+        return int(m.group(1)) if m else None
+    except (OSError, subprocess.TimeoutExpired):
+        return None
+
+pw = playwright_mcps()
+floating = [w for w, args in pw if any(a in ("@playwright/mcp", "@playwright/mcp@latest") for a in args)]
+rep("OK" if not floating else "WARN", "Playwright MCP is pinned to a release (not @latest)",
+    ("floats on @latest (a new release can need a browser build that isn't installed): " + "; ".join(floating) +
+     ". Pin it as in agent-stack system/codex/config.toml") if floating else "")
+stale = []
+for w, args in pw:
+    if "--executable-path" not in args or args.index("--executable-path") + 1 >= len(args):
+        continue
+    exe = args[args.index("--executable-path") + 1]
+    pkg = next(a for a in args if a.startswith("@playwright/mcp"))
+    have, want = browser_major(exe), bundled_major(pkg if "@" in pkg[1:] else pkg + "@latest")
+    if have is not None and want is not None and have < want:
+        stale.append(f"{w}: {exe} is {have}, {pkg} bundles Chrome for Testing {want}")
+rep("OK" if not stale else "WARN", "Playwright MCP doesn't pin an older system browser (--executable-path)",
+    ("; ".join(stale) + ". Use --browser chromium (Playwright's own Chrome for Testing; playwright-browsers keeps it installed)") if stale else "")
+
 if "--json" in sys.argv:
     print(json.dumps([{"level": l, "check": w, "detail": d} for l, w, d in results], indent=1))
 else:
