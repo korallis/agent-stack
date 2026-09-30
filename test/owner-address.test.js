@@ -79,6 +79,27 @@ test("install.sh: an invalid or comment-only config/owner.env is reported, not c
   file(null);
 });
 
+test("install.sh: a valid config/owner.env next to an AGENT_OWNER_ADDRESS override is OK, and says which one wins (WO34)", () => {
+  const src = fs.readFileSync(join(repo, "install.sh"), "utf8");
+  const a = src.indexOf('step "Owner address'), b = src.indexOf('step "Kernel operator');
+  const run = (check, env) => spawnSync("bash", ["-c", `set -euo pipefail\nS=${S}\nCHECK=${check}\nstep() { :; }\nok() { echo "ok  $*"; }\ntodo() { echo "--  $*"; }\n${src.slice(a, b)}`],
+    { encoding: "utf8", env: { PATH: `${bin}:/usr/bin:/bin`, HOME: root, ...env } });
+  humans([]); file("bob@external");
+  for (const check of [0, 1]) {
+    let r = run(check, { AGENT_OWNER_ADDRESS: "cy@external" });
+    assert.equal(r.status, 0, r.stderr);
+    assert.match(r.stdout, /^ok  owner address: cy@external \(AGENT_OWNER_ADDRESS overrides config\/owner\.env: bob@external\)$/m);
+    assert.doesNotMatch(r.stdout, /no valid OWNER_ADDRESS/);
+    r = run(check, {});
+    assert.match(r.stdout, /^ok  owner address: bob@external \(config\/owner\.env\)$/m);
+  }
+  file("not-an-address");
+  const r = run(0, { AGENT_OWNER_ADDRESS: "cy@external" });
+  assert.match(r.stdout, /config\/owner\.env has no valid OWNER_ADDRESS=<name>@external \(using cy@external \(AGENT_OWNER_ADDRESS\)\)/, "an invalid file is still reported with an override");
+  assert.equal(fs.readFileSync(join(S, "config/owner.env"), "utf8"), "# note\nOWNER_ADDRESS=not-an-address\n");
+  file(null);
+});
+
 test("the registry is read defensively: a failed call, ok:false or odd records give no address (QA round 1, consider)", () => {
   file(null);
   for (const body of ['{"ok":false,"humans":[{"address":"ann@external"}]}', '{"ok":true,"humans":[null]}', '{"ok":true,"humans":[{"address":7}]}', '{"ok":true}', "[]"]) {
