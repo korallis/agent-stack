@@ -9,7 +9,7 @@ import { join, dirname } from "node:path";
 import { fileURLToPath } from "node:url";
 
 const repo = join(dirname(fileURLToPath(import.meta.url)), "..");
-const { buildMergeInput, passes, outcome, gateProblems } = await import("../orchestration/merge-evidence.js");
+const { buildMergeInput, passes, outcome, gateProblems, parseDiff, brbCutoff, brbNotApplicable, blastNotApplicable, flagOnly } = await import("../orchestration/merge-evidence.js");
 const { seatCandidates, nextStep } = await import("../orchestration/pickseat.js");
 const st = await import("../orchestration/stuck.js");
 const root = fs.mkdtempSync("/tmp/claude-1000/wo35-");
@@ -86,7 +86,8 @@ test("agent-merge-evidence --decide: reads gh and the proof file, exits 0 only o
   fs.writeFileSync(join(bin, "gh"), `#!/bin/sh
 case "$*" in
   "pr view 42 -R o/r --json headRefOid,baseRefOid") n=$(cat "${root}/views" 2>/dev/null || echo 0); echo $((n+1)) > "${root}/views"; h=${H}; [ -f "${root}/move" ] && h=${"c".repeat(40)}; printf '{"headRefOid":"%s","baseRefOid":"${B}"}\\n' "$h" ;;
-  "pr view 42 -R o/r --json"*) echo '{"number":42,"title":"Adds login","headRefOid":"${H}","baseRefOid":"${B}","baseRefName":"main","headRefName":"agent/x","mergeable":"MERGEABLE","isDraft":false,"comments":[{"body":"looks good","url":"https://x/c0","createdAt":"2026-09-30T09:00:00Z","author":{"login":"a"}},{"body":"## Blast radius\\nSafe because: only a nullable column (${H.slice(0, 7)}).","url":"https://x/c1","createdAt":"2026-09-30T10:00:00Z","author":{"login":"rev"}},{"body":"Implementation update on ${H.slice(0, 7)}: my tests pass, all fixes are ready for review.","url":"https://x/c3","createdAt":"2026-09-30T11:00:00Z","author":{"login":"builder"}}],"reviews":[{"body":"Lenses applied: correctness, security. Verified the login tests pass on ${H.slice(0, 7)}; one finding fixed.","url":"https://x/r1","submittedAt":"2026-09-30T10:05:00Z","author":{"login":"rev"},"commit":{"oid":"${H}"}}]}' ;;
+  "pr diff 42 -R o/r") printf 'diff --git a/src/login.ts b/src/login.ts\\n--- a/src/login.ts\\n+++ b/src/login.ts\\n@@ -1 +1 @@\\n-old\\n+new\\n' ;;
+  "pr view 42 -R o/r --json"*) echo '{"number":42,"title":"Adds login","createdAt":"2026-09-30T14:00:00Z","headRefOid":"${H}","baseRefOid":"${B}","baseRefName":"main","headRefName":"agent/x","mergeable":"MERGEABLE","isDraft":false,"comments":[{"body":"looks good","url":"https://x/c0","createdAt":"2026-09-30T09:00:00Z","author":{"login":"a"}},{"body":"## Blast radius\\nSafe because: only a nullable column (${H.slice(0, 7)}).","url":"https://x/c1","createdAt":"2026-09-30T10:00:00Z","author":{"login":"rev"}},{"body":"Implementation update on ${H.slice(0, 7)}: my tests pass, all fixes are ready for review.","url":"https://x/c3","createdAt":"2026-09-30T11:00:00Z","author":{"login":"builder"}}],"reviews":[{"body":"Lenses applied: correctness, security. Verified the login tests pass on ${H.slice(0, 7)}; one finding fixed.","url":"https://x/r1","submittedAt":"2026-09-30T10:05:00Z","author":{"login":"rev"},"commit":{"oid":"${H}"}}]}' ;;
   "pr checks 42 -R o/r --required --json"*) echo '[{"name":"verify","state":"FAILURE","bucket":"fail"},{"name":"qa-evidence","state":"SUCCESS","bucket":"pass"}]'; exit 1 ;;
   "api repos/o/r/commits/${H}/statuses") echo '[{"context":"independent-review","state":"success","description":"QA PASS","creator":{"login":"rev"},"target_url":"https://x/r1"}]' ;;
   *) echo "unexpected gh $*" >&2; exit 9 ;;
@@ -318,4 +319,136 @@ test("the CULTURE template keeps the below-bar confirm path (WO36)", () => {
   const c = fs.readFileSync(join(repo, "rig/template/CULTURE.md"), "utf8").replace(/\s+/g, " ");
   assert.match(c, /only live Jev `merge` in the act band merges on its own; a merge below the act bar, with every deterministic gate green, merges after a one-line exact-head `confirm <sha>` from the other-family independent reviewer, as the integrator role says/);
   assert.doesNotMatch(c, /only live Jev `merge` in the act band merges\)/);
+});
+
+
+// ---- WO37: N/A instead of MISSING, from verified facts only -------------------------------------------------------
+const diffOf = (files) => files.map(([path, removed = [], added = [], oldPath = path]) =>
+  `diff --git a/${oldPath} b/${path}\n--- a/${oldPath}\n+++ b/${path}\n@@ -1 +1 @@\n${removed.map((l) => "-" + l).join("\n")}\n${added.map((l) => "+" + l).join("\n")}`).join("\n");
+const CULTURE = "## Owner decisions\n- Transition (operator, 2026-09-30 12:55Z): PRs opened before 13:00Z may merge on their existing QA and witness\n  evidence; PRs opened from 13:00Z need the bug-review-board verdict (proof brb-<head>.md).\n";
+
+test("the bug-review-board cutoff comes from AGENT_BRB_REQUIRED_SINCE, else the rig CULTURE's transition bullet", () => {
+  assert.deepEqual(brbCutoff({ env: {}, culture: CULTURE }), { iso: "2026-09-30T13:00:00.000Z", source: "the rig CULTURE's transition bullet" });
+  assert.equal(brbCutoff({ env: { AGENT_BRB_REQUIRED_SINCE: "2026-10-01T08:00Z" }, culture: CULTURE }).source, "AGENT_BRB_REQUIRED_SINCE");
+  assert.equal(brbCutoff({ env: { AGENT_BRB_REQUIRED_SINCE: "not a time" }, culture: CULTURE }).iso, "2026-09-30T13:00:00.000Z");
+  assert.equal(brbCutoff({ env: {}, culture: "- Transition (op): PRs opened before 2026-11-02T09:30Z keep their evidence" }).iso, "2026-11-02T09:30:00.000Z");
+  assert.equal(brbCutoff({ env: {}, culture: "## Operating rules\n- nothing here\n" }), null);
+});
+
+test("bug-review-board N/A: before the cutoff, or docs-only; a mixed or renamed-from-code PR still needs it", () => {
+  const cutoff = brbCutoff({ env: {}, culture: CULTURE });
+  const src = parseDiff(diffOf([["src/a.ts", ["x"], ["y"]]]));
+  assert.equal(brbNotApplicable({ createdAt: "2026-09-30T11:02:00Z", cutoff, files: src }), "N/A: PR created 2026-09-30T11:02:00Z, before the bug-review-board cutoff 2026-09-30T13:00:00.000Z (the rig CULTURE's transition bullet)");
+  assert.equal(brbNotApplicable({ createdAt: "2026-09-30T13:05:00Z", cutoff, files: src }), null);
+  assert.match(brbNotApplicable({ createdAt: "2026-09-30T15:00:00Z", cutoff, files: parseDiff(diffOf([["docs/a.md"], ["README.md"], ["docs/img/x.png"]])) }), /^N\/A: 3 changed path\(s\), all docs/);
+  assert.equal(brbNotApplicable({ createdAt: "2026-09-30T15:00:00Z", cutoff, files: parseDiff(diffOf([["docs/a.md"], ["src/a.ts"]])) }), null, "mixed: required");
+  assert.equal(brbNotApplicable({ createdAt: "2026-09-30T15:00:00Z", cutoff, files: parseDiff(diffOf([["docs/moved.md", [], [], "src/code.ts"]])) }), null, "a rename out of code is not docs-only");
+  assert.equal(brbNotApplicable({ createdAt: "2026-09-30T15:00:00Z", cutoff: null, files: src }), null, "no cutoff configured: required");
+});
+
+test("blast radius N/A: acceptance tests, docs, or features.json flag flips only (checked in the hunks); anything else needs it", () => {
+  assert.equal(blastNotApplicable({ files: parseDiff(diffOf([["tests/acceptance/a.spec.ts"], ["tests/acceptance/b.spec.ts"], ["tests/acceptance/c.spec.ts"], ["tests/acceptance/d.spec.ts"]])) }),
+    "N/A: 4 changed path(s), all tests/acceptance/ (checked in the diff): tests/acceptance/a.spec.ts, tests/acceptance/b.spec.ts, tests/acceptance/c.spec.ts, tests/acceptance/d.spec.ts");
+  const flip = parseDiff(diffOf([["features.json", ['    "passes": false,'], ['    "passes": true,']]]));
+  assert.ok(flagOnly(flip[0])); assert.match(blastNotApplicable({ files: flip }), /all features\.json flag flips only/);
+  const notFlip = parseDiff(diffOf([["features.json", ['    "passes": false,'], ['    "passes": true,', '    "owner": "impl-codex-1",']]]));
+  assert.equal(blastNotApplicable({ files: notFlip }), null, "a features.json edit that isn't only flag flips");
+  const renamedKey = parseDiff(diffOf([["features.json", ['    "passes": false,'], ['    "shipped": true,']]]));
+  assert.equal(blastNotApplicable({ files: renamedKey }), null, "a different key is not a flip");
+  assert.match(blastNotApplicable({ files: parseDiff(diffOf([["docs/x.md"], ["tests/acceptance/y.spec.ts"]])) }), /all tests\/acceptance\/ or docs|all docs or tests\/acceptance\//);
+  assert.equal(blastNotApplicable({ files: parseDiff(diffOf([["docs/x.md"], ["src/app.ts"]])) }), null, "mixed docs + src: required");
+  assert.equal(blastNotApplicable({ files: [] }), null, "no diff read: required");
+});
+
+test("N/A replaces MISSING in the evidence and in the gate check, and only there", () => {
+  const na = buildMergeInput(facts({ brb: null, brbNA: "N/A: PR created 2026-09-30T11:02:00Z, before the bug-review-board cutoff 2026-09-30T13:00:00.000Z (env)", blastRadius: null, blastNA: "N/A: 2 changed path(s), all docs (checked in the diff): a.md, b.md" }));
+  assert.match(na.review, /\nN\/A: PR created .* before the bug-review-board cutoff/);
+  assert.match(na.review, /blast radius N\/A: 2 changed path\(s\), all docs/);
+  assert.doesNotMatch(na.review, /MISSING: no bug-review-board|MISSING: no blast-radius/);
+  assert.deepEqual(gateProblems(facts({ brb: null, brbNA: "N/A: docs only" })), [], "a N/A proof is not a red gate");
+  assert.deepEqual(gateProblems(facts({ brb: null })), ["no bug-review-board qa PASS for this head"]);
+});
+
+test("agent-merge-evidence end to end: a docs-only PR from before the cutoff gets N/A for both, a mixed PR gets MISSING", () => {
+  const W2 = join(root, "work2"); fs.mkdirSync(join(W2, "rig"), { recursive: true }); fs.writeFileSync(join(W2, "rig/CULTURE.md"), CULTURE);
+  const ghStub = (created) => fs.writeFileSync(join(bin, "gh"), `#!/bin/sh
+case "$*" in
+  "pr view 7 -R o/r --json headRefOid,baseRefOid") printf '{"headRefOid":"${H}","baseRefOid":"${B}"}\\n' ;;
+  "pr view 7 -R o/r --json"*) printf '%s\\n' '{"number":7,"title":"Docs","createdAt":"${created}","headRefOid":"${H}","baseRefOid":"${B}","baseRefName":"main","headRefName":"d","mergeable":"MERGEABLE","mergeStateStatus":"CLEAN","isDraft":false,"comments":[],"reviews":[]}' ;;
+  "pr diff 7 -R o/r") cat "${join(root, "diff7")}" ;;
+  "pr checks 7 -R o/r --required --json"*) echo '[]' ;;
+  "api repos/o/r/commits/${H}/statuses") echo '[]' ;;
+  *) echo "unexpected gh $*" >&2; exit 9 ;;
+esac
+`, { mode: 0o755 });
+  const setDiff = (diff) => fs.writeFileSync(join(root, "diff7"), diff);
+  const run = () => JSON.parse(spawnSync(process.execPath, [join(repo, "orchestration/merge-evidence.js"), "7", "--repo", "o/r"],
+    { encoding: "utf8", env: { PATH: `${bin}:${process.env.PATH}`, OPENRIG_WORK_ROOT: W2, AGENT_BRB_REQUIRED_SINCE: "" } }).stdout);
+  ghStub("2026-09-30T11:02:00Z"); setDiff(diffOf([["docs/guide.md"], ["README.md"]]));
+  let r = run();
+  assert.match(r.review, /N\/A: PR created 2026-09-30T11:02:00Z, before the bug-review-board cutoff 2026-09-30T13:00:00\.000Z/);
+  assert.match(r.review, /blast radius N\/A: 2 changed path\(s\), all docs/);
+  ghStub("2026-09-30T14:00:00Z"); setDiff(diffOf([["docs/guide.md"], ["src/app.ts"]]));
+  r = run();
+  assert.match(r.review, /MISSING: no bug-review-board proof/); assert.match(r.review, /MISSING: no blast-radius comment/);
+});
+
+
+test("diff parsing fails closed: quoted (non-ASCII) paths, binary files and unparseable headers never make a mixed change docs-only (QA round 1)", async () => {
+  const { gitUnquote } = await import("../orchestration/merge-evidence.js");
+  assert.equal(gitUnquote('"a/src/caf\\303\\251.js"'), "a/src/café.js");
+  assert.equal(gitUnquote('"b/a \\"q\\" \\\\x"'), 'b/a "q" \\x');
+  const readme = "diff --git a/README.md b/README.md\n--- a/README.md\n+++ b/README.md\n@@ -1 +1 @@\n-a\n+b\n";
+  const quoted = readme + 'diff --git "a/src/caf\\303\\251.js" "b/src/caf\\303\\251.js"\n--- "a/src/caf\\303\\251.js"\n+++ "b/src/caf\\303\\251.js"\n@@ -1 +1 @@\n-x\n+y\n';
+  const binary = readme + 'diff --git "a/src/caf\\303\\251.png" "b/src/caf\\303\\251.png"\nindex 1..2 100644\nBinary files "a/src/caf\\303\\251.png" and "b/src/caf\\303\\251.png" differ\n';
+  const garbled = readme + "diff --git something odd\n@@ -1 +1 @@\n-x\n+y\n";
+  for (const [name, d, path] of [["quoted text", quoted, "src/café.js"], ["quoted binary", binary, "src/café.png"], ["unparseable header", garbled, "<unparsed diff header>"]]) {
+    const files = parseDiff(d);
+    assert.deepEqual(files.map((f) => f.path), ["README.md", path], name);
+    assert.deepEqual(files[0].added, ["b"], `${name}: README keeps only its own lines`);
+    assert.equal(brbNotApplicable({ createdAt: "2026-10-01T00:00:00Z", cutoff: null, files }), null, `${name}: BRB required`);
+    assert.equal(blastNotApplicable({ files }), null, `${name}: blast radius required`);
+  }
+  assert.ok(parseDiff(binary)[1].binary);
+});
+
+test("features.json exemption needs an in-place text edit: a rename into it, a new file or a mode change needs a blast radius (QA round 1)", () => {
+  const flip = '@@ -1 +1 @@\n-    "passes": false,\n+    "passes": true,\n';
+  const renamed = parseDiff(`diff --git a/runtime-config.json b/features.json\nsimilarity index 95%\nrename from runtime-config.json\nrename to features.json\n--- a/runtime-config.json\n+++ b/features.json\n${flip}`);
+  const created = parseDiff(`diff --git a/features.json b/features.json\nnew file mode 100644\n--- /dev/null\n+++ b/features.json\n${flip}`);
+  const moded = parseDiff(`diff --git a/features.json b/features.json\nold mode 100644\nnew mode 100755\n--- a/features.json\n+++ b/features.json\n${flip}`);
+  for (const [name, files] of [["rename", renamed], ["new file", created], ["mode change", moded]]) {
+    assert.ok(!flagOnly(files[0]), name); assert.equal(blastNotApplicable({ files }), null, name);
+  }
+  assert.ok(flagOnly(parseDiff(`diff --git a/features.json b/features.json\nindex 1..2 100644\n--- a/features.json\n+++ b/features.json\n${flip}`)[0]), "an in-place flip still qualifies");
+});
+
+test("NEEDS CONFIRM names an N/A QA verdict as not required, not as a PASS (QA round 1)", () => {
+  const o = outcome({ decided_by: "jev", band: "review", result: { decision: "merge" } }, facts({ brb: null, brbNA: "N/A: 2 changed path(s), all docs" }));
+  assert.equal(o.code, 3); assert.match(o.text, /QA verdict not required \(2 changed path\(s\), all docs\)/); assert.doesNotMatch(o.text, /qa PASS/);
+});
+
+test("paths with spaces (Git leaves them unquoted) parse exactly; renames resolve only when the header rebuilds (QA round 2)", () => {
+  const T = "\t";
+  const docs = `diff --git a/docs/guide one.md b/docs/guide one.md\nindex 90be1f3..294186e 100644\n--- a/docs/guide one.md${T}\n+++ b/docs/guide one.md${T}\n@@ -1 +1 @@\n-before\n+after\n`;
+  const src = `diff --git a/src/two words.ts b/src/two words.ts\nindex 1..2 100644\n--- a/src/two words.ts${T}\n+++ b/src/two words.ts${T}\n@@ -1 +1 @@\n-x\n+y\n`;
+  const renameDocs = `diff --git a/docs/guide one.md b/docs/guide two.md\nsimilarity index 90%\nrename from docs/guide one.md\nrename to docs/guide two.md\n--- a/docs/guide one.md${T}\n+++ b/docs/guide two.md${T}\n@@ -1 +1,2 @@\n a\n+b\n`;
+  const renameOut = `diff --git a/src/old name.ts b/docs/new name.md\nsimilarity index 90%\nrename from src/old name.ts\nrename to docs/new name.md\n`;
+  const lying = `diff --git a/docs/x y.md b/docs/z w.md\nrename from src/secret.ts\nrename to docs/z w.md\n`;
+  const at = { createdAt: "2026-10-01T00:00:00Z", cutoff: null };
+  let f = parseDiff(docs);
+  assert.deepEqual(f.map((x) => [x.path, x.oldPath, Boolean(x.unknown)]), [["docs/guide one.md", "docs/guide one.md", false]]);
+  assert.match(brbNotApplicable({ ...at, files: f }), /^N\/A: 1 changed path\(s\), all docs/); assert.match(blastNotApplicable({ files: f }), /^N\/A: .*all docs/);
+  f = parseDiff(docs + src);
+  assert.deepEqual(f.map((x) => x.path), ["docs/guide one.md", "src/two words.ts"]);
+  assert.equal(brbNotApplicable({ ...at, files: f }), null, "mixed with a spaced source file: required"); assert.equal(blastNotApplicable({ files: f }), null);
+  f = parseDiff(renameDocs);
+  assert.deepEqual(f.map((x) => [x.oldPath, x.path, Boolean(x.unknown), Boolean(x.renamed)]), [["docs/guide one.md", "docs/guide two.md", false, true]]);
+  assert.match(brbNotApplicable({ ...at, files: f }), /^N\/A: .*all docs/, "a docs-to-docs rename with spaces is docs");
+  f = parseDiff(renameOut);
+  assert.deepEqual([f[0].oldPath, f[0].path, Boolean(f[0].unknown)], ["src/old name.ts", "docs/new name.md", false]);
+  assert.equal(brbNotApplicable({ ...at, files: f }), null, "a rename out of source is not docs-only");
+  f = parseDiff(lying);
+  assert.ok(f[0].unknown, "rename lines that don't rebuild the header leave it unknown"); assert.equal(brbNotApplicable({ ...at, files: f }), null);
+  assert.ok(parseDiff("diff --git something odd\n@@ -1 +1 @@\n-x\n+y\n")[0].unknown, "still fails closed");
 });
