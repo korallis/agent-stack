@@ -57,15 +57,16 @@ Some conversations, and what happens next:
 > are the issues to fix: #12 and #14.
 >
 > **Operator:** reads the repo (its README, CI, branch rules, the two issues), then asks in one message only what it
-> can't find out: whether merges deploy to production, who approves merges (default: the other-family review plus live
-> Jev, no approval per PR from you), and whether #14 may touch production data.
+> can't find out: whether merges deploy to production, who approves the plan and the merges (default for merges: the
+> other-family review plus live Jev, no approval per PR from you), and whether #14 may touch production data.
 
 > **You:** Merges deploy to production, that's fine for now. No approval per PR. #14 needs my go before production.
 >
 > **Operator:** clones the repo, sets up a development database branch with its own password so no agent ever holds a
 > production credential, runs `agent-project-onboard` (dry run first), starts a 10-seat team, writes your answers into
 > the team's rules, and briefs the lead. When the lead reports the plan ready, the operator checks it (research in every
-> slice, waves, a witness at the end of each wave, `docs/VERIFY.md`) and sends you a summary.
+> slice, waves, a witness at the end of each wave, `docs/VERIFY.md`) and sends it to you to approve, unless you told it
+> to approve plans for you. Builders start only after that.
 
 > **You:** How is shop going?
 >
@@ -276,8 +277,8 @@ source. `agent-credguard-check` shows which running seats have `neon` and `verce
 
 ### What does it cost?
 Your AI subscriptions (Claude and ChatGPT; Kimi optional), pooled through CLIProxyAPI, plus a TypeSafe key for Jev and a
-machine that stays on. A bigger team finishes sooner but uses subscription time faster: pick `small` for a handful of
-issues and `full-stack` only for a large new product. `agent-proxy-status` shows how each account is doing.
+machine that stays on. A bigger team can work on more slices in parallel and uses subscription time faster: pick
+`small` for a handful of issues and `full-stack` only for a large new product. `agent-proxy-status` shows how each account is doing.
 
 ### Is it safe to run?
 Seats run with permission checks off so they can work unattended, so run it on a machine and accounts you are

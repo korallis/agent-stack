@@ -26,8 +26,11 @@ default branch, branch rules (`gh api repos/<o>/<r>/rulesets`), open issues. The
 - **Hosting and data:** where it deploys (for example Vercel) and what it stores data in (for example Neon, Blob). Say
   whether merges deploy to production automatically.
 - **The work:** a plan in their words, existing docs, or a list of GitHub issues.
-- **Standing decisions:** who approves merges (the default is independent review plus live Jev; no owner approval
-  per PR), what needs their explicit go (production data, launches), and anything they never want.
+- **Standing decisions:** who approves the plan (the owner, or you on their behalf), who approves merges (the default
+  is independent review plus live Jev; no owner approval per PR), what needs their explicit go (production data,
+  launches), and anything they never want.
+- **Existing repo with no branch protection:** may `agent-project-new` add its protection and labels? Only an explicit
+  yes sets `GITHUB_SETUP=yes`.
 
 Record the answers in `~/.openrig/state/<project>-stage/` (plan, owner decisions, CULTURE specifics, answers file).
 
@@ -44,8 +47,9 @@ Record the answers in `~/.openrig/state/<project>-stage/` (plan, owner decisions
    Verify with the password-hash check in PROJECT-ENV. Creating branches and stores in the provider is the owner's or
    yours with their OK; never touch production.
 3. **Create the team.** Write the answers file (`rig/template/onboarding/answers.example.env`) and run
-   `agent-project-onboard <answers>`: a dry run that shows every step. Read it. Then run it with `--apply`: it clones,
-   pulls the development env, runs `agent-project-new`, and stages the files below.
+   `agent-project-onboard <answers>`: a dry run that shows every step. Read it. Then run it with `--apply`. It clones,
+   creates the repo, workspace and worktrees without starting seats, pulls the development env, stages the files
+   below, and then starts the team, so seats launch with their env and rules in place.
 4. **The owner's plan** goes to `~/Projects/<Name>-work/docs/PLAN.md`: their goal, users, what people must be able to
    do, rules and limits, out of scope, stack and hosting, and what done looks like. Write it from their words and
    docs; mark anything you inferred. For an issues-based project, one mission per issue, and the issue workflow:
@@ -58,7 +62,8 @@ Record the answers in `~/.openrig/state/<project>-stage/` (plan, owner decisions
 6. **Brief the lead.** Review `<Name>-work/docs/lead-brief.md` (rendered from
    `rig/template/onboarding/lead-brief.md`), then send it:
    `rig send <lead seat> "$(cat ~/Projects/<Name>-work/docs/lead-brief.md)"`.
-7. **Wait for plan-ready** from the lead (a queue row to you).
+7. **Wait for plan-ready** from the lead (a queue row to you). The brief tells the lead to dispatch no builder until
+   you send "plan approved".
 8. **Review the plan before builders start:**
    - every slice SPEC has research findings, a plan, a Territory and a proof contract;
    - waves in each mission.yaml, load-bearing work (schema, auth, payments, data cleanup) in its own wave;
@@ -66,9 +71,12 @@ Record the answers in `~/.openrig/state/<project>-stage/` (plan, owner decisions
    - `docs/VERIFY.md` written by the architect (`verification-guide`);
    - `agent-project-check <Name>`: no FAIL.
 
-   Send gaps back to the lead.
-9. **Report to the owner** (`--human-intent update`): the team, the plan summary (missions, waves), the first wave's
-   slices, what will need their decision, and how to follow along (`rig ps`, the daily summary).
+   Send gaps back to the lead, and review again.
+9. **Approve the plan.** Unless the owner delegated plan approval to you (CULTURE records which), send them the plan
+   summary as ONE decision request (`--human-intent decision`): the team, missions, waves, the first wave's slices,
+   and what will need their decision later. With their OK (or yours when delegated), tell the lead:
+   `rig send <lead seat> "plan approved"`. Then report to the owner (`--human-intent update`) how to follow along
+   (`rig ps`, the daily summary).
 
 ## 3. Never without the owner
 

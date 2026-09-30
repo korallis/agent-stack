@@ -3,19 +3,24 @@
 
 Dry run by default: prints every step and runs `agent-project-new --dry-run`; changes nothing. With --apply:
   1. clone REPO to ~/Projects/<NAME> (an existing checkout is adopted as it is);
-  2. VERCEL_PROJECT set: link it and pull ONLY the Development env into <repo>/.env.local (skipped if the file
+  2. agent-project-new --no-up: the repo (a new one is created), workspace and worktrees, no seats started yet.
+     An existing repo gets --no-github: its GitHub rules are the owner's. Only GITHUB_SETUP=yes (the owner's explicit
+     OK) lets agent-project-new add branch protection and labels to an existing repo that has none;
+  3. VERCEL_PROJECT set: link it and pull ONLY the Development env into <repo>/.env.local (skipped if the file
      exists; production and preview env stay with the owner, docs/PROJECT-ENV.md);
-  3. agent-project-new (creates the workspace, worktrees, GitHub setup, starts the team);
   4. stage: PLAN -> <NAME>-work/docs/PLAN.md; DECISIONS -> CULTURE "Owner decisions"; SPECIFICS -> CULTURE
      "<NAME> specifics"; the issue workflow (WORKFLOW=issues) as an owner decision; the lead brief rendered from
      rig/template/onboarding/lead-brief.md -> <NAME>-work/docs/lead-brief.md. Nothing already there is overwritten:
-     a different existing PLAN.md or lead brief gets a .new beside it; a bullet already in CULTURE is not added again;
-  5. agent-refresh-guidance <NAME> --apply, so running seats get the staged CULTURE.
+     a different existing PLAN.md or lead brief gets a .new beside it; a bullet already in CULTURE is not added again.
+     PLAN_APPROVAL (owner, the default, or operator when the owner delegated it) is recorded as an owner decision;
+  5. agent-project-new again: starts the team (seats launch with the env link and the staged CULTURE) and its
+     watchdogs; then agent-refresh-guidance <NAME> --apply, for seats that were already running.
 It never sends the lead brief: review it, then send it (the command is printed). Judgment stays in the skill.
 The answers file: rig/template/onboarding/answers.example.env.
 """
 import datetime, os, re, shlex, subprocess, sys
 
+sys.stdout.reconfigure(line_buffering=True)   # keep our lines in order with the commands we run
 S = os.path.dirname(os.path.dirname(os.path.realpath(__file__)))
 HOME = os.path.expanduser("~")
 args = [a for a in sys.argv[1:] if not a.startswith("--")]
@@ -35,8 +40,12 @@ if need:
     sys.exit(f"agent-project-onboard: missing in {args[0]}: {', '.join(need)}")
 if A["TEAM"] not in ("core", "small", "build", "full-stack"):
     sys.exit(f"agent-project-onboard: TEAM must be core, small, build or full-stack, not {A['TEAM']}")
-if not re.fullmatch(r"[A-Za-z0-9._-]+", A["NAME"]) or not re.fullmatch(r"[a-z0-9-]+", A["RIG"]):
-    sys.exit("agent-project-onboard: NAME must be a plain name and RIG lower-case letters, digits and dashes")
+if not re.fullmatch(r"[A-Za-z0-9][A-Za-z0-9._-]*", A["NAME"]) or not re.fullmatch(r"[a-z0-9][a-z0-9-]*", A["RIG"]):
+    sys.exit("agent-project-onboard: NAME must be a plain name starting with a letter or digit, and RIG lower-case letters, digits and dashes")
+if A.get("PLAN_APPROVAL", "owner") not in ("owner", "operator"):
+    sys.exit("agent-project-onboard: PLAN_APPROVAL must be owner or operator")
+if A.get("GITHUB_SETUP", "no") not in ("yes", "no"):
+    sys.exit("agent-project-onboard: GITHUB_SETUP must be yes or no")
 if A.get("WORKFLOW", "plan") not in ("plan", "issues"):
     sys.exit("agent-project-onboard: WORKFLOW must be plan or issues")
 P, RIG = A["NAME"], A["RIG"]
@@ -101,6 +110,8 @@ def bullets_of(path):
 
 print(f"== onboard {P} (rig {RIG}, team {A['TEAM']}, workflow {A.get('WORKFLOW', 'plan')}){'' if APPLY else ' -- dry run'}")
 
+EXISTING = bool(A.get("REPO")) or os.path.isdir(f"{R}/.git")
+
 # 1. repo
 if A.get("REPO"):
     if os.path.isdir(f"{R}/.git"):
@@ -112,7 +123,21 @@ if A.get("REPO"):
 else:
     print(f"no REPO: agent-project-new creates a new private repo {A.get('GITHUB', '<GITHUB>')}/{P}")
 
-# 2. development env only
+# 2. agent-project-new: its dry run always; with --apply, first without starting seats
+if EXISTING:
+    gh = ["--github", A["GITHUB"]] if A.get("GITHUB_SETUP") == "yes" and A.get("GITHUB") else ["--no-github"]
+    print("existing repo: its GitHub rules stay as they are" if gh == ["--no-github"]
+          else "existing repo: GITHUB_SETUP=yes, the owner agreed to agent-project-new's branch protection and labels")
+else:
+    gh = ["--github", A["GITHUB"]] if A.get("GITHUB") else ["--no-github"]
+apn = [os.environ.get("AGENT_PROJECT_NEW", f"{S}/bin/agent-project-new"), "--name", P, "--rig", RIG, "--team", A["TEAM"],
+       "--identity", A["IDENTITY"]] + gh
+run(apn + ["--dry-run"], stdout=None if not APPLY else subprocess.DEVNULL)
+say("agent-project-new --no-up (repo, workspace, worktrees; no seats yet)")
+if APPLY:
+    run(apn + ["--no-up"])
+
+# 3. development env only, now that the repo exists
 if A.get("VERCEL_PROJECT"):
     if os.path.exists(f"{R}/.env.local"):
         print(f"{R}/.env.local exists: not pulled again")
@@ -123,13 +148,6 @@ if A.get("VERCEL_PROJECT"):
             run(["vercel", "env", "pull", ".env.local", "--environment=development", "--yes", "--cwd", R], stdout=subprocess.DEVNULL)
     print("  then check the dev database password differs from production's (docs/PROJECT-ENV.md, 'Verify without printing values')")
 
-# 3. agent-project-new: always its dry run first, then the real run with --apply
-apn = [os.environ.get("AGENT_PROJECT_NEW", f"{S}/bin/agent-project-new"), "--name", P, "--rig", RIG, "--team", A["TEAM"],
-       "--identity", A["IDENTITY"]] + (["--github", A["GITHUB"]] if A.get("GITHUB") else ["--no-github"])
-run(apn + ["--dry-run"], stdout=None if not APPLY else subprocess.DEVNULL)
-if APPLY:
-    run(apn)
-
 # 4. stage the owner's files
 culture = f"{W}/rig/CULTURE.md"
 decisions = bullets_of(files["DECISIONS"]) if "DECISIONS" in files else []
@@ -138,6 +156,13 @@ if A.get("WORKFLOW") == "issues" and "Issue workflow:" not in (open(culture).rea
     decisions.append(f"- {today}: Issue workflow: research, plan, implement, verify. NEVER close an issue. When done, comment on it "
                      "(what was wrong, what changed with the PR link, where to see it, exact re-test steps), reassign it to "
                      "its creator and ask them to re-test.")
+if "Plan approval:" not in (open(culture).read() if os.path.isfile(culture) else ""):
+    today = datetime.date.today().isoformat()
+    decisions.append(f"- {today}: Plan approval: " + (
+        "delegated to the operator. The lead dispatches no builder until the operator sends 'plan approved' after its review."
+        if A.get("PLAN_APPROVAL") == "operator" else
+        "the owner's. The operator reviews the plan first, then asks the owner; the lead dispatches no builder until the "
+        "operator sends 'plan approved' with the owner's OK."))
 specifics = bullets_of(files["SPECIFICS"]) if "SPECIFICS" in files else []
 workflow = ("4. Done per issue: merged through the gate, deployed, witnessed where the creator re-tests. Then comment on "
             "the issue (what was wrong, what changed with the PR link, where to see it, exact re-test steps), reassign "
@@ -169,9 +194,14 @@ if APPLY:
     print(f"  {add_bullets(culture, 'Owner decisions', decisions)} owner decision(s) added")
     print(f"  {add_bullets(culture, f'{P} specifics', specifics)} specifics line(s) added")
     print("  " + put(f"{W}/docs/lead-brief.md", brief))
+say("agent-project-new again: start the team and its watchdogs; agent-refresh-guidance for seats already running")
+if APPLY:
+    run(apn)
     run([os.environ.get("AGENT_REFRESH_GUIDANCE", f"{S}/bin/agent-refresh-guidance"), P, "--apply"], stdout=subprocess.DEVNULL)
 
 print(f"""
 Next (project-onboarding skill, steps 6-9):
   review {W}/docs/lead-brief.md, then:  rig send {lead} "$(cat {W}/docs/lead-brief.md)"
-  wait for plan-ready from the lead; review SPECs, waves, W slices and docs/VERIFY.md; agent-project-check {P}""")
+  wait for plan-ready; review SPECs, waves, W slices and docs/VERIFY.md; agent-project-check {P};
+  then (with the owner's OK unless PLAN_APPROVAL=operator): rig send {lead} "plan approved"
+""")

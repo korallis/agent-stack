@@ -11,5 +11,6 @@ Owner brief for the @RIG@ rig, from @OPERATOR@ on the owner's behalf.
 3. Merge path and environments: see CULTURE "@PROJECT@ specifics". Seats use only .env.local.
 @WORKFLOW@
 5. Run `agent-project-check @PROJECT@` after planning. No FAIL before builders are dispatched.
-Report plan-ready to @OPERATOR@ as a queue row before any builder starts; then report each finished mission. FYIs
-to the owner use --human-intent update.
+6. Report plan-ready to @OPERATOR@ as a queue row, then WAIT. Dispatch no builder until @OPERATOR@ sends "plan approved"
+   (after its review, your corrections, and the owner's OK unless CULTURE records plan approval as delegated).
+   Then report each finished mission. FYIs to the owner use --human-intent update.

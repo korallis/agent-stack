@@ -14,16 +14,25 @@ process.on("exit", () => fs.rmSync(home, { recursive: true, force: true }));
 const bin = join(home, "bin"), calls = join(home, "calls"), stage = join(home, "stage");
 fs.mkdirSync(bin); fs.mkdirSync(stage);
 fs.writeFileSync(join(home, ".gitconfig"), "[user]\n\tname = T\n\temail = t@example.invalid\n");
-for (const t of ["rig", "gh", "vercel"])
+for (const t of ["rig", "gh"])
   fs.writeFileSync(join(bin, t), `#!/bin/sh\necho "${t} $*" >> "${calls}"\ncase "$1 $2" in "watchdog list") echo "[]";; esac\nexit 0\n`, { mode: 0o755 });
+// Stub vercel that fails, like the real one, when its --cwd doesn't exist (QA round 1: a new repo was linked before it existed).
+fs.writeFileSync(join(bin, "vercel"), `#!/bin/sh
+echo "vercel $*" >> "${calls}"
+while [ $# -gt 0 ]; do [ "$1" = --cwd ] && { [ -d "$2" ] || { echo "Error: $2 does not exist" >&2; exit 1; }; }; shift; done
+exit 0
+`, { mode: 0o755 });
 // Stub agent-project-new for --apply: the workspace files the real one creates (CULTURE from the template + the
 // "<P> specifics" stub, the team spec), and nothing else.
 fs.writeFileSync(join(bin, "apn"), `#!/bin/sh
 echo "agent-project-new $*" >> "${calls}"
 case " $* " in *" --dry-run "*) echo "would: agent-project-new steps"; exit 0;; esac
-W="$HOME/Projects/Shop-work"; mkdir -p "$W/rig" "$W/docs"
-[ -f "$W/rig/CULTURE.md" ] || { cp "${repo}/rig/template/CULTURE.md" "$W/rig/CULTURE.md"; printf '\\n## Shop specifics\\n- Trunk: \`main\`.\\n' >> "$W/rig/CULTURE.md"; }
+P=$(echo " $* " | sed -n 's/.* --name \\([^ ]*\\) .*/\\1/p'); W="$HOME/Projects/$P-work"; R="$HOME/Projects/$P"
+[ -d "$R/.git" ] || { git init -q -b main "$R"; echo "created new repo $R" >> "${calls}"; }
+mkdir -p "$W/rig" "$W/docs"
+[ -f "$W/rig/CULTURE.md" ] || { cp "${repo}/rig/template/CULTURE.md" "$W/rig/CULTURE.md"; printf '\\n## %s specifics\\n- Trunk: \`main\`.\\n' "$P" >> "$W/rig/CULTURE.md"; }
 cp "${repo}/rig/template/small.yaml" "$W/rig/small.yaml"
+case " $* " in *" --no-up "*) ;; *) echo "team started for $P" >> "${calls}";; esac
 `, { mode: 0o755 });
 fs.writeFileSync(join(bin, "refresh"), `#!/bin/sh\necho "agent-refresh-guidance $*" >> "${calls}"\n`, { mode: 0o755 });
 // The "GitHub" repo: a local one with a commit.
@@ -49,8 +58,9 @@ test("dry run: shows every step, runs the real agent-project-new --dry-run, chan
   assert.match(r.stdout, new RegExp(`would: git clone ${origin} .*/Projects/Shop`));
   assert.match(r.stdout, /would: vercel link --project shop and vercel env pull \.env\.local --environment=development \(Development only\)/);
   assert.match(r.stdout, /would: write .*Shop-work\/docs\/PLAN\.md/);
-  assert.match(r.stdout, /would: add 3 owner decision\(s\) and 2 specifics line\(s\)/);
-  assert.match(r.stdout, /agent-project-new .*--name Shop --rig shop --team small --identity 'Shop Bot <bot@example\.invalid>' --github acme --dry-run/);
+  assert.match(r.stdout, /would: add 4 owner decision\(s\) and 2 specifics line\(s\)/);
+  assert.match(r.stdout, /agent-project-new .*--name Shop --rig shop --team small --identity 'Shop Bot <bot@example\.invalid>' --no-github --dry-run/);
+  assert.match(r.stdout, /existing repo: its GitHub rules stay as they are/);
   assert.match(r.stdout, /would: .*worktree add/, "the real agent-project-new dry run printed its plan");
   assert.doesNotMatch(r.calls, /^vercel|^gh |rig up|rig send/m, "no provider or rig call in a dry run");
   assert.ok(!fs.existsSync(join(home, "Projects")), "nothing created");
@@ -64,7 +74,13 @@ test("apply: clones, pulls Development env only, creates the team, stages plan, 
   assert.match(r.calls, /vercel link --yes --project shop --cwd .*\/Projects\/Shop/);
   assert.match(r.calls, /vercel env pull \.env\.local --environment=development --yes --cwd .*\/Projects\/Shop/);
   assert.doesNotMatch(r.calls, /--environment=(production|preview)/);
-  assert.match(r.calls, /agent-project-new --name Shop .*--dry-run\nagent-project-new --name Shop --rig shop --team small/, "dry run first, then the real run");
+  const order = r.calls.split("\n").filter((l) => /^(agent-project-new|vercel|team started)/.test(l)).map((l) => l.replace(/ --identity .*? --/, " --"));
+  assert.deepEqual(order.map((l) => l.replace(/ --cwd .*/, "")), [
+    "agent-project-new --name Shop --rig shop --team small --no-github --dry-run",
+    "agent-project-new --name Shop --rig shop --team small --no-github --no-up",
+    "vercel link --yes --project shop", "vercel env pull .env.local --environment=development --yes",
+    "agent-project-new --name Shop --rig shop --team small --no-github", "team started for Shop"],
+    "dry run, create without seats, Development env, then start the team; an existing repo keeps its GitHub rules");
   assert.equal(fs.readFileSync(join(W, "docs/PLAN.md"), "utf8"), fs.readFileSync(join(stage, "plan.md"), "utf8"));
   const c = culture();
   const section = (h) => c.split(/^## /m).find((s) => s.startsWith(h));
@@ -74,6 +90,9 @@ test("apply: clones, pulls Development env only, creates the team, stages plan, 
   const brief = fs.readFileSync(join(W, "docs/lead-brief.md"), "utf8");
   assert.match(brief, /Owner brief for the shop rig, from operator-agent@kernel/);
   assert.match(brief, /Never close an issue/); assert.doesNotMatch(brief, /@[A-Z]+@/, "every placeholder filled");
+  assert.match(brief, /then WAIT\. Dispatch no builder until operator-agent@kernel sends "plan approved"/);
+  assert.match(section("Owner decisions"), /Plan approval: the owner's\. The operator reviews the plan first, then asks the owner/);
+  assert.match(r.stdout, /rig send coord-lead-claude@shop "plan approved"/);
   assert.match(r.calls, /agent-refresh-guidance Shop --apply/);
   assert.match(r.stdout, /rig send coord-lead-claude@shop "\$\(cat .*Shop-work\/docs\/lead-brief\.md\)"/);
   assert.doesNotMatch(r.calls, /rig send/, "the brief is never sent by the helper");
@@ -94,7 +113,9 @@ test("apply again: nothing duplicated; a changed plan goes to PLAN.md.new; an ex
 });
 
 test("bad answers are refused before anything runs", () => {
-  for (const [extra, msg] of [["TEAM=huge\n", /TEAM must be/], ["WORKFLOW=chaos\n", /WORKFLOW must be/], ["RIG=Bad Rig\n", /RIG lower-case/]]) {
+  for (const [extra, msg] of [["TEAM=huge\n", /TEAM must be/], ["WORKFLOW=chaos\n", /WORKFLOW must be/], ["RIG=Bad Rig\n", /RIG lower-case/],
+    ["NAME=.\n", /NAME must be a plain name/], ["NAME=..\n", /NAME must be a plain name/], ["NAME=.hidden\n", /NAME must be/],
+    ["PLAN_APPROVAL=anyone\n", /PLAN_APPROVAL must be/], ["GITHUB_SETUP=maybe\n", /GITHUB_SETUP must be/]]) {
     const r = onboard([answers(extra)]);
     assert.notEqual(r.status, 0); assert.match(r.stderr, msg); assert.equal(r.calls, "");
   }
@@ -123,4 +144,36 @@ test("operator-guidance: one agent-stack block beside OpenRig's managed blocks; 
   assert.ok(fs.readdirSync(join(home, ".local/share/agent-stack/backups/operator-guidance")).length >= 2, "backed up before each change");
   fs.rmSync(ws, { recursive: true });
   r = og(); assert.equal(r.status, 0); assert.match(r.stdout, /no kernel workspace instruction file/);
+});
+
+test("shipped, not just present: the onboarding templates are tracked by git, and install.sh links every bin/ tool (QA round 1)", () => {
+  const tracked = spawnSync("git", ["ls-files", "rig/template/onboarding", "skills/project-onboarding", "bin", "system/operator-guidance"], { cwd: repo, encoding: "utf8" }).stdout;
+  for (const f of ["rig/template/onboarding/answers.example.env", "rig/template/onboarding/lead-brief.md", "skills/project-onboarding/SKILL.md",
+    "bin/agent-project-onboard", "system/operator-guidance"])
+    assert.ok(tracked.split("\n").includes(f), `${f} is not tracked (ignored?)`);
+  const install = fs.readFileSync(join(repo, "install.sh"), "utf8");
+  const linked = install.match(/^for f in ([^;]+); do link "\$S\/bin\/\$f"/m)[1].split(/\s+/);
+  const internal = ["openrig-apply-patches", "semver-cmp"];   // called by path from other tools, never by hand
+  const tools = fs.readdirSync(join(repo, "bin")).filter((f) => fs.statSync(join(repo, "bin", f)).isFile() && (fs.statSync(join(repo, "bin", f)).mode & 0o111));
+  for (const t of tools) if (!internal.includes(t)) assert.ok(linked.includes(t), `install.sh does not link bin/${t}`);
+});
+
+
+test("a new repo with Vercel: the repo exists before vercel link, and the new repo gets --github (QA round 1)", () => {
+  const env = { AGENT_PROJECT_NEW: join(bin, "apn"), AGENT_REFRESH_GUIDANCE: join(bin, "refresh") };
+  fs.writeFileSync(join(stage, "new.env"), "NAME=NewShop\nRIG=newshop\nGITHUB=acme\nTEAM=core\nIDENTITY=Shop Bot <bot@example.invalid>\nVERCEL_PROJECT=newshop\nPLAN=plan.md\nPLAN_APPROVAL=operator\n");
+  const r = onboard([join(stage, "new.env"), "--apply"], env);
+  assert.equal(r.status, 0, r.stdout + r.stderr);
+  const lines = r.calls.split("\n");
+  const created = lines.findIndex((l) => l.startsWith("created new repo")), linked = lines.findIndex((l) => l.startsWith("vercel link"));
+  assert.ok(created !== -1 && linked > created, `repo created before vercel link:\n${r.calls}`);
+  assert.match(r.calls, /agent-project-new --name NewShop --rig newshop --team core --identity .* --github acme --no-up/);
+  assert.ok(lines.findIndex((l) => l.startsWith("team started for NewShop")) > linked, "seats start after the env is in place");
+  assert.match(fs.readFileSync(join(home, "Projects/NewShop-work/rig/CULTURE.md"), "utf8"), /Plan approval: delegated to the operator/);
+});
+
+test("an existing repo gets agent-project-new's GitHub setup only with GITHUB_SETUP=yes (QA round 1)", () => {
+  const r = onboard([answers("GITHUB_SETUP=yes\n")]);
+  assert.equal(r.status, 0, r.stderr);
+  assert.match(r.stdout, /GITHUB_SETUP=yes, the owner agreed/); assert.match(r.stdout, /--github acme --dry-run/);
 });

@@ -1,6 +1,7 @@
 node_modules/
 *.env
 !config/versions.defaults.env
+!rig/template/onboarding/answers.example.env
 secrets/
 state/
 *.log
