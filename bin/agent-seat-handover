@@ -70,15 +70,22 @@ def ladder(job):
         return False
 
 
+UNKNOWN_MESSAGE = object()   # the spec couldn't be read: treat the message as not the default
+
+
 def wake_message(job):
-    """The message a periodic-reminder job delivers (its spec's `message:` line), or None."""
-    for line in str(job.get("specYaml") or "").splitlines():
-        if line.startswith("message: "):
-            try:
-                return str(json.loads(line[len("message: "):]))
-            except ValueError:
-                return line[len("message: "):]
-    return None
+    """The message a periodic-reminder job delivers, read the way OpenRig's policy reads it: the spec is YAML (JSON
+    included), `message` or else `context.message`. None when there is none; UNKNOWN_MESSAGE when unreadable."""
+    try:
+        import yaml
+        spec = yaml.safe_load(str(job.get("specYaml") or ""))
+    except Exception:   # no PyYAML, or a spec it can't parse
+        return UNKNOWN_MESSAGE
+    if not isinstance(spec, dict):
+        return UNKNOWN_MESSAGE
+    ctx = spec.get("context") if isinstance(spec.get("context"), dict) else {}
+    msg = spec.get("message") if spec.get("message") is not None else ctx.get("message")
+    return None if msg is None else str(msg)
 
 
 def default_message(q):   # what OpenRig writes for a plain `--wake-after` (queue-repository)
@@ -165,7 +172,10 @@ def rearm(occupant):
             ok, uwhy = False, str(e)
         if ok:
             print(f"wake of {q}: re-armed, every {w['interval']}s{', blocked on ' + row['blockedOn'] if row.get('blockedOn') else ''}")
-            if w["message"] is not None and w["message"] != default_message(q):   # the CLI can't set a wake message
+            if w["message"] is UNKNOWN_MESSAGE:
+                print(f"wake of {q}: its wake message could not be read, so it may NOT have been kept; see rig watchdog show {w['job']}",
+                      file=sys.stderr); failed += 1
+            elif w["message"] is not None and w["message"] != default_message(q):   # the CLI can't set a wake message
                 print(f"wake of {q}: its custom wake message was NOT kept (the CLI can't set one); it said: {w['message']}", file=sys.stderr)
                 failed += 1
         else:

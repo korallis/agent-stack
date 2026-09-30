@@ -291,3 +291,22 @@ test("WO56 (QA PR61 f3): a custom wake message is re-armed but reported as not k
   assert.match(r.stderr, /wake of qitem-w: NOT re-armed: its wake was watchdog J-w \(policy artifact-gate\)/);
   assert.doesNotMatch(r.calls, /queue update qitem-w/);
 });
+
+test("WO56 (QA PR61 f4): the message is read as OpenRig reads it (YAML or JSON, message or context.message); unreadable counts as not kept", () => {
+  const spec = (id, specYaml) => put("jobs", id, { jobId: id, policy: "periodic-reminder", intervalSeconds: 600, state: "active", specYaml });
+  handover({ out: OK });
+  spec("J-json", JSON.stringify({ policy: "periodic-reminder", target: { session: SEATN }, message: "Use the JSON continuation." }));
+  spec("J-ctx", "policy: periodic-reminder\ncontext:\n  message: Custom context continuation.\n");
+  spec("J-block", "policy: periodic-reminder\nmessage: |\n  First line.\n  Then continue safely.\n");
+  spec("J-jdef", JSON.stringify({ policy: "periodic-reminder", message: DEFAULT("qitem-jdef") }));
+  spec("J-bad", "policy: [unclosed\n");
+  for (const q of ["json", "ctx", "block", "jdef", "bad"]) { row(`qitem-${q}`, { wake: `J-${q}` }); rowAfter(`qitem-${q}`, {}); }
+  const r = run("agent-seat-handover", [SEATN, "--source", "rebuild"]);
+  assert.equal(r.status, 4, r.stdout + r.stderr);
+  assert.match(r.stderr, /wake of qitem-json: its custom wake message was NOT kept .*: Use the JSON continuation\./);
+  assert.match(r.stderr, /wake of qitem-ctx: its custom wake message was NOT kept .*: Custom context continuation\./);
+  assert.match(r.stderr, /wake of qitem-block: its custom wake message was NOT kept .*: First line\.\nThen continue safely\./);
+  assert.match(r.stderr, /wake of qitem-bad: its wake message could not be read, so it may NOT have been kept; see rig watchdog show J-bad/);
+  assert.doesNotMatch(r.stderr, /qitem-jdef/);
+  for (const q of ["json", "ctx", "block", "jdef", "bad"]) assert.match(r.stdout, new RegExp(`wake of qitem-${q}: re-armed, every 600s`));
+});
