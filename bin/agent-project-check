@@ -471,6 +471,14 @@ for w, args in pw:
         stale.append(f"{w}: {exe} is {have}, {pkg} bundles Chrome for Testing {want}")
 rep("OK" if not stale else "WARN", "Playwright MCP doesn't pin an older system browser (--executable-path)",
     ("; ".join(stale) + ". Use --browser chromium (Playwright's own Chrome for Testing; playwright-browsers keeps it installed)") if stale else "")
+nosec = [w for w, args in pw if "--secrets" not in args]
+sec_files = {args[args.index("--secrets") + 1] for w, args in pw if "--secrets" in args and args.index("--secrets") + 1 < len(args)}
+bad_files = [f"{f} ({'missing' if not os.path.exists(f) else oct(os.stat(f).st_mode & 0o777)})" for f in sorted(sec_files)
+             if not os.path.exists(f) or os.stat(f).st_mode & 0o777 != 0o600]
+rep("OK" if pw and not nosec and not bad_files else "WARN", "Playwright MCP redacts test credentials (--secrets <0600 dotenv>)",
+    "; ".join(filter(None, [("no --secrets: " + "; ".join(nosec)) if nosec else "", ("secrets file: " + ", ".join(bad_files)) if bad_files else "",
+                            "no Playwright MCP configured" if not pw else ""])) + " (run install.sh; system/playwright-mcp-config)"
+    if (nosec or bad_files or not pw) else "")
 
 if "--json" in sys.argv:
     print(json.dumps([{"level": l, "check": w, "detail": d} for l, w, d in results], indent=1))

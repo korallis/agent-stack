@@ -1,0 +1,83 @@
+#!/usr/bin/env python3
+"""playwright-mcp-config [--check]: keep test credentials out of seat transcripts (WO24).
+
+Playwright MCP returns a snapshot after every action, and a filled password field shows its value there
+(`textbox "Password": <value>`), in the "Ran Playwright code" section too. With `--secrets <dotenv>` the MCP replaces
+each listed value with `<secret>NAME</secret>` in every response, and an agent types a secret BY NAME (browser_type
+text: "NAME"). This:
+  - creates ~/.config/agent-stack/secrets/playwright.env (0600) with a commented template when missing, and makes
+    an existing one 0600;
+  - sets the Codex MCP ([mcp_servers.playwright] in ~/.codex/config.toml) args to the pinned template's, i.e. with
+    `--secrets <that file>`, backing the file up first (the rest of the file is untouched).
+Claude Code's user-scope entry is set by install.sh through `claude mcp` (its own config lock).
+--check reports each part (ok / WARN) and changes nothing; exit 1 when any is WARN.
+Seats pick the change up when their Playwright MCP starts again (a relaunch or a new MCP session).
+"""
+import json, os, re, shutil, sys, time
+
+HOME = os.path.expanduser("~")
+S = os.path.dirname(os.path.dirname(os.path.realpath(__file__)))
+CHECK = "--check" in sys.argv
+SECRETS = os.path.join(HOME, ".config/agent-stack/secrets/playwright.env")
+CODEX = os.path.join(HOME, ".codex/config.toml")
+TEMPLATE = """# Test credentials for Playwright MCP (0600, never in git). One NAME=value per line.
+# The MCP types a value when an agent sends its NAME as the text (browser_type text: "WITNESS_PASSWORD") and shows
+# <secret>NAME</secret> wherever the value would appear in a snapshot or code. Never type a literal password.
+# WITNESS_EMAIL=witness@example.com
+# WITNESS_PASSWORD=
+"""
+tmpl = open(os.path.join(S, "system/codex/config.toml")).read()
+m = re.search(r'^\[mcp_servers\.playwright\]\n(?:[^\[]*?\n)?args = (\[[^\n]*\])', tmpl, re.M)
+want_args = m.group(1).replace("@HOME@", HOME)
+out, warn = [], False
+
+
+def say(ok, text):
+    global warn
+    warn |= not ok
+    out.append(("ok  " if ok else "--  WARN: ") + text)
+
+
+# 1. the secrets file
+if not os.path.exists(SECRETS):
+    if CHECK:
+        say(False, f"{SECRETS} missing (run install.sh)")
+    else:
+        os.makedirs(os.path.dirname(SECRETS), mode=0o700, exist_ok=True)
+        fd = os.open(SECRETS, os.O_WRONLY | os.O_CREAT | os.O_EXCL, 0o600)
+        with os.fdopen(fd, "w") as f:
+            f.write(TEMPLATE)
+        say(True, f"{SECRETS} created (0600, template)")
+else:
+    mode = os.stat(SECRETS).st_mode & 0o777
+    if mode == 0o600:
+        say(True, f"{SECRETS} (0600)")
+    elif CHECK:
+        say(False, f"{SECRETS} is {oct(mode)}, not 0600")
+    else:
+        os.chmod(SECRETS, 0o600)
+        say(True, f"{SECRETS} made 0600 (was {oct(mode)})")
+
+# 2. the Codex MCP args
+text = open(CODEX).read() if os.path.exists(CODEX) else None
+sec = re.search(r'^\[mcp_servers\.playwright\]\n((?:(?!^\[)[^\n]*\n?)*)', text or "", re.M)
+cur = re.search(r'^args = (\[[^\n]*\])', sec.group(1), re.M) if sec else None
+if text is None or not sec or not cur:
+    say(False, f"{CODEX} has no [mcp_servers.playwright] args (copy it from system/codex/config.toml)")
+elif cur.group(1) == want_args:
+    say(True, "Codex Playwright MCP runs with --secrets")
+elif CHECK:
+    say(False, f"Codex Playwright MCP args are {cur.group(1)}; want {want_args}")
+else:
+    shutil.copy2(CODEX, f"{CODEX}.bak-{time.strftime('%Y%m%d%H%M%S')}")
+    start = sec.start(1) + cur.start()
+    new = text[:start] + "args = " + want_args + text[start + len(cur.group(0)):]
+    tmp = CODEX + ".tmp-pwsecrets"
+    with open(tmp, "w") as f:
+        f.write(new)
+    os.chmod(tmp, os.stat(CODEX).st_mode & 0o777)
+    os.replace(tmp, CODEX)
+    say(True, "Codex Playwright MCP args set to the template's (with --secrets); backup kept")
+
+print("\n".join(out))
+sys.exit(1 if CHECK and warn else 0)

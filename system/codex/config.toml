@@ -47,9 +47,11 @@ url = "https://mcp.neon.tech/mcp"
 # one Playwright and needs that Playwright's browser build, so @latest can move to a browser that isn't installed (0.0.83
 # needed CfT 155 while 153 was installed). This line is the one pin: install.sh and bin/playwright-browsers read it.
 # Bump it deliberately (0.0.80 = CfT 153, 0.0.82 = CfT 154).
+# --secrets: test credentials live in that dotenv file (0600); the MCP types a value when given its NAME and shows
+# <secret>NAME</secret> instead of the value in every snapshot and code line (system/playwright-mcp-config).
 [mcp_servers.playwright]
 command = "npx"
-args = ["-y", "@playwright/mcp@0.0.80", "--headless", "--browser", "chromium"]
+args = ["-y", "@playwright/mcp@0.0.80", "--headless", "--browser", "chromium", "--secrets", "@HOME@/.config/agent-stack/secrets/playwright.env"]
 # Browser actions are pre-approved so QA seats never stall on per-action prompts.
 default_tools_approval_mode = "approve"
 

@@ -17,14 +17,14 @@ const pin = read("system/codex/config.toml").match(/"@playwright\/mcp@([^"]+)"/)
 test("the Codex template pins one @playwright/mcp release with --browser chromium; no @latest, no system browser", () => {
   const t = read("system/codex/config.toml");
   assert.match(pin, /^\d+\.\d+\.\d+$/);
-  assert.match(t, new RegExp(`^args = \\["-y", "@playwright/mcp@${pin.replace(/\./g, "\\.")}", "--headless", "--browser", "chromium"\\]$`, "m"));
+  assert.match(t, new RegExp(`^args = \\["-y", "@playwright/mcp@${pin.replace(/\./g, "\\.")}", "--headless", "--browser", "chromium", "--secrets", "@HOME@/\\.config/agent-stack/secrets/playwright\\.env"\\]$`, "m"));
   assert.doesNotMatch(t, /@playwright\/mcp@latest|--executable-path/);
 });
 
 test("install.sh reads that pin, registers Claude's MCP with it, installs via playwright-browsers, never playwright@latest", () => {
   const s = read("install.sh");
   assert.match(s, /PW_MCP=\$\(sed -n .*system\/codex\/config\.toml/);
-  assert.match(s, /pw=\(npx -y "@playwright\/mcp@\$PW_MCP" --headless --browser chromium\)/);
+  assert.match(s, /pw=\(npx -y "@playwright\/mcp@\$PW_MCP" --headless --browser chromium --secrets "\$SEC\/playwright\.env"\)/);
   assert.match(s, /claude mcp remove --scope user playwright/, "an entry with other args is replaced");
   assert.match(s, /"\$S\/bin\/playwright-browsers" >\/dev\/null \|\| todo/);
   const code = s.split("\n").filter((l) => !/^\s*#/.test(l)).join("\n");
@@ -121,7 +121,7 @@ test("agent-project-check WARNs on @latest and on an --executable-path older tha
   const chromium = join(bin, "chromium-152"); fs.writeFileSync(chromium, "#!/bin/sh\necho 'Chromium 152.0.7777.1 Arch Linux'\n", { mode: 0o755 });
   const run = () => JSON.parse(spawnSync("python3", [join(repo, "bin/agent-project-check"), W, "--json"], { encoding: "utf8", timeout: 120000,
     env: { PATH: `${bin}:${process.env.PATH}`, HOME: home, OPENRIG_URL: "http://127.0.0.1:9" } }).stdout)
-    .filter((r) => r.check.startsWith("Playwright MCP"));
+    .filter((r) => r.check.startsWith("Playwright MCP") && !r.check.includes("redacts"));
   fs.writeFileSync(join(home, ".codex/config.toml"), `[mcp_servers.playwright]\ncommand = "npx"\nargs = ["-y", "@playwright/mcp@latest", "--headless", "--executable-path", "${chromium}"]\n`);
   fs.writeFileSync(join(home, ".claude.json"), JSON.stringify({ mcpServers: { playwright: { args: ["-y", `@playwright/mcp@${pin}`, "--headless", "--browser", "chromium"] } } }));
   const bad = run();
@@ -150,4 +150,68 @@ test("a playwright tree that isn't from the pinned @playwright/mcp release is re
   const r = ensure(["--check"]);
   assert.equal(r.status, 1);
   assert.match(r.stdout, new RegExp(`the playwright found is not from @playwright/mcp@${esc(pin)} \\(found 0\\.0\\.83 in `));
+});
+
+// ---- WO24: test credentials never reach seat transcripts (--secrets) ----------------------------------------------
+const pmc = (h, ...a) => spawnSync(join(repo, "system/playwright-mcp-config"), a, { encoding: "utf8", env: { PATH: process.env.PATH, HOME: h } });
+function codexHome(args) {
+  const h = fs.mkdtempSync(join(root, "pmc-")); fs.mkdirSync(join(h, ".codex"));
+  fs.writeFileSync(join(h, ".codex/config.toml"), `approval_policy = "never"\n\n[mcp_servers.playwright]\ncommand = "npx"\nargs = ${args}\ndefault_tools_approval_mode = "approve"\n\n[mcp_servers.jev]\nargs = ["x"]\n`, { mode: 0o600 });
+  return h;
+}
+
+test("playwright-mcp-config: creates playwright.env 0600 with a template, sets --secrets in the Codex MCP args (backup), touches nothing else", () => {
+  const h = codexHome(`["-y", "@playwright/mcp@${pin}", "--headless", "--browser", "chromium"]`);
+  const chk = pmc(h, "--check");
+  assert.equal(chk.status, 1);
+  assert.match(chk.stdout, /WARN: .*playwright\.env missing/); assert.match(chk.stdout, /WARN: Codex Playwright MCP args are/);
+  const r = pmc(h);
+  assert.equal(r.status, 0, r.stderr);
+  const env = join(h, ".config/agent-stack/secrets/playwright.env");
+  assert.equal(fs.statSync(env).mode & 0o777, 0o600);
+  assert.match(fs.readFileSync(env, "utf8"), /typed BY NAME|types a value when an agent sends its NAME/);
+  const t = fs.readFileSync(join(h, ".codex/config.toml"), "utf8");
+  assert.ok(t.includes(`args = ["-y", "@playwright/mcp@${pin}", "--headless", "--browser", "chromium", "--secrets", "${env}"]`), t);
+  assert.match(t, /^approval_policy = "never"$/m); assert.match(t, /\[mcp_servers\.jev\]\nargs = \["x"\]/); assert.match(t, /default_tools_approval_mode = "approve"/);
+  assert.equal(fs.statSync(join(h, ".codex/config.toml")).mode & 0o777, 0o600);
+  assert.ok(fs.readdirSync(join(h, ".codex")).some((f) => f.startsWith("config.toml.bak-")));
+  const again = pmc(h, "--check");
+  assert.equal(again.status, 0, again.stdout);
+  const t2 = fs.readFileSync(join(h, ".codex/config.toml"), "utf8"); pmc(h);
+  assert.equal(fs.readFileSync(join(h, ".codex/config.toml"), "utf8"), t2, "idempotent");
+});
+
+test("playwright-mcp-config: an existing secrets file keeps its contents and is made 0600; --check flags a loose mode", () => {
+  const h = codexHome(`["-y", "@playwright/mcp@${pin}", "--headless", "--browser", "chromium"]`);
+  const env = join(h, ".config/agent-stack/secrets/playwright.env");
+  fs.mkdirSync(dirname(env), { recursive: true }); fs.writeFileSync(env, "WITNESS_PASSWORD=real\n", { mode: 0o644 }); fs.chmodSync(env, 0o644);
+  assert.match(pmc(h, "--check").stdout, /is 0o644, not 0600/);
+  pmc(h);
+  assert.equal(fs.statSync(env).mode & 0o777, 0o600);
+  assert.equal(fs.readFileSync(env, "utf8"), "WITNESS_PASSWORD=real\n");
+});
+
+test("agent-project-check WARNs when a Playwright MCP lacks --secrets or its file is missing/loose; OK when all set", () => {
+  const home = join(root, "home"), W = join(home, "Projects/P-work");
+  const check = () => JSON.parse(spawnSync("python3", [join(repo, "bin/agent-project-check"), W, "--json"], { encoding: "utf8", timeout: 120000,
+    env: { PATH: `${bin}:${process.env.PATH}`, HOME: home, OPENRIG_URL: "http://127.0.0.1:9" } }).stdout).find((r) => r.check.startsWith("Playwright MCP redacts"));
+  const env = join(home, ".config/agent-stack/secrets/playwright.env");
+  fs.writeFileSync(join(home, ".codex/config.toml"), `[mcp_servers.playwright]\nargs = ["-y", "@playwright/mcp@${pin}", "--headless", "--browser", "chromium"]\n`);
+  fs.writeFileSync(join(home, ".claude.json"), JSON.stringify({ mcpServers: { playwright: { args: ["-y", `@playwright/mcp@${pin}`, "--headless", "--browser", "chromium", "--secrets", env] } } }));
+  let c = check();
+  assert.equal(c.level, "WARN"); assert.match(c.detail, /no --secrets: ~\/\.codex\/config\.toml \[playwright\]/); assert.match(c.detail, /secrets file: .*playwright\.env \(missing\)/);
+  fs.writeFileSync(join(home, ".codex/config.toml"), `[mcp_servers.playwright]\nargs = ["-y", "@playwright/mcp@${pin}", "--headless", "--browser", "chromium", "--secrets", "${env}"]\n`);
+  fs.mkdirSync(dirname(env), { recursive: true }); fs.writeFileSync(env, "", { mode: 0o600 });
+  assert.equal(check().level, "OK");
+});
+
+test("QA role, witness slice and the skill: credentials in playwright.env, typed by name, never literal or echoed", () => {
+  for (const p of ["rig/template/agents/qa/guidance/role.md", "rig/template/witness-slice/SPEC.md"]) {
+    const t = read(p);
+    assert.match(t, /~\/\.config\/agent-stack\/secrets\/playwright\.env/, p);
+    assert.match(t, /type them BY NAME: `browser_type` with `text: "WITNESS_PASSWORD"`/, p);
+    assert.match(t, /Never type a literal password through the MCP, never paste or echo a credential/, p);
+    assert.match(t, /never inline an env or credential value .* in `browser_run_code`, `browser_evaluate` or any other tool input/s, p);
+  }
+  assert.match(read("skills/agent-stack/SKILL.md"), /typed BY NAME/);
 });
