@@ -421,7 +421,13 @@ the lead or a person. Send Jev evidence, not conclusions.
   - there is no review requirement outstanding, and no conflict.
 
   Otherwise the merge state stays BLOCKED and lists each reason ("not verified by this helper: ..." for the kinds
-  above). Unreadable requirements or check runs keep BLOCKED. The gate's own `jev-merge` is never evidence against
+  above). Unreadable requirements or check runs keep BLOCKED. GitHub's UNSTABLE (mergeable, but some check or status
+  isn't passing) is explained the same way:
+  - `UNSTABLE (only non-required checks not passing: lint (failure); every required check passes)`;
+  - `UNSTABLE (required check(s) not passing: verify (failure); …)`;
+  - unreadable data says so.
+
+  The gate's own context is never among them. The gate's own `jev-merge` is never evidence against
   itself: an earlier run's result on the same head reads "pending this gate (jev-merge holds an earlier run's result,
   which this run replaces; …)". It is dropped from the required checks in `ci` and from the gate's problems, so a
   re-gate after its own HOLD (or MERGE) reads like a first run. Otherwise every hold would re-hold itself. Those
