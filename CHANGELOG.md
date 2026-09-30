@@ -39,6 +39,10 @@ has no version numbers; entries are grouped by the day they merged, newest first
 - The lead's and the merge owner's role texts and the CULTURE template use the new Jev helpers.
 
 ### Fixed
+- `agent-merge-evidence` prints `{"input": …, "history": …}`, so Jev's input and the gate's own earlier results can't
+  be mistaken for one object. The flat printout let an integrator copy the gate's own HOLD into a hand-built Jev
+  input. `--extra-evidence <file>` adds caller-supplied evidence to `input.review`, labelled as unverified and
+  redacted, so nobody hand-edits the JSON.
 - `agent-merge-evidence` explains GitHub's UNSTABLE merge state. It says whether only non-required checks are red
   ("every required check passes") or a required one is, and names each non-passing check. Before, a red optional
   check read as a bare "UNSTABLE". The gate's own status is never listed.

@@ -503,6 +503,8 @@ export function buildMergeInput(f) {
     f.blastRadius
       ? `blast radius (${f.blastRadius.url}, ${f.blastRadius.at}${f.blastRadius.namesHead ? ", names this head" : ", does NOT name this head"}): ${f.blastRadius.excerpt}`
       : f.blastNA ? `blast radius ${f.blastNA}` : "MISSING: no blast-radius comment on the PR",
+    // Evidence the caller adds (--extra-evidence <file>): labelled as theirs, never mistaken for what was verified here.
+    ...(f.extraEvidence ? [`additional evidence supplied by the caller (${f.extraEvidence.label}; not verified by this helper): ${f.extraEvidence.text.replace(/\s+/g, " ").trim().slice(0, 1500)}`] : []),
   ].filter((x) => x !== null).join("\n");
   const limits = [
     `target branch ${f.baseRef} at ${f.base}; PR head branch ${f.headRef}`,
@@ -707,16 +709,26 @@ if (import.meta.url === `file://${process.argv[1]}` || process.argv[1]?.endsWith
   const a = process.argv.slice(2);
   const flag = (n) => { const i = a.indexOf(n); return i >= 0 ? a[i + 1] : undefined; };
   const pr = a.find((x) => /^\d+$/.test(x));
-  if (!pr) { console.error("usage: agent-merge-evidence <pr> [--repo o/r] [--mission M --slice S] [--change ...] [--deploy ...] [--rollback ...] [--config F] [--author-family claude|codex|kimi] [--decide]"); process.exit(2); }
+  if (!pr) { console.error("usage: agent-merge-evidence <pr> [--repo o/r] [--mission M --slice S] [--change ...] [--deploy ...] [--rollback ...] [--config F] [--author-family claude|codex|kimi] [--extra-evidence FILE] [--decide]"); process.exit(2); }
+  // Extra evidence goes in through this flag, into input.review, so nobody hand-edits the printed JSON.
+  let extraEvidence = null;
+  if (a.includes("--extra-evidence")) {
+    const file = flag("--extra-evidence");
+    let text = "";
+    try { text = readFileSync(file, "utf8"); } catch (e) { console.error(`agent-merge-evidence: --extra-evidence ${file}: ${e.code || e.message}`); process.exit(2); }
+    if (!text.trim()) { console.error(`agent-merge-evidence: --extra-evidence ${file} is empty`); process.exit(2); }
+    extraEvidence = { label: file.split("/").pop(), text };
+  }
   let facts;
   try { facts = gather(pr, { repo: flag("--repo"), mission: flag("--mission"), slice: flag("--slice"), change: flag("--change"), deploy: flag("--deploy"), rollback: flag("--rollback"), configPath: flag("--config"), authorFamily: flag("--author-family") }); }
   catch (e) { console.error(`agent-merge-evidence: ${e.message}`); process.exit(2); }
-  const input = buildMergeInput(facts);
-  // `history`: this gate's own earlier runs on this head, for people; never part of the input Jev decides on.
-  const history = facts.gateHistory?.length ? { history: facts.gateHistory } : {};
-  if (!a.includes("--decide")) { console.log(JSON.stringify({ ...input, ...history }, null, 2)); process.exit(0); }
+  const input = buildMergeInput({ ...facts, extraEvidence });
+  // Printed as { input, history }: `input` is exactly what Jev decides on; `history` (this gate's own earlier runs on
+  // this head) is for people and must never be copied into an input. Same shape with --decide, plus the decision.
+  const history = facts.gateHistory || [];
+  if (!a.includes("--decide")) { console.log(JSON.stringify({ input, history }, null, 2)); process.exit(0); }
   const rec = await decideOrStub("review.merge_gate", input, { caller: process.env.OPENRIG_SESSION_NAME || "agent-merge-evidence" });
-  console.log(JSON.stringify({ input, ...history, decision: { decided_by: rec.decided_by, band: rec.band, result: rec.result, request_id: rec.request_id, ...(rec.stubbed ? { stubbed: true } : {}) } }, null, 2));
+  console.log(JSON.stringify({ input, history, decision: { decided_by: rec.decided_by, band: rec.band, result: rec.result, request_id: rec.request_id, ...(rec.stubbed ? { stubbed: true } : {}) } }, null, 2));
   const o = outcome(rec, facts);
   console.error(o.text);
   process.exit(o.code);

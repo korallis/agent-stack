@@ -432,7 +432,12 @@ the lead or a person. Send Jev evidence, not conclusions.
   which this run replaces; …)". It is dropped from the required checks in `ci` and from the gate's problems, so a
   re-gate after its own HOLD (or MERGE) reads like a first run. Otherwise every hold would re-hold itself. Those
   earlier runs on this head (statuses, or gate comments declaring the head) are listed in a separate `history` field
-  of the command's output, for people. It is never sent to Jev, and an older head's runs never appear. The gate's own
+  of the command's output, for people. It is never sent to Jev, and an older head's runs never appear. The command
+  prints `{"input": {…}, "history": […]}` (with `--decide`, plus `"decision"`): `input` is exactly what Jev decides
+  on. Never build a Jev input by hand from the printout, and never copy `history` into one. To add evidence the helper
+  doesn't collect, write it to a file and pass `--extra-evidence <file>`. It goes into `input.review` as "additional
+  evidence supplied by the caller (<file>; not verified by this helper)", whitespace-collapsed, at most 1500
+  characters, and redacted like other free text. An empty or missing file stops the command (exit 2). The gate's own
   reports (a comment a gate status links to, one under the configured gate heading, or one headed `## jev-merge`) are
   kept out of every other collector too: the review fallback, the blast radius, and the review and QA comment sources. Free text is
   redacted before it

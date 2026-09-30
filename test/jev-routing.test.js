@@ -19,6 +19,10 @@ process.on("exit", () => { fs.rmSync(root, { recursive: true, force: true }); fs
 const bin = join(root, "bin"); fs.mkdirSync(bin);
 const stub = (answers) => { const f = join(root, `jev-${Math.random().toString(36).slice(2)}.json`); fs.writeFileSync(f, JSON.stringify(answers)); return f; };
 const H = "a".repeat(40), B = "b".repeat(40);
+// agent-merge-evidence prints { input, history } (WO48): the input Jev reads, and the gate's own history beside it.
+// Tests read the input, with history attached only when there is some (the earlier flat shape, for their assertions).
+const evidence = (stdout) => { const o = JSON.parse(stdout); assert.deepEqual(Object.keys(o), ["input", "history"]);
+  return { ...o.input, ...(o.history.length ? { history: o.history } : {}) }; };
 
 // ---- model defaults ------------------------------------------------------------------------------------------------
 test("templates: architects on claude-fable-5-1, Codex implementers on gpt-6-astra, reviewers unchanged", () => {
@@ -384,7 +388,7 @@ case "$*" in
 esac
 `, { mode: 0o755 });
   const setDiff = (diff) => fs.writeFileSync(join(root, "diff7"), diff);
-  const run = () => JSON.parse(spawnSync(process.execPath, [join(repo, "orchestration/merge-evidence.js"), "7", "--repo", "o/r"],
+  const run = () => evidence(spawnSync(process.execPath, [join(repo, "orchestration/merge-evidence.js"), "7", "--repo", "o/r"],
     { encoding: "utf8", env: { PATH: `${bin}:${process.env.PATH}`, OPENRIG_WORK_ROOT: W2, AGENT_BRB_REQUIRED_SINCE: "" } }).stdout);
   ghStub("2026-09-30T11:02:00Z"); setDiff(diffOf([["docs/guide.md"], ["README.md"]]));
   let r = run();
@@ -613,10 +617,10 @@ esac
   const run = () => spawnSync(process.execPath, [join(repo, "orchestration/merge-evidence.js"), "8", "--repo", "o/r"], { encoding: "utf8", env: { PATH: `${bin}:${process.env.PATH}`, OPENRIG_WORK_ROOT: root } });
   ghFor("success");
   let r = run(); assert.equal(r.status, 0, r.stderr);
-  assert.match(JSON.parse(r.stdout).limits, /merge state: pending this gate \(jev-merge not yet posted; every other requirement verified\)/);
+  assert.match(evidence(r.stdout).limits, /merge state: pending this gate \(jev-merge not yet posted; every other requirement verified\)/);
   ghFor("failure");
   r = run(); assert.equal(r.status, 0, r.stderr);
-  assert.match(JSON.parse(r.stdout).limits, /merge state: BLOCKED \(independent-review: status failure; jev-merge not yet posted\)/);
+  assert.match(evidence(r.stdout).limits, /merge state: BLOCKED \(independent-review: status failure; jev-merge not yet posted\)/);
 });
 
 test("agent-merge-evidence end to end: review, QA and gate from PR comments by config; app-bound context from check runs", () => {
@@ -648,7 +652,7 @@ process.stdout.write(typeof out === "string" ? out : JSON.stringify(out));
       env: { PATH: `${ghJs}:${process.env.PATH}`, OPENRIG_WORK_ROOT: work, GH_FIXTURE: fx, AGENT_BRB_REQUIRED_SINCE: "" } }); };
   // Default sources: the comments are not evidence; the status-based review is MISSING.
   let r = run(); assert.equal(r.status, 0, r.stderr);
-  let o = JSON.parse(r.stdout);
+  let o = evidence(r.stdout);
   assert.match(o.review, /MISSING: no independent-review status on a{40}/);
   assert.match(o.limits, /merge state: pending this gate \(jev-merge not yet posted; every other requirement verified\)/, "app-bound verify met by its app's run");
   assert.equal(o.history, undefined, "no earlier run of the gate: no history");
@@ -656,7 +660,7 @@ process.stdout.write(typeof out === "string" ? out : JSON.stringify(out));
   fs.writeFileSync(join(work, ".agent-stack", "merge-evidence.json"), JSON.stringify({ repos: { "o/r": {
     review: { source: "comments", heading: "^## review-(claude|codex|kimi)" }, qa: { source: "comments", heading: "^## qa-" },
     gate: { source: "comments", heading: "^## jev-merge" } } } }));
-  r = run(); assert.equal(r.status, 0, r.stderr); o = JSON.parse(r.stdout);
+  r = run(); assert.equal(r.status, 0, r.stderr); o = evidence(r.stdout);
   assert.match(o.review, /independent review comment on a{40}: success "## review-claude-1" \(seat review-claude-1, another family than the author's codex, https:\/\/x\/c2\)/,
     "the codex author's own family is skipped and the short-sha FAIL doesn't count");
   assert.match(o.review, /bug-review-board proof https:\/\/x\/c3: artifact_type=qa verdict=PASS candidate_sha=a{40}; QA comment by qa-claude-1/);
@@ -665,25 +669,25 @@ process.stdout.write(typeof out === "string" ? out : JSON.stringify(out));
   assert.match(o.limits, /limits stated by the independent review: concurrent writers untested/);
   assert.doesNotMatch(o.limits, /merge gate jev-merge/);
   const gateC = c(`## jev-merge\nhead ${H}\nVerdict: HOLD`, 5);
-  r = run({ view: { ...fixture.view, comments: [...fixture.view.comments, gateC] } }); o = JSON.parse(r.stdout);
+  r = run({ view: { ...fixture.view, comments: [...fixture.view.comments, gateC] } }); o = evidence(r.stdout);
   assert.deepEqual(o.history, ["failure: ## jev-merge (gate comment https://x/c5, 2026-09-30T15:00:00Z)"], "WO45: the own earlier HOLD is history");
   assert.doesNotMatch(JSON.stringify({ ...o, history: undefined }), /c5|HOLD|failure already/, "…and nowhere in the input Jev reads");
   // An unknown author family (no agent/<seat> branch) never verifies a comment review; --author-family supplies it.
   const plain = { view: { ...fixture.view, headRefName: "feature/login" } };
-  o = JSON.parse(run(plain).stdout);
+  o = evidence(run(plain).stdout);
   assert.match(o.review, /MISSING: the PR author's model family is unknown .*2 review record\(s\) for this head not counted/);
-  o = JSON.parse(run(plain, ["--author-family", "claude"]).stdout);
+  o = evidence(run(plain, ["--author-family", "claude"]).stdout);
   assert.match(o.review, /independent review comment on a{40}: success "## review-codex-2" \(seat review-codex-2, another family than the author's claude/);
   assert.equal(run(plain, ["--author-family", "gemini"]).status, 2);
   // App-bound context: another app's success does not satisfy it; unreadable runs keep BLOCKED.
-  o = JSON.parse(run({ checkRuns: { total_count: 1, check_runs: [{ id: 8, name: "verify", app: { id: 1 }, conclusion: "success" }] } }).stdout);
+  o = evidence(run({ checkRuns: { total_count: 1, check_runs: [{ id: 8, name: "verify", app: { id: 1 }, conclusion: "success" }] } }).stdout);
   assert.match(o.limits, /merge state: BLOCKED \(verify: no result from its required app 15368 \(another producer's result does not count\); jev-merge not yet posted\)/);
-  o = JSON.parse(run({ checkRuns: { total_count: 150, check_runs: [] } }).stdout);
+  o = evidence(run({ checkRuns: { total_count: 150, check_runs: [] } }).stdout);
   assert.match(o.limits, /verify: bound to app 15368 and the check runs could not be read/, "a truncated list is unreadable");
   // QA WO39 f7: every status page is read: the gate's earlier run behind 100 newer statuses is still found (as history).
   const many = Array.from({ length: 100 }, () => ({ context: "verify", state: "success" }));
   fs.rmSync(join(work, ".agent-stack", "merge-evidence.json"));
-  o = JSON.parse(run({ statuses: [many, [{ context: "jev-merge", state: "failure", target_url: "https://x/g" }]] }).stdout);
+  o = evidence(run({ statuses: [many, [{ context: "jev-merge", state: "failure", target_url: "https://x/g" }]] }).stdout);
   assert.match(o.limits, /merge state: pending this gate \(jev-merge holds an earlier run's result, which this run replaces/);
   assert.deepEqual(o.history, ['failure: "" (status https://x/g, ?)']);
   const bad = join(root, "bad.json"); fs.writeFileSync(bad, JSON.stringify({ review: { source: "comments" } }));
@@ -763,7 +767,7 @@ process.stdout.write(typeof out === "string" ? out : JSON.stringify(out));
   const run = (over) => { fs.writeFileSync(fx, JSON.stringify({ ...fixture, ...over, view: { ...fixture.view, ...over.view } }));
     const r = spawnSync(process.execPath, [join(repo, "orchestration/merge-evidence.js"), "5", "--repo", "o/r"], { encoding: "utf8",
       env: { PATH: `${ghDir}:${process.env.PATH}`, OPENRIG_WORK_ROOT: work, GH_FIXTURE: fx, AGENT_BRB_REQUIRED_SINCE: "" } });
-    assert.equal(r.status, 0, r.stderr); return JSON.parse(r.stdout); };
+    assert.equal(r.status, 0, r.stderr); return evidence(r.stdout); };
   let o = run({ statuses: [{ context: "independent-review", state: "success", description: "PASS: 14 tests, contract checked", creator: { login: "rev" }, target_url: "https://reports.example/r/1" }], view: {} });
   assert.match(o.review, /^review verdict: success, from independent-review status on a{40} \(success, "PASS: 14 tests, contract checked", by rev\); bound to head a{40}/);
   assert.match(o.review, /independent review report: https:\/\/reports\.example\/r\/1 \(linked from the status, outside this PR, so not read\)/);
@@ -849,7 +853,7 @@ process.stdout.write(typeof out === "string" ? out : JSON.stringify(out));
   const run = (over = {}) => { fs.writeFileSync(fx, JSON.stringify({ ...fixture, ...over }));
     const r = spawnSync(process.execPath, [join(repo, "orchestration/merge-evidence.js"), "6", "--repo", "o/r"], { encoding: "utf8",
       env: { PATH: `${ghDir}:${process.env.PATH}`, OPENRIG_WORK_ROOT: join(root, "wo44-work"), GH_FIXTURE: fx, AGENT_BRB_REQUIRED_SINCE: "" } });
-    assert.equal(r.status, 0, r.stderr); return JSON.parse(r.stdout); };
+    assert.equal(r.status, 0, r.stderr); return evidence(r.stdout); };
   assert.equal(run().ci, `base tests/integration has no required checks; observed on exact head ${H}: unit=success, verify=success; all pass`);
   assert.equal(run({ checkRuns: [{ total_count: 2, check_runs: [run_(5, "verify", "failure"), run_(6, "unit", "success")] }] }).ci,
     `base tests/integration has no required checks; observed on exact head ${H}: unit=success, verify=failure; NOT passing: verify (failure)`);
@@ -946,7 +950,7 @@ process.stdout.write(typeof out === "string" ? out : JSON.stringify(out));
   const run = (over) => { fs.writeFileSync(fx, JSON.stringify({ ...fixture, ...over, view: { ...fixture.view, ...over.view } }));
     const r = spawnSync(process.execPath, [join(repo, "orchestration/merge-evidence.js"), "8", "--repo", "o/r"], { encoding: "utf8",
       env: { PATH: `${ghDir}:${process.env.PATH}`, OPENRIG_WORK_ROOT: work, GH_FIXTURE: fx, AGENT_BRB_REQUIRED_SINCE: "" } });
-    assert.equal(r.status, 0, r.stderr); return JSON.parse(r.stdout); };
+    assert.equal(r.status, 0, r.stderr); return evidence(r.stdout); };
   assert.match(run({ view: { reviews: [review("## review-claude-1\nVerdict: PASS\nChecked the parser.")] } }).review,
     /^review verdict: success, from GitHub PR review APPROVED by owner \(claude family, self-declared in its heading "## review-claude-1"; the author is codex\) submitted on commit a{40}/);
   assert.match(run({ view: { reviews: [review("## review-codex-2\nVerdict: PASS")] } }).review, /^review verdict: NONE VERIFIABLE/, "same family by heading");
@@ -976,7 +980,7 @@ process.stdout.write(typeof out === "string" ? out : JSON.stringify(out));
   const run = (over = {}) => { fs.writeFileSync(fx, JSON.stringify({ ...fixture, ...over }));
     const r = spawnSync(process.execPath, [join(repo, "orchestration/merge-evidence.js"), "7", "--repo", "o/r"], { encoding: "utf8",
       env: { PATH: `${ghDir}:${process.env.PATH}`, OPENRIG_WORK_ROOT: join(root, "wo45-work"), GH_FIXTURE: fx, AGENT_BRB_REQUIRED_SINCE: "" } });
-    assert.equal(r.status, 0, r.stderr); return JSON.parse(r.stdout); };
+    assert.equal(r.status, 0, r.stderr); return evidence(r.stdout); };
   const first = run();
   assert.match(first.limits, /merge state: pending this gate \(jev-merge not yet posted; every other requirement verified\)/);
   assert.equal(first.history, undefined);
@@ -1040,7 +1044,7 @@ process.stdout.write(typeof out === "string" ? out : JSON.stringify(out));
   const run = (over = {}) => { fs.writeFileSync(fx, JSON.stringify({ ...fixture, ...over }));
     const r = spawnSync(process.execPath, [join(repo, "orchestration/merge-evidence.js"), "9", "--repo", "o/r"], { encoding: "utf8",
       env: { PATH: `${ghDir}:${process.env.PATH}`, OPENRIG_WORK_ROOT: join(root, "unstable-work"), GH_FIXTURE: fx, AGENT_BRB_REQUIRED_SINCE: "" } });
-    assert.equal(r.status, 0, r.stderr); return JSON.parse(r.stdout); };
+    assert.equal(r.status, 0, r.stderr); return evidence(r.stdout); };
   assert.match(run().limits, /merge state: UNSTABLE \(only non-required checks not passing: preview \(in_progress\), lint \(failure\); every required check passes\)/,
     "non-required only; the gate's own earlier jev-merge failure is not listed");
   const req = run({ checks: [{ name: "verify", state: "FAILURE", bucket: "fail" }],
@@ -1082,11 +1086,47 @@ process.stdout.write(typeof out === "string" ? out : JSON.stringify(out));
   const run = (body) => { fs.writeFileSync(fx, JSON.stringify({ ...fixture, view: { ...fixture.view, comments: [comment(body)] } }));
     const r = spawnSync(process.execPath, [join(repo, "orchestration/merge-evidence.js"), "11", "--repo", "o/r"], { encoding: "utf8",
       env: { PATH: `${ghDir}:${process.env.PATH}`, OPENRIG_WORK_ROOT: work, GH_FIXTURE: fx, AGENT_BRB_REQUIRED_SINCE: "" } });
-    assert.equal(r.status, 0, r.stderr); return JSON.parse(r.stdout).review; };
+    assert.equal(r.status, 0, r.stderr); return evidence(r.stdout).review; };
   const heading = "## review-claude-1 evidence remedy for HOLD 7db8271e (req 0199-abc, MERGE after fix)";
   assert.match(run(`${heading}\nhead: ${H}\nVerdict: PASS`), /^review verdict: success, from review comment by seat review-claude-1/);
   assert.match(run(`${heading}\nhead: ${H}\nVerdict: FAIL`), /^review verdict: failure, from review comment by seat review-claude-1/);
   const none = run(`${heading}\nhead: ${H}\nChecked the remedy; details below.`);
   assert.match(none, /^review verdict: NONE VERIFIABLE on a{40} \(.*comments: no verdict stated/);
   assert.doesNotMatch(none, /failure/, "never an inferred failure");
+});
+
+// ---- WO48: the printout separates Jev's input from the gate's history; extra evidence goes in by flag -------------
+test("agent-merge-evidence prints { input, history } apart, and adds --extra-evidence to input.review", () => {
+  const ghDir = join(root, "gh-wo48"); fs.mkdirSync(ghDir, { recursive: true });
+  fs.writeFileSync(join(ghDir, "gh"), `#!${process.execPath}
+const f = JSON.parse(require("fs").readFileSync(process.env.GH_FIXTURE, "utf8")), a = process.argv.slice(2).join(" ");
+const out = a.startsWith("pr view") ? f.view : a.startsWith("pr diff") ? f.diff : a.startsWith("pr checks") ? f.checks : a.includes("/statuses") ? f.statuses : undefined;
+if (out === undefined) { process.stderr.write("unexpected gh " + a); process.exit(9); }
+process.stdout.write(typeof out === "string" ? out : JSON.stringify(out));
+`, { mode: 0o755 });
+  const fx = join(root, "wo48-fixture.json");
+  fs.writeFileSync(fx, JSON.stringify({ view: { number: 12, title: "x", createdAt: "2026-09-30T09:00:00Z", headRefOid: H, baseRefOid: B, baseRefName: "main", headRefName: "agent/impl-codex-1",
+      mergeable: "MERGEABLE", mergeStateStatus: "CLEAN", reviewDecision: "", isDraft: false, comments: [], reviews: [] },
+    diff: "diff --git a/src/a.ts b/src/a.ts\n--- a/src/a.ts\n+++ b/src/a.ts\n@@ -1 +1 @@\n-x\n+y\n", checks: [{ name: "verify", state: "SUCCESS", bucket: "pass" }],
+    statuses: [{ context: "jev-merge", state: "failure", description: "Jev hold, review band, req r1", created_at: "t1" },
+      { context: "independent-review", state: "success", description: "PASS", creator: { login: "rev" } }] }));
+  const run = (...args) => spawnSync(process.execPath, [join(repo, "orchestration/merge-evidence.js"), "12", "--repo", "o/r", ...args], { encoding: "utf8",
+    env: { PATH: `${ghDir}:${process.env.PATH}`, OPENRIG_WORK_ROOT: join(root, "wo48-work"), GH_FIXTURE: fx, AGENT_BRB_REQUIRED_SINCE: "" } });
+  let r = run(); assert.equal(r.status, 0, r.stderr);
+  const o = JSON.parse(r.stdout);
+  assert.deepEqual(Object.keys(o), ["input", "history"], "Jev's input is its own object; history sits beside it");
+  assert.deepEqual(Object.keys(o.input), ["pr", "head", "base", "change", "review", "ci", "limits"], "exactly the decision's inputs");
+  assert.deepEqual(o.history, ['failure: "Jev hold, review band, req r1" (status, t1)']);
+  assert.doesNotMatch(JSON.stringify(o.input), /Jev hold|history/, "the gate's own earlier HOLD is not in the input");
+  // Extra evidence: into input.review, labelled as the caller's, redacted like any free text.
+  const extra = join(root, "remedy.md");
+  fs.writeFileSync(extra, "Re-ran the migration twice on a scratch DB.\nBoth clean. token ghp_ABCDEFGHIJKLMNOPQRST was never printed.\n");
+  r = run("--extra-evidence", extra); assert.equal(r.status, 0, r.stderr);
+  const withExtra = JSON.parse(r.stdout).input;
+  assert.match(withExtra.review, /\nadditional evidence supplied by the caller \(remedy\.md; not verified by this helper\): Re-ran the migration twice on a scratch DB\. Both clean\./);
+  assert.doesNotMatch(withExtra.review, /ghp_ABC/, "redacted");
+  assert.deepEqual(Object.keys(JSON.parse(r.stdout)), ["input", "history"]);
+  fs.writeFileSync(extra, "  \n");
+  r = run("--extra-evidence", extra); assert.equal(r.status, 2); assert.match(r.stderr, /--extra-evidence .*remedy\.md is empty/);
+  r = run("--extra-evidence", join(root, "absent.md")); assert.equal(r.status, 2); assert.match(r.stderr, /--extra-evidence .*absent\.md: ENOENT/);
 });
