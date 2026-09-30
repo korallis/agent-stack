@@ -433,12 +433,20 @@ the lead or a person. Send Jev evidence, not conclusions.
   `review verdict: <success|failure>, from <source>; bound to head <sha>`. The verdict reaches Jev even when the
   report the status links to can't be read (a link outside the PR). It comes from verified sources only. The
   configured source goes first, then the others, in this order:
-  1. the `independent-review` status on the exact head: its own state and description;
+  1. the `independent-review` status on the exact head: its own state and description. With `identityHeadings`,
+     a description that names a matching seat (the pattern without its leading `^## `, e.g. `review-codex-1: PASS`)
+     gives the status's family, and a status naming the author's own family is not an independent review. A
+     description naming no such seat is taken as before;
   2. GitHub PR reviews submitted on the exact head. The review's commit must equal the head, so a review of an older
      commit never counts as current; such reviews are counted as ignored. APPROVED and CHANGES_REQUESTED are verdicts,
      combined with any the body declares. A COMMENTED review counts only if its body declares one. Dismissed reviews
      never count. The reviewer must be a login mapped to another family than the author's, in `identities`
-     (`{ "identities": { "<github login>": "claude" } }`, top level or per repository);
+     (`{ "identities": { "<github login>": "claude" } }`, top level or per repository). Where every seat posts as
+     ONE shared login, map it to `"shared"` and add `identityHeadings`: a regex on the review body's first line
+     mapped to a family (`{ "^## review-codex": "codex", "^## review-claude": "claude", "^## review-kimi": "kimi" }`).
+     A review whose login is unmapped or shared takes its family from a matching heading; a login mapped to a family
+     always wins. The review's commit must still be the exact head. **Trust limit:** with a shared login the heading
+     is self-declared, so it is only as trustworthy as the seats. Nothing on GitHub proves which seat wrote it;
   3. review comments declaring the head (above). A review `heading` with source `status` makes them the last
      fallback. Comment sources (review, QA, gate) read PR comments only. A GitHub review is always its own source,
      under the rules in 2, so a stale, dismissed, pending, unmapped or same-family review never counts as a

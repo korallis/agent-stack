@@ -11,7 +11,7 @@ import { fileURLToPath } from "node:url";
 const repo = join(dirname(fileURLToPath(import.meta.url)), "..");
 const { buildMergeInput, passes, outcome, gateProblems, parseDiff, brbCutoff, brbNotApplicable, blastNotApplicable, flagOnly, mergeStateLine,
   requirementsFrom, contextState, gateLine, verdictOf, records, reviewFromComments, qaFromComments, resolveConfig, loadConfig, familyOf,
-  reviewFromPrReviews, reviewVerdict, observedFrom } = await import("../orchestration/merge-evidence.js");
+  reviewFromPrReviews, reviewVerdict, observedFrom, familyFromHeading, familyFromDescription } = await import("../orchestration/merge-evidence.js");
 const { seatCandidates, nextStep } = await import("../orchestration/pickseat.js");
 const st = await import("../orchestration/stuck.js");
 const root = fs.mkdtempSync("/tmp/claude-1000/wo35-");
@@ -688,7 +688,7 @@ test("GitHub reviews: only on the exact head, by a mapped login of another famil
   assert.equal(r.verdict, null, "a review on an older commit is never current"); assert.match(r.problem, /no GitHub review with a verdict on a{40}; 1 review\(s\) on another commit ignored/);
   r = reviewFromPrReviews([rv("rev-claude", "APPROVED", OLD, "", "1"), rv("rev-claude", "CHANGES_REQUESTED", H, "", "2")], H, "codex", ids);
   assert.equal(r.verdict.state, "failure"); assert.match(r.problem, /1 review\(s\) on another commit ignored/);
-  assert.match(reviewFromPrReviews([rv("someone", "APPROVED", H)], H, "codex", ids).problem, /by a login mapped to a family other than codex \(1 unmapped or same-family/);
+  assert.match(reviewFromPrReviews([rv("someone", "APPROVED", H)], H, "codex", ids).problem, /by a reviewer of a family other than codex \(1 unmapped or same-family; map logins in "identities", or headings in "identityHeadings"/);
   assert.equal(reviewFromPrReviews([rv("rev-codex", "APPROVED", H)], H, "codex", ids).verdict, null, "same family");
   assert.match(reviewFromPrReviews([rv("rev-claude", "APPROVED", H)], H, null, ids).problem, /author's model family is unknown/);
   assert.equal(reviewFromPrReviews([rv("rev-claude", "COMMENTED", H, "## r\nVerdict: PASS")], H, "codex", ids).verdict.state, "success", "a COMMENTED review with a declared verdict");
@@ -856,4 +856,67 @@ process.stdout.write(typeof out === "string" ? out : JSON.stringify(out));
   assert.equal(run({ statuses: [], checkRuns: [{ total_count: 2, check_runs: [run_(5, "jev-merge", "success"), run_(6, "independent-review", "success")] }] }).ci,
     `base tests/integration has no required checks; no check ran on exact head ${H}`);
   assert.equal(run({ checkRuns: [{ total_count: 150, check_runs: [run_(5, "verify", "success")] }] }).ci, "MISSING: no required checks reported for this head", "incomplete runs");
+});
+
+// ---- WO43: one shared GitHub login: the family comes from the review's own heading --------------------------------
+test("identity headings: a shared or unmapped login takes its family from the review heading; a mapped login wins", () => {
+  const cfg = resolveConfig({ identities: { owner: "shared", "rev-claude": "claude" },
+    identityHeadings: { "^## review-codex": "codex", "^## review-claude": "claude", "^## review-kimi": "kimi" } });
+  const H2 = cfg.identityHeadingRes, OLD = "c".repeat(40);
+  assert.equal(familyFromHeading("## review-codex-1\nVerdict: PASS", H2), "codex");
+  assert.equal(familyFromHeading("LGTM", H2), null);
+  assert.equal(familyFromHeading("## review-claude-2", [...H2, { re: /^## review/, family: "kimi" }]), null, "patterns that disagree: unknown");
+  const rv = (author, body, commit = H, reviewState = "APPROVED") => ({ author, body, commit, reviewState, at: "1", url: `review ${author}` });
+  let r = reviewFromPrReviews([rv("owner", "## review-claude-2\nVerdict: PASS")], H, "codex", cfg.identities, H2);
+  assert.equal(r.verdict.state, "success");
+  assert.match(r.verdict.source, /GitHub PR review APPROVED by owner \(claude family, self-declared in its heading "## review-claude-2"; the author is codex\)/);
+  assert.equal(reviewFromPrReviews([rv("owner", "## review-codex-1\nVerdict: PASS")], H, "codex", cfg.identities, H2).verdict, null, "the same family by heading");
+  assert.equal(reviewFromPrReviews([rv("stranger", "## review-kimi-1\nVerdict: PASS")], H, "codex", cfg.identities, H2).verdict.state, "success", "an unmapped login uses its heading too");
+  assert.equal(reviewFromPrReviews([rv("owner", "## review-claude-2\nVerdict: PASS", OLD)], H, "codex", cfg.identities, H2).verdict, null, "the exact-head rule still holds");
+  assert.equal(reviewFromPrReviews([rv("owner", "LGTM")], H, "codex", cfg.identities, H2).verdict, null, "shared login, no heading: unknown");
+  assert.match(reviewFromPrReviews([rv("rev-claude", "## review-codex-9\nVerdict: PASS")], H, "codex", cfg.identities, H2).verdict.source, /\(claude family; the author is codex\)/,
+    "a login mapped to a family wins over what its body says");
+  assert.equal(reviewFromPrReviews([rv("owner", "## review-claude-2\nVerdict: PASS")], H, "codex", cfg.identities, []).verdict, null, "no headings configured: shared stays unknown");
+  // The status description: only a named seat matching a configured pattern gives a family.
+  assert.equal(familyFromDescription("review-codex-1: PASS on aaaa", H2), "codex");
+  assert.equal(familyFromDescription("QA PASS", H2), null);
+  const st = (description) => ({ state: "success", description, creator: "owner", url: null });
+  let v = reviewVerdict({ head: H, status: st("review-codex-1: PASS"), prReview: { problem: "none" }, authorFamily: "codex", headings: H2 });
+  assert.equal(v.state, null); assert.match(v.why, /status: the independent-review status on a{40} names a codex seat, the author's own family, so it is not an independent review/);
+  v = reviewVerdict({ head: H, status: st("review-claude-2: PASS"), prReview: { problem: "none" }, authorFamily: "codex", headings: H2 });
+  assert.equal(v.state, "success"); assert.match(v.source, /by owner; claude family, named in its description\)/);
+  v = reviewVerdict({ head: H, status: st("QA PASS"), prReview: { problem: "none" }, authorFamily: "codex", headings: H2 });
+  assert.equal(v.state, "success", "no seat named: unchanged from before"); assert.doesNotMatch(v.source, /family/);
+  assert.doesNotThrow(() => resolveConfig({ identities: { owner: "shared" } }));
+  assert.throws(() => resolveConfig({ identityHeadings: { "^## review-x": "gemini" } }), /identityHeadings\["\^## review-x"\] must be one of/);
+  assert.throws(() => resolveConfig({ identityHeadings: { "([": "codex" } }), /is not a valid regex/);
+  assert.throws(() => resolveConfig({ identities: { owner: "everyone" } }), /must be one of claude, codex, kimi or shared/);
+});
+
+test("agent-merge-evidence end to end: every seat posts as one shared login; the review heading names the family", () => {
+  const ghDir = join(root, "gh-wo43"); fs.mkdirSync(ghDir, { recursive: true });
+  fs.writeFileSync(join(ghDir, "gh"), `#!${process.execPath}
+const f = JSON.parse(require("fs").readFileSync(process.env.GH_FIXTURE, "utf8")), a = process.argv.slice(2).join(" ");
+const out = a.startsWith("pr view") ? f.view : a.startsWith("pr diff") ? f.diff : a.startsWith("pr checks") ? f.checks : a.includes("/statuses") ? f.statuses : undefined;
+if (out === undefined) { process.stderr.write("unexpected gh " + a); process.exit(9); }
+process.stdout.write(typeof out === "string" ? out : JSON.stringify(out));
+`, { mode: 0o755 });
+  const work = join(root, "wo43-work"); fs.mkdirSync(join(work, ".agent-stack"), { recursive: true });
+  fs.writeFileSync(join(work, ".agent-stack", "merge-evidence.json"), JSON.stringify({ identities: { owner: "shared" },
+    identityHeadings: { "^## review-codex": "codex", "^## review-claude": "claude" } }));
+  const review = (body, commit = H) => ({ id: "R1", author: { login: "owner" }, body, state: "APPROVED", submittedAt: "2026-09-30T12:00:00Z", commit: { oid: commit } });
+  const fixture = { view: { number: 8, title: "Adds x", createdAt: "2026-09-30T09:00:00Z", headRefOid: H, baseRefOid: B, baseRefName: "main", headRefName: "agent/impl-codex-1",
+      mergeable: "MERGEABLE", mergeStateStatus: "CLEAN", reviewDecision: "", isDraft: false, comments: [], reviews: [] },
+    diff: "diff --git a/src/a.ts b/src/a.ts\n--- a/src/a.ts\n+++ b/src/a.ts\n@@ -1 +1 @@\n-x\n+y\n", checks: [{ name: "verify", state: "SUCCESS", bucket: "pass" }], statuses: [] };
+  const fx = join(root, "wo43-fixture.json");
+  const run = (over) => { fs.writeFileSync(fx, JSON.stringify({ ...fixture, ...over, view: { ...fixture.view, ...over.view } }));
+    const r = spawnSync(process.execPath, [join(repo, "orchestration/merge-evidence.js"), "8", "--repo", "o/r"], { encoding: "utf8",
+      env: { PATH: `${ghDir}:${process.env.PATH}`, OPENRIG_WORK_ROOT: work, GH_FIXTURE: fx, AGENT_BRB_REQUIRED_SINCE: "" } });
+    assert.equal(r.status, 0, r.stderr); return JSON.parse(r.stdout); };
+  assert.match(run({ view: { reviews: [review("## review-claude-1\nVerdict: PASS\nChecked the parser.")] } }).review,
+    /^review verdict: success, from GitHub PR review APPROVED by owner \(claude family, self-declared in its heading "## review-claude-1"; the author is codex\) submitted on commit a{40}/);
+  assert.match(run({ view: { reviews: [review("## review-codex-2\nVerdict: PASS")] } }).review, /^review verdict: NONE VERIFIABLE/, "same family by heading");
+  assert.match(run({ view: { reviews: [review("## review-claude-1\nVerdict: PASS", "c".repeat(40))] } }).review, /^review verdict: NONE VERIFIABLE .*1 review\(s\) on another commit ignored/);
+  assert.match(run({ statuses: [{ context: "independent-review", state: "success", description: "review-codex-2: PASS", creator: { login: "owner" } }], view: {} }).review,
+    /^review verdict: NONE VERIFIABLE .*names a codex seat, the author's own family/);
 });
