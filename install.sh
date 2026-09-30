@@ -6,6 +6,7 @@
 #   ./install.sh --check    only report what is missing
 set -euo pipefail
 S=$(cd "$(dirname "$(readlink -f "$0")")" && pwd); source "$S/config/versions.env"
+PW_MCP=$(sed -n 's/.*"@playwright\/mcp@\([^"]*\)".*/\1/p' "$S/system/codex/config.toml" | head -1)   # the Playwright MCP pin
 L=$HOME/.local/share/agent-stack; B=$HOME/.local/bin; C=$HOME/.config/agent-stack; SEC=$C/secrets
 CHECK=0; [ "${1:-}" = "--check" ] && CHECK=1
 step() { printf '\n\033[1m== %s\033[0m\n' "$*"; }
@@ -74,7 +75,7 @@ for f in agent-login cliproxy-healthcheck cliproxy-key openrig-healthcheck clipr
 place "$S/system/seat-bin-codex" "$L/seat-bin/codex" 755
 mkdir -p "$L/seat-tools"; place "$S/system/seat-tools-rig" "$L/seat-tools/rig" 755   # queue writes get the project tag + EC-3 worktree_path
 link "$L/bin/agent-login" "$B/agent-login"
-for f in claude-pool agent-heavy openrig-upgrade openrig-update agent-project-new agent-project-check agent-never-prompt-check agent-human-inbox-tidy openrig-daemon-cycle openrig-tmux-adopt agent-queue-backfill agent-refresh-guidance agent-project-repair agent-waves-sync; do link "$S/bin/$f" "$B/$f"; done
+for f in claude-pool agent-heavy playwright-browsers openrig-upgrade openrig-update agent-project-new agent-project-check agent-never-prompt-check agent-human-inbox-tidy openrig-daemon-cycle openrig-tmux-adopt agent-queue-backfill agent-refresh-guidance agent-project-repair agent-waves-sync; do link "$S/bin/$f" "$B/$f"; done
 link "$S/proxy/status.py" "$B/agent-proxy-status"
 if [ $CHECK = 0 ] || mise where "node@$NODE_FOR_JEV" >/dev/null 2>&1; then
   launcher jev-mcp "$NODE_FOR_JEV" "$S/jev/bin/jev-mcp.js"
@@ -125,7 +126,7 @@ if [ $CHECK = 0 ]; then
   # Seats' tmux server gets its own unit first (skips itself if a server already runs; bin/openrig-tmux-adopt moves that one).
   systemctl --user enable --now openrig-tmux.service >/dev/null 2>&1 || todo "openrig-tmux.service"
   systemctl --user enable --now openrig.service >/dev/null 2>&1 || true
-  for t in cliproxyapi-health cliproxy-usage openrig-health cliproxy-authwatch cliproxy-quotawatch openrig-update agent-repos-sync agent-human-inbox-tidy; do systemctl --user enable --now "$t.timer" >/dev/null 2>&1 || todo "$t.timer"; done
+  for t in cliproxyapi-health cliproxy-usage openrig-health cliproxy-authwatch cliproxy-quotawatch openrig-update agent-repos-sync agent-human-inbox-tidy playwright-browsers; do systemctl --user enable --now "$t.timer" >/dev/null 2>&1 || todo "$t.timer"; done
 fi
 "$B/rig" --version >/dev/null 2>&1 && ok "rig $("$B/rig" --version | awk '{print $1}')" || todo "OpenRig not installed"
 # Transcript capture defaults: every 15s, 400 lines. The shipped 2s/1000 lines across ~90 seats starved the daemon.
@@ -163,9 +164,13 @@ if [ $CHECK = 0 ]; then
   ts=$(ls -d "$HOME"/.claude/plugins/cache/typesafe-ai/typesafe/*/skills/typesafe-ai 2>/dev/null | tail -1)
   [ -n "$ts" ] && [ ! -e "$HOME/.agents/skills/typesafe-ai" ] && { mkdir -p "$HOME/.agents/skills"; cp -r "$ts" "$HOME/.agents/skills/"; }
   claude mcp get jev >/dev/null 2>&1 || claude mcp add --scope user jev -- "$B/jev-mcp" >/dev/null
-  pw=(npx -y @playwright/mcp@latest --headless); cr=$(command -v chromium || command -v chromium-browser || command -v google-chrome || true)
-  [ -n "$cr" ] && pw+=(--executable-path "$cr")   # use the system browser (Playwright's default Chrome channel is often absent on Linux)
-  claude mcp get playwright >/dev/null 2>&1 || claude mcp add --scope user playwright -- "${pw[@]}" >/dev/null
+  # Playwright MCP: the pinned release with Playwright's own Chrome for Testing (see system/codex/config.toml). An
+  # existing user-scope entry with other args (the old @latest + --executable-path) is replaced.
+  pw=(npx -y "@playwright/mcp@$PW_MCP" --headless --browser chromium)
+  if ! claude mcp get playwright 2>/dev/null | grep -qF -- "Args: ${pw[*]:1}"; then
+    claude mcp remove --scope user playwright >/dev/null 2>&1 || true
+    claude mcp add --scope user playwright -- "${pw[@]}" >/dev/null || todo "claude mcp playwright"
+  fi
   command -v toon >/dev/null || npm install -g @toon-format/cli >/dev/null 2>&1
   # Neon: CLI (preferred by agents), the Postgres/branching skills, and the OAuth MCP server for Claude Code.
   # Codex's Neon MCP entry comes from system/codex/config.toml (neon's own installer would rewrite that file).
@@ -173,9 +178,14 @@ if [ $CHECK = 0 ]; then
   command -v neon >/dev/null && neon skills --global -y -a claude-code -a codex \
     -s neon -s neon-postgres -s neon-postgres-branches -s neon-postgres-egress-optimizer >/dev/null 2>&1 || todo "neon skills"
   claude mcp get Neon >/dev/null 2>&1 || claude mcp add --scope user --transport http Neon https://mcp.neon.tech/mcp >/dev/null
-  npx -y playwright@latest install chromium >/dev/null 2>&1 || todo "playwright chromium"
+  "$S/bin/playwright-browsers" >/dev/null || todo "playwright chromium for @playwright/mcp@$PW_MCP"
 fi
 claude plugin list 2>/dev/null | grep -q superpowers && ok "Superpowers (Claude Code)" || todo "Superpowers (Claude Code)"
+claude mcp get playwright 2>/dev/null | grep -qF -- "Args: -y @playwright/mcp@$PW_MCP --headless --browser chromium" \
+  && ok "Playwright MCP (Claude Code): @playwright/mcp@$PW_MCP, Chrome for Testing" || todo "Playwright MCP (Claude Code) not on @playwright/mcp@$PW_MCP --browser chromium"
+grep -qF "\"@playwright/mcp@$PW_MCP\", \"--headless\", \"--browser\", \"chromium\"" "$HOME/.codex/config.toml" 2>/dev/null \
+  && ok "Playwright MCP (Codex): @playwright/mcp@$PW_MCP, Chrome for Testing" || todo "Playwright MCP (Codex): set [mcp_servers.playwright] args as in system/codex/config.toml"
+"$S/bin/playwright-browsers" --check >/dev/null && ok "Playwright MCP browser installed" || todo "Playwright MCP browser: run playwright-browsers"
 codex plugin list 2>/dev/null | grep -q "superpowers.*installed" && ok "Superpowers (Codex)" || todo "Superpowers (Codex)"
 command -v toon >/dev/null && ok "toon CLI" || todo "toon CLI"
 command -v neon >/dev/null && ok "Neon CLI + skills" || todo "Neon CLI (npm i -g neon; then neon login)"

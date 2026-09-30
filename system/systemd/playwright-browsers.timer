@@ -1,0 +1,10 @@
+[Unit]
+Description=Check the Playwright MCP's browser daily
+
+[Timer]
+OnBootSec=10min
+OnUnitActiveSec=1d
+RandomizedDelaySec=30min
+
+[Install]
+WantedBy=timers.target

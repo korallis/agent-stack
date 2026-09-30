@@ -1,0 +1,20 @@
+#!/usr/bin/env bash
+# playwright-browsers [--check]: make sure the Chrome for Testing build that the pinned Playwright MCP needs is installed.
+# The pin is the @playwright/mcp@<version> in system/codex/config.toml. The browser is installed with THAT release's own
+# Playwright (npx -p @playwright/mcp@<version> playwright install chromium), never playwright@latest, whose browser
+# build can differ. A no-op when it is already there. Runs from install.sh and daily from playwright-browsers.timer,
+# because any other Playwright install on this machine can garbage-collect browser builds it doesn't know about.
+#   --check   report only (exit 1 when the browser is missing), install nothing
+set -uo pipefail
+S=$(cd "$(dirname "$(readlink -f "$0")")/.." && pwd)
+pin=$(sed -n 's/.*"@playwright\/mcp@\([^"]*\)".*/\1/p' "$S/system/codex/config.toml" | head -1)
+[ -n "$pin" ] || { echo "playwright-browsers: no @playwright/mcp@<version> pin in $S/system/codex/config.toml" >&2; exit 2; }
+say() { echo "playwright-browsers: $*"; logger -t playwright-browsers "$*" 2>/dev/null || true; }
+plan=$(npx -y -p "@playwright/mcp@$pin" playwright install --dry-run chromium 2>/dev/null) || { say "could not ask @playwright/mcp@$pin which browser it needs"; exit 1; }
+missing=$(sed -n 's/^ *Install location: *//p' <<<"$plan" | while read -r d; do [ -d "$d" ] || echo "$d"; done)
+build=$(grep -m1 -oE 'Chrome for Testing [0-9.]+ \(playwright chromium v[0-9]+\)' <<<"$plan")
+if [ -z "$missing" ]; then echo "playwright-browsers: @playwright/mcp@$pin browser present: $build"; exit 0; fi
+if [ "${1:-}" = --check ]; then say "@playwright/mcp@$pin needs $build; missing: $(echo $missing)"; exit 1; fi
+say "installing $build for @playwright/mcp@$pin"
+npx -y -p "@playwright/mcp@$pin" playwright install chromium >/dev/null 2>&1 || { say "install FAILED for $build"; exit 1; }
+say "installed $build"

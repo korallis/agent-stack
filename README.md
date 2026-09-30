@@ -193,6 +193,11 @@ with `agent-login` and the pool uses it straight away.
   A nested call of the same class (a script that wraps its own runs) runs inline in the parent's slot; a different
   class takes its own slot. The rig template's CULTURE.md makes it binding, and `agent-project-check` WARNs when a
   project's conventions lack it.
+- **Playwright MCP:** a pinned `@playwright/mcp` release with Playwright's own Chrome for Testing (`--browser chromium`),
+  not the system Chromium. The pin lives in `system/codex/config.toml`; `install.sh` registers Claude's MCP with it and
+  `playwright-browsers` (daily timer) installs that release's own browser build. Bump the pin deliberately (0.0.80 =
+  Chrome 153, 0.0.82 = Chrome 154), then run `playwright-browsers`. `@latest` can need a browser build that isn't
+  installed yet.
 - **Seats never depend on the daemon unit.** Every seat lives in the tmux server of `openrig-tmux.service`, not in
   `openrig.service`. tmux ties each pane to the unit its server runs in, which is how `systemctl stop openrig.service`
   once stopped every seat. Restart the daemon with `openrig-daemon-cycle` (the health check does too), never with

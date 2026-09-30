@@ -1,0 +1,6 @@
+[Unit]
+Description=Keep the Playwright MCP's Chrome for Testing installed (matched to the pinned @playwright/mcp)
+
+[Service]
+Type=oneshot
+ExecStart=%h/.local/bin/playwright-browsers
