@@ -10,7 +10,8 @@ import { fileURLToPath } from "node:url";
 
 const repo = join(dirname(fileURLToPath(import.meta.url)), "..");
 const { buildMergeInput, passes, outcome, gateProblems, parseDiff, brbCutoff, brbNotApplicable, blastNotApplicable, flagOnly, mergeStateLine,
-  requirementsFrom, contextState, gateLine, verdictOf, records, reviewFromComments, qaFromComments, resolveConfig, loadConfig, familyOf } = await import("../orchestration/merge-evidence.js");
+  requirementsFrom, contextState, gateLine, verdictOf, records, reviewFromComments, qaFromComments, resolveConfig, loadConfig, familyOf,
+  reviewFromPrReviews, reviewVerdict } = await import("../orchestration/merge-evidence.js");
 const { seatCandidates, nextStep } = await import("../orchestration/pickseat.js");
 const st = await import("../orchestration/stuck.js");
 const root = fs.mkdtempSync("/tmp/claude-1000/wo35-");
@@ -673,4 +674,93 @@ process.stdout.write(typeof out === "string" ? out : JSON.stringify(out));
   assert.match(o.limits, /merge gate jev-merge \(status\): failure already posted/);
   const bad = join(root, "bad.json"); fs.writeFileSync(bad, JSON.stringify({ review: { source: "comments" } }));
   r = run({}, ["--config", bad]); assert.equal(r.status, 2); assert.match(r.stderr, /review\.heading is required/);
+});
+
+// ---- WO40: the review verdict reaches Jev even when the linked report can't be read -------------------------------
+test("GitHub reviews: only on the exact head, by a mapped login of another family; stale ones are ignored", () => {
+  const OLD = "c".repeat(40), ids = { "rev-claude": "claude", "rev-codex": "codex" };
+  const rv = (author, reviewState, commit, body = "", at = "1") => ({ author, reviewState, commit, body, at, url: `review ${author}-${at}` });
+  let r = reviewFromPrReviews([rv("rev-claude", "APPROVED", H, "LGTM. LIMIT: load untested")], H, "codex", ids);
+  assert.equal(r.verdict.state, "success"); assert.match(r.verdict.source, /GitHub PR review APPROVED by rev-claude \(claude family; the author is codex\) submitted on commit a{40}/);
+  assert.deepEqual(r.verdict.limits, ["load untested"]);
+  assert.equal(reviewFromPrReviews([rv("rev-claude", "CHANGES_REQUESTED", H)], H, "codex", ids).verdict.state, "failure");
+  r = reviewFromPrReviews([rv("rev-claude", "APPROVED", OLD)], H, "codex", ids);
+  assert.equal(r.verdict, null, "a review on an older commit is never current"); assert.match(r.problem, /no GitHub review with a verdict on a{40}; 1 review\(s\) on another commit ignored/);
+  r = reviewFromPrReviews([rv("rev-claude", "APPROVED", OLD, "", "1"), rv("rev-claude", "CHANGES_REQUESTED", H, "", "2")], H, "codex", ids);
+  assert.equal(r.verdict.state, "failure"); assert.match(r.problem, /1 review\(s\) on another commit ignored/);
+  assert.match(reviewFromPrReviews([rv("someone", "APPROVED", H)], H, "codex", ids).problem, /by a login mapped to a family other than codex \(1 unmapped or same-family/);
+  assert.equal(reviewFromPrReviews([rv("rev-codex", "APPROVED", H)], H, "codex", ids).verdict, null, "same family");
+  assert.match(reviewFromPrReviews([rv("rev-claude", "APPROVED", H)], H, null, ids).problem, /author's model family is unknown/);
+  assert.equal(reviewFromPrReviews([rv("rev-claude", "COMMENTED", H, "## r\nVerdict: PASS")], H, "codex", ids).verdict.state, "success", "a COMMENTED review with a declared verdict");
+  assert.equal(reviewFromPrReviews([rv("rev-claude", "COMMENTED", H, "looks fine")], H, "codex", ids).verdict, null, "a plain comment is not a verdict");
+  assert.equal(reviewFromPrReviews([rv("rev-claude", "DISMISSED", H)], H, "codex", ids).verdict, null);
+  assert.equal(reviewFromPrReviews([rv("rev-claude", "APPROVED", H, "Verdict: FAIL")], H, "codex", ids).verdict.state, "failure", "the body's own FAIL is not outvoted");
+  assert.throws(() => resolveConfig({ identities: { x: "gemini" } }), /identities\.x must be one of/);
+  assert.deepEqual(resolveConfig({ identities: { a: "claude" }, repos: { "o/r": { identities: { b: "codex" } } } }, "o/r").identities, { a: "claude", b: "codex" });
+});
+
+test("review verdict: status, then GitHub reviews, then comments; conflicts and none-verifiable are explicit", () => {
+  const status = (state, description = "QA PASS") => ({ state, description, creator: "rev", url: "https://elsewhere/report" });
+  const prOk = { verdict: { state: "success", source: "GitHub PR review APPROVED by rev-claude", url: "review 1" } };
+  const prNone = { verdict: null, problem: "no GitHub review with a verdict on x; 1 review(s) on another commit ignored" };
+  const comOk = { review: { state: "success", creator: "review-claude-1", url: "https://x/c" } };
+  let v = reviewVerdict({ head: H, status: status("success"), prReview: prNone });
+  assert.deepEqual([v.state, v.key], ["success", "status"]); assert.match(v.source, /independent-review status on a{40} \(success, "QA PASS", by rev\)/);
+  v = reviewVerdict({ head: H, status: null, prReview: prOk });
+  assert.deepEqual([v.state, v.key], ["success", "reviews"]);
+  v = reviewVerdict({ head: H, status: status("pending"), prReview: prNone, commentReview: comOk });
+  assert.deepEqual([v.state, v.key], ["success", "comments"]);
+  v = reviewVerdict({ head: H, status: null, prReview: prNone, commentReview: null });
+  assert.equal(v.state, null);
+  assert.equal(v.why, "status: no independent-review status on " + H + "; reviews: no GitHub review with a verdict on x; 1 review(s) on another commit ignored; comments: no review comment heading configured");
+  v = reviewVerdict({ head: H, status: status("success"), prReview: { verdict: { state: "failure", source: "GitHub PR review CHANGES_REQUESTED by rev-claude" } } });
+  assert.equal(v.state, "conflict"); assert.deepEqual(v.conflict, ["failure from GitHub PR review CHANGES_REQUESTED by rev-claude"]);
+  v = reviewVerdict({ head: H, primary: "comments", status: status("failure"), prReview: prNone, commentReview: comOk });
+  assert.deepEqual([v.state, v.key], ["conflict", "comments"], "the primary source leads; a disagreeing one is a conflict");
+  const input = (rvf, over = {}) => buildMergeInput(facts({ reviewVerdict: rvf, ...over }));
+  assert.match(input(reviewVerdict({ head: H, status: status("success"), prReview: prNone }), { independentReview: { ...status("success"), source: "status" }, reviewNote: null }).review,
+    /^review verdict: success, from independent-review status on a{40} \(success, "QA PASS", by rev\); bound to head a{40}\n/);
+  const viaReview = reviewVerdict({ head: H, status: null, prReview: prOk });
+  assert.match(input(viaReview, { independentReview: null, reviewNote: null }).review, /^review verdict: success, from GitHub PR review APPROVED by rev-claude; bound to head a{40}/);
+  assert.match(input(reviewVerdict({ head: H, status: null, prReview: prNone })).review, /^review verdict: NONE VERIFIABLE on a{40} \(status: no independent-review status/);
+  assert.match(input(reviewVerdict({ head: H, status: status("success"), prReview: { verdict: { state: "failure", source: "GitHub PR review CHANGES_REQUESTED by x" } } })).review,
+    /^review verdict: CONFLICT \(success from independent-review status .*; failure from GitHub PR review CHANGES_REQUESTED by x\)/);
+  assert.deepEqual(gateProblems(facts({ reviewVerdict: viaReview, independentReview: null })), [], "a verified GitHub review satisfies the gate");
+  assert.match(gateProblems(facts({ reviewVerdict: reviewVerdict({ head: H, status: null, prReview: prNone }) })).join(), /no verifiable review verdict \(status: no independent-review status/);
+  assert.match(gateProblems(facts({ reviewVerdict: { state: "conflict" } })).join(), /review verdict conflict/);
+});
+
+test("agent-merge-evidence end to end: unreadable report -> status verdict; no status -> exact-head GitHub review; stale review -> none", () => {
+  const ghDir = join(root, "gh-wo40"); fs.mkdirSync(ghDir, { recursive: true });
+  fs.writeFileSync(join(ghDir, "gh"), `#!${process.execPath}
+const f = JSON.parse(require("fs").readFileSync(process.env.GH_FIXTURE, "utf8")), a = process.argv.slice(2).join(" ");
+const out = a.startsWith("pr view") ? f.view : a.startsWith("pr diff") ? f.diff : a.startsWith("pr checks") ? f.checks : a.includes("/statuses") ? f.statuses : undefined;
+if (out === undefined) { process.stderr.write("unexpected gh " + a); process.exit(9); }
+process.stdout.write(typeof out === "string" ? out : JSON.stringify(out));
+`, { mode: 0o755 });
+  const work = join(root, "wo40-work"); fs.mkdirSync(join(work, ".agent-stack"), { recursive: true });
+  fs.writeFileSync(join(work, ".agent-stack", "merge-evidence.json"), JSON.stringify({ identities: { "rev-claude": "claude" } }));
+  const OLD = "c".repeat(40);
+  const review = (state, commit, body = "Verified the migration. LIMIT: rollback untested") => ({ id: "R1", author: { login: "rev-claude" }, body, state, submittedAt: "2026-09-30T12:00:00Z", commit: { oid: commit } });
+  const fixture = { view: { number: 5, title: "Tests only", createdAt: "2026-09-30T09:00:00Z", headRefOid: H, baseRefOid: B, baseRefName: "main", headRefName: "agent/impl-codex-1",
+      mergeable: "MERGEABLE", mergeStateStatus: "CLEAN", reviewDecision: "", isDraft: false, comments: [], reviews: [] },
+    diff: "diff --git a/src/a.ts b/src/a.ts\n--- a/src/a.ts\n+++ b/src/a.ts\n@@ -1 +1 @@\n-x\n+y\n", checks: [{ name: "verify", state: "SUCCESS", bucket: "pass" }], statuses: [] };
+  const fx = join(root, "wo40-fixture.json");
+  const run = (over) => { fs.writeFileSync(fx, JSON.stringify({ ...fixture, ...over, view: { ...fixture.view, ...over.view } }));
+    const r = spawnSync(process.execPath, [join(repo, "orchestration/merge-evidence.js"), "5", "--repo", "o/r"], { encoding: "utf8",
+      env: { PATH: `${ghDir}:${process.env.PATH}`, OPENRIG_WORK_ROOT: work, GH_FIXTURE: fx, AGENT_BRB_REQUIRED_SINCE: "" } });
+    assert.equal(r.status, 0, r.stderr); return JSON.parse(r.stdout); };
+  let o = run({ statuses: [{ context: "independent-review", state: "success", description: "PASS: 14 tests, contract checked", creator: { login: "rev" }, target_url: "https://reports.example/r/1" }], view: {} });
+  assert.match(o.review, /^review verdict: success, from independent-review status on a{40} \(success, "PASS: 14 tests, contract checked", by rev\); bound to head a{40}/);
+  assert.match(o.review, /independent review report: https:\/\/reports\.example\/r\/1 \(linked from the status, outside this PR, so not read\)/);
+  o = run({ view: { reviews: [review("APPROVED", H)] } });
+  assert.match(o.review, /^review verdict: success, from GitHub PR review APPROVED by rev-claude \(claude family; the author is codex\) submitted on commit a{40}; bound to head a{40}/);
+  assert.match(o.review, /GitHub review report \(review R1, 2026-09-30T12:00:00Z\): Verified the migration/);
+  assert.match(o.limits, /limits stated by the GitHub review: rollback untested/);
+  o = run({ view: { reviews: [review("APPROVED", OLD)] } });
+  assert.match(o.review, /^review verdict: NONE VERIFIABLE on a{40} \(status: no independent-review status on a{40}; reviews: no GitHub review with a verdict on a{40}; 1 review\(s\) on another commit ignored; comments: no review comment heading configured\)/);
+  // With a review heading configured, comments are the last fallback even while the source is "status".
+  fs.writeFileSync(join(work, ".agent-stack", "merge-evidence.json"), JSON.stringify({ review: { heading: "^## review-" } }));
+  o = run({ view: { comments: [{ body: `## review-claude-1\nhead: ${H}\nVerdict: PASS`, url: "https://x/c1", createdAt: "2026-09-30T12:00:00Z", author: { login: "owner" } }] } });
+  assert.match(o.review, /^review verdict: success, from review comment by seat review-claude-1 declaring head a{40}; bound to head a{40}/);
 });

@@ -26,6 +26,11 @@ has no version numbers; entries are grouped by the day they merged, newest first
 - The lead's and the merge owner's role texts and the CULTURE template use the new Jev helpers.
 
 ### Fixed
+- `agent-merge-evidence` always states the review verdict with its source and head binding, so it reaches Jev even
+  when the report the status links to can't be read. The sources, in order: the status's own state and description
+  on the exact head; GitHub reviews submitted on the exact head by a login mapped (`identities`) to another family;
+  review comments declaring the head. A review of an older commit never counts. Disagreeing sources are a CONFLICT,
+  and no verifiable source says why.
 - `agent-merge-evidence` reports the merge state as "pending this gate" when the only unmet required context is
   `jev-merge` itself (GitHub's BLOCKED was circular and drew no-concern holds); any other missing or failing required
   context, a review requirement or a conflict keeps BLOCKED, with the reasons. Requirements it can't verify
