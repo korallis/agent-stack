@@ -11,7 +11,7 @@ import { fileURLToPath } from "node:url";
 const repo = join(dirname(fileURLToPath(import.meta.url)), "..");
 const { buildMergeInput, passes, outcome, gateProblems, parseDiff, brbCutoff, brbNotApplicable, blastNotApplicable, flagOnly, mergeStateLine,
   requirementsFrom, contextState, gateHistory, verdictOf, records, reviewFromComments, qaFromComments, resolveConfig, loadConfig, familyOf,
-  reviewFromPrReviews, reviewVerdict, observedFrom, familyFromHeading, familyFromDescription, isGateReport, firstSection } = await import("../orchestration/merge-evidence.js");
+  reviewFromPrReviews, reviewVerdict, observedFrom, familyFromHeading, familyFromDescription, isGateReport, firstSection, blastSection } = await import("../orchestration/merge-evidence.js");
 const { seatCandidates, nextStep } = await import("../orchestration/pickseat.js");
 const st = await import("../orchestration/stuck.js");
 const root = fs.mkdtempSync("/tmp/claude-1000/wo35-");
@@ -1284,4 +1284,54 @@ process.stdout.write(typeof out === "string" ? out : JSON.stringify(out));
   // a QA comment for another head doesn't carry
   const staleQA = run({ view: { ...fixture.view, comments: [c(`qa-codex-1@shop\nHead: ${OLD}\nVerdict: SHIP`, 1)] } });
   assert.match(staleQA.review, /MISSING: no bug-review-board proof for a{40}/);
+});
+
+// ---- WO53: the blast radius in any form, preferring the selected review's own ------------------------------------
+test("blast radius sections: any heading level, bold or a plain lead-in; not in fences or quotes; own budget, redacted first", () => {
+  assert.equal(blastSection("## Blast radius\nOnly the publish action."), "## Blast radius Only the publish action.");
+  assert.equal(blastSection("Intro\n### Blast radius\n- one table"), "### Blast radius - one table");
+  assert.equal(blastSection("Intro\n**Blast radius:** shared helper only"), "Blast radius: shared helper only");
+  assert.equal(blastSection(`Head: ${H}\nline\nline\nBlast radius: the export path and its CSV writer.`), "Blast radius: the export path and its CSV writer.");
+  assert.equal(blastSection("No section here; the blast radius is small"), null, "a mention mid-sentence is not a section");
+  assert.equal(blastSection("```\nBlast radius: example\n```\n> Blast radius: quoted"), null);
+  assert.equal(blastSection("Blast radius: " + "x ".repeat(600)).length, 900, "its own 900-character budget");
+  assert.doesNotMatch(blastSection("Blast radius: " + "x ".repeat(430) + 'password="fixtureSecretForQA"'), /fixtureSec/, "redacted before the cut");
+});
+
+test("agent-merge-evidence end to end: the selected review's paragraph blast radius beats an older ## one (WO53)", () => {
+  const OLD = "c".repeat(40);
+  const ghDir = join(root, "gh-wo53"); fs.mkdirSync(ghDir, { recursive: true });
+  fs.writeFileSync(join(ghDir, "gh"), `#!${process.execPath}
+const f = JSON.parse(require("fs").readFileSync(process.env.GH_FIXTURE, "utf8")), a = process.argv.slice(2).join(" ");
+const out = a.startsWith("pr view") ? f.view : a.startsWith("pr diff") ? f.diff : a.startsWith("pr checks") ? f.checks : a.includes("/statuses") ? f.statuses : undefined;
+if (out === undefined) { process.stderr.write("unexpected gh " + a); process.exit(9); }
+process.stdout.write(typeof out === "string" ? out : JSON.stringify(out));
+`, { mode: 0o755 });
+  const c = (body, i) => ({ body, url: `https://github.com/o/r/pull/15#issuecomment-${i}`, createdAt: `2026-09-30T2${i}:00:00Z`, author: { login: "owner" } });
+  const older = c(`review-claude-1: review at ${OLD.slice(0, 7)}\nHead: ${OLD}\n## Blast radius\nOLD_SECTION the old export path.`, 1);
+  const selected = c(`review-codex-2: review at ${H.slice(0, 7)}\nHead: ${H}\n` + "Checked the change.\n".repeat(6) + `Blast radius: NEW_PARAGRAPH the CSV writer and its caller only.\n` + "More notes.\n".repeat(60), 2);
+  const fixture = { view: { number: 15, title: "x", body: "", createdAt: "2026-09-30T19:00:00Z", headRefOid: H, baseRefOid: B, baseRefName: "main", headRefName: "agent/impl-claude-1",
+      mergeable: "MERGEABLE", mergeStateStatus: "CLEAN", reviewDecision: "", isDraft: false, reviews: [], comments: [older, selected] },
+    diff: "diff --git a/src/a.ts b/src/a.ts\n--- a/src/a.ts\n+++ b/src/a.ts\n@@ -1 +1 @@\n-x\n+y\n", checks: [{ name: "verify", state: "SUCCESS", bucket: "pass" }],
+    statuses: [{ context: "independent-review", state: "success", description: "review-codex-2: PASS", creator: { login: "owner" }, target_url: selected.url }] };
+  const fx = join(root, "wo53-fixture.json");
+  const run = (over = {}) => { fs.writeFileSync(fx, JSON.stringify({ ...fixture, ...over }));
+    const r = spawnSync(process.execPath, [join(repo, "orchestration/merge-evidence.js"), "15", "--repo", "o/r"], { encoding: "utf8",
+      env: { PATH: `${ghDir}:${process.env.PATH}`, OPENRIG_WORK_ROOT: join(root, "wo53-work"), GH_FIXTURE: fx, AGENT_BRB_REQUIRED_SINCE: "" } });
+    assert.equal(r.status, 0, r.stderr); return JSON.parse(r.stdout).input.review; };
+  let review = run();
+  assert.match(review, /blast radius \(https:\/\/github\.com\/o\/r\/pull\/15#issuecomment-2, 2026-09-30T22:00:00Z, in the selected review, names this head\): Blast radius: NEW_PARAGRAPH the CSV writer/,
+    "the selected review's own paragraph, though it sits past the review excerpt's 900 characters");
+  assert.doesNotMatch(review, /OLD_SECTION/);
+  // Without a linked review: a newer note naming this head beats an older "##" one that doesn't.
+  review = run({ statuses: [] });
+  assert.match(review, /blast radius \(https:\/\/github\.com\/o\/r\/pull\/15#issuecomment-2, [^)]*, names this head\): Blast radius: NEW_PARAGRAPH/);
+  assert.doesNotMatch(review, /in the selected review/);
+  // Only an older note that doesn't name the head: it is used, and says so.
+  review = run({ statuses: [], view: { ...fixture.view, comments: [older] } });
+  assert.match(review, /blast radius \(https:\/\/github\.com\/o\/r\/pull\/15#issuecomment-1, [^)]*, does NOT name this head\): ## Blast radius OLD_SECTION/);
+  // A bold "**Blast radius:**" lead-in in the selected review counts too.
+  const bold = c(`review-codex-2\nHead: ${H}\n**Blast radius:** BOLD_FORM only the writer.`, 3);
+  review = run({ statuses: [{ ...fixture.statuses[0], target_url: bold.url }], view: { ...fixture.view, comments: [older, bold] } });
+  assert.match(review, /in the selected review, names this head\): Blast radius: BOLD_FORM only the writer\./);
 });

@@ -519,7 +519,7 @@ export function buildMergeInput(f) {
       ? `bug-review-board proof ${f.brb.file}: artifact_type=${f.brb.artifact_type} verdict=${f.brb.verdict} candidate_sha=${f.brb.candidate_sha}${f.brb.candidate_sha === f.head ? "" : " (NOT this head)"}; ${f.brb.money_evidence}`
       : f.brbNA || `MISSING: no bug-review-board proof for ${f.head}${f.brbWhere ? ` (looked for ${f.brbWhere})` : " (no --mission/--slice given)"}`,
     f.blastRadius
-      ? `blast radius (${f.blastRadius.url}, ${f.blastRadius.at}${f.blastRadius.namesHead ? ", names this head" : ", does NOT name this head"}): ${f.blastRadius.excerpt}`
+      ? `blast radius (${f.blastRadius.url}, ${f.blastRadius.at}${f.blastRadius.own ? ", in the selected review" : ""}${f.blastRadius.namesHead ? ", names this head" : ", does NOT name this head"}): ${f.blastRadius.excerpt}`
       : f.blastNA ? `blast radius ${f.blastNA}` : "MISSING: no blast-radius comment on the PR",
     // Evidence the caller adds (--extra-evidence <file>): labelled as theirs, never mistaken for what was verified here.
     // Redacted whole, before AND after whitespace is collapsed (collapsing can join a split value into a recognizable
@@ -556,6 +556,16 @@ export function firstSection(body) {
   // Redacted whole, before and after joining lines (joining can form a credential), and only then cut: a cut can
   // split a credential past the redactor.
   return redact(redact(out.join("\n")).replace(/\s+/g, " ").trim()).slice(0, 600);
+}
+
+// Pure: a note's blast-radius section, from its "Blast radius" heading (any level), bold or plain lead-in to the end,
+// redacted whole and then cut to its own 900-character budget (a cut can split a credential past the redactor); null
+// when the note has none. Only the note's own lines count (not fenced or quoted).
+export function blastSection(body) {
+  const text = ownLines(body).join("\n");
+  const at = text.search(/^(?:#{1,6}[ \t]*)?Blast radius\b/im);
+  if (at < 0) return null;
+  return redact(redact(text.slice(at)).replace(/\s+/g, " ").trim()).slice(0, 900);
 }
 
 export function gather(pr, { repo, mission, slice, change, deploy, rollback, config, configPath, authorFamily } = {}) {
@@ -667,24 +677,23 @@ export function gather(pr, { repo, mission, slice, change, deploy, rollback, con
       brb = { ...carried, carried: true, otherProofs: others };
     }
   }
-  const br = [...notes].reverse().find((c) => /^## Blast radius/m.test(c.body || ""));
-  const blast = br ? { url: br.url, at: br.at, namesHead: namesHead(br.body) || br.commit === v.headRefOid,
-    excerpt: br.body.slice(br.body.search(/^## Blast radius/m)).replace(/\s+/g, " ").slice(0, 700) } : null;
   // What the cross-family reviewer verified: the report the independent-review status links to (target_url), and
   // nothing else. Without a link, the latest comment naming the head is passed on only as UNVERIFIED.
   const note = (c) => c && { url: c.url, at: c.at, author: c.author || "?", excerpt: c.body.replace(/\s+/g, " ").slice(0, 900), limits: statedLimits(c.body),
     ...(c.commit ? { commit: c.commit } : {}) };   // a GitHub review keeps its commit: "submitted on this head" or not
-  let independentReview = null, reviewNote = null, unlinkedNote = null, reviewProblem = null, reviewLinkProblem = null;
+  let independentReview = null, reviewNote = null, unlinkedNote = null, reviewProblem = null, reviewLinkProblem = null, reviewSrc = null;
   const commentReview = cfg.review.headingRe
     ? reviewFromComments(comments, cfg.review.headingRe, v.headRefOid, author.family) : null;
   const prReview = reviewFromPrReviews(notes.filter((n) => n.kind === "review"), v.headRefOid, author.family, cfg.identities || {}, cfg.identityHeadingRes || []);
   if (cfg.review.source === "comments") {
     ({ review: independentReview, note: reviewNote = null, problem: reviewProblem = null } = reviewFromComments(comments, cfg.review.headingRe, v.headRefOid, author.family));
+    if (reviewNote) reviewSrc = notes.find((c) => c.url === reviewNote.url) || null;
   } else {
     const ir = statuses.find((s) => s.context === cfg.review.context);   // its target_url links the report
     independentReview = statusRecord(statuses, cfg.review.context);
     const link = ir?.target_url || null;
     reviewNote = link ? note(notes.find((c) => c.url && c.url === link)) || null : null;
+    if (reviewNote) reviewSrc = notes.find((c) => c.url === link);
     // A link to a GitHub review on this PR (…/pull/<n>#pullrequestreview-<id>) is read from the API, with the
     // commit it was submitted on, so the report is shown rather than "outside this PR".
     const rl = !reviewNote && link && link.match(/^https:\/\/github\.com\/([^/]+\/[^/#]+)\/pull\/(\d+)#pullrequestreview-(\d+)$/);
@@ -693,6 +702,7 @@ export function gather(pr, { repo, mission, slice, change, deploy, rollback, con
         const rv = ghJson("api", `repos/${nwo}/pulls/${pr}/reviews/${rl[3]}`);
         reviewNote = { url: link, at: rv.submitted_at || "?", author: rv.user?.login || "?", commit: rv.commit_id || null,
           excerpt: String(rv.body || "").replace(/\s+/g, " ").slice(0, 900), limits: statedLimits(rv.body) };
+        reviewSrc = { url: link, at: reviewNote.at, author: reviewNote.author, commit: reviewNote.commit, body: String(rv.body || "") };
       } catch { reviewLinkProblem = "a review on this PR, but it could not be read"; }
     }
     unlinkedNote = note([...notes].reverse().find((c) => (c.body || "").length > 40 && (namesHead(c.body) || c.commit === v.headRefOid)));
@@ -700,6 +710,16 @@ export function gather(pr, { repo, mission, slice, change, deploy, rollback, con
   const reviewVerdictFacts = reviewVerdict({ head: v.headRefOid, primary: cfg.review.source, statusContext: cfg.review.context,
     status: independentReview?.source === "status" ? independentReview : cfg.review.source === "status" ? null : statusRecord(statuses, cfg.review.context),
     prReview, commentReview, authorFamily: author.family, headings: cfg.identityHeadingRes || [] });
+  // The blast radius: a "Blast radius" section at any heading level, bold or a plain lead-in ("Blast radius: …"), in a
+  // note's own lines. Preferred: the selected review's own (the status-linked report, or the source of a fallback
+  // verdict); else the newest note naming this head; else the newest note (labelled as not naming it).
+  const picked = reviewVerdictFacts.key && reviewVerdictFacts.key !== cfg.review.source && reviewVerdictFacts.report
+    ? notes.find((c) => c.url === reviewVerdictFacts.report.url) : null;
+  const withBlast = (c) => c && blastSection(c.body) !== null;
+  const own = [reviewSrc, picked].find(withBlast);
+  const namingHead = (c) => namesHead(c.body) || c.commit === v.headRefOid;
+  const br = own || [...notes].reverse().find((c) => withBlast(c) && namingHead(c)) || [...notes].reverse().find(withBlast);
+  const blast = br ? { url: br.url, at: br.at, namesHead: namingHead(br), own: br === own, excerpt: blastSection(br.body) } : null;
   // Applicability from verified facts only: the actual diff and the PR's creation time against the configured cutoff.
   const files = parseDiff(gh("pr", "diff", String(pr), ...R));
   let culture = "";

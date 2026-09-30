@@ -39,6 +39,10 @@ has no version numbers; entries are grouped by the day they merged, newest first
 - The lead's and the merge owner's role texts and the CULTURE template use the new Jev helpers.
 
 ### Fixed
+- `agent-merge-evidence` finds the blast radius in any form: `### Blast radius`, a bold lead-in, or a "Blast radius:"
+  paragraph. It prefers the selected review's own section, then the newest note naming this head. It used to take an
+  older review's `## Blast radius` that didn't name the head. The excerpt has its own budget, so a paragraph deep in a
+  long review isn't cut off.
 - `agent-merge-evidence` no longer makes the merge gate hold on project-rig PRs. The operator's live A/B test showed
   what flipped Jev:
   - The limits line no longer says "merge state: pending this gate …" when the gate's own `jev-merge` is the only
