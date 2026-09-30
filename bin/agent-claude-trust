@@ -11,11 +11,17 @@ root, so a parent folder's trust does not cover seat worktrees.
   --check            report only; exit 1 when any is untrusted
   --dry-run          say what would change; write nothing
 
-Writes only what is missing, in ONE atomic write: under a lock, read, add the entries (every other key kept), write a
-temp file with the same mode beside it, rename over. Claude Code sessions rewrite ~/.claude.json too (concurrent seats
-have lost each other's trust writes), so it re-reads afterwards and retries up to 3 times. Idempotent.
+Writes only what is missing, in ONE atomic write, under CLAUDE CODE'S OWN LOCK: Claude Code (2.1.284) serialises its
+config writes with a proper-lockfile lock, the directory `<config>.lock` (mkdir = acquire, stale after 10 s). This
+tool takes that same lock, so a Claude session and this tool never write over each other:
+  - it waits while the lock is held (up to AGENT_CLAUDE_TRUST_WAIT seconds, default 10), and never takes over a lock
+    that was fresh when first seen; only a lock ALREADY stale by Claude's own rule (unrefreshed for 10 s) is reclaimed;
+  - under the lock it re-reads, adds the entries (every other key kept), writes a temp file with the same mode beside
+    it, renames it over, then releases the lock;
+  - if the lock can't be had, it writes NOTHING and exits 1.
+It re-reads afterwards and retries up to 3 times, in case a writer that ignores the lock replaced the file. Idempotent.
 """
-import fcntl, json, os, sys, tempfile, time
+import json, os, sys, tempfile, time
 
 argv = sys.argv[1:]
 CHECK, DRY, JSON_OUT = "--check" in argv, "--dry-run" in argv, "--json" in argv
@@ -84,9 +90,39 @@ if DRY:
         print(f"would trust {want[p]}: {p}")
     sys.exit(0)
 
-lock = open(CONF + ".agent-stack.lock", "a")
+LOCK, STALE = CONF + ".lock", 10.0   # proper-lockfile, as Claude Code uses it: mkdir-based, stale after 10 s
+WAIT = float(os.environ.get("AGENT_CLAUDE_TRUST_WAIT", "10"))
+
+
+def acquire():
+    """Take Claude's lock. A lock that is ALREADY stale when first seen (abandoned by a crashed writer) is reclaimed,
+    as proper-lockfile does. A lock that was fresh when first seen is never taken over: wait, then give up."""
+    deadline, delay, first = time.monotonic() + WAIT, 0.1, True
+    while True:
+        try:
+            os.mkdir(LOCK)
+            return True
+        except FileExistsError:
+            try:
+                if first and time.time() - os.stat(LOCK).st_mtime > STALE:
+                    os.rmdir(LOCK)
+                    first = False
+                    continue
+            except FileNotFoundError:
+                continue
+            except OSError:
+                pass
+            first = False
+        if time.monotonic() >= deadline:
+            return False
+        time.sleep(delay)
+        delay = min(delay * 2, 1.0)
+
+
 for attempt in range(3):
-    fcntl.flock(lock, fcntl.LOCK_EX)
+    if not acquire():
+        print(f"agent-claude-trust: {LOCK} is held (a Claude session is writing its config) for over {WAIT:.0f}s; nothing written. Re-run.", file=sys.stderr)
+        sys.exit(1)
     try:
         conf = load()
         todo = untrusted(conf)
@@ -106,7 +142,10 @@ for attempt in range(3):
                 os.unlink(tmp)
                 raise
     finally:
-        fcntl.flock(lock, fcntl.LOCK_UN)
+        try:
+            os.rmdir(LOCK)
+        except OSError:
+            pass
     time.sleep(0.5 if attempt < 2 else 0)
     still = untrusted(load())   # a running Claude session may have written back an older copy
     if not still:

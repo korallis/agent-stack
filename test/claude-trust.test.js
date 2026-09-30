@@ -107,3 +107,63 @@ test("a spec without Claude seats needs nothing: exit 0, file untouched", () => 
   for (const a of [["--check", "--json"], []]) assert.equal(trust("--spec", codexOnly, ...a).status, 0);
   assert.equal(fs.readFileSync(conf, "utf8"), before);
 });
+
+// QA round 1 (PR #24): Claude Code 2.1.284 locks its config with proper-lockfile: the directory `<config>.lock`. The
+// helper must use that same lock: wait while a Claude writer holds it, never write through it, and only reclaim a lock
+// that is stale by Claude's own rule (10 s).
+test("a Claude writer holding the native lock: the helper waits, and the writer's changes survive (no lost update)", async () => {
+  fs.writeFileSync(conf, JSON.stringify({ counter: 0, projects: {} }), { mode: 0o600 });
+  const lock = conf + ".lock";
+  // the "Claude" writer: takes the lock, then (still holding it) re-reads, bumps the counter and adds a key, and releases
+  const writer = spawn(process.execPath, ["-e", `
+    const fs = require("fs"); fs.mkdirSync(${JSON.stringify(lock)});
+    const c = JSON.parse(fs.readFileSync(${JSON.stringify(conf)}, "utf8"));   // read under its lock, save later
+    setTimeout(() => {
+      c.counter = 1; c.outside_writer = "must survive";
+      fs.writeFileSync(${JSON.stringify(conf)}, JSON.stringify(c));
+      fs.rmdirSync(${JSON.stringify(lock)});
+    }, 1200);`], { stdio: "ignore" });
+  const writerDone = new Promise((r) => writer.on("exit", r));
+  await new Promise((r) => setTimeout(r, 200));
+  const t0 = Date.now();
+  const helper = await new Promise((res) => { const p = spawn(join(repo, "bin/agent-claude-trust"), [join(wt, "impl-claude-ui")], { env, stdio: ["ignore", "pipe", "pipe"] }); let e = ""; p.stderr.on("data", (d) => { e += d; }); p.on("exit", (code) => res({ code, e })); });
+  await writerDone;
+  assert.equal(helper.code, 0, helper.e);
+  assert.ok(Date.now() - t0 >= 800, "it waited for the lock");
+  const c = JSON.parse(fs.readFileSync(conf, "utf8"));
+  assert.equal(c.counter, 1); assert.equal(c.outside_writer, "must survive");
+  assert.equal(c.projects[join(wt, "impl-claude-ui")].hasTrustDialogAccepted, true);
+  assert.equal(fs.existsSync(lock), false, "lock released");
+});
+
+test("a native lock held longer than the wait: nothing is written, exit 1, and the lock is not taken from its holder", () => {
+  fixture(); const before = fs.readFileSync(conf, "utf8"); const lock = conf + ".lock";
+  fs.mkdirSync(lock);
+  try {
+    const r = spawnSync(join(repo, "bin/agent-claude-trust"), ["--spec", spec], { encoding: "utf8", env: { ...env, AGENT_CLAUDE_TRUST_WAIT: "1" } });
+    assert.equal(r.status, 1);
+    assert.match(r.stderr, /\.claude\.json\.lock is held .*nothing written/);
+    assert.equal(fs.readFileSync(conf, "utf8"), before);
+    assert.ok(fs.existsSync(lock), "the holder's lock stays");
+  } finally { fs.rmdirSync(lock); }
+});
+
+test("a stale native lock (unrefreshed for over 10 s) is reclaimed, as proper-lockfile does", () => {
+  fixture(); const lock = conf + ".lock";
+  fs.mkdirSync(lock); const old = new Date(Date.now() - 60000); fs.utimesSync(lock, old, old);
+  const r = trust("--spec", spec);
+  assert.equal(r.status, 0, r.stderr);
+  assert.equal(JSON.parse(fs.readFileSync(conf, "utf8")).projects[join(wt, "impl-claude-ui")].hasTrustDialogAccepted, true);
+  assert.equal(fs.existsSync(lock), false);
+});
+
+test("a lock that is fresh when first seen is never reclaimed, even if it ages past 10 s during the wait (fail closed)", () => {
+  fixture(); const before = fs.readFileSync(conf, "utf8"); const lock = conf + ".lock";
+  fs.mkdirSync(lock); const nine = new Date(Date.now() - 9000); fs.utimesSync(lock, nine, nine);   // stale 1 s into the wait
+  try {
+    const r = spawnSync(join(repo, "bin/agent-claude-trust"), ["--spec", spec], { encoding: "utf8", env: { ...env, AGENT_CLAUDE_TRUST_WAIT: "3" } });
+    assert.equal(r.status, 1, r.stdout);
+    assert.equal(fs.readFileSync(conf, "utf8"), before);
+    assert.ok(fs.existsSync(lock));
+  } finally { fs.rmdirSync(lock); }
+});
