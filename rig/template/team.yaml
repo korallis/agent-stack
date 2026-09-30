@@ -1,5 +1,5 @@
 # Balanced 24-seat team: 12 Claude Code + 12 Codex.
-# Copy to <workspace>/rig/, replace @RIG@ (rig name, e.g. hc), @REPO@ (absolute repo path), @AGENT_STACK@ (this repo, e.g. $HOME/Projects/agent-stack) and
+# Copy to <workspace>/rig/, replace @RIG@ (rig name, e.g. shop), @REPO@ (absolute repo path), @AGENT_STACK@ (this repo, e.g. $HOME/Projects/agent-stack) and
 # @WT@ (absolute worktrees folder, e.g. <repo>.worktrees), create the worktrees with git, then:
 #   rig spec validate <file>  →  rig up <file>   (later: rig down @RIG@ --snapshot / rig up @RIG@)
 # Roles come from the shared template (path: refs), so improving a role improves every repo's rig.

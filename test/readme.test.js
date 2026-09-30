@@ -126,7 +126,7 @@ test("README reads plainly, links to real files, and carries no personal data", 
     if (!/^https?:/.test(target)) assert.ok(fs.existsSync(join(repo, target)), `broken link ${target}`);
   assert.doesNotMatch(readme, /\/home\/\w+|@(gmail|outlook|hotmail|icloud)\.|sk-[A-Za-z0-9]{10}/);
   for (const [, email] of readme.matchAll(/<([^<>\s]+@[^<>\s]+)>/g)) assert.match(email, /@example\.invalid$/);
-  assert.doesNotMatch(readme, /fortis|psaneler|steep-silence|br-patient|marva|muve|matilda/i, "the worked example is anonymised");
+  // client and people names: test/anonymity.test.js checks the whole tree
   assert.match(readme, /```mermaid\nflowchart/, "a How it works diagram");
   assert.match(readme, /## Talk to your operator[\s\S]*> \*\*You:\*\* Onboard/, "example conversations");
   for (const h of ["What does it cost?", "Is it safe to run?", "What does it never do without me?"]) assert.ok(readme.includes(`### ${h}`), h);

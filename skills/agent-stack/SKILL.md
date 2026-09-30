@@ -13,7 +13,7 @@ metadata:
     version: "2026-09-29"
     stage: shipped
     last_verified: "2026-09-29"
-    source_evidence: "install.sh --check and agent-project-check on MTA and HC-Prime; OpenRig 0.5.17 references"
+    source_evidence: "install.sh --check and agent-project-check on two live projects; OpenRig 0.5.17 references"
 ---
 
 # Agent stack
@@ -68,7 +68,7 @@ project-workspace.md) and the `mission-slice-sop` skill. Verify each point on di
 9. Operating rules (template CULTURE.md, "Operating rules"):
    - send owner FYIs with `--human-intent update`: they are closed automatically once posted (`agent-human-inbox-tidy`,
      every 5 min), so don't reopen them. A row without `--human-intent` counts as a decision and is not auto-closed;
-   - decision requests use `--human-intent decision` and stay pending: Lee's Slack reply closes them, and parking or
+   - decision requests use `--human-intent decision` and stay pending: the owner's Slack reply closes them, and parking or
      claiming one makes that reply a no-op;
    - scratch checkouts go under `~/Projects/<P>.worktrees/`, never `/tmp`, removed in a trap;
    - judge proof as `rig proof judge <project-id>:<mission>/slices/<slice>`;
@@ -116,7 +116,7 @@ lead confirms that with each seat.
 - **Playwright secrets:** the MCP reads `--secrets` once, when it starts.
   - Add every entry a seat will need first, then relaunch it once.
   - Append to `~/.config/agent-stack/secrets/playwright.env`, never rewrite it, and prefix names with the project
-    (`FORTIS_WITNESS_PASSWORD`).
+    (`APP_WITNESS_PASSWORD`).
 - **Credentials never go to a seat's output** (it is the transcript). Seats' `neon`/`vercel` run through
   `seat-bin/credguard`: credential-printing commands need `--output-file <path>` (0600) and use the values by name
   (docs/PROJECT-ENV.md). `agent-credguard-check` shows which running seats are guarded (Claude seats: after a relaunch).

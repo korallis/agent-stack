@@ -2,7 +2,7 @@
 
 Seats run unattended with permission checks off, so the only safe production credential is one they never have. Each
 project gets a **development** environment of its own for the seats. Production and preview credentials stay with the
-owner, outside the repo. The example below is Vercel + Neon Postgres + Vercel Blob (fortis-secure, 2026-09-30); other
+owner, outside the repo. The example below is Vercel + Neon Postgres + Vercel Blob (a real project, 2026-09-30); other
 hosts work the same way.
 
 ## The layout

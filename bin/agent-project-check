@@ -172,7 +172,7 @@ open_missions = set(open_slices_by_mission) | {os.path.basename(m.rstrip("/")) f
 # `no-witness: <reason>`: a non-empty text reason, and only for a docs/infra wave (refused if any member is
 # `ui: true`). Wave ids are global: each mission.yaml lists its own slices of a shared wave, so members are merged
 # across missions. A wave is witnessed by a W slice among its members, or by a follow-on wave `<id>w` holding one (the
-# mta layout). Only waves with open slices are judged: a finished wave can no longer be gated, whatever its name. A
+# project B layout). Only waves with open slices are judged: a finished wave can no longer be gated, whatever its name. A
 # mission without waves needs one W slice of its own.
 import yaml as _yaml
 waves, unwitnessed = {}, []

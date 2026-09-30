@@ -64,7 +64,7 @@ test("small.yaml is build.yaml minus impl.codex-2/-3, impl.astra and tests.codex
   assert.match(fs.readFileSync(join(repo, "bin/agent-project-new"), "utf8"), /--team full-stack\|build\|small\|core/);
 });
 
-// ---- WO21: an EXISTING repo whose trunk isn't main (fortis-secure: master) ---------------------------------------------
+// ---- WO21: an EXISTING repo whose trunk isn't main (shop-app: master) ---------------------------------------------
 // Real runs in a throwaway HOME on local git repos only: a bare "origin" plus a clone as the project, stub rig and gh (the
 // stub `rig config get` already lists the roots, so agent-project-new never cycles the daemon). Never GitHub, never the live
 // project.
@@ -112,11 +112,11 @@ exit 0
 }
 
 test("existing master-trunk repo: dry run names the trunk, the mirror and the kit's new home, and changes nothing", () => {
-  const { proj } = existingRepo("fortis-dry", "master");
+  const { proj } = existingRepo("shop-dry", "master");
   const before = git(proj, "status", "--porcelain").stdout;
-  const r = realRun("fortis-dry", "fdry", ["--dry-run"]);
+  const r = realRun("shop-dry", "fdry", ["--dry-run"]);
   assert.equal(r.status, 0, r.stderr);
-  assert.match(r.stdout, /repo .*fortis-dry \(existing, trunk master: adopted as is; starter kit goes to .*fortis-dry-work\/starter-kit\)/);
+  assert.match(r.stdout, /repo .*shop-dry \(existing, trunk master: adopted as is; starter kit goes to .*shop-dry-work\/starter-kit\)/);
   assert.match(r.stdout, /would: set refs\/heads\/main := origin\/master/);
   assert.match(r.stdout, /worktrees .* \(one per seat, from origin\/master\)/);
   assert.equal((r.stdout.match(/would: git -C \S+ worktree add -q (--no-track \S+ -b agent\/\S+|--detach \S+) origin\/master/g) || []).length, 10);
@@ -125,10 +125,10 @@ test("existing master-trunk repo: dry run names the trunk, the mirror and the ki
 });
 
 test("existing master-trunk repo, real run: mirror main, pre-push guard, worktrees from origin/master, kit in the workspace, .env.local linked, ruleset kept", () => {
-  const { proj } = existingRepo("fortis-real", "master");
+  const { proj } = existingRepo("shop-real", "master");
   fs.writeFileSync(join(proj, ".env.local"), "DATABASE_URL=postgres://dev\n");
   fs.writeFileSync(join(proj, ".env.production.local"), "SECRET=prod\n");
-  const r = realRun("fortis-real", "freal");
+  const r = realRun("shop-real", "freal");
   assert.equal(r.status, 0, "STDERR:"+r.stderr.slice(-600));
   // the repo is untouched: no kit files, same tree
   assert.equal(git(proj, "status", "--porcelain").stdout, "", "no starter-kit files in the working tree");
@@ -143,7 +143,7 @@ test("existing master-trunk repo, real run: mirror main, pre-push guard, worktre
   assert.equal(git(proj, "branch", "--show-current").stdout.trim(), "master", "main is never checked out");
   assert.match(fs.readFileSync(join(proj, ".git/hooks/pre-push"), "utf8"), /agent-stack.mainMirror/);
   // worktrees from origin/master; implementers on untracked agent/<seat> branches
-  const wt = join(home, "Projects", "fortis-real.worktrees");
+  const wt = join(home, "Projects", "shop-real.worktrees");
   assert.equal(fs.readdirSync(wt).length, 10);
   assert.equal(git(join(wt, "impl-codex-1"), "rev-parse", "HEAD").stdout, git(proj, "rev-parse", "origin/master").stdout);
   assert.equal(git(join(wt, "impl-codex-1"), "branch", "--show-current").stdout.trim(), "agent/impl-codex-1");
@@ -158,16 +158,16 @@ test("existing master-trunk repo, real run: mirror main, pre-push guard, worktre
   assert.match(fs.readFileSync(join(r.W, "rig/CULTURE.md"), "utf8"), /- Trunk: `master`\. Branch from origin\/master; every PR targets master\./);
   // GitHub: the ruleset is kept, no protection PUT, no push of main
   assert.match(r.stdout, /GitHub: master already protected \(ruleset: deletion, non_fast_forward, pull_request, required_status_checks\); kit protection skipped/);
-  assert.doesNotMatch(r.gh, /-X PUT|repos\/korallis\/fortis-real\/branches\/main/);
+  assert.doesNotMatch(r.gh, /-X PUT|repos\/korallis\/shop-real\/branches\/main/);
   // idempotent: a second run changes nothing and keeps the links
-  const again = realRun("fortis-real", "freal");
+  const again = realRun("shop-real", "freal");
   assert.equal(again.status, 0, again.stderr);
   assert.equal(git(proj, "status", "--porcelain").stdout, "");
 });
 
 test("the pre-push guard refuses pushing the mirrored main; other branches push normally", () => {
-  const { proj, bare } = existingRepo("fortis-push", "master");
-  assert.equal(realRun("fortis-push", "fpush").status, 0);
+  const { proj, bare } = existingRepo("shop-push", "master");
+  assert.equal(realRun("shop-push", "fpush").status, 0);
   const pushMain = git(proj, "push", "origin", "main");
   assert.notEqual(pushMain.status, 0);
   assert.match(pushMain.stderr, /pre-push: refusing to push 'main': in this repo it only mirrors origin\/master/);
@@ -177,19 +177,19 @@ test("the pre-push guard refuses pushing the mirrored main; other branches push 
 });
 
 test("an existing repo with no protection at all gets the kit's protection on its trunk (not main)", () => {
-  existingRepo("fortis-bare", "master");
-  const r = realRun("fortis-bare", "fbare", [], "none");
+  existingRepo("shop-bare", "master");
+  const r = realRun("shop-bare", "fbare", [], "none");
   assert.equal(r.status, 0, r.stderr);
-  assert.match(r.gh, /api -X PUT repos\/korallis\/fortis-bare\/branches\/master\/protection/);
+  assert.match(r.gh, /api -X PUT repos\/korallis\/shop-bare\/branches\/master\/protection/);
 });
 
 test("a local main that agent-stack didn't create is never overwritten", () => {
-  const { proj } = existingRepo("fortis-own-main", "master");
+  const { proj } = existingRepo("shop-own-main", "master");
   git(proj, "branch", "main", "HEAD");
   git(proj, "commit", "-q", "--allow-empty", "-m", "own main work");   // on master, so main != origin/master? keep it different:
   git(proj, "update-ref", "refs/heads/main", "HEAD");
   const own = git(proj, "rev-parse", "main").stdout;
-  const r = realRun("fortis-own-main", "fown");
+  const r = realRun("shop-own-main", "fown");
   assert.equal(r.status, 0, r.stderr);
   assert.match(r.stderr, /a local main exists that agent-stack didn't create; not overwriting it/);
   assert.equal(git(proj, "rev-parse", "main").stdout, own);
@@ -206,9 +206,9 @@ test("regression: an existing MAIN-trunk repo behaves as before: worktrees from 
 });
 
 test("agent-project-check FAILs a stale main mirror and passes once it matches origin/<trunk>", () => {
-  const { proj, seed } = existingRepo("fortis-chk", "master");
-  assert.equal(realRun("fortis-chk", "fchk").status, 0);
-  const check = () => JSON.parse(spawnSync("python3", [join(repo, "bin/agent-project-check"), "fortis-chk", "--json"], { encoding: "utf8", timeout: 120000,
+  const { proj, seed } = existingRepo("shop-chk", "master");
+  assert.equal(realRun("shop-chk", "fchk").status, 0);
+  const check = () => JSON.parse(spawnSync("python3", [join(repo, "bin/agent-project-check"), "shop-chk", "--json"], { encoding: "utf8", timeout: 120000,
     env: { PATH: `${home}/bin:${process.env.PATH}`, HOME: home, OPENRIG_URL: "http://127.0.0.1:9", GIT_CONFIG_GLOBAL: join(home, ".gitconfig") } }).stdout)
     .find((r) => r.check.startsWith("local main mirrors origin/master"));
   assert.equal(check().level, "OK");
@@ -220,40 +220,40 @@ test("agent-project-check FAILs a stale main mirror and passes once it matches o
 });
 
 test("WO21 addendum: a bun lockfile installs each new worktree with bun install --frozen-lockfile (npm ci otherwise)", () => {
-  const { proj, bare, seed } = existingRepo("fortis-bun", "master");
+  const { proj, bare, seed } = existingRepo("shop-bun", "master");
   fs.writeFileSync(join(seed, "bun.lock"), "{}\n"); fs.writeFileSync(join(seed, "package.json"), "{}\n");
   git(seed, "add", "-A"); git(seed, "commit", "-qm", "bun"); git(seed, "push", "-q", "origin", "master"); git(proj, "pull", "-q");
   fs.writeFileSync(join(home, "bin/bun"), `#!/bin/sh\necho "bun $* in $PWD" >> "${home}/bun-calls"\n`, { mode: 0o755 });
   fs.writeFileSync(join(home, "bin/npm"), `#!/bin/sh\necho "npm $*" >> "${home}/npm-calls"\n`, { mode: 0o755 });
-  const W = join(home, "Projects", "fortis-bun-work");
+  const W = join(home, "Projects", "shop-bun-work");
   fs.writeFileSync(join(home, "bin/rig"), `#!/bin/bash\ncase "$1 $2" in "config get") echo "fbun:${W}";; "config init-workspace") mkdir -p "$4"; printf "kind: project\\ninstall:\\n  context: []\\n" > "$4/project.yaml"; printf "workspaces:\\n  - id: default\\n" > "$4/workspace.yaml";; "watchdog list") echo "[]";; esac\nexit 0\n`, { mode: 0o755 });
-  const r = spawnSync(join(repo, "bin/agent-project-new"), ["--name", "fortis-bun", "--rig", "fbun", "--team", "small", "--no-up", "--no-github"],
+  const r = spawnSync(join(repo, "bin/agent-project-new"), ["--name", "shop-bun", "--rig", "fbun", "--team", "small", "--no-up", "--no-github"],
     { encoding: "utf8", env: { PATH: `${home}/bin:${process.env.PATH}`, HOME: home, USER: "t", GIT_CONFIG_GLOBAL: join(home, ".gitconfig"), OPENRIG_URL: "http://127.0.0.1:9" } });
   assert.equal(r.status, 0, r.stderr.slice(-400));
   const calls = fs.readFileSync(join(home, "bun-calls"), "utf8").trim().split("\n");
   assert.equal(calls.length, 10);
-  for (const c of calls) assert.match(c, /^bun install --frozen-lockfile in .*fortis-bun\.worktrees\/[a-z0-9-]+$/);
+  for (const c of calls) assert.match(c, /^bun install --frozen-lockfile in .*shop-bun\.worktrees\/[a-z0-9-]+$/);
   assert.ok(!fs.existsSync(join(home, "npm-calls")), "no npm ci for a bun project");
   fs.rmSync(join(home, "bin/bun")); fs.rmSync(join(home, "bin/npm"));
 });
 
 // ---- QA round 1 (PR #23) ----
 test("QA: failed protection reads (HTTP 503) change nothing on GitHub: no label, no PUT", () => {
-  existingRepo("fortis-503", "master");
-  const r = realRun("fortis-503", "f503", [], "503");
+  existingRepo("shop-503", "master");
+  const r = realRun("shop-503", "f503", [], "503");
   assert.equal(r.status, 0, r.stderr.slice(-400));
   assert.match(r.stdout, /GitHub: could not read master\x27s protection \(rules: .*HTTP 503.*; branch protection: .*HTTP 503.*\); nothing changed/);
   assert.doesNotMatch(r.gh, /-X PUT|label create/);
 });
 
 test("QA: main checked out in a LINKED worktree is never moved, by setup or by sync", () => {
-  const { proj, seed } = existingRepo("fortis-linked", "master");
-  assert.equal(realRun("fortis-linked", "flink").status, 0);
+  const { proj, seed } = existingRepo("shop-linked", "master");
+  assert.equal(realRun("shop-linked", "flink").status, 0);
   const side = join(home, "linked-main"); fs.rmSync(side, { recursive: true, force: true });
   assert.equal(git(proj, "worktree", "add", "-q", side, "main").status, 0);
   fs.appendFileSync(join(seed, "README.md"), "x\n"); git(seed, "commit", "-qam", "x"); git(seed, "push", "-q", "origin", "master");
   const before = git(proj, "rev-parse", "main").stdout;
-  const again = realRun("fortis-linked", "flink");
+  const again = realRun("shop-linked", "flink");
   assert.match(again.stderr, /main is checked out in a worktree; mirror not set/);
   assert.equal(git(proj, "rev-parse", "main").stdout, before);
   const cat = join(home, "sync-cat.yaml"); fs.writeFileSync(cat, `workspaces:\n  - id: x\n    root: ${proj}-work\n`);
@@ -265,35 +265,35 @@ test("QA: main checked out in a LINKED worktree is never moved, by setup or by s
 });
 
 test("QA: with core.hooksPath (the project\x27s own hooks), nothing is written there and the check FAILs the missing guard", () => {
-  const { proj } = existingRepo("fortis-hooks", "master");
+  const { proj } = existingRepo("shop-hooks", "master");
   fs.mkdirSync(join(proj, ".husky"), { recursive: true }); git(proj, "config", "core.hooksPath", ".husky");
-  const r = realRun("fortis-hooks", "fhook");
+  const r = realRun("shop-hooks", "fhook");
   assert.equal(r.status, 0, r.stderr.slice(-300));
   assert.match(r.stderr, /core\.hooksPath is .*\.husky \(the project\x27s own hooks\): add the agent-stack pre-commit and pre-push checks there by hand/);
   assert.deepEqual(fs.readdirSync(join(proj, ".husky")), []);
-  const chk = JSON.parse(spawnSync("python3", [join(repo, "bin/agent-project-check"), "fortis-hooks", "--json"], { encoding: "utf8", timeout: 120000,
+  const chk = JSON.parse(spawnSync("python3", [join(repo, "bin/agent-project-check"), "shop-hooks", "--json"], { encoding: "utf8", timeout: 120000,
     env: { PATH: `${home}/bin:${process.env.PATH}`, HOME: home, OPENRIG_URL: "http://127.0.0.1:9", GIT_CONFIG_GLOBAL: join(home, ".gitconfig") } }).stdout)
     .find((x) => x.check.startsWith("pre-push hook keeps the main mirror"));
   assert.equal(chk.level, "FAIL");
   assert.match(chk.detail, /git runs hooks from .*\.husky/);
   // a guard placed there, executable, passes
   fs.copyFileSync(join(repo, "system/git-hooks/pre-push"), join(proj, ".husky/pre-push")); fs.chmodSync(join(proj, ".husky/pre-push"), 0o755);
-  const ok = JSON.parse(spawnSync("python3", [join(repo, "bin/agent-project-check"), "fortis-hooks", "--json"], { encoding: "utf8", timeout: 120000,
+  const ok = JSON.parse(spawnSync("python3", [join(repo, "bin/agent-project-check"), "shop-hooks", "--json"], { encoding: "utf8", timeout: 120000,
     env: { PATH: `${home}/bin:${process.env.PATH}`, HOME: home, OPENRIG_URL: "http://127.0.0.1:9", GIT_CONFIG_GLOBAL: join(home, ".gitconfig") } }).stdout)
     .find((x) => x.check.startsWith("pre-push hook keeps the main mirror"));
   assert.equal(ok.level, "OK");
 });
 
 test("WO22: agent-project-new pre-trusts every Claude seat worktree before rig up (the dry run only says so)", () => {
-  existingRepo("fortis-trust", "master");
+  existingRepo("shop-trust", "master");
   const cj = join(home, ".claude.json"); fs.writeFileSync(cj, JSON.stringify({ numStartups: 1, projects: {} }), { mode: 0o600 });
-  const dryR = realRun("fortis-trust", "ftrust", ["--dry-run"]);
+  const dryR = realRun("shop-trust", "ftrust", ["--dry-run"]);
   assert.match(dryR.stdout, /would: agent-claude-trust --spec \S+small\.yaml/);
   assert.deepEqual(JSON.parse(fs.readFileSync(cj, "utf8")).projects, {});
-  const r = realRun("fortis-trust", "ftrust");
+  const r = realRun("shop-trust", "ftrust");
   assert.equal(r.status, 0, r.stderr.slice(-300));
   const pr = JSON.parse(fs.readFileSync(cj, "utf8")).projects;
-  const wt = join(home, "Projects", "fortis-trust.worktrees");
+  const wt = join(home, "Projects", "shop-trust.worktrees");
   const claude = ["coord-lead-claude", "arch-claude", "tests-claude", "impl-claude-ui", "review-claude", "review-kimi", "integ-claude"];
   for (const s of claude) assert.equal(pr[fs.realpathSync(join(wt, s))]?.hasTrustDialogAccepted, true, s);
   for (const s of ["impl-codex-1", "qa-codex", "review-codex"]) assert.equal(pr[fs.realpathSync(join(wt, s))], undefined, s);

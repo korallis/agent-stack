@@ -88,5 +88,5 @@ Record the answers in `~/.openrig/state/<project>-stage/` (plan, owner decisions
 When unsure, ask one precise question with your recommendation instead of guessing.
 
 ---
-Built from the fortis-secure onboarding (2026-09-30): an existing repo on `master`, a list of GitHub issues, Vercel and
+Built from a real onboarding (2026-09-30): an existing repo on `master`, a list of GitHub issues, Vercel and
 Neon, deploy on merge.

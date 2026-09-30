@@ -3,7 +3,7 @@
 ## What happened
 Re-running `./install.sh` reinstalled OpenRig **0.5.17** over **0.6.1**. For about 9 minutes the daemon ran unpatched
 0.5.17 against a database that 0.6.1 had already migrated.
-- A rig created in that window (fortis) came up on the old version.
+- A rig created in that window came up on the old version.
 - With local patch 133 gone, a stuck-sweep alert paged the owner.
 
 ## Why

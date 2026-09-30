@@ -101,7 +101,7 @@ Simulated on a copy of the live files: the result is byte-identical to a fresh i
 
 ## Load from outside the daemon (19:20Z)
 Host load reached 101 on 32 cores. The biggest consumers were full daemon vitest runs from openrig-fix (mine) plus
-MTA's tsc/eslint/vitest across worktrees. That starved the daemon again. Changes in this PR:
+One project's tsc/eslint/vitest runs across worktrees. That starved the daemon again. Changes in this PR:
 - the daemon runs at `CPUWeight=1000` (`openrig-daemon-cycle`'s scope and `openrig.service`). IOWeight is set too, but
   the user manager here delegates only `cpu memory pids`, so it takes effect only after the root step in docs/UPGRADE.md;
 - every seat's rules (rig template CULTURE, starter-kit AGENTS, role guidance, skills) now require
