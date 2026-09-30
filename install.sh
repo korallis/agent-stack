@@ -212,7 +212,8 @@ command -v neon >/dev/null && ok "Neon CLI + skills" || todo "Neon CLI (npm i -g
 
 step "Owner address (the human seats message)"
 own=$("$S/bin/agent-owner-address" --source 2>/dev/null || echo "owner@external (default)"); addr=${own%% *}
-if [ -s "$S/config/owner.env" ]; then ok "owner address: $own"
+if [ "${own#* }" = "(config/owner.env)" ]; then ok "owner address: $own"
+elif [ -e "$S/config/owner.env" ]; then todo "owner address: $S/config/owner.env has no valid OWNER_ADDRESS=<name>@external (using $own); fix that line"
 elif [ "${own#* }" = "(default)" ]; then todo "owner address: none registered yet; register yourself (rig gateway human add) or put OWNER_ADDRESS=<you>@external in $S/config/owner.env"
 elif [ $CHECK = 1 ]; then todo "owner address: $own, not recorded in config/owner.env yet (install.sh records it)"
 else printf '# The owner'"'"'s human address, the one seats message (agent-owner-address). Per machine; not tracked.\nOWNER_ADDRESS=%s\n' "$addr" > "$S/config/owner.env"

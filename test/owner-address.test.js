@@ -59,6 +59,36 @@ test("install.sh records a derived address once, never the bare default, and --c
   file(null);
 });
 
+test("install.sh: an invalid or comment-only config/owner.env is reported, not called OK, and never overwritten (QA round 1)", () => {
+  const src = fs.readFileSync(join(repo, "install.sh"), "utf8");
+  const a = src.indexOf('step "Owner address'), b = src.indexOf('step "Kernel operator');
+  const block = (check) => `set -euo pipefail\nS=${S}\nCHECK=${check}\nstep() { :; }\nok() { echo "ok  $*"; }\ntodo() { echo "--  $*"; }\n${src.slice(a, b)}`;
+  const run = (check) => spawnSync("bash", ["-c", block(check)], { encoding: "utf8", env: { PATH: `${bin}:/usr/bin:/bin`, HOME: root } });
+  for (const content of ["OWNER_ADDRESS=not-an-address\n", "# only a comment\n"]) {
+    for (const registered of [[], [{ address: "ann@external" }]]) {
+      humans(registered); fs.writeFileSync(join(S, "config/owner.env"), content);
+      for (const check of [0, 1]) {
+        const r = run(check);
+        assert.equal(r.status, 0, r.stderr);
+        assert.doesNotMatch(r.stdout, /^ok  owner address/m, `${JSON.stringify(content)} registered=${registered.length} check=${check}`);
+        assert.match(r.stdout, /config\/owner\.env has no valid OWNER_ADDRESS=<name>@external \(using \S+@external \((OpenRig human registry|default)\)\); fix that line/);
+        assert.equal(fs.readFileSync(join(S, "config/owner.env"), "utf8"), content, "the owner's file is left alone");
+      }
+    }
+  }
+  file(null);
+});
+
+test("the registry is read defensively: a failed call, ok:false or odd records give no address (QA round 1, consider)", () => {
+  file(null);
+  for (const body of ['{"ok":false,"humans":[{"address":"ann@external"}]}', '{"ok":true,"humans":[null]}', '{"ok":true,"humans":[{"address":7}]}', '{"ok":true}', "[]"]) {
+    fs.writeFileSync(join(bin, "rig"), `#!/bin/sh\necho '${body}'\nexit 0\n`, { mode: 0o755 });
+    assert.equal(resolve().out, "owner@external (default)", body);
+  }
+  fs.writeFileSync(join(bin, "rig"), `#!/bin/sh\necho '{"ok":true,"humans":[{"address":"ann@external"}]}'\nexit 1\n`, { mode: 0o755 });
+  assert.equal(resolve().out, "owner@external (default)", "a failed rig call is not trusted");
+});
+
 test("the template carries @OWNER@, and config/owner.env stays out of git", () => {
   assert.match(fs.readFileSync(join(repo, "rig/template/CULTURE.md"), "utf8"), /informational row to the owner \(@OWNER@\)/);
   assert.equal(spawnSync("git", ["check-ignore", "-q", "config/owner.env"], { cwd: repo }).status, 0);

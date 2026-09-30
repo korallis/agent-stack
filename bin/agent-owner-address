@@ -31,10 +31,15 @@ def from_file():
 def from_registry():
     try:
         r = subprocess.run(["rig", "gateway", "human", "list", "--json"], capture_output=True, text=True, timeout=20)
-        humans = json.loads(r.stdout).get("humans") or []
-    except (OSError, ValueError, subprocess.TimeoutExpired, AttributeError):
+        data = json.loads(r.stdout) if r.returncode == 0 else None
+    except (OSError, ValueError, subprocess.TimeoutExpired):
         return ""
-    return humans[0].get("address", "") if len(humans) == 1 else ""
+    if not isinstance(data, dict) or data.get("ok") is not True or not isinstance(data.get("humans"), list):
+        return ""
+    humans = data["humans"]
+    if len(humans) != 1 or not isinstance(humans[0], dict) or not isinstance(humans[0].get("address"), str):
+        return ""
+    return humans[0]["address"]
 
 
 for source, get in (("AGENT_OWNER_ADDRESS", from_env), ("config/owner.env", from_file), ("OpenRig human registry", from_registry)):
