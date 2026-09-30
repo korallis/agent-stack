@@ -369,7 +369,7 @@ the lead or a person. Send Jev evidence, not conclusions.
   posted)" or "<state> already posted". Free text is redacted before it
   goes to Jev. The helper refuses if the PR's head or base moves while it collects. A live, not stubbed, Jev `merge`
   in the act band merges on its own (exit 0). A live `merge` below the act bar (review or uncertain band) is NEEDS
-  CONFIRM (exit 3) when every gate the helper checks is green: required checks pass, `independent-review` is success,
+  CONFIRM (exit 3) when every gate the helper checks is green: required checks pass, the review verdict is success,
   QA's proof is a `qa` PASS for this head, the PR is not a draft, GitHub says mergeable, and the branch is neither
   behind nor conflicted. The integrator then checks the repository's own gates (starter-kit journeys, risk tier,
   owner OK), asks the other-family independent reviewer for a one-line exact-head `confirm <sha>`, and merges.
@@ -422,6 +422,26 @@ the lead or a person. Send Jev evidence, not conclusions.
   `Not verified:`, `Untested:`) are repeated in the limits field. QA's latest record stands in for the proof file
   (PASS, BLOCKING or UNCLEAR), and the gate's latest record gives its line in the merge state. Commit statuses are
   read across all pages. A bad config (unknown source, missing or invalid heading) stops the helper with exit 2.
+- **The review verdict:** the first line of the review evidence is always
+  `review verdict: <success|failure>, from <source>; bound to head <sha>`. The verdict reaches Jev even when the
+  report the status links to can't be read (a link outside the PR). It comes from verified sources only. The
+  configured source goes first, then the others, in this order:
+  1. the `independent-review` status on the exact head: its own state and description;
+  2. GitHub PR reviews submitted on the exact head. The review's commit must equal the head, so a review of an older
+     commit never counts as current; such reviews are counted as ignored. APPROVED and CHANGES_REQUESTED are verdicts,
+     combined with any the body declares. A COMMENTED review counts only if its body declares one. Dismissed reviews
+     never count. The reviewer must be a login mapped to another family than the author's, in `identities`
+     (`{ "identities": { "<github login>": "claude" } }`, top level or per repository);
+  3. review comments declaring the head (above). A review `heading` with source `status` makes them the last
+     fallback. Comment sources (review, QA, gate) read PR comments only. A GitHub review is always its own source,
+     under the rules in 2, so a stale, dismissed, pending, unmapped or same-family review never counts as a
+     comment.
+
+  When the verdict comes from a fallback source, that source's report (link, time, author) and its stated limits go
+  into the evidence with it.
+
+  If a verifiable source disagrees with the first one, the verdict is CONFLICT and lists both. If none is
+  verifiable, it is `NONE VERIFIABLE`, with what each source lacked. For the gate, the review must be `success`.
 - **Dispatch:** `agent-dispatch pick-seat --rig R --role implementer --task "..."` lists the running seats of the role
   that are idle with no open work, with their load notes (code), and Jev's `intake.seat` picks one. On review or uncertain the lead picks
   and records why in the row.

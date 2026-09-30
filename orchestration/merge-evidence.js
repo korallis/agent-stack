@@ -137,15 +137,17 @@ const SOURCES = { review: ["status", "comments"], qa: ["proof", "comments"], gat
 // Pure: the effective config for `nwo` from a parsed file (null = defaults). Throws on anything it can't use.
 export function resolveConfig(raw, nwo) {
   const own = (raw?.repos && nwo && raw.repos[nwo]) || {};
-  const cfg = { authorFamily: own.authorFamily || raw?.authorFamily || null };
+  const cfg = { authorFamily: own.authorFamily || raw?.authorFamily || null, identities: { ...raw?.identities, ...own.identities } };
   for (const k of Object.keys(SOURCES)) {
     const c = cfg[k] = { ...DEFAULT_CONFIG[k], ...raw?.[k], ...own[k] };
     if (!SOURCES[k].includes(c.source)) throw new Error(`merge-evidence config: ${k}.source must be ${SOURCES[k].join(" or ")}, not ${JSON.stringify(c.source)}`);
-    if (c.source === "comments") {
-      if (!c.heading) throw new Error(`merge-evidence config: ${k}.heading is required with source "comments"`);
+    if (c.source === "comments" && !c.heading) throw new Error(`merge-evidence config: ${k}.heading is required with source "comments"`);
+    if (c.heading) {   // with source "status", a review heading still lets comments serve as a fallback source
       try { c.headingRe = new RegExp(c.heading); } catch (e) { throw new Error(`merge-evidence config: ${k}.heading is not a valid regex: ${e.message}`); }
     }
   }
+  for (const [login, fam] of Object.entries(cfg.identities))
+    if (!FAMILIES.includes(fam)) throw new Error(`merge-evidence config: identities.${login} must be one of ${FAMILIES.join(", ")}`);
   if (cfg.authorFamily && !FAMILIES.includes(cfg.authorFamily)) throw new Error(`merge-evidence config: authorFamily must be one of ${FAMILIES.join(", ")}`);
   return cfg;
 }
@@ -238,6 +240,50 @@ export function reviewFromComments(notes, headingRe, head, authorFamily) {
   if (!r) return { review: null, problem: `no review comment for ${head} by a seat outside the ${authorFamily} family${recs.length ? ` (${recs.length} same-family or unattributed record(s) ignored)` : ""}` };
   return { review: { state: r.state || "no verdict stated", description: String(r.body).split("\n", 1)[0].slice(0, 200), creator: r.seat, url: r.url || null, source: "comment" },
     note: { url: r.url, at: r.at, author: r.seat, excerpt: String(r.body).replace(/\s+/g, " ").slice(0, 900), limits: statedLimits(r.body) } };
+}
+
+// Pure: the independent review from GitHub PR reviews. Only reviews submitted ON the exact head count (commit ==
+// head); older ones are counted and ignored. The reviewer's family comes from the configured identities (GitHub login
+// -> family); an unmapped login, or an unknown author family, can't be verified as cross-family. APPROVED and
+// CHANGES_REQUESTED are verdicts (combined with any the body declares); a COMMENTED review counts only when its own
+// lines declare one. Dismissed and pending reviews never count. The latest counting review decides.
+export function reviewFromPrReviews(reviews, head, authorFamily, identities = {}) {
+  const all = (reviews || []).filter((r) => !["DISMISSED", "PENDING"].includes(r.reviewState));
+  const stale = all.filter((r) => r.commit !== head).length;
+  const staleNote = stale ? `; ${stale} review(s) on another commit ignored` : "";
+  const onHead = all.filter((r) => r.commit === head).map((r) => ({ ...r, state: verdictOf(r.body, r.reviewState), family: identities[r.author] || null })).filter((r) => r.state);
+  if (!onHead.length) return { verdict: null, problem: `no GitHub review with a verdict on ${head}${staleNote}` };
+  if (!authorFamily) return { verdict: null, problem: `the PR author's model family is unknown, so no GitHub review can be verified as cross-family${staleNote}` };
+  const r = onHead.filter((x) => x.family && x.family !== authorFamily).at(-1);
+  if (!r) return { verdict: null, problem: `no GitHub review on ${head} by a login mapped to a family other than ${authorFamily} (${onHead.length} unmapped or same-family; map logins in "identities")${staleNote}` };
+  return { verdict: { state: r.state, by: r.author, source: `GitHub PR review ${r.reviewState} by ${r.author} (${r.family} family; the author is ${authorFamily}) submitted on commit ${head}`, url: r.url, at: r.at,
+    excerpt: String(r.body || "").replace(/\s+/g, " ").slice(0, 900), limits: statedLimits(r.body) }, problem: stale ? staleNote.slice(2) : null };
+}
+
+const statusRecord = (statuses, context) => { const ir = (statuses || []).find((s) => s.context === context);
+  return ir ? { state: ir.state, description: ir.description || "", creator: ir.creator?.login || "?", url: ir.target_url || null, source: "status" } : null; };
+
+// Pure: the review verdict that goes to Jev, from verified sources only, in order: the configured primary source,
+// then the others (the independent-review status on the exact head -- its own state and description --, GitHub
+// reviews on the exact head, review comments declaring the head). The first verifiable one gives the verdict; a
+// verifiable source that disagrees makes it a conflict. With none, `why` says what each source lacked.
+export function reviewVerdict({ head, primary = "status", status, statusContext = "independent-review", prReview, commentReview }) {
+  const bySource = {
+    status: status && ["success", "failure"].includes(status.state)
+      ? { verdict: { state: status.state, source: `${statusContext} status on ${head} (${status.state}, "${status.description || ""}", by ${status.creator})`, url: status.url } }
+      : { problem: status ? `the ${statusContext} status on ${head} is ${status.state}, not a verdict` : `no ${statusContext} status on ${head}` },
+    reviews: prReview?.verdict ? { ...prReview, verdict: { ...prReview.verdict, report: { kind: "GitHub review", url: prReview.verdict.url, at: prReview.verdict.at, author: prReview.verdict.by, excerpt: prReview.verdict.excerpt, limits: prReview.verdict.limits } } } : prReview || { problem: "GitHub reviews not read" },
+    comments: commentReview ? { verdict: commentReview.review && { state: commentReview.review.state, source: `review comment by seat ${commentReview.review.creator} declaring head ${head}`, url: commentReview.review.url, report: commentReview.note && { kind: "review comment", ...commentReview.note } }, problem: commentReview.problem }
+      : { problem: "no review comment heading configured" },
+  };
+  const order = primary === "comments" ? ["comments", "status", "reviews"] : ["status", "reviews", "comments"];
+  const found = order.filter((k) => bySource[k].verdict && ["success", "failure"].includes(bySource[k].verdict.state)).map((k) => ({ key: k, ...bySource[k].verdict }));
+  const unclear = order.filter((k) => bySource[k].verdict && !found.some((x) => x.key === k)).map((k) => `${k}: ${bySource[k].verdict.state}`);
+  if (!found.length) return { state: null, why: order.map((k) => `${k}: ${bySource[k].verdict ? bySource[k].verdict.state : bySource[k].problem}`).join("; ") };
+  const [first] = found, other = found.filter((x) => x.state !== first.state);
+  return { state: other.length ? "conflict" : first.state, first: first.state, source: first.source, url: first.url || null, key: first.key, report: first.report || null,
+    others: found.slice(1).map((x) => `${x.state} from ${x.source}`), conflict: other.length ? other.map((x) => `${x.state} from ${x.source}`) : null,
+    notes: [...unclear, ...order.map((k) => bySource[k].problem && bySource[k].verdict ? `${k}: ${bySource[k].problem}` : null).filter(Boolean)] };
 }
 
 // Pure: QA's verdict from comments, in the shape of a bug-review-board proof (the same exact-head rule applies).
@@ -350,7 +396,13 @@ export function buildMergeInput(f) {
     ? "MISSING: no required checks reported for this head"
     : `${checks.length} required check(s) on ${f.head}: ` + checks.map((c) => `${c.name}=${c.bucket}`).join(", ")
       + (failed.length ? `; NOT passing: ${failed.map((c) => c.name).join(", ")}` : "; all pass");
+  const rv = f.reviewVerdict;
   const review = [
+    ...(rv ? [rv.state
+      ? `review verdict: ${rv.state === "conflict" ? `CONFLICT (${rv.first} from ${rv.source}; ${rv.conflict.join("; ")})` : `${rv.state}, from ${rv.source}`}; bound to head ${f.head}`
+        + (rv.others?.length && rv.state !== "conflict" ? `; agreeing: ${rv.others.join("; ")}` : "") + (rv.notes?.length ? `; ${rv.notes.join("; ")}` : "")
+      : `review verdict: NONE VERIFIABLE on ${f.head} (${rv.why})`] : []),
+    ...(f.verdictReport ? [`${f.verdictReport.kind} report, the source of the verdict above (${f.verdictReport.url}, ${f.verdictReport.at}, by ${f.verdictReport.author}): ${f.verdictReport.excerpt}`] : []),
     f.independentReview?.source === "comment"
       ? `independent review comment on ${f.head}: ${f.independentReview.state} "${f.independentReview.description}" (seat ${f.independentReview.creator}, another family than the author's ${f.authorFamily}${f.independentReview.url ? `, ${f.independentReview.url}` : ""})`
       : f.independentReview
@@ -363,9 +415,9 @@ export function buildMergeInput(f) {
       : f.reviewNote
       ? `independent review report, linked from the ${RC} status (${f.reviewNote.url}, ${f.reviewNote.at}, by ${f.reviewNote.author}): ${f.reviewNote.excerpt}`
       : f.independentReview?.url
-        ? `independent review report: ${f.independentReview.url} (linked from the status, outside this PR; not read)`
+        ? `independent review report: ${f.independentReview.url} (linked from the status, outside this PR, so not read${rv?.state && rv.key !== "status" ? `; the verdict above comes from ${rv.key === "reviews" ? "the GitHub review" : "the review comment"}` : ""})`
         : f.sources?.review === "comments" ? null : `MISSING: the ${RC} status links no review report (no target_url), so what the reviewer verified is not established`,
-    ...(!f.reviewNote && f.unlinkedNote
+    ...(!f.reviewNote && f.unlinkedNote && f.unlinkedNote.url !== f.verdictReport?.url   // not the verdict's own source again
       ? [`UNVERIFIED, not linked from the status and not treated as the review: the latest PR comment naming ${f.head.slice(0, 7)} (${f.unlinkedNote.url}, ${f.unlinkedNote.at}, by ${f.unlinkedNote.author}): ${f.unlinkedNote.excerpt}`]
       : []),
     f.brb
@@ -380,6 +432,7 @@ export function buildMergeInput(f) {
     `mergeable: ${f.mergeable}; ${mergeStateLine(f)}; draft: ${f.isDraft}`,
     ...(f.gate ? [gateLine(f)] : []),
     ...(f.reviewNote?.limits?.length ? [`limits stated by the independent review: ${f.reviewNote.limits.join("; ")}`] : []),
+    ...(f.verdictReport?.limits?.length ? [`limits stated by the ${f.verdictReport.kind}: ${f.verdictReport.limits.join("; ")}`] : []),
     `deploy effect: ${f.deploy || "MISSING: not stated (see the rig CULTURE specifics)"}`,
     f.rollback ? `rollback: ${f.rollback}` : `rollback: not stated (proposed default: revert the squash commit on ${f.baseRef})`,
   ].join("\n");
@@ -437,11 +490,14 @@ export function gather(pr, { repo, mission, slice, change, deploy, rollback, con
   const namesHead = (body) => (body || "").includes(short);
   const notes = [
     ...(v.comments || []).map((c) => ({ body: c.body, url: c.url, at: c.createdAt, author: c.author?.login })),
-    ...(v.reviews || []).map((r) => ({ body: r.body, url: r.url || `review ${r.id}`, at: r.submittedAt, author: r.author?.login, commit: r.commit?.oid, reviewState: r.state })),
+    ...(v.reviews || []).map((r) => ({ body: r.body, url: r.url || `review ${r.id}`, at: r.submittedAt, author: r.author?.login, commit: r.commit?.oid, reviewState: r.state, kind: "review" })),
   ].sort((a, b) => String(a.at).localeCompare(String(b.at)));
-  const gate = gateFrom(cfg, { statuses, notes, head: v.headRefOid });
+  // Comment sources read PR comments only. A GitHub review is its own source with its own eligibility (exact-head
+  // commit, not dismissed or pending, a mapped login of another family), so it never re-enters as a "comment".
+  const comments = notes.filter((n) => n.kind !== "review");
+  const gate = gateFrom(cfg, { statuses, notes: comments, head: v.headRefOid });
   const author = { family: authorFamily || cfg.authorFamily || familyOf((v.headRefName || "").match(/^agent\/([\w.-]+)/)?.[1]) || null };
-  if (cfg.qa.source === "comments") { brb = qaFromComments(notes, cfg.qa.headingRe, v.headRefOid); brbWhere = `PR comments headed /${cfg.qa.heading}/`; }
+  if (cfg.qa.source === "comments") { brb = qaFromComments(comments, cfg.qa.headingRe, v.headRefOid); brbWhere = `PR comments headed /${cfg.qa.heading}/`; }
   const br = [...notes].reverse().find((c) => /^## Blast radius/m.test(c.body || ""));
   const blast = br ? { url: br.url, at: br.at, namesHead: namesHead(br.body) || br.commit === v.headRefOid,
     excerpt: br.body.slice(br.body.search(/^## Blast radius/m)).replace(/\s+/g, " ").slice(0, 700) } : null;
@@ -449,15 +505,21 @@ export function gather(pr, { repo, mission, slice, change, deploy, rollback, con
   // nothing else. Without a link, the latest comment naming the head is passed on only as UNVERIFIED.
   const note = (c) => c && { url: c.url, at: c.at, author: c.author || "?", excerpt: c.body.replace(/\s+/g, " ").slice(0, 900), limits: statedLimits(c.body) };
   let independentReview = null, reviewNote = null, unlinkedNote = null, reviewProblem = null;
+  const commentReview = cfg.review.headingRe
+    ? reviewFromComments(comments, cfg.review.headingRe, v.headRefOid, author.family) : null;
+  const prReview = reviewFromPrReviews(notes.filter((n) => n.kind === "review"), v.headRefOid, author.family, cfg.identities || {});
   if (cfg.review.source === "comments") {
-    ({ review: independentReview, note: reviewNote = null, problem: reviewProblem = null } = reviewFromComments(notes, cfg.review.headingRe, v.headRefOid, author.family));
+    ({ review: independentReview, note: reviewNote = null, problem: reviewProblem = null } = reviewFromComments(comments, cfg.review.headingRe, v.headRefOid, author.family));
   } else {
-    const ir = statuses.find((s) => s.context === cfg.review.context);
-    if (ir) independentReview = { state: ir.state, description: ir.description || "", creator: ir.creator?.login || "?", url: ir.target_url || null, source: "status" };
+    const ir = statuses.find((s) => s.context === cfg.review.context);   // its target_url links the report
+    independentReview = statusRecord(statuses, cfg.review.context);
     const link = ir?.target_url || null;
     reviewNote = link ? note(notes.find((c) => c.url && c.url === link)) || null : null;
     unlinkedNote = note([...notes].reverse().find((c) => (c.body || "").length > 40 && (namesHead(c.body) || c.commit === v.headRefOid)));
   }
+  const reviewVerdictFacts = reviewVerdict({ head: v.headRefOid, primary: cfg.review.source, statusContext: cfg.review.context,
+    status: independentReview?.source === "status" ? independentReview : cfg.review.source === "status" ? null : statusRecord(statuses, cfg.review.context),
+    prReview, commentReview });
   // Applicability from verified facts only: the actual diff and the PR's creation time against the configured cutoff.
   const files = parseDiff(gh("pr", "diff", String(pr), ...R));
   let culture = "";
@@ -473,7 +535,10 @@ export function gather(pr, { repo, mission, slice, change, deploy, rollback, con
     pr: v.number, head: v.headRefOid, base: v.baseRefOid, baseRef: v.baseRefName, headRef: v.headRefName,
     mergeable: v.mergeable, mergeState: v.mergeStateStatus, reviewDecision: v.reviewDecision || null, isDraft: v.isDraft, change: change || v.title, checks,
     requirements, gate, gateContext: cfg.gate.context, reviewContext: cfg.review.context, sources: { review: cfg.review.source, qa: cfg.qa.source, gate: cfg.gate.source },
-    authorFamily: author.family, independentReview, reviewProblem, reviewNote, unlinkedNote, brb, brbWhere, brbNA, blastRadius: blast, blastNA, deploy, rollback,
+    authorFamily: author.family, independentReview, reviewProblem, reviewNote,
+    reviewVerdict: reviewVerdictFacts,
+    // The report of the source the verdict came from, when the lines below don't already carry it (a fallback source).
+    verdictReport: reviewVerdictFacts.key && reviewVerdictFacts.key !== cfg.review.source ? reviewVerdictFacts.report : null, unlinkedNote, brb, brbWhere, brbNA, blastRadius: blast, blastNA, deploy, rollback,
   };
 }
 
@@ -482,7 +547,7 @@ export function gather(pr, { repo, mission, slice, change, deploy, rollback, con
 export const passes = (rec) => !rec?.stubbed && rec?.decided_by === "jev" && rec?.band === "act" && rec?.result?.decision === "merge";
 
 // The deterministic gates this helper can check from the evidence it gathered: required checks pass, the
-// independent-review status is success, QA's bug-review-board proof is a qa artifact with PASS for exactly this head,
+// review verdict (or, without one, the independent-review status) is success, QA's bug-review-board proof is a qa artifact with PASS for exactly this head,
 // the PR is not a draft, GitHub says it is mergeable, and the branch is neither behind its base nor conflicted.
 // Returns what is not green. Repository-specific gates (the integrator role's starter-kit journeys, risk tier and
 // owner OK) are not visible here and stay the integrator's to check.
@@ -493,7 +558,8 @@ export function gateProblems(f) {
   if (["BEHIND", "DIRTY", "UNKNOWN", undefined, null, ""].includes(f.mergeState)) p.push(`merge state ${f.mergeState || "unknown"} (the branch must be up to date with its base and free of conflicts)`);
   if (!f.checks?.length) p.push("no required checks reported");
   else if (f.checks.some((c) => c.bucket !== "pass")) p.push(`required checks not passing: ${f.checks.filter((c) => c.bucket !== "pass").map((c) => c.name).join(", ")}`);
-  if (f.independentReview?.state !== "success") p.push(f.independentReview ? `independent review is ${f.independentReview.state}` : `independent review missing${f.reviewProblem ? ` (${f.reviewProblem})` : ""}`);
+  if (f.reviewVerdict) { if (f.reviewVerdict.state !== "success") p.push(f.reviewVerdict.state ? `review verdict ${f.reviewVerdict.state}` : `no verifiable review verdict (${f.reviewVerdict.why})`); }
+  else if (f.independentReview?.state !== "success") p.push(f.independentReview ? `independent review is ${f.independentReview.state}` : `independent review missing${f.reviewProblem ? ` (${f.reviewProblem})` : ""}`);
   if (!f.brbNA && !(f.brb && f.brb.artifact_type === "qa" && f.brb.verdict === "PASS" && f.brb.candidate_sha === f.head)) p.push("no bug-review-board qa PASS for this head");
   return p;
 }
@@ -508,7 +574,7 @@ export function outcome(rec, facts) {
     const problems = gateProblems(facts);
     return problems.length
       ? { code: 1, text: `merge gate: HOLD (Jev merge below the act bar, ${rec.band} band, and a gate this helper checks is not green: ${problems.join("; ")})` }
-      : { code: 3, text: `merge gate: NEEDS CONFIRM (Jev merge below the act bar, ${rec.band} band; the gates this helper checks are green: required checks, independent-review, ${facts.brbNA ? `QA verdict not required (${facts.brbNA.replace(/^N\/A: /, "")})` : "QA's qa PASS for this head"}, not a draft, mergeable, up to date). Check the repository's own gates too (integrator role: starter-kit journeys, risk tier, owner OK), then ask the other-family independent reviewer for a one-line exact-head "confirm ${facts.head}", and merge with --match-head-commit ${facts.head}` };
+      : { code: 3, text: `merge gate: NEEDS CONFIRM (Jev merge below the act bar, ${rec.band} band; the gates this helper checks are green: required checks, the review verdict, ${facts.brbNA ? `QA verdict not required (${facts.brbNA.replace(/^N\/A: /, "")})` : "QA's qa PASS for this head"}, not a draft, mergeable, up to date). Check the repository's own gates too (integrator role: starter-kit journeys, risk tier, owner OK), then ask the other-family independent reviewer for a one-line exact-head "confirm ${facts.head}", and merge with --match-head-commit ${facts.head}` };
   }
   return { code: 1, text: `merge gate: HOLD (${rec?.decided_by}/${rec?.band}/${rec?.result?.decision})` };
 }
