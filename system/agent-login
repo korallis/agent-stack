@@ -2,20 +2,30 @@
 # Usage: agent-login <claude|codex|kimi> <label>   (kimi = international kimi.ai OAuth)
 # Runs the CLIProxyAPI OAuth login for ONE account, then labels the new credential (note field)
 # and prints a non-secret identity summary. Credentials stay in ~/.cli-proxy-api (0600).
+# If the label can't be set, it says so and exits 4 (the credential itself is kept and in use). The management key
+# reaches curl on a file descriptor, never on the command line.
 set -euo pipefail
 prov=${1:?claude|codex|kimi}; label=${2:?label e.g. claude-a}
-source ~/.config/agent-stack/secrets/cliproxy.env
-M=http://127.0.0.1:8317/v8/management; H="Authorization: Bearer $CLIPROXY_MGMT_KEY"
-dir=~/.cli-proxy-api
+source "${AGENT_LOGIN_SECRETS:-$HOME/.config/agent-stack/secrets/cliproxy.env}"
+M=${AGENT_LOGIN_MGMT:-http://127.0.0.1:8317/v8/management}
+dir=${AGENT_LOGIN_DIR:-$HOME/.cli-proxy-api}
 before=$(ls "$dir"/${prov}-*.json 2>/dev/null | sort || true)
 case $prov in claude) flag=-claude-login;; codex) flag=-codex-login;; kimi) flag=-kimi-ai-login;; *) echo "bad provider"; exit 2;; esac
 echo ">> Open the URL below in a PRIVATE/INCOGNITO window signed in to the account for '$label'."
-~/.local/share/agent-stack/cliproxyapi/current/cli-proxy-api -config "$dir/config.yaml" $flag -no-browser
+"${AGENT_LOGIN_PROXY_BIN:-$HOME/.local/share/agent-stack/cliproxyapi/current/cli-proxy-api}" -config "$dir/config.yaml" $flag -no-browser
 after=$(ls "$dir"/${prov}-*.json 2>/dev/null | sort || true)
 new=$(comm -13 <(echo "$before") <(echo "$after") | head -1)
 if [ -z "$new" ]; then echo "!! No new credential file. Same account as an existing one? (refreshed in place)"; exit 3; fi
 chmod 600 "$new"; name=$(basename "$new")
 sleep 2
-curl -fsS -X PATCH -H "$H" -H 'Content-Type: application/json' "$M/credentials/fields" \
-  -d "$(jq -nc --arg n "$name" --arg l "$label" '{name:$n, note:$l}')" >/dev/null
+out=$(curl -sS -m 20 -w '\n%{http_code}' -X PATCH -H @<(printf 'Authorization: Bearer %s\n' "$CLIPROXY_MGMT_KEY") \
+  -H 'Content-Type: application/json' "$M/credentials/fields" \
+  -d "$(jq -nc --arg n "$name" --arg l "$label" '{name:$n, note:$l}')" 2>&1) && rc=0 || rc=$?
+code=$(tail -n1 <<<"$out"); body=$(head -n -1 <<<"$out" | tr -d '\n' | cut -c1-200)
+# Success needs both a 2xx answer AND a complete transfer: a 200 whose body was cut off is not a confirmed label.
+if [[ $rc != 0 || $code != 2?? ]]; then
+  echo "!! Could not label $name as '$label' (HTTP $code, curl exit $rc${body:+: $body}). The credential itself is saved and in use." >&2
+  echo "   Label it later: agent-login's PATCH $M/credentials/fields with {\"name\":\"$name\",\"note\":\"$label\"}." >&2
+  exit 4
+fi
 jq -r --arg l "$label" --arg f "$name" '"OK label=\($l) type=\(.type) email=\(.email // "?") plan=\(.plan_type // .account_type // "?") file=\($f)"' "$new"
