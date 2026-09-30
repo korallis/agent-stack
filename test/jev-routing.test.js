@@ -1147,3 +1147,42 @@ process.stdout.write(typeof out === "string" ? out : JSON.stringify(out));
   r = run("--extra-evidence", extra); assert.equal(r.status, 2); assert.match(r.stderr, /--extra-evidence .*remedy\.md is empty/);
   r = run("--extra-evidence", join(root, "absent.md")); assert.equal(r.status, 2); assert.match(r.stderr, /--extra-evidence .*absent\.md: ENOENT/);
 });
+
+// ---- WO49: a CI-configuration-only change needs no bug-review-board verdict (it still needs a blast radius) -------
+test("bug-review-board N/A for CI configuration only; mixed with source it is required; blast radius still applies", () => {
+  const at = { createdAt: "2026-09-30T18:00:00Z", cutoff: { iso: "2026-09-30T13:00:00.000Z", source: "x" } };
+  const d = (...paths) => parseDiff(diffOf(paths.map((p) => [p])));
+  const wf = d(".github/workflows/ci.yml");
+  assert.match(brbNotApplicable({ ...at, files: wf }), /^N\/A: 1 changed path\(s\), all CI configuration \(`\.github\/workflows\/\*\*`.*\), no user-facing behaviour: \.github\/workflows\/ci\.yml$/);
+  assert.equal(blastNotApplicable({ files: wf }), null, "a CI change can break builds: blast radius still required");
+  assert.equal(brbNotApplicable({ ...at, files: d(".github/workflows/ci.yml", "src/app.ts") }), null, "workflow + source: required");
+  assert.match(brbNotApplicable({ ...at, files: d("docs/deploy.md", ".github/workflows/deploy.yml") }), /^N\/A: 2 changed path\(s\), all docs or CI configuration \(.*; docs\/\*\* or \*\.md\)/);
+  for (const p of [".github/actions/setup/action.yml", ".gitlab-ci.yml", ".circleci/config.yml", ".buildkite/pipeline.yml", "azure-pipelines.yml", "Jenkinsfile"])
+    assert.match(brbNotApplicable({ ...at, files: d(p) }) || "", /all CI configuration/, p);
+  for (const p of [".github/CODEOWNERS", "src/.github/workflows/x.yml", "scripts/ci.sh", "Jenkinsfile.bak", ".github/dependabot.yml"])
+    assert.equal(brbNotApplicable({ ...at, files: d(p) }), null, `${p} is not CI configuration here`);
+  const renamed = parseDiff("diff --git a/src/build.ts b/.github/workflows/build.yml\nsimilarity index 90%\nrename from src/build.ts\nrename to .github/workflows/build.yml\n");
+  assert.equal(brbNotApplicable({ ...at, files: renamed }), null, "a rename out of source is not CI-only");
+});
+
+test("agent-merge-evidence end to end: a workflow-only PR says N/A for the QA verdict and MISSING for the blast radius", () => {
+  const ghDir = join(root, "gh-wo49"); fs.mkdirSync(ghDir, { recursive: true });
+  fs.writeFileSync(join(ghDir, "gh"), `#!${process.execPath}
+const f = JSON.parse(require("fs").readFileSync(process.env.GH_FIXTURE, "utf8")), a = process.argv.slice(2).join(" ");
+const out = a.startsWith("pr view") ? f.view : a.startsWith("pr diff") ? f.diff : a.startsWith("pr checks") ? f.checks : a.includes("/statuses") ? f.statuses : undefined;
+if (out === undefined) { process.stderr.write("unexpected gh " + a); process.exit(9); }
+process.stdout.write(typeof out === "string" ? out : JSON.stringify(out));
+`, { mode: 0o755 });
+  const fx = join(root, "wo49-fixture.json");
+  fs.writeFileSync(fx, JSON.stringify({ view: { number: 13, title: "ci: raise job timeout", createdAt: "2026-09-30T18:00:00Z", headRefOid: H, baseRefOid: B, baseRefName: "main",
+      headRefName: "agent/impl-codex-1", mergeable: "MERGEABLE", mergeStateStatus: "CLEAN", reviewDecision: "", isDraft: false, comments: [], reviews: [] },
+    diff: "diff --git a/.github/workflows/ci.yml b/.github/workflows/ci.yml\n--- a/.github/workflows/ci.yml\n+++ b/.github/workflows/ci.yml\n@@ -1 +1 @@\n-    timeout-minutes: 10\n+    timeout-minutes: 20\n",
+    checks: [{ name: "verify", state: "SUCCESS", bucket: "pass" }], statuses: [] }));
+  const r = spawnSync(process.execPath, [join(repo, "orchestration/merge-evidence.js"), "13", "--repo", "o/r", "--mission", "m", "--slice", "s"], { encoding: "utf8",
+    env: { PATH: `${ghDir}:${process.env.PATH}`, OPENRIG_WORK_ROOT: join(root, "wo49-work"), GH_FIXTURE: fx, AGENT_BRB_REQUIRED_SINCE: "2026-09-30T13:00:00Z" } });
+  assert.equal(r.status, 0, r.stderr);
+  const review = JSON.parse(r.stdout).input.review;
+  assert.match(review, /\nN\/A: 1 changed path\(s\), all CI configuration .*: \.github\/workflows\/ci\.yml\n/);
+  assert.doesNotMatch(review, /MISSING: no bug-review-board proof/);
+  assert.match(review, /MISSING: no blast-radius comment on the PR/, "blast radius still required");
+});
