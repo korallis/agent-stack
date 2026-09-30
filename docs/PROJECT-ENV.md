@@ -80,5 +80,11 @@ Check hosts by name (for example `sed -n 's/^DATABASE_URL=.*@\([^/]*\)\/.*/\1/p'
   `--output-file` (a plain `> file` too: Claude Code captures a command's stdout in a file of its own), and refuses a
   `--no-secrets` that the installed version doesn't have. After the 2026-09-30 leak
   ([docs/incidents/2026-09-30-neon-cs-leak.md](incidents/2026-09-30-neon-cs-leak.md)).
+- **Credential files are never printed.** A machine-wide PreToolUse hook (the credential read guard, below) refuses
+  a command or a read that would print `.env*` (not `.env.example`), `*runtime-url*`, `*.pem`, `prod.env` or the
+  secrets directory into the transcript. Load them by name instead: `set -a; . <file>; set +a; <command>`,
+  `--env-file`, or a dotenv loader in a script. `grep -q '^NAME=' <file>` checks a key exists;
+  `agent-credguard-read-hook --keys <file>` (in `~/.local/share/agent-stack/bin`) lists the key names and nothing
+  else.
 - Browser logins go in `~/.config/agent-stack/secrets/playwright.env` and are typed BY NAME (the Playwright MCP's
   `--secrets`). Never inline an env or credential value into a tool input, because the MCP echoes tool input.

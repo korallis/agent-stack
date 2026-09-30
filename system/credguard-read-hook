@@ -1,0 +1,366 @@
+#!/usr/bin/env node
+// agent-stack credential read guard: a PreToolUse hook for Claude Code (Bash, Read, Grep) and Codex (Bash, which is
+// Codex's exec_command). It refuses a tool call that would PRINT a credential file into the transcript, where it
+// stays (and gets copied, summarised and synced). Using the values without printing them stays allowed:
+// `set -a; . .env; set +a; npm run migrate`, `--env-file .env`, dotenv loaders in scripts, `grep -q KEY .env`.
+//
+//   credguard-read-hook [--runtime claude|codex]      reads the hook input (JSON) on stdin
+//
+// Claude: a deny is JSON on stdout (hookSpecificOutput.permissionDecision = "deny"); it blocks even under
+// bypassPermissions. Codex: a deny is exit 2 with the reason on stderr. Allow = exit 0, no output.
+// Protected paths: DEFAULT_PATTERNS plus one glob per line in ~/.config/agent-stack/credguard-read-paths (local,
+// never committed: put machine- or project-specific paths there). AGENT_CREDGUARD_READ_PATHS overrides that file.
+// Best effort against ACCIDENTAL printing by a seat, not a sandbox: a script that reads and prints a file itself
+// (node -e, python -c) is not parsed. The guard never fails closed on its own errors (a broken hook must not stop
+// every seat); install.sh and agent-never-prompt-check report whether it is installed.
+"use strict";
+const fs = require("node:fs"), path = require("node:path"), os = require("node:os");
+
+const DEFAULT_PATTERNS = ["**/.env", "**/.env.*", "**/*runtime-url*", "**/*.pem", "~/.config/agent-stack/secrets/**", "**/prod.env"];
+// Templates that hold no values.
+const EXEMPT = /(^|\/)\.env\.(example|sample|template)$/;
+
+function patterns(env = process.env, home = os.homedir()) {
+  const file = env.AGENT_CREDGUARD_READ_PATHS || path.join(home, ".config/agent-stack/credguard-read-paths");
+  let extra = [];
+  try { extra = fs.readFileSync(file, "utf8").split("\n").map((l) => l.trim()).filter((l) => l && !l.startsWith("#")); } catch { /* none */ }
+  return [...DEFAULT_PATTERNS, ...extra];
+}
+
+// A glob (**, *, ?; a leading ~/ is the home directory) as a regex over absolute paths.
+function globRe(glob, home) {
+  let g = glob.startsWith("~/") ? home + glob.slice(1) : glob, re = "";
+  for (let i = 0; i < g.length; i++) {
+    const c = g[i];
+    if (c === "*" && g[i + 1] === "*") {
+      if (g[i + 2] === "/") { re += "(?:.*/)?"; i += 2; } else { re += ".*"; i += 1; }
+    } else if (c === "*") re += "[^/]*";
+    else if (c === "?") re += "[^/]";
+    else re += c.replace(/[.+^${}()|[\]\\]/g, "\\$&");
+  }
+  return new RegExp(`^${g.startsWith("/") ? "" : "(?:.*/)?"}${re}$`);
+}
+
+// Basenames a wildcard word could expand to that are protected (cat .env*, cat *.pem): tested without the filesystem.
+const SAMPLES = [".env", ".env.local", ".env.production", "key.pem", "db-runtime-url", "prod.env"];
+
+// Pure: the protected path a word names, or null. Handles ~ / $HOME, relative paths (against cwd), `--opt=path`,
+// `if=path`, `REV:path` (git show), and wildcards.
+function protectedPath(word, { cwd, home, pats }) {
+  if (!word || word === "-") return null;
+  const forms = new Set([word]);
+  const eq = word.indexOf("="); if (eq > 0) forms.add(word.slice(eq + 1));
+  const colon = word.indexOf(":"); if (colon > 0 && !word.includes("://")) forms.add(word.slice(colon + 1));
+  for (let f of forms) {
+    if (!f) continue;
+    f = f.replace(/^~(?=\/|$)/, home).replace(/^\$\{?HOME\}?(?=\/|$)/, home);
+    const abs = path.isAbsolute(f) ? path.normalize(f) : path.join(cwd || "/", f);
+    if (/[*?[]/.test(path.basename(abs))) {
+      const dir = path.dirname(abs), base = globRe(path.basename(abs), home);
+      for (const s of SAMPLES) {
+        const cand = path.join(dir, s);
+        if (base.test(s) && !EXEMPT.test(cand)) { const p = pats.find((x) => globRe(x, home).test(cand)); if (p) return { path: abs, pattern: p }; }
+      }
+      continue;
+    }
+    if (EXEMPT.test(abs)) continue;
+    const p = pats.find((x) => globRe(x, home).test(abs));
+    if (p) return { path: abs, pattern: p };
+  }
+  return null;
+}
+
+// The $( … ) and ` … ` command substitutions in a text (a heredoc body), innermost handled by lex itself.
+function substitutions(text) {
+  const out = [];
+  for (let i = 0; i < text.length; i++) {
+    if (text[i] === "\\") { i++; continue; }
+    if (text[i] === "$" && text[i + 1] === "(") {
+      let depth = 1, j = i + 2;
+      for (; j < text.length && depth; j++) { if (text[j] === "(") depth++; else if (text[j] === ")") depth--; }
+      out.push(text.slice(i + 2, j - 1)); i = j - 1;
+    } else if (text[i] === "`") {
+      const j = text.indexOf("`", i + 1); if (j < 0) break;
+      out.push(text.slice(i + 1, j)); i = j;
+    }
+  }
+  return out;
+}
+
+// ---- a small shell lexer: segments (simple commands) with their words and redirections -----------------------------
+// Command substitutions ($(...), `...`, <(...)) become segments of their own. Heredoc bodies are data, not commands.
+function lex(src) {
+  const segs = []; let seg = { words: [], redirs: [] }, word = null, quotedAll = true, i = 0;
+  const heredocs = [];
+  const endWord = () => { if (word !== null) { if (seg.pendingRedir) { seg.redirs.push({ op: seg.pendingRedir, target: word }); seg.pendingRedir = null; } else seg.words.push({ text: word, sq: quotedAll }); } word = null; quotedAll = true; };
+  const endSeg = () => { endWord(); if (seg.words.length || seg.redirs.length) segs.push(seg); seg = { words: [], redirs: [] }; };
+  const add = (s, single = false) => { word = (word ?? "") + s; if (!single) quotedAll = false; };
+  const sub = (open, close) => {   // returns the inner text of a balanced $( ... ) / <( ... )
+    let depth = 1, j = i, q = null;
+    for (; j < src.length; j++) {
+      const c = src[j];
+      if (q) { if (c === q) q = null; else if (c === "\\" && q === '"') j++; continue; }
+      if (c === "'" || c === '"') q = c;
+      else if (c === "\\") j++;
+      else if (c === open) depth++;
+      else if (c === close && --depth === 0) break;
+    }
+    const inner = src.slice(i, j); i = j + 1; return inner;
+  };
+  while (i < src.length) {
+    const c = src[i];
+    if (c === "\n") {
+      endSeg(); i++;
+      while (heredocs.length) {   // skip each pending heredoc body up to its delimiter line
+        const { delim, strip, expands } = heredocs.shift(), body = [];
+        while (i < src.length) {
+          const nl = src.indexOf("\n", i), line = src.slice(i, nl < 0 ? src.length : nl);
+          i = nl < 0 ? src.length : nl + 1;
+          if ((strip ? line.replace(/^\t+/, "") : line) === delim) break;
+          body.push(line);
+        }
+        // An unquoted delimiter (<<EOF) makes the shell run the body's command substitutions; <<'EOF' is literal.
+        if (expands) for (const inner of substitutions(body.join("\n"))) segs.push(...lex(inner).map((x) => ({ ...x, subst: true })));
+      }
+      continue;
+    }
+    if (c === " " || c === "\t") { endWord(); i++; continue; }
+    if (c === "#" && word === null) { while (i < src.length && src[i] !== "\n") i++; continue; }
+    if (c === "\\") { if (src[i + 1] === "\n") { i += 2; continue; } add(src[i + 1] ?? ""); i += 2; continue; }
+    if (c === "'") { const j = src.indexOf("'", i + 1); add(src.slice(i + 1, j < 0 ? src.length : j), true); i = j < 0 ? src.length : j + 1; continue; }
+    if (c === '"') {
+      i++; let s = "";
+      while (i < src.length && src[i] !== '"') {
+        if (src[i] === "\\") { s += src[i + 1] ?? ""; i += 2; continue; }
+        if (src[i] === "$" && src[i + 1] === "(") { i += 2; const inner = sub("(", ")"); segs.push(...lex(inner).map((x) => ({ ...x, subst: true }))); s += "$(…)"; continue; }
+        if (src[i] === "`") { i++; const j = src.indexOf("`", i); segs.push(...lex(src.slice(i, j < 0 ? src.length : j)).map((x) => ({ ...x, subst: true }))); s += "$(…)"; i = j < 0 ? src.length : j + 1; continue; }
+        s += src[i++];
+      }
+      i++; add(s); continue;
+    }
+    if (c === "$" && src[i + 1] === "(" && src[i + 2] !== "(") { i += 2; const inner = sub("(", ")"); segs.push(...lex(inner).map((x) => ({ ...x, subst: true }))); add("$(…)"); continue; }
+    if (c === "`") { i++; const j = src.indexOf("`", i); segs.push(...lex(src.slice(i, j < 0 ? src.length : j)).map((x) => ({ ...x, subst: true }))); add("$(…)"); i = j < 0 ? src.length : j + 1; continue; }
+    if ((c === "<" || c === ">") && src[i + 1] === "(") { i += 2; const inner = sub("(", ")"); segs.push(...lex(inner).map((x) => ({ ...x, subst: true }))); add("<(…)"); continue; }
+    if (c === "(" || c === ")") { endSeg(); i++; continue; }   // ( subshell ), and the parens of (( … ))
+    if (c === "|" || c === ";" || c === "&") {
+      if (c === "&" && src[i + 1] === ">") { endWord(); seg.pendingRedir = ">"; i += src[i + 2] === ">" ? 3 : 2; continue; }
+      endSeg(); i += (src[i + 1] === c || (c === "|" && src[i + 1] === "&")) ? 2 : 1; continue;
+    }
+    if (c === "<" || c === ">") {
+      const fdOnly = word !== null && /^\d+$/.test(word);
+      if (fdOnly) word = null; else endWord();
+      if (c === "<" && src[i + 1] === "<" && src[i + 2] === "<") { seg.pendingRedir = "<<<"; i += 3; continue; }
+      if (c === "<" && src[i + 1] === "<") {   // heredoc: remember the delimiter; its body is skipped at the next newline
+        i += 2; let strip = false; if (src[i] === "-") { strip = true; i++; }
+        while (src[i] === " ") i++;
+        let d = ""; while (i < src.length && !/[\s;|&<>]/.test(src[i])) d += src[i++];
+        heredocs.push({ delim: d.replace(/['"\\]/g, ""), strip, expands: !/['"\\]/.test(d) }); continue;
+      }
+      let op = c; i++;
+      if (src[i] === ">" || src[i] === "|") { op += src[i] === ">" ? ">" : ""; i++; }
+      if (src[i] === "&") { i++; while (/\d|-/.test(src[i] || "")) i++; continue; }   // 2>&1, >&2: fd duplication
+      seg.pendingRedir = op; continue;
+    }
+    add(c); i++;
+  }
+  endSeg();
+  return segs;
+}
+
+const PRINT = new Set(["cat", "tac", "nl", "head", "tail", "less", "more", "most", "bat", "batcat", "jq", "yq", "xxd", "od", "hexdump",
+  "strings", "base64", "base32", "cut", "sort", "uniq", "paste", "column", "fold", "fmt", "pr", "rev", "expand", "diff", "sdiff",
+  "colordiff", "grep", "egrep", "fgrep", "zgrep", "rg", "ag", "ack", "awk", "gawk", "mawk", "sed", "perl", "tee", "vimcat",
+  "highlight", "pygmentize", "view", "openssl", "envsubst"]);
+const WRAPPERS = new Set(["sudo", "command", "builtin", "exec", "nohup", "time", "nice", "ionice", "stdbuf", "unbuffer", "doas",
+  "{", "}", "!", "if", "then", "elif", "else", "while", "until", "do"]);
+const TTY = /^(-|\/dev\/(stdout|stderr|tty|fd\/[12])|\/proc\/self\/fd\/[12])$/;
+const SHELLS = new Set(["bash", "sh", "zsh", "dash", "ksh", "mksh", "busybox"]);
+const SEARCH = new Set(["grep", "egrep", "fgrep", "zgrep", "rg", "ag", "ack"]);
+
+// How each tool reads its arguments: `v` short options that take a value, `long` long options that take a value,
+// `pat` first operand is a pattern/program unless one is given by `patOpt`, `quiet` options after which nothing of
+// the input is printed, `files` options whose value is a file the tool reads.
+const SPEC = {
+  grep: { v: "ABCmefdD", long: "--max-count --regexp --file --context --after-context --before-context --label --include --exclude --exclude-dir --binary-files --devices --directories --color --colour",
+    pat: true, patOpt: "e f --regexp --file", quiet: "q c l L --quiet --silent --count --files-with-matches --files-without-match", files: "f --file" },
+  rg: { v: "ABCmefgtTMjEr", long: "--max-count --regexp --file --glob --iglob --type --type-not --context --after-context --before-context --threads --max-columns --type-add --replace --encoding --sort --sortr --color --colors",
+    pat: true, patOpt: "e f --regexp --file", quiet: "q c l --quiet --count --count-matches --files --files-with-matches --files-without-match", files: "f --file" },
+  ag: { v: "ABCmG", long: "--context --file-search-regex --max-count --after --before", pat: true, patOpt: "", quiet: "l L c --files-with-matches --files-without-matches --count" },
+  ack: { v: "ABCm", long: "--type --context --max-count", pat: true, patOpt: "", quiet: "l L c --files-with-matches --files-without-matches --count" },
+  awk: { v: "Fvf", long: "--field-separator --assign --file", pat: true, patOpt: "f --file", files: "f --file" },
+  sed: { v: "efl", long: "--expression --file --line-length", pat: true, patOpt: "e f --expression --file", inplace: true },
+  perl: { v: "eEIM", long: "", pat: false, inplace: true },
+  jq: { v: "fL", long: "--from-file --arg:2 --argjson:2 --slurpfile:2 --rawfile:2 --indent --args --jsonargs", pat: true, patOpt: "f --from-file",
+    files: "f --from-file --slurpfile --rawfile" },   // --rawfile NAME FILE: the last value is the file it reads
+  head: { v: "nc", long: "--lines --bytes" }, tail: { v: "ncs", long: "--lines --bytes --sleep-interval --pid" },
+  cut: { v: "bcdf", long: "--bytes --characters --delimiter --fields --output-delimiter" }, sort: { v: "kotST", long: "--key --output --field-separator --buffer-size --temporary-directory" },
+};
+for (const [a, b] of [["egrep", "grep"], ["fgrep", "grep"], ["zgrep", "grep"], ["gawk", "awk"], ["mawk", "awk"], ["yq", "jq"]]) SPEC[a] = SPEC[b];
+
+// Pure: a tool's arguments as the tool itself reads them: options (with their values), then operands. `--` ends the
+// options. For pattern-first tools the pattern operand is set aside (it names no file).
+function parseArgs(verb, args) {
+  const sp = SPEC[verb] || {}, longs = new Map((sp.long || "").split(" ").filter(Boolean).map((x) => { const [n, k] = x.split(":"); return [n, Number(k || 1)]; }));
+  const patOpt = new Set((sp.patOpt || "").split(" ").filter(Boolean)), quietSet = new Set((sp.quiet || "").split(" ").filter(Boolean)),
+    fileOpt = new Set((sp.files || "").split(" ").filter(Boolean));
+  const out = { operands: [], files: [], quiet: false, inplace: false, patternGiven: false };
+  const opt = (name, value) => {
+    if (quietSet.has(name)) out.quiet = true;
+    if (patOpt.has(name)) out.patternGiven = true;
+    if (fileOpt.has(name) && value != null) out.files.push(value);
+    if (sp.inplace && (name === "i" || name === "--in-place")) out.inplace = true;
+  };
+  for (let i = 0; i < args.length; i++) {
+    const a = args[i];
+    if (a === "--") { out.operands.push(...args.slice(i + 1)); break; }
+    if (a.startsWith("--") && a.length > 2) {
+      const [name, eq] = [a.split("=")[0], a.includes("=") ? a.slice(a.indexOf("=") + 1) : null];
+      if (longs.has(name) && eq === null) { opt(name, args[i + longs.get(name)]); i += longs.get(name); } else opt(name, eq);
+      continue;
+    }
+    if (/^-./.test(a) && !/^-\d/.test(a)) {
+      for (let j = 1; j < a.length; j++) {
+        const ch = a[j];
+        if ((sp.v || "").includes(ch)) { const val = j + 1 < a.length ? a.slice(j + 1) : args[++i]; opt(ch, val); break; }
+        if (sp.inplace && ch === "i") { out.inplace = true; break; }   // sed -i[SUFFIX], perl -i[.bak]
+        opt(ch, null);
+      }
+      continue;
+    }
+    out.operands.push(a);
+  }
+  if (sp.pat && !out.patternGiven && out.operands.length) out.operands.shift();
+  return out;
+}
+
+// Pure: why this Bash command would print a protected file, or null.
+function bashVerdict(command, ctx, depth = 0) {
+  const segs = lex(String(command || ""));
+  let sourced = null;
+  for (const seg of segs) {
+    let words = seg.words.map((w) => w.text), k = 0;
+    for (;;) {   // prefixes: FOO=bar, sudo/exec/nohup/…, shell keywords and braces, env [opts], timeout [opts] N
+      if (k < words.length && /^[A-Za-z_][A-Za-z0-9_]*=/.test(words[k])) { k++; continue; }
+      if (k < words.length && WRAPPERS.has(path.basename(words[k]))) { k++; while (k < words.length && /^-/.test(words[k])) k++; continue; }
+      if (words[k] === "env") {
+        k++;
+        while (k < words.length && (/^-/.test(words[k]) || /^[A-Za-z_][A-Za-z0-9_]*=/.test(words[k]))) {
+          const w = words[k];
+          if (w === "-S" || w === "--split-string") { const r = bashVerdict(words.slice(k + 1).join(" "), ctx, depth + 1); if (r) return r; k = words.length; break; }
+          if (/^--split-string=/.test(w) || /^-S./.test(w)) { const r = bashVerdict([w.replace(/^--split-string=|^-S/, ""), ...words.slice(k + 1)].join(" "), ctx, depth + 1); if (r) return r; k = words.length; break; }
+          k += ["-u", "-C", "--unset", "--chdir"].includes(w) ? 2 : 1;
+        }
+        if (k >= words.length) { if (sourced && !words.slice(1).some((w) => w === "-S" || /^-S|^--split-string/.test(w))) return { why: `env prints the variables loaded from ${sourced.path}`, hit: sourced }; break; }
+        continue;
+      }
+      if (words[k] === "timeout") { k++; while (k < words.length && /^-/.test(words[k])) k += ["-s", "-k", "--signal", "--kill-after"].includes(words[k]) ? 2 : 1; k++; continue; }
+      break;
+    }
+    if (k >= words.length && !seg.redirs.length) continue;
+    const verb = path.basename(words[k] || ""), args = words.slice(k + 1);
+    const hitIn = (list) => { for (const w of list) { const h = protectedPath(w, ctx); if (h) return h; } return null; };
+    // bash -c / -lc / --norc -c …, sh -c, eval: the command string is a command of its own.
+    if (SHELLS.has(verb) && depth < 3) {
+      let dashC = false, cmd = null;
+      for (let i = 0; i < args.length; i++) {
+        const a = args[i];
+        if (a === "--") { if (dashC) cmd = args[i + 1]; break; }
+        if (["--rcfile", "--init-file", "-o", "-O", "+O", "+o"].includes(a)) { i++; continue; }
+        if (/^-[A-Za-z]+$/.test(a)) { if (a.includes("c")) dashC = true; continue; }
+        if (a.startsWith("--")) continue;
+        if (dashC) cmd = a;
+        break;
+      }
+      if (cmd != null) { const r = bashVerdict(cmd, ctx, depth + 1); if (r) return r; }
+    }
+    if (verb === "eval" && depth < 3) { const r = bashVerdict(args.join(" "), ctx, depth + 1); if (r) return r; }
+    // source/. a protected file: fine, unless a later step prints what it loaded.
+    if ((verb === "source" || verb === ".") && args.length) { const h = hitIn([args[0]]); if (h) { sourced = h; continue; } }
+    if (sourced) {
+      const operands = args.filter((x) => !/^[-+]/.test(x));
+      const dumps = verb === "printenv" || verb === "compgen"
+        || (verb === "set" && args.length === 0)                                   // set with options only changes options
+        || (verb === "export" && (args.length === 0 || (args.includes("-p") && !operands.length)))
+        // declare/typeset -p prints the named variables (all of them without names); -x alone lists the exported ones
+        || ((verb === "declare" || verb === "typeset") && (args.some((a) => /^-[a-zA-Z]*p/.test(a)) || (!operands.length && (args.length === 0 || args.some((a) => /^-[a-zA-Z]*x/.test(a))))));
+      if (dumps) return { why: `${verb} prints the variables loaded from ${sourced.path}`, hit: sourced };
+      if ((verb === "echo" || verb === "printf") && seg.words.slice(k + 1).some((w) => !w.sq && /\$[{A-Za-z_]/.test(w.text)))
+        return { why: `${verb} prints a variable after ${sourced.path} was loaded`, hit: sourced };
+    }
+    const pa = parseArgs(verb, args);
+    const quietOrInPlace = pa.quiet || pa.inplace;
+    // < file into something that prints its input (tee included: it copies its input to the terminal), or $(< file).
+    for (const r of seg.redirs) {
+      if (r.op !== "<") continue;
+      const h = protectedPath(r.target, ctx);
+      if (h && (!verb || (PRINT.has(verb) && !quietOrInPlace))) return { why: verb ? `${verb} < ${r.target} prints it` : `$(< ${r.target}) expands to its contents`, hit: h };
+    }
+    if (!verb) continue;
+    if (verb === "git") {
+      const sub = args.find((a) => !/^-/.test(a)), h = hitIn(args);
+      if (h && ["show", "diff", "log", "blame", "cat-file", "grep", "annotate"].includes(sub)) return { why: `git ${sub} prints it`, hit: h };
+      continue;
+    }
+    if (["cp", "mv", "install", "rsync", "ln"].includes(verb)) {
+      const ops = args.filter((a) => !/^-/.test(a)), h = hitIn(ops.slice(0, -1));
+      if (h && TTY.test(ops.at(-1) || "")) return { why: `${verb} to ${ops.at(-1)} prints it`, hit: h };
+      continue;
+    }
+    if (verb === "dd") { const h = hitIn(args); if (h && !args.some((a) => /^of=/.test(a) && !TTY.test(a.slice(3)))) return { why: "dd without of= prints it", hit: h }; continue; }
+    if (!PRINT.has(verb) || verb === "tee" || quietOrInPlace) continue;   // tee FILE writes FILE; it doesn't print it
+    const h = hitIn([...pa.operands, ...pa.files]);
+    if (h) return { why: `${verb} prints it`, hit: h };
+  }
+  return null;
+}
+
+// The key names in a dotenv-style file, and nothing else (the deny message points here): `--keys <file>`. A key file
+// (PEM armor) has no names, and a base64 line ending in "=" padding is key material, not NAME=value: both give nothing.
+function keyNames(text) {
+  if (/^-----BEGIN /m.test(String(text))) return [];
+  return String(text).split("\n").filter((l) => !/^[A-Za-z0-9+/]{20,}={1,2}\s*$/.test(l))
+    .map((l) => (l.match(/^\s*(?:export\s+)?([A-Za-z_][A-Za-z0-9_]*)\s*=/) || [])[1]).filter(Boolean);
+}
+
+// Pure: the decision for one hook input. { deny: false } or { deny: true, reason }.
+function decide(input, { home = os.homedir(), pats = patterns(process.env, home) } = {}) {
+  const ctx = { cwd: input.cwd || process.cwd(), home, pats };
+  const t = input.tool_name, ti = input.tool_input || {};
+  let v = null;
+  if (t === "Bash") v = bashVerdict(ti.command, ctx);
+  else if (t === "Read") { const h = protectedPath(ti.file_path, ctx); if (h) v = { why: "reading it shows its contents", hit: h }; }
+  else if (t === "Grep" && (ti.output_mode || "files_with_matches") === "content") {
+    const h = protectedPath(ti.path, ctx) || (ti.glob && protectedPath(path.join(ti.path || ".", ti.glob), ctx));
+    if (h) v = { why: "a content search prints the matching lines", hit: h };
+  }
+  if (!v) return { deny: false };
+  const p = v.hit.path.replace(home, "~");
+  return { deny: true, reason: [
+    `agent-stack credential guard: blocked, because this would print ${p} (a credential file, pattern ${v.hit.pattern}) into the transcript, where it stays: ${v.why}.`,
+    "Use the values by name without printing them:",
+    `  set -a; . ${p}; set +a; <the command that needs them>      (print nothing from it)`,
+    "  or the tool's own option (--env-file, dotenv in the script).",
+    `Check a key exists: grep -q '^NAME=' ${p} && echo present. List the key names only: agent-credguard-read-hook --keys ${p}`,
+    "  (in ~/.local/share/agent-stack/bin; it prints NAME for each NAME=value line and nothing else).",
+    "Never print a value to check it; if a value is wrong, ask the operator (the owner rotates it).",
+  ].join("\n") };
+}
+
+function main() {
+  if (process.argv[2] === "--keys") {
+    for (const f of process.argv.slice(3)) { try { for (const n of keyNames(fs.readFileSync(f, "utf8"))) console.log(n); } catch (e) { console.error(`${f}: ${e.code || e.message}`); process.exitCode = 1; } }
+    return;
+  }
+  const runtime = process.argv.includes("--runtime") ? process.argv[process.argv.indexOf("--runtime") + 1] : "claude";
+  let input;
+  try { input = JSON.parse(fs.readFileSync(0, "utf8")); } catch { process.exit(0); }
+  let d;
+  try { d = decide(input); } catch { process.exit(0); }
+  if (!d.deny) process.exit(0);
+  if (runtime === "codex") { process.stderr.write(d.reason + "\n"); process.exit(2); }
+  process.stdout.write(JSON.stringify({ hookSpecificOutput: { hookEventName: "PreToolUse", permissionDecision: "deny", permissionDecisionReason: d.reason } }));
+  process.exit(0);
+}
+
+module.exports = { DEFAULT_PATTERNS, patterns, globRe, protectedPath, lex, parseArgs, bashVerdict, keyNames, decide };
+if (require.main === module) main();
