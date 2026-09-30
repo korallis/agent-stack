@@ -68,6 +68,22 @@ def resolve_real():
     return None
 
 
+def launch_cmd(real):
+    """How to start the real CLI: a script from mise's node installs runs on that install's own node (its shebang says
+    `env node`, and the node on PATH may be another version, or none, where mise didn't activate it)."""
+    rp = os.path.realpath(real)
+    if "/mise/installs/node/" in real:
+        node = os.path.join(real.split("/bin/", 1)[0], "bin", "node")
+        if os.path.isfile(node) and os.access(node, os.X_OK):
+            return [node, rp]
+    return [real]
+
+
+def exec_real(real, argv):
+    cmd = launch_cmd(real)
+    os.execv(cmd[0], ([tool] if len(cmd) == 1 else cmd) + list(argv))
+
+
 def real_binary():
     p = resolve_real()
     if not p:
@@ -223,7 +239,7 @@ def stdout_safe():
 
 def help_lists_no_secrets(real, words):
     try:
-        out = subprocess.run([real, *words, "--help"], capture_output=True, text=True, timeout=30,
+        out = subprocess.run([*launch_cmd(real), *words, "--help"], capture_output=True, text=True, timeout=30,
                              env={**os.environ, "NO_COLOR": "1"}).stdout
     except Exception:
         return False
@@ -244,7 +260,7 @@ if "--credguard-status" in args:
 real = real_binary()
 if flag("help", "h") == TRUE or flag("version") == TRUE or not words:
     if not any(re.match(r"^--(no-)?(help|version)=", t) or t in ("--no-help", "--no-version") for t in toks):
-        os.execv(real, [tool, *args])
+        exec_real(real, args)
 
 guard, why = False, ""
 if NAME == "neon":
@@ -315,9 +331,9 @@ if guard:
         print(f"{tool} (seat guard): output goes to {out} (mode 0600); use it by name, never print it", file=sys.stderr)
         os.dup2(fd, 1)
         os.close(fd)
-        os.execv(real, [tool, *rest])
+        exec_real(real, rest)
     if not stdout_safe():
         refuse(why)
 elif last_value("--output-file") is not None:
     refuse("--output-file is only for commands that print credentials")
-os.execv(real, [tool, *args])
+exec_real(real, args)

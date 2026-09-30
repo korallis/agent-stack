@@ -112,7 +112,7 @@ test("--output-file on a command that prints no credentials: refused", () => {
 });
 
 test("no real CLI behind the guard: a clear error, no loop", () => {
-  const r = spawnSync(join(seat, "neon"), ["branches", "list"], { encoding: "utf8", env: { PATH: `${seat}:/usr/bin:/bin` } });
+  const r = spawnSync(join(seat, "neon"), ["branches", "list"], { encoding: "utf8", env: { PATH: `${seat}:/usr/bin:/bin`, HOME: join(root, "home") } });   // a HOME with no mise installs
   assert.notEqual(r.status, 0); assert.match(r.stderr, /the real neon is not on PATH/);
 });
 

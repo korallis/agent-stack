@@ -76,3 +76,12 @@ test("--credguard-resolve prints the real CLI the guard would run, and runs noth
   r = run("vercel whoami", [seat, shims]);
   assert.ok(!r.killed); assert.notEqual(r.status, 0); assert.match(r.out, /the real vercel is not on PATH \(shims skipped\)/);
 });
+
+test("a CLI from mise's node installs runs on that install's own node, even with no node on PATH", () => {
+  const v = join(home, ".local/share/mise/installs/node/30.0.0/bin");
+  exe(join(v, "node"), 'echo "node-30 ran $(basename "$1") ${2:-}"');
+  exe(join(v, "vercel"), 'echo "vercel script should be run by its node, not directly"');
+  const r = run("vercel whoami", [seat, shims]);   // PATH has no node at all
+  assert.equal(r.status, 0, r.out); assert.match(r.out, /^node-30 ran vercel whoami/);
+  fs.rmSync(join(home, ".local/share/mise/installs/node/30.0.0"), { recursive: true });
+});
