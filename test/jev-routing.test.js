@@ -1295,6 +1295,9 @@ test("roles: every template pod maps to its role; --role takes pod short names; 
   for (const [alias, role] of [["impl", "implementer"], ["review", "reviewer"], ["qa", "qa"], ["arch", "architect"], ["integ", "integrator"], ["tests", "test-author"],
     ["ops", "recovery"], ["tester", "qa"], ["Implementer", "implementer"], [" reviewer ", "reviewer"]]) assert.equal(normalizeRole(alias), role, alias);
   for (const r of ROLES) assert.equal(normalizeRole(r), r);
+  // QA PR55 f1: inherited object keys are not roles or aliases.
+  for (const bad of ["constructor", "__proto__", "toString", "hasOwnProperty", "prototype"]) assert.throws(() => normalizeRole(bad), /unknown role/, bad);
+  assert.equal(seatInfo(node("constructor.x")).role, undefined, "an unmapped pod has no role, even one named like an Object key");
   assert.throws(() => normalizeRole("frontend"), /unknown role "frontend": use one of lead \(coord\), deputy, architect \(arch\), implementer \(impl\), reviewer \(review\), integrator \(integ\), qa \(tester\), test-author \(tests, test\), recovery \(ops\)/);
 });
 
@@ -1311,6 +1314,8 @@ test("agent-dispatch pick-seat end to end: --role impl and --role qa find their 
   const o = JSON.parse(r.stdout);
   assert.deepEqual(o.candidates, ["qa-codex-1@shop", "qa-codex-2@shop"], "QA seats can be picked"); assert.equal(o.next.action, "dispatch");
   r = pick("review"); assert.deepEqual(JSON.parse(r.stdout).candidates, ["review-claude@shop"]);
-  r = pick("frontend");
-  assert.equal(r.status, 1); assert.equal(r.stdout, ""); assert.match(r.stderr, /unknown role \\"frontend\\": use one of lead/);
+  for (const bad of ["frontend", "constructor", "__proto__"]) {   // QA PR55 f1: inherited Object keys are unknown too
+    r = pick(bad);
+    assert.equal(r.status, 1, bad); assert.equal(r.stdout, "", bad); assert.match(r.stderr, new RegExp(`unknown role \\\\"${bad}\\\\": use one of lead`), bad);
+  }
 });

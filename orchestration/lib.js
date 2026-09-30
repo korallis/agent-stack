@@ -30,13 +30,13 @@ const ROLE_ALIASES = { arch: "architect", impl: "implementer", review: "reviewer
 export function normalizeRole(role) {
   const r = String(role || "").trim().toLowerCase();
   if (ROLES.includes(r)) return r;
-  if (ROLE_ALIASES[r]) return ROLE_ALIASES[r];
+  if (Object.hasOwn(ROLE_ALIASES, r)) return ROLE_ALIASES[r];   // own entries only: "constructor", "__proto__" are not roles
   const aka = (x) => Object.entries(ROLE_ALIASES).filter(([, v]) => v === x).map(([k]) => k);
   throw new Error(`unknown role "${role}": use one of ${ROLES.map((x) => (aka(x).length ? `${x} (${aka(x).join(", ")})` : x)).join(", ")}`);
 }
 export function seatInfo(node) {
   const [pod, member] = node.logicalId.split(".");
-  let role = POD_ROLE[pod];
+  let role = Object.hasOwn(POD_ROLE, pod) ? POD_ROLE[pod] : undefined;
   if (pod === "coord") role = member.startsWith("lead") ? "lead" : "deputy";
   const family = node.runtime === "codex" ? "codex" : "claude";
   return { seat: node.canonicalSessionName, pod, member, role, family, runtime: node.runtime,
