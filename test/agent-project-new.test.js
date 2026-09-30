@@ -217,3 +217,21 @@ test("agent-project-check FAILs a stale main mirror and passes once it matches o
   assert.equal(stale.level, "FAIL");
   assert.match(stale.detail, /main is \w{8}, origin\/master is \w{8}: run agent-repos-sync/);
 });
+
+test("WO21 addendum: a bun lockfile installs each new worktree with bun install --frozen-lockfile (npm ci otherwise)", () => {
+  const { proj, bare, seed } = existingRepo("fortis-bun", "master");
+  fs.writeFileSync(join(seed, "bun.lock"), "{}\n"); fs.writeFileSync(join(seed, "package.json"), "{}\n");
+  git(seed, "add", "-A"); git(seed, "commit", "-qm", "bun"); git(seed, "push", "-q", "origin", "master"); git(proj, "pull", "-q");
+  fs.writeFileSync(join(home, "bin/bun"), `#!/bin/sh\necho "bun $* in $PWD" >> "${home}/bun-calls"\n`, { mode: 0o755 });
+  fs.writeFileSync(join(home, "bin/npm"), `#!/bin/sh\necho "npm $*" >> "${home}/npm-calls"\n`, { mode: 0o755 });
+  const W = join(home, "Projects", "fortis-bun-work");
+  fs.writeFileSync(join(home, "bin/rig"), `#!/bin/bash\ncase "$1 $2" in "config get") echo "fbun:${W}";; "config init-workspace") mkdir -p "$4"; printf "kind: project\\ninstall:\\n  context: []\\n" > "$4/project.yaml"; printf "workspaces:\\n  - id: default\\n" > "$4/workspace.yaml";; "watchdog list") echo "[]";; esac\nexit 0\n`, { mode: 0o755 });
+  const r = spawnSync(join(repo, "bin/agent-project-new"), ["--name", "fortis-bun", "--rig", "fbun", "--team", "small", "--no-up", "--no-github"],
+    { encoding: "utf8", env: { PATH: `${home}/bin:${process.env.PATH}`, HOME: home, USER: "t", GIT_CONFIG_GLOBAL: join(home, ".gitconfig"), OPENRIG_URL: "http://127.0.0.1:9" } });
+  assert.equal(r.status, 0, r.stderr.slice(-400));
+  const calls = fs.readFileSync(join(home, "bun-calls"), "utf8").trim().split("\n");
+  assert.equal(calls.length, 10);
+  for (const c of calls) assert.match(c, /^bun install --frozen-lockfile in .*fortis-bun\.worktrees\/[a-z0-9-]+$/);
+  assert.ok(!fs.existsSync(join(home, "npm-calls")), "no npm ci for a bun project");
+  fs.rmSync(join(home, "bin/bun")); fs.rmSync(join(home, "bin/npm"));
+});

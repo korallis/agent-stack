@@ -158,13 +158,20 @@ if [ $DRY = 1 ]; then
   for cwd in $(grep -oE 'cwd: *"?[^"]+' "$AS/rig/template/$TEAM.yaml" | sed 's/cwd: *"\{0,1\}//; s#@WT@#'"$WT"'#'); do
     seat=$(basename "$cwd"); case "$seat" in impl-*) run git -C "$R" worktree add -q --no-track "$cwd" -b "agent/$seat" "$BASE" ;; *) run git -C "$R" worktree add -q --detach "$cwd" "$BASE" ;; esac
     [ -f "$R/.env.local" ] && echo "  would: ln -s $R/.env.local $cwd/.env.local"
+    if [ $DEPS = 1 ] && { [ -f "$R/bun.lock" ] || [ -f "$R/bun.lockb" ]; }; then echo "  would: (cd $cwd && bun install --frozen-lockfile)"
+    elif [ $DEPS = 1 ] && [ -f "$R/package-lock.json" ]; then echo "  would: (cd $cwd && npm ci)"; fi
   done
 else
   for cwd in $(grep -oE 'cwd: *"?[^"]+' "$W/rig/$TEAM.yaml" | sed 's/cwd: *"\{0,1\}//'); do
     seat=$(basename "$cwd")
     if [ ! -d "$cwd" ]; then
       case "$seat" in impl-*) git -C "$R" worktree add -q --no-track "$cwd" -b "agent/$seat" "$BASE" ;; *) git -C "$R" worktree add -q --detach "$cwd" "$BASE" ;; esac
-      [ $DEPS = 1 ] && [ -f "$cwd/package-lock.json" ] && (cd "$cwd" && npm ci --silent >/dev/null 2>&1 || echo "  npm ci failed in $seat (install later)")
+      if [ $DEPS = 1 ]; then   # the project's own package manager, from its lockfile
+        if [ -f "$cwd/bun.lock" ] || [ -f "$cwd/bun.lockb" ]; then
+          if command -v bun >/dev/null; then (cd "$cwd" && bun install --frozen-lockfile >/dev/null 2>&1 || echo "  bun install failed in $seat (install later)")
+          else echo "  $seat: bun.lock present but bun is not installed; install bun, then: bun install --frozen-lockfile"; fi
+        elif [ -f "$cwd/package-lock.json" ]; then (cd "$cwd" && npm ci --silent >/dev/null 2>&1 || echo "  npm ci failed in $seat (install later)"); fi
+      fi
     fi
     # The project's dev env (e.g. the dev-branch database URL): .env.local ONLY, as a link, so seats share the owner's
     # file. Never .env.*.local or .env.production*. An existing file in the worktree is left alone.
