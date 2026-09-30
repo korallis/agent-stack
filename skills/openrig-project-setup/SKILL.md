@@ -133,6 +133,46 @@ New projects get these from the template. `agent-project-check` WARNs when an ex
   - never prompt (below);
   - the merge gate (cross-family review, live Jev act band, merge pinned to head; integrator role).
 
+## Adopting an existing repo (worked example: fortis-secure, trunk `master`)
+`agent-project-new` detects an existing repo (commits + origin) and adopts it as it is:
+- **Trunk:** `origin/HEAD` (e.g. `master`). Worktrees start from `origin/<trunk>`; PRs target the trunk; `@TRUNK@` fills
+  the seats' startup context and the CULTURE specifics.
+- **Main mirror:** OpenRig judges "merged" against a local ref named `main`. When the trunk isn't `main`, the shared
+  checkout keeps `refs/heads/main` = `origin/<trunk>`. It's only a ref: never checked out, never pushed (a pre-push
+  hook refuses). `agent-repos-sync` keeps it current; `agent-project-check` FAILs a stale mirror.
+- **Starter kit:** never copied into the working tree. It goes to `<P>-work/starter-kit/`; adopting it (merged with the
+  repo's own AGENTS.md, README, .gitignore, Playwright config) is the lead's first slice, as a PR.
+- **Merge gate:** the repo's own gate is adopted, not replaced.
+  - `agent-project-new` keeps an existing ruleset or branch protection (it adds the kit's only when there is none).
+  - Record the required checks and the merge path in CULTURE specifics. Fortis: ruleset checks `verify` +
+    `qa-evidence`, squash only, and a `jev-approved` label that arms GitHub auto-merge.
+  - The merge owner applies such a label only after the cross-family review and the live Jev `review.merge_gate` act
+    band on the exact head. Never merge around the ruleset.
+- **Production deploys on merge:** if every merge to the trunk auto-deploys, say so in CULTURE specifics.
+  - Every PR must be safe to ship on merge: backward-compatible migrations, nothing half-finished.
+  - The witness (and a tester's re-test) runs on the production URL once the deploy is Ready.
+- **Environment:** seats get a development environment of their own (docs/PROJECT-ENV.md): a dev database branch and
+  a dev file store in `.env.local`, linked into every worktree. Production and preview env files stay with the owner,
+  outside the repo.
+- **CULTURE specifics template lines** for such a repo: trunk and mirror; package manager (e.g. bun, heavy commands via
+  `agent-heavy build -- bun …`); required checks and merge path; databases and env (which branch, which store, what
+  seats never touch); deploys (what merges ship, where the witness runs).
+
+## Project environments (full guide: docs/PROJECT-ENV.md)
+Seats run with permission checks off, so they only ever get development credentials:
+- Pull env per environment (`vercel env pull .env.local --environment=development`). Production and preview files go
+  in an owner-only dir outside the repo, never into a worktree.
+- The database gets a dev branch for the seats. **Reset the role password on the child branch**: it inherits the
+  parent's, so without the reset the dev URL also opens production. Previews get a branch per deployment.
+- Files (e.g. Blob) get a store per environment. Seats never touch production data.
+- Only `<repo>/.env.local` is linked into worktrees (agent-project-new does it), never `.env.*.local` or `.env.production*`.
+- Verify by hash (`sha256sum`), never by printing a value.
+- Expect Vercel to rewrite things:
+  - saving a store connection re-issues its tokens as Sensitive: re-pull, and prove the first deploy still uploads;
+  - `vercel blob create-store` rewrites `.env.local`: re-check the database and store it points at.
+- Write the arrangement into CULTURE specifics (which branch and store seats use; seats never look for, copy or
+  request production or preview env files).
+
 ## Agent witness (default for every project)
 Done = acceptance tests + a FRESH agent witnessing the feature end to end through the real UI on the deployed
 environment, recorded as `agent-witnessed (YYYY-MM-DD, by <agent>, <model>)` with evidence. Tests, merges and deploys

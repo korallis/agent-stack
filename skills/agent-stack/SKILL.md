@@ -78,6 +78,28 @@ project-workspace.md) and the `mission-slice-sop` skill. Verify each point on di
     with `no-witness: <reason>`. Tests, merges and deploys are not witnesses.
 11. OpenRig upgrades are operator windows (`docs/UPGRADE.md`), raised weekly by `openrig-update.timer`; never ad hoc. Owner delegations/standing approvals go into the rig CULTURE.md.
 
+## Operating a running fleet (operator runbook)
+- **Relaunch a seat, only when it is idle.**
+  - Codex: `C-u` (clear the composer), `/quit`, Enter. Claude: `/exit`.
+  - Kill the tmux session only if the seat dropped to a bare shell.
+  - Then `rig launch <rigId> <pod.member>`, with the rig ID (from `rig ps --json`), not its name.
+- **Verify it resumed its OWN conversation**, not a fresh one:
+  - Codex: the seat's codex process shows `resume <thread>` in `/proc/<codex pid>/cmdline`, and that thread's session
+    file is large and carries the seat's cwd.
+  - Claude: its command line shows `--resume <session-id>`.
+  - A UUID in the pane's child shell is OpenRig's tmux-send helper, not the thread.
+- **Retire and restore a seat:**
+  1. `rig seat stop`. If the seat is a claimed session: `/quit`, then `rig unclaim`, then kill the now-empty session.
+  2. Restore it later with `rig launch <rigId> <pod.member>`.
+- **Playwright secrets:** the MCP reads `--secrets` once, when it starts.
+  - Add every entry a seat will need first, then relaunch it once.
+  - Append to `~/.config/agent-stack/secrets/playwright.env`, never rewrite it, and prefix names with the project
+    (`FORTIS_WITNESS_PASSWORD`).
+- **`rig ps` ATTN `user_prompt_submit`** on a seat that is working is not a stuck seat: it is mid-turn. Check its pane
+  before acting.
+- Never stop or restart `openrig.service` or `openrig-tmux.service` while rigs run. Restart the daemon with
+  `openrig-daemon-cycle` (docs/incidents/2026-09-29-unit-stop-killed-seats.md).
+
 ## Using Jev well
 - Only for decisions in `jev-decide list`, or new ones added to `~/Projects/agent-stack/config/decisions.yaml`
   (versioned; thresholds tuned with `node eval/run.js`).
