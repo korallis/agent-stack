@@ -127,6 +127,9 @@ New projects get these from the template. `agent-project-check` WARNs when an ex
     `agent-heavy build|browser -- <cmd>`, preferring focused runs (2026-09-29: load 101 on 32 cores from parallel
     suites stalled the OpenRig daemon);
   - never `pkill -f`/`killall` by pattern (it matches other seats' command lines); stop your own processes by PID;
+  - research -> plan -> implement for every slice, feature, fix and wave (`## Research` / `## Plan` in the slice
+    PROGRESS.md before the first code commit; the section "Research, plan, implement"; agent-project-check WARNs
+    without it);
   - never prompt (below);
   - the merge gate (cross-family review, live Jev act band, merge pinned to head; integrator role).
 
