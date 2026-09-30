@@ -120,11 +120,19 @@ run when its gate fails, so the last line runs only when every gate passed:
   base=$(gh pr view "$pr" --json baseRefOid --jq .baseRefOid)
   gh pr checks "$pr" --required
   [ "$(gh api "repos/$repo/commits/$head/statuses" --jq '[.[] | select(.context == "independent-review")][0].state')" = success ]
-  qa=$(awk 'NR == 1 && /^---$/ {f = 1; next} f && /^---$/ {exit} f' "$OPENRIG_WORK_ROOT/missions/$mission/slices/$slice/proof/brb-$head.md")
-  grep -Eqx 'artifact_type: "?qa"?' <<<"$qa"
-  grep -Eqx 'verdict: "?PASS"?' <<<"$qa"
-  grep -Eqx "candidate_sha: [\"']?$head[\"']?" <<<"$qa"
-  jq -n --argjson pr "$pr" --arg head "$head" --arg base "$base" --arg qa "$(sed -n 's/^money_evidence: //p' <<<"$qa")" \
+  qa=$(python3 - "$OPENRIG_WORK_ROOT/missions/$mission/slices/$slice/proof/brb-$head.md" "$head" <<'PY'
+import re, sys, yaml
+try:
+    m = re.match(r"---\n(.*?)\n---\n", open(sys.argv[1]).read(), re.S)
+except OSError:
+    sys.exit("no QA verdict for this head")
+fm = (yaml.safe_load(m.group(1)) if m else None) or {}
+if not (fm.get("artifact_type") == "qa" and fm.get("verdict") == "PASS" and str(fm.get("candidate_sha")) == sys.argv[2]):
+    sys.exit("QA's verdict for this head is not a PASS")
+print(fm["money_evidence"])
+PY
+  )
+  jq -n --argjson pr "$pr" --arg head "$head" --arg base "$base" --arg qa "$qa" \
     '{pr: $pr, head: $head, base: $base, change: "Adds login", ci: "required checks pass",
       review: ("independent-review success; bug review board: " + $qa)}' > gate-input.json
   jev-decide review.merge_gate --input gate-input.json > gate.json
@@ -137,10 +145,10 @@ The gates, in order:
 
 1. `gh pr checks --required` fails unless every required check passed.
 2. The status line fails unless the latest `independent-review` status on that head is `success`.
-3. The three `grep` lines read the frontmatter of QA's bug-review-board proof for this head (`proof/brb-<head>.md`,
-   written by `rig proof add`) and fail unless it is a `qa` artifact with verdict `PASS` for exactly this head. A NO,
-   a missing file or a verdict for an older head stops the run. Its `money_evidence` line is what Jev sees as QA's
-   verdict.
+3. The Python step parses the YAML frontmatter of QA's bug-review-board proof for this head (`proof/brb-<head>.md`,
+   written by `rig proof add`) and fails unless it is a `qa` artifact with verdict `PASS` for exactly this head. A NO,
+   a missing file or a verdict for an older head stops the run. Its whole `money_evidence` (which `rig proof add` may
+   wrap over several lines) is what Jev sees as QA's verdict.
 4. The `jq -e` line fails unless live Jev (not a cache or a fallback) answered `merge` in the act band. `jev-decide`
    itself exits 0 for the review band too, so its exit code is not the gate.
 
