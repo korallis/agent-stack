@@ -16,6 +16,9 @@ import { join } from "node:path";
 import { STATE_DIR } from "../jev/lib/store.js";
 import { rig, seats } from "./lib.js";
 import { decideOrStub } from "./jevcall.js";
+import { redact as redactText } from "./redact.js";
+
+const redact = (t) => redactText(t, { longTokens: true });
 
 const WARN_EVERY_MS = 60 * 60_000;
 const KEEP = 6;   // screen hashes remembered per seat
@@ -42,23 +45,19 @@ export function shouldAsk({ openWork, hashes, repeat }) {
   return unchangedRuns(hashes) >= 2 || cycling(hashes) || Boolean(repeat);
 }
 
-const redact = (s) => s
-  .replace(/postgres(ql)?:\/\/[^\s'"]+/gi, "postgres://<redacted>")
-  .replace(/\b(sk|pk|rk|ghp|gho|ghs|xox[abp])[-_][A-Za-z0-9_-]{10,}/g, "<redacted-token>")
-  .replace(/\b[A-Za-z0-9_-]{32,}\b/g, "<redacted-long-token>");
-
 export function buildEvidence({ state, minutesInState, hashes, intervalMin, repeat, openRows, tail }) {
   const same = unchangedRuns(hashes);
-  return [
+  // Everything here goes to Jev (an external service): the whole text is redacted, queue summaries included.
+  return redact([
     `state: ${state} for about ${minutesInState} min (tracked by this check)`,
     same >= 2 ? `screen output: unchanged for the last ${same} checks (about ${(same - 1) * intervalMin} min; digits ignored)`
       : cycling(hashes) ? `screen output: only ${new Set(hashes.slice(-KEEP)).size} different screens over the last ${KEEP} checks`
       : "screen output: changed since the last check",
-    repeat ? `repeated line (${repeat.n}x in the last 40): ${redact(repeat.line).slice(0, 160)}` : "no line repeats 3 times",
+    repeat ? `repeated line (${repeat.n}x in the last 40): ${repeat.line.slice(0, 160)}` : "no line repeats 3 times",
     openRows.length ? "open queue work: " + openRows.map((r) => `${r.id} ${r.state} for ${r.ageMin} min (${(r.summary || "").slice(0, 80)})`).join("; ") : "open queue work: assigned, no in-progress row",
     "last lines of the screen:",
-    redact(tail.split("\n").filter((l) => l.trim()).slice(-15).join("\n")).slice(0, 1500),
-  ].join("\n");
+    tail.split("\n").filter((l) => l.trim()).slice(-15).join("\n").slice(0, 1500),
+  ].join("\n"));
 }
 
 export function warning(seat, rec, evidence, { unchanged }) {
@@ -78,7 +77,7 @@ async function main() {
   const dry = a.includes("--dry-run"), maxAsks = Number(flag("--max-asks", 10)), intervalMin = 10;
   const dir = join(STATE_DIR, "stuck"); mkdirSync(dir, { recursive: true, mode: 0o700 });
   const rigs = flag("--rig") ? [flag("--rig")] : (rig(["ps"], { json: true }) || []).filter((r) => !r.isArchived && r.runningCount > 0).map((r) => r.name).filter((n) => n && n !== "kernel");
-  const now = Date.now(); let asks = 0; const report = [];
+  const now = Date.now(); let asks = 0; const report = []; const flagged = [];
   for (const rigName of rigs) {
     const all = seats(rigName);
     const lead = all.find((s) => s.role === "lead")?.seat;
@@ -96,22 +95,30 @@ async function main() {
         .map((q) => ({ id: q.qitemId, state: q.state, summary: q.summary, ageMin: Math.round((now - Date.parse(q.claimedAt || q.tsUpdated || q.tsCreated)) / 60_000) }));
       const repeat = repeatedLine(tail);
       const openWork = s.assigned > 0 || openRows.length > 0;
-      if (shouldAsk({ openWork, hashes: st.hashes, repeat }) && asks < maxAsks) {
-        asks++;
-        const evidence = buildEvidence({ state, minutesInState: Math.round((now - st.since) / 60_000), hashes: st.hashes, intervalMin, repeat, openRows, tail });
-        const rec = await decideOrStub("seat.stuck", { seat: s.seat, evidence }, { caller: "agent-stuck-check" });
-        const w = warning(s.seat, rec, evidence, { unchanged: unchangedRuns(st.hashes) });
-        const last = st.warned?.[w?.verdict];
-        report.push({ seat: s.seat, band: rec.band, verdict: rec.result?.verdict, warn: Boolean(w), sent: false });
-        if (w && lead && !(last && now - last < WARN_EVERY_MS)) {
-          if (!dry) { rig(["send", lead, w.text], { allowFail: true }); st.warned = { ...(st.warned || {}), [w.verdict]: now }; }
-          report.at(-1).sent = !dry;
-        }
-      }
+      if (shouldAsk({ openWork, hashes: st.hashes, repeat }))
+        flagged.push({ s, st, file, lead, evidence: buildEvidence({ state, minutesInState: Math.round((now - st.since) / 60_000), hashes: st.hashes, intervalMin, repeat, openRows, tail }) });
       writeFileSync(file, JSON.stringify(st));
     }
   }
-  console.log(JSON.stringify({ asked: asks, results: report }, null, 2));
+  // At most --max-asks Jev calls per run, the seats asked longest ago first, so no flagged seat waits forever.
+  flagged.sort((x, y) => (x.st.lastAsked || 0) - (y.st.lastAsked || 0));
+  for (const f of flagged.slice(0, maxAsks)) {
+    const { s, st, file, lead, evidence } = f;
+    asks++;
+    const rec = await decideOrStub("seat.stuck", { seat: s.seat, evidence }, { caller: "agent-stuck-check" });
+    st.lastAsked = now;
+    const w = warning(s.seat, rec, evidence, { unchanged: unchangedRuns(st.hashes) });
+    const last = st.warned?.[w?.verdict];
+    const row = { seat: s.seat, band: rec.band, verdict: rec.result?.verdict, warn: Boolean(w), sent: false };
+    if (w && lead && !(last && now - last < WARN_EVERY_MS) && !dry) {
+      // Recorded as warned only when the message really went out; a failed send is tried again next run.
+      if (rig(["send", lead, w.text], { allowFail: true }) !== null) { st.warned = { ...(st.warned || {}), [w.verdict]: now }; row.sent = true; }
+      else row.sendFailed = true;
+    }
+    report.push(row);
+    writeFileSync(file, JSON.stringify(st));
+  }
+  console.log(JSON.stringify({ asked: asks, flagged: flagged.length, results: report }, null, 2));
 }
 
 if (process.argv[1]?.endsWith("stuck.js") || process.argv[1]?.endsWith("agent-stuck-check")) await main();

@@ -9,10 +9,11 @@ has no version numbers; entries are grouped by the day they merged, newest first
 - Jev as the decision layer for routine judgments: code gathers the evidence and owns the thresholds, and anything
   short of Jev's act band goes to the lead or a person.
   - `agent-merge-evidence <pr> --decide`: the merge gate's input from exact-head facts (full shas, every required check
-    by name, the independent-review status, QA's bug-review-board proof, the blast-radius comment, target branch,
-    deploy effect, rollback). Only a live Jev `merge` in the act band passes.
+    by name, the independent-review status and the review that names the head, QA's bug-review-board proof, the
+    blast-radius comment, target branch, deploy effect, rollback). It refuses if the PR moves while it collects. Only
+    a live (not stubbed) Jev `merge` in the act band passes.
   - `agent-dispatch pick-seat`: Jev picks the seat for a dispatch (new decision `intake.seat`) from the running seats
-    of the role that have no open work; on review or uncertain the lead picks and records why.
+    of the role that are idle with no open work; on review or uncertain the lead picks and records why.
   - `agent-stuck-check` (every 10 minutes): warns a rig's lead when a seat holding work looks looping, rate-limited or
     stalled (new decision `seat.stuck`). It never acts.
 - `agent-project-check` warns when a Fable seat's screen asks for Fable's one-time usage-credits consent, and says how
@@ -49,10 +50,12 @@ has no version numbers; entries are grouped by the day they merged, newest first
 ### Fixed
 - Claude seats are pre-trusted, so none stops on "trust this folder?" at first launch; the guidance refresh keeps
   block names ([#24]).
-- OpenRig patch 140: a row closed by a direct human reply no longer shows "never posted" ([#27]).
+- OpenRig patch 140: a row that was posted and then closed by a direct human reply keeps its posted delivery outcome;
+  an alert that was never posted still shows "never posted" ([#27]).
 - The credential guard never loops behind a mise shim where mise doesn't activate the tool ([#35]).
-- `install.sh` reports a valid `config/owner.env` correctly next to an environment override, and the onboarding
-  helper no longer prints a stray "Next:" hint ([#37]).
+- `agent-project-new` prints no "Next:" hint of its own under the onboarding helper ([#36]; tested end to end in
+  [#37]).
+- `install.sh` reports a valid `config/owner.env` correctly next to an environment override ([#37]).
 
 ### Security
 - Browser test logins are typed by name through the Playwright MCP's `--secrets`, so values never reach a seat's

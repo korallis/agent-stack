@@ -1,13 +1,14 @@
 // agent-dispatch pick-seat: Jev picks the seat, code builds the candidates and owns the rule.
-// Candidates = running seats of the role with no open work (code: capacity and account availability), each with notes
+// Candidates = running, idle seats of the role with no open work (code: capacity and account availability), each with notes
 // Jev can weigh. Act band: dispatch to Jev's seat. Review or uncertain: the lead decides and records why in the row.
 import { qualityScore } from "./lib.js";
 
 // Pure: the candidate list for intake.seat.
 export function seatCandidates(all, role, families = {}) {
   return all
-    .filter((s) => s.role === role && s.running && s.assigned === 0 && s.pending === 0 && families[s.family] !== 0)
-    .map((s) => ({ id: s.seat, text: `${s.seat}: ${s.family} seat (${s.runtime}), ${s.idle ? "idle" : "working"}, no open work, `
+    // Idle as observed (not merely no tracked work: a seat can be busy on something the queue doesn't show).
+    .filter((s) => s.role === role && s.running && s.idle && s.assigned === 0 && s.pending === 0 && families[s.family] !== 0)
+    .map((s) => ({ id: s.seat, text: `${s.seat}: ${s.family} seat (${s.runtime}), idle, no open work, `
       + `quality ${qualityScore(s.seat).toFixed(2)} (completed/returned/failed record)` }));
 }
 

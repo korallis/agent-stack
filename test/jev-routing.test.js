@@ -44,7 +44,9 @@ const facts = (over = {}) => ({ pr: 42, head: H, base: B, baseRef: "main", headR
   change: "Adds login", checks: [{ name: "verify", bucket: "pass" }, { name: "qa-evidence", bucket: "pass" }],
   independentReview: { state: "success", description: "QA PASS", creator: "rev" },
   brb: { file: "/w/proof/brb-a.md", artifact_type: "qa", verdict: "PASS", candidate_sha: H, money_evidence: "Ship: YES, 5 criteria passed" },
-  blastRadius: "## Blast radius Safe because: nullable column", deploy: "merges deploy to production", ...over });
+  blastRadius: { url: "https://x/c1", at: "2026-09-30T10:00Z", namesHead: true, excerpt: "## Blast radius Safe because: nullable column" },
+  reviewNote: { url: "https://x/c2", at: "2026-09-30T10:05Z", author: "rev", excerpt: "Lenses applied: correctness. Verified 12 tests on aaaaaaa." },
+  deploy: "merges deploy to production", ...over });
 
 test("merge evidence: exact-head facts in, every gap named MISSING, never smoothed over", () => {
   const ok = buildMergeInput(facts());
@@ -52,11 +54,17 @@ test("merge evidence: exact-head facts in, every gap named MISSING, never smooth
   assert.match(ok.ci, /2 required check\(s\) on a{40}: verify=pass, qa-evidence=pass; all pass/);
   assert.match(ok.review, /independent-review status on a{40}: success "QA PASS" \(by rev\)/);
   assert.match(ok.review, /bug-review-board proof \/w\/proof\/brb-a\.md: artifact_type=qa verdict=PASS candidate_sha=a{40}; Ship: YES/);
-  assert.match(ok.limits, /target branch main at b{40}[\s\S]*deploy effect: merges deploy to production[\s\S]*rollback: revert the squash commit on main/);
-  const gaps = buildMergeInput(facts({ checks: [{ name: "verify", bucket: "fail" }], independentReview: null, brb: null, brbWhere: "/w/proof/brb-x.md", blastRadius: null, deploy: undefined }));
+  assert.match(ok.review, /cross-family review on the PR \(https:\/\/x\/c2, .*names this head\): Lenses applied/);
+  assert.match(ok.review, /blast radius \(https:\/\/x\/c1, .*names this head\): ## Blast radius/);
+  assert.match(ok.limits, /target branch main at b{40}[\s\S]*deploy effect: merges deploy to production[\s\S]*rollback: not stated \(proposed default: revert the squash commit on main\)/);
+  const gaps = buildMergeInput(facts({ checks: [{ name: "verify", bucket: "fail" }], independentReview: null, reviewNote: null, brb: null, brbWhere: "/w/proof/brb-x.md", blastRadius: null, deploy: undefined }));
+  assert.match(gaps.review, /MISSING: no review comment or PR review that names a{40}/);
   assert.match(gaps.ci, /NOT passing: verify/);
   assert.match(gaps.review, /MISSING: no independent-review status/); assert.match(gaps.review, /MISSING: no bug-review-board proof .* \(looked for \/w\/proof\/brb-x\.md\)/);
-  assert.match(gaps.review, /blast radius: none posted/); assert.match(gaps.limits, /deploy effect: MISSING/);
+  assert.match(gaps.review, /MISSING: no blast-radius comment/); assert.match(gaps.limits, /deploy effect: MISSING/);
+  assert.match(buildMergeInput(facts({ blastRadius: { ...facts().blastRadius, namesHead: false } })).review, /does NOT name this head/);
+  const leaky = buildMergeInput(facts({ change: "uses postgresql://app:hunter2@db/app", reviewNote: { ...facts().reviewNote, excerpt: "token ghp_ABCDEFGHIJKLMNOPQRST ok" } }));
+  assert.doesNotMatch(JSON.stringify(leaky), /hunter2|ghp_ABC/); assert.match(leaky.head, /^a{40}$/, "shas are kept");
   assert.match(buildMergeInput(facts({ brb: { ...facts().brb, candidate_sha: "c".repeat(40) } })).review, /\(NOT this head\)/);
   assert.match(buildMergeInput(facts({ checks: [] })).ci, /MISSING: no required checks/);
 });
@@ -64,7 +72,8 @@ test("merge evidence: exact-head facts in, every gap named MISSING, never smooth
 test("merge gate passes only for live Jev merge in the act band", () => {
   assert.ok(passes({ decided_by: "jev", band: "act", result: { decision: "merge" } }));
   for (const r of [{ decided_by: "jev", band: "review", result: { decision: "merge" } }, { decided_by: "cache", band: "act", result: { decision: "merge" } },
-    { decided_by: "fallback_model", band: "act", result: { decision: "merge" } }, { decided_by: "jev", band: "act", result: { decision: "hold" } }, null])
+    { decided_by: "fallback_model", band: "act", result: { decision: "merge" } }, { decided_by: "jev", band: "act", result: { decision: "hold" } },
+    { decided_by: "jev", band: "act", result: { decision: "merge" }, stubbed: true }, null])
     assert.ok(!passes(r), JSON.stringify(r));
 });
 
@@ -73,7 +82,8 @@ test("agent-merge-evidence --decide: reads gh and the proof file, exits 0 only o
   fs.writeFileSync(join(proof, `brb-${H}.md`), `---\nslice: m1.s1\ncandidate_sha: ${H}\nartifact_type: qa\nverdict: PASS\nmoney_evidence: "Ship: YES, all criteria passed\n  in the browser"\n---\nbody\n`);
   fs.writeFileSync(join(bin, "gh"), `#!/bin/sh
 case "$*" in
-  "pr view 42 -R o/r --json"*) echo '{"number":42,"title":"Adds login","headRefOid":"${H}","baseRefOid":"${B}","baseRefName":"main","headRefName":"agent/x","mergeable":"MERGEABLE","isDraft":false,"comments":[{"body":"looks good"},{"body":"## Blast radius\\nSafe because: only a nullable column."}]}' ;;
+  "pr view 42 -R o/r --json headRefOid,baseRefOid") n=$(cat "${root}/views" 2>/dev/null || echo 0); echo $((n+1)) > "${root}/views"; h=${H}; [ -f "${root}/move" ] && h=${"c".repeat(40)}; printf '{"headRefOid":"%s","baseRefOid":"${B}"}\\n' "$h" ;;
+  "pr view 42 -R o/r --json"*) echo '{"number":42,"title":"Adds login","headRefOid":"${H}","baseRefOid":"${B}","baseRefName":"main","headRefName":"agent/x","mergeable":"MERGEABLE","isDraft":false,"comments":[{"body":"looks good","url":"https://x/c0","createdAt":"2026-09-30T09:00:00Z","author":{"login":"a"}},{"body":"## Blast radius\\nSafe because: only a nullable column (${H.slice(0, 7)}).","url":"https://x/c1","createdAt":"2026-09-30T10:00:00Z","author":{"login":"rev"}}],"reviews":[{"body":"Lenses applied: correctness, security. Verified the login tests pass on ${H.slice(0, 7)}; one finding fixed.","url":"https://x/r1","submittedAt":"2026-09-30T10:05:00Z","author":{"login":"rev"},"commit":{"oid":"${H}"}}]}' ;;
   "pr checks 42 -R o/r --required --json"*) echo '[{"name":"verify","state":"FAILURE","bucket":"fail"},{"name":"qa-evidence","state":"SUCCESS","bucket":"pass"}]'; exit 1 ;;
   "api repos/o/r/commits/${H}/statuses") echo '[{"context":"independent-review","state":"success","description":"QA PASS","creator":{"login":"rev"}}]' ;;
   *) echo "unexpected gh $*" >&2; exit 9 ;;
@@ -82,14 +92,19 @@ esac
   const run = (answer) => spawnSync(process.execPath, [join(repo, "orchestration/merge-evidence.js"), "42", "--repo", "o/r", "--mission", "m1", "--slice", "s1", "--deploy", "none", "--decide"],
     { encoding: "utf8", env: { PATH: `${bin}:${process.env.PATH}`, OPENRIG_WORK_ROOT: work, AGENT_JEV_STUB: stub({ "review.merge_gate": answer }) } });
   let r = run({ decided_by: "jev", band: "act", result: { decision: "merge" } });
-  assert.equal(r.status, 0, r.stderr);
   const out = JSON.parse(r.stdout);
   assert.match(out.input.ci, /verify=fail[\s\S]*NOT passing: verify/, "a failing check (gh exits 1) is still reported");
   assert.match(out.input.review, /Ship: YES, all criteria passed in the browser/, "wrapped YAML evidence read whole");
-  assert.match(out.input.review, /blast radius \(PR comment\): ## Blast radius Safe because: only a nullable column\./);
-  assert.match(r.stderr, /merge gate: PASS/);
+  assert.match(out.input.review, /blast radius \(https:\/\/x\/c1, 2026-09-30T10:00:00Z, names this head\): ## Blast radius Safe because: only a nullable column/);
+  assert.match(out.input.review, /cross-family review on the PR \(https:\/\/x\/r1, .*by rev, names this head\): Lenses applied: correctness, security\. Verified the login tests/);
+  assert.match(r.stderr, /merge gate: HOLD \(a STUBBED answer, not a live Jev decision/, "a stub never passes (QA round 1)");
+  assert.equal(r.status, 1); assert.equal(out.decision.stubbed, true);
+  fs.writeFileSync(join(root, "move"), "");   // a push lands while the evidence is collected
+  r = run({ decided_by: "jev", band: "act", result: { decision: "merge" } });
+  assert.equal(r.status, 2); assert.match(r.stderr, /the PR moved while its evidence was collected \(head aaaaaaaaaaaa -> cccccccccccc/, "QA round 1: no mixed-head evidence");
+  fs.rmSync(join(root, "move"));
   r = run({ decided_by: "jev", band: "review", result: { decision: "merge" } });
-  assert.equal(r.status, 1); assert.match(r.stderr, /merge gate: HOLD \(jev\/review\/merge\)/);
+  assert.equal(r.status, 1); assert.match(r.stderr, /merge gate: HOLD \(a STUBBED answer, not a live Jev decision: jev\/review\/merge\)/);
 });
 
 // ---- seat picking --------------------------------------------------------------------------------------------------
@@ -103,6 +118,8 @@ const seatRows = [
 
 test("pick-seat candidates: running seats of the role with no open work, on an available account family", () => {
   assert.deepEqual(seatCandidates(seatRows, "implementer").map((c) => c.id), ["impl-codex-1@shop", "impl-claude-ui@shop"]);
+  const busyUntracked = { ...seatRows[0], seat: "impl-codex-9@shop", idle: false };   // working, but no tracked work (QA round 1)
+  assert.ok(!seatCandidates([busyUntracked], "implementer").length, "a working seat is never a candidate");
   assert.deepEqual(seatCandidates(seatRows, "implementer", { claude: 0, codex: 2 }).map((c) => c.id), ["impl-codex-1@shop"], "no claude account free");
   assert.match(seatCandidates(seatRows, "implementer")[0].text, /codex seat \(codex\), idle, no open work, quality 0\.50/);
 });
@@ -148,11 +165,11 @@ test("stuck rules: digits don't count as change, decoration isn't a repeat, thre
 
 test("stuck evidence: the facts Jev needs, with credentials redacted", () => {
   const e = st.buildEvidence({ state: "idle", minutesInState: 40, hashes: ["x", "y", "y", "y"], intervalMin: 10, repeat: null,
-    openRows: [{ id: "qitem-1", state: "in-progress", ageMin: 95, summary: "Build 03-login" }],
+    openRows: [{ id: "qitem-1", state: "in-progress", ageMin: 95, summary: "Build 03-login; DB postgresql://app:summarysecret@db/app" }],
     tail: RATE_LIMIT + "\nDATABASE_URL=postgresql://app:hunter2@db.example/app\ntoken sk-live_ABCDEFGHIJKLMNOP" });
   assert.match(e, /^state: idle for about 40 min/); assert.match(e, /unchanged for the last 3 checks \(about 20 min; digits ignored\)/);
-  assert.match(e, /open queue work: qitem-1 in-progress for 95 min \(Build 03-login\)/);
-  assert.match(e, /rate_limit_error/); assert.doesNotMatch(e, /hunter2|sk-live_/);
+  assert.match(e, /open queue work: qitem-1 in-progress for 95 min \(Build 03-login; DB postgres:\/\/<redacted>\)/);
+  assert.match(e, /rate_limit_error/); assert.doesNotMatch(e, /hunter2|sk-live_|summarysecret/, "queue summaries are redacted too (QA round 1)");
 });
 
 test("stuck warnings: looping, rate-limited or stalled warn the lead; progressing never; unclear only after 3 same screens", () => {
@@ -205,4 +222,43 @@ test("agent-project-check WARNs when a Fable seat's screen asks for the usage-cr
   assert.equal(row.level, "WARN"); assert.match(row.check, /arch-claude@shop/); assert.match(row.detail, /run `\/model fable` once/);
   row = check("● Reading the repo's AGENTS.md");
   assert.equal(row.level, "OK");
+  row = check("Finished updating the usage credits documentation. Tests passed.");
+  assert.equal(row.level, "OK", "ordinary work that mentions usage credits is not a consent prompt (QA round 1)");
+  fs.writeFileSync(join(pb, "tmux"), "#!/bin/sh\necho \"can't find session\" >&2; exit 1\n", { mode: 0o755 });
+  row = JSON.parse(spawnSync("python3", [join(repo, "bin/agent-project-check"), W, "--json"], { encoding: "utf8", timeout: 60000,
+    env: { PATH: `${pb}:${process.env.PATH}`, HOME: home, OPENRIG_URL: "http://127.0.0.1:9" } }).stdout).find((x) => x.check.startsWith("Fable seats can use their model"));
+  assert.equal(row.level, "WARN"); assert.match(row.detail, /screen not readable .* not verified/);
+});
+
+
+test("agent-stuck-check: no flagged seat starves behind --max-asks, and a failed send is retried, not deduplicated (QA round 1)", () => {
+  const calls = join(root, "rig-calls-2"), state = join(root, "state-2");
+  const lead = { canonicalSessionName: "coord-lead-claude@big", logicalId: "coord.lead-claude", runtime: "claude-code", lifecycleState: "running", sessionStatus: "running", agentActivity: { state: "idle" }, assignedWorkCount: 0, pendingWorkCount: 0 };
+  const workers = Array.from({ length: 12 }, (_, i) => ({ canonicalSessionName: `impl-codex-${i + 1}@big`, logicalId: `impl.codex-${i + 1}`, runtime: "codex",
+    lifecycleState: "running", sessionStatus: "running", agentActivity: { state: "idle" }, assignedWorkCount: 1, pendingWorkCount: 0 }));
+  const writeRig = (sendRc) => fs.writeFileSync(join(bin, "rig"), `#!/bin/sh
+echo "rig $*" >> "${calls}"
+case "$*" in
+  "ps --json") echo '[{"name":"big","isArchived":false,"runningCount":13}]' ;;
+  "ps --nodes --rig big --json") echo '${JSON.stringify([lead, ...workers])}' ;;
+  "queue list -A --limit 500 --json") echo '[]' ;;
+  send*) exit ${sendRc} ;;
+esac
+`, { mode: 0o755 });
+  fs.writeFileSync(join(root, "screen.txt"), RATE_LIMIT);
+  fs.writeFileSync(join(bin, "tmux"), `#!/bin/sh\ncat "${join(root, "screen.txt")}"\n`, { mode: 0o755 });
+  const env = { PATH: `${bin}:${process.env.PATH}`, AGENT_STACK_STATE: state, AGENT_JEV_STUB: stub({ "seat.stuck": { decided_by: "jev", band: "act", result: { verdict: "rate_limited" } } }) };
+  const run = () => { fs.rmSync(calls, { force: true }); const r = spawnSync(process.execPath, [join(repo, "orchestration/stuck.js"), "--max-asks", "10"], { encoding: "utf8", env });
+    assert.equal(r.status, 0, r.stderr); return { out: JSON.parse(r.stdout), calls: fs.readFileSync(calls, "utf8") }; };
+  writeRig(1);                                   // every send fails
+  run();                                         // first sight: nothing flagged
+  const a = run(), b = run();
+  assert.equal(a.out.flagged, 12); assert.equal(a.out.asked, 10);
+  const asked = new Set([...a.out.results, ...b.out.results].map((r) => r.seat));
+  assert.equal(asked.size, 12, "the two seats left out of the first run are asked first in the next");
+  assert.deepEqual(b.out.results.slice(0, 2).map((r) => r.seat).sort(), ["impl-codex-11@big", "impl-codex-12@big"]);
+  assert.ok(a.out.results.every((r) => r.sent === false && r.sendFailed === true), "a failed send is not recorded as sent");
+  writeRig(0);                                   // sends work again
+  const c = run();
+  assert.ok(c.out.results.some((r) => r.sent === true), "not deduplicated after a failed send");
 });

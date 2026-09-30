@@ -333,16 +333,26 @@ Code gathers the evidence and owns the thresholds; Jev makes the judgment; anyth
 the lead or a person. Send Jev evidence, not conclusions.
 
 - **Merge gate:** `agent-merge-evidence <pr> --mission M --slice S --deploy "..." --decide` builds the
-  `review.merge_gate` input from exact-head facts. A missing item says MISSING. Only a live Jev `merge` in the act
-  band passes. Before this, the gate was asked with hand-written summaries: of 288 calls (2026-09-28 to 2026-09-30),
+  `review.merge_gate` input from exact-head facts:
+  - full head and base shas, and every required check by name;
+  - the `independent-review` status with its link, and the latest review or comment that names the head (what the
+    reviewer verified);
+  - QA's `proof/brb-<head>.md`, and the latest blast-radius comment with its link and whether it names the head;
+  - the target branch, the deploy effect, and the rollback (a rollback nobody stated is labelled as a proposed
+    default).
+
+  A missing check, status, review, proof, blast radius or deploy effect says MISSING. Free text is redacted before it
+  goes to Jev. The helper refuses if the PR's head or base moves while it collects. Only a live, not stubbed, Jev
+  `merge` in the act band passes. Before this, the gate was asked with hand-written summaries: of 288 calls (2026-09-28 to 2026-09-30),
   79 were act (27%), 62 review (22%) and 147 uncertain (51%). Measure the change with
   `jev-decide stats --since <date the helper went live>` (row `review.merge_gate`).
 - **Dispatch:** `agent-dispatch pick-seat --rig R --role implementer --task "..."` lists the running seats of the role
-  with no open work and their load (code), and Jev's `intake.seat` picks one. On review or uncertain the lead picks
+  that are idle with no open work, with their load notes (code), and Jev's `intake.seat` picks one. On review or uncertain the lead picks
   and records why in the row.
 - **Stuck seats:** `agent-stuck-check` runs every 10 minutes. For a seat holding work whose screen stopped changing,
   cycles, or repeats a line, it asks Jev's `seat.stuck` (progressing, looping, rate-limited, stalled or unclear) and
-  warns the rig's lead, at most once an hour per seat and verdict. It never acts. Checked against live Jev before
+  warns the rig's lead, at most once an hour per seat and verdict. It never acts. At most 10 Jev calls a run, the
+  seats asked longest ago first; a warning counts as sent only when `rig send` succeeded; the evidence is redacted. Checked against live Jev before
   shipping, all act band: a real rate-limit stall (a 429 with credentials cooling down) came back `rate_limited`
   (0.93, request `a1a04515`), a test run `progressing` (`fd6306b0`), a repeated failing build `looping`
   (`1190d376`), and a seat idle at its prompt holding work `stalled` (0.96, `0091b260`).
