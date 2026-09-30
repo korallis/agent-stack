@@ -198,6 +198,11 @@ with `agent-login` and the pool uses it straight away.
   `playwright-browsers` (daily timer) installs that release's own browser build. Bump the pin deliberately (0.0.80 =
   Chrome 153, 0.0.82 = Chrome 154), then run `playwright-browsers`. `@latest` can need a browser build that isn't
   installed yet.
+- **Test credentials:** Playwright MCP runs with `--secrets ~/.config/agent-stack/secrets/playwright.env` (0600,
+  `NAME=value`). An agent types a login BY NAME (`browser_type` text `"WITNESS_PASSWORD"`); the MCP types the value and
+  shows `<secret>WITNESS_PASSWORD</secret>` in every snapshot and code line instead of it. Without it, a filled
+  password shows in the snapshot. `install.sh` sets it up (`system/playwright-mcp-config`); seats get it when their MCP
+  restarts.
 - **Seats never depend on the daemon unit.** Every seat lives in the tmux server of `openrig-tmux.service`, not in
   `openrig.service`. tmux ties each pane to the unit its server runs in, which is how `systemctl stop openrig.service`
   once stopped every seat. Restart the daemon with `openrig-daemon-cycle` (the health check does too), never with

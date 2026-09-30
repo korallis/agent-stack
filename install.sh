@@ -166,7 +166,8 @@ if [ $CHECK = 0 ]; then
   claude mcp get jev >/dev/null 2>&1 || claude mcp add --scope user jev -- "$B/jev-mcp" >/dev/null
   # Playwright MCP: the pinned release with Playwright's own Chrome for Testing (see system/codex/config.toml). An
   # existing user-scope entry with other args (the old @latest + --executable-path) is replaced.
-  pw=(npx -y "@playwright/mcp@$PW_MCP" --headless --browser chromium)
+  pw=(npx -y "@playwright/mcp@$PW_MCP" --headless --browser chromium --secrets "$SEC/playwright.env")
+  "$S/system/playwright-mcp-config" | sed 's/^/   /'   # secrets file (0600) + the Codex MCP args with --secrets
   if ! claude mcp get playwright 2>/dev/null | grep -qF -- "Args: ${pw[*]:1}"; then
     claude mcp remove --scope user playwright >/dev/null 2>&1 || true
     claude mcp add --scope user playwright -- "${pw[@]}" >/dev/null || todo "claude mcp playwright"
@@ -181,10 +182,9 @@ if [ $CHECK = 0 ]; then
   "$S/bin/playwright-browsers" >/dev/null || todo "playwright chromium for @playwright/mcp@$PW_MCP"
 fi
 claude plugin list 2>/dev/null | grep -q superpowers && ok "Superpowers (Claude Code)" || todo "Superpowers (Claude Code)"
-claude mcp get playwright 2>/dev/null | grep -qF -- "Args: -y @playwright/mcp@$PW_MCP --headless --browser chromium" \
-  && ok "Playwright MCP (Claude Code): @playwright/mcp@$PW_MCP, Chrome for Testing" || todo "Playwright MCP (Claude Code) not on @playwright/mcp@$PW_MCP --browser chromium"
-grep -qF "\"@playwright/mcp@$PW_MCP\", \"--headless\", \"--browser\", \"chromium\"" "$HOME/.codex/config.toml" 2>/dev/null \
-  && ok "Playwright MCP (Codex): @playwright/mcp@$PW_MCP, Chrome for Testing" || todo "Playwright MCP (Codex): set [mcp_servers.playwright] args as in system/codex/config.toml"
+claude mcp get playwright 2>/dev/null | grep -qF -- "Args: -y @playwright/mcp@$PW_MCP --headless --browser chromium --secrets $SEC/playwright.env" \
+  && ok "Playwright MCP (Claude Code): @playwright/mcp@$PW_MCP, Chrome for Testing, --secrets" || todo "WARN: Playwright MCP (Claude Code) not on @playwright/mcp@$PW_MCP --browser chromium --secrets $SEC/playwright.env"
+"$S/system/playwright-mcp-config" --check | sed 's/^/   /' || true   # secrets file 0600 + Codex args with --secrets
 "$S/bin/playwright-browsers" --check >/dev/null && ok "Playwright MCP browser installed" || todo "Playwright MCP browser: run playwright-browsers"
 codex plugin list 2>/dev/null | grep -q "superpowers.*installed" && ok "Superpowers (Codex)" || todo "Superpowers (Codex)"
 command -v toon >/dev/null && ok "toon CLI" || todo "toon CLI"
