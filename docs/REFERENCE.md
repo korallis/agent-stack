@@ -371,9 +371,13 @@ the lead or a person. Send Jev evidence, not conclusions.
   - there is no review requirement outstanding, and no conflict.
 
   Otherwise the merge state stays BLOCKED and lists each reason ("not verified by this helper: ..." for the kinds
-  above). A `jev-merge` that already failed reads as failed, never as "not yet posted". Unreadable requirements or
-  check runs keep BLOCKED. A separate line gives the gate's own record for the head: "pending this gate (nothing
-  posted)" or "<state> already posted". Free text is redacted before it
+  above). Unreadable requirements or check runs keep BLOCKED. The gate's own `jev-merge` is never evidence against
+  itself: an earlier run's result on the same head reads "pending this gate (jev-merge holds an earlier run's result,
+  which this run replaces; …)". It is dropped from the required checks in `ci` and from the gate's problems, so a
+  re-gate after its own HOLD (or MERGE) reads like a first run. Otherwise every hold would re-hold itself. Those
+  earlier runs on this head (statuses, or gate comments declaring the head) are listed in a separate `history` field
+  of the command's output, for people. It is never sent to Jev, and an older head's runs never appear. Free text is
+  redacted before it
   goes to Jev. The helper refuses if the PR's head or base moves while it collects. A live, not stubbed, Jev `merge`
   in the act band merges on its own (exit 0). A live `merge` below the act bar (review or uncertain band) is NEEDS
   CONFIRM (exit 3) when every gate the helper checks is green: required checks pass, the review verdict is success,
@@ -427,7 +431,7 @@ the lead or a person. Send Jev evidence, not conclusions.
   review counts and the review is MISSING, saying why. The selected review's body goes into the evidence, with its
   link, time and seat, and redacted like every other free text. Limits it states (`LIMIT:`, `Caveat:`,
   `Not verified:`, `Untested:`) are repeated in the limits field. QA's latest record stands in for the proof file
-  (PASS, BLOCKING or UNCLEAR), and the gate's latest record gives its line in the merge state. Commit statuses are
+  (PASS, BLOCKING or UNCLEAR), and the gate's own comments on the head go into `history` (never into Jev's input). Commit statuses are
   read across all pages. A bad config (unknown source, missing or invalid heading) stops the helper with exit 2.
 - **The review verdict:** the first line of the review evidence is always
   `review verdict: <success|failure>, from <source>; bound to head <sha>`. The verdict reaches Jev even when the
