@@ -102,6 +102,7 @@ esac
   const run = (answer) => spawnSync(process.execPath, [join(repo, "orchestration/merge-evidence.js"), "42", "--repo", "o/r", "--mission", "m1", "--slice", "s1", "--deploy", "none", "--decide"],
     { encoding: "utf8", env: { PATH: `${bin}:${process.env.PATH}`, OPENRIG_WORK_ROOT: work, AGENT_JEV_STUB: stub({ "review.merge_gate": answer }) } });
   let r = run({ decided_by: "jev", band: "act", result: { decision: "merge" } });
+  assert.ok(r.stdout.trim(), `no output (exit ${r.status}): ${r.stderr}`);
   const out = JSON.parse(r.stdout);
   assert.match(out.input.ci, /verify=fail[\s\S]*NOT passing: verify/, "a failing check (gh exits 1) is still reported");
   assert.match(out.input.review, /Ship: YES, all criteria passed in the browser/, "wrapped YAML evidence read whole");
