@@ -25,7 +25,7 @@ test("review.merge_gate is version 2 and states the tests-first rule and every e
   assert.match(instr, /its change carries the line 'scope \(from the diff\): tests-only', computed from the diff/);
   assert.match(instr, /tests that QA actually ran \(on this head, or on an earlier commit when the evidence shows the test files unchanged since, a carried run\) and saw fail exactly at the step needing the unbuilt feature, with the run's result in the evidence/);
   assert.match(instr, /QA's verdict for this head is FAIL or there is no QA verdict for it at all \(the exception never replaces the QA gate\)/);
-  assert.match(instr, /when a 'scope check' line says the PR was called tests-only but the diff changes code, when the scope line says code change, says unknown, or is absent/);
+  assert.match(instr, /when a 'scope check' line says a tests-first branch changes code, when the scope line says code change, says unknown, or is absent/);
   assert.match(instr, /when QA did not run the tests \(a predicted or inferred failure/);
   assert.match(instr, /a bare count such as '2 failed' names no step/);
   assert.match(instr, /a test fails at a step that is already built/);
@@ -85,25 +85,22 @@ test("outcome (QA PR80): a live Jev merge in the act band still HOLDs when a det
   }
 });
 
-test("WO79: an ordinary PR's scope line is neutral; the contradiction line appears only when tests-only is claimed but code changed", () => {
+test("WO79: an ordinary PR's scope line is neutral; the scope-check line comes only from a tests/ branch whose diff changes code", () => {
   const f = (path) => ({ path, oldPath: path, added: [], removed: [] });
   const code = testScope([f("bin/tool"), f("tests/tool.test.js")]);
   assert.equal(code, "scope (from the diff): code change, 1 non-test path(s): bin/tool (plus 1 test path(s))");
   assert.doesNotMatch(code, /NOT|not tests-only/, "no defect wording for an ordinary change");
-  const facts = (change, scope) => ({ pr: 1, head: "a".repeat(40), base: "b".repeat(40), baseRef: "main", headRef: "x", change, scope, checks: [], mergeable: "MERGEABLE", isDraft: false });
-  const ordinary = buildMergeInput(facts("Fix the export date sort", code));
-  assert.equal(ordinary.change, `Fix the export date sort\n${code}`);
-  const claimed = buildMergeInput(facts("F-031 locked journey. Tests only.", code));
-  assert.match(claimed.change, /\nscope check: the change or review calls this tests-only, but the diff changes 1 non-test path\(s\): bin\/tool \(plus 1 test path\(s\)\)$/);
-  const honest = buildMergeInput(facts("F-031 locked journey. Tests only.", testScope([f("tests/a.spec.ts")])));
-  assert.doesNotMatch(honest.change, /scope check/, "a tests-only diff is no contradiction");
-  // QA PR83: negations, descriptions and history in the review or the description are not claims
-  for (const said of ["This is not tests-only.", "This isn't tests-only.", "This changes the tests-only classifier.",
-    "The old description said tests-only; this review confirms application code changed.", "This is not a tests-only change.", "non-tests-only refactor"]) {
-    assert.doesNotMatch(buildMergeInput(facts(`Refactor export. ${said}`, code)).change, /scope check/, `description: ${said}`);
+  const facts = (change, scope, headRef = "agent/impl-codex-1") => ({ pr: 1, head: "a".repeat(40), base: "b".repeat(40), baseRef: "main", headRef, change, scope, checks: [], mergeable: "MERGEABLE", isDraft: false });
+  assert.equal(buildMergeInput(facts("Fix the export date sort", code)).change, `Fix the export date sort\n${code}`);
+  // QA PR83: prose never makes a claim, whatever it says and wherever it says it
+  for (const said of ["Tests only.", "This PR is tests-only.", "This is not tests-only.", "This isn't tests-only.", "This changes the tests-only classifier.",
+    "The old description said tests-only; this review confirms application code changed.", "Fix tests-only PR detection.", "Tests-only classifier: fix code-change detection."]) {
+    assert.doesNotMatch(buildMergeInput(facts(said, code)).change, /scope check/, `description: ${said}`);
     assert.doesNotMatch(buildMergeInput({ ...facts("Refactor export.", code), reviewVerdict: { state: "success", source: "status" }, verdictReport: { kind: "review", url: "u", at: "t", author: "r", excerpt: said } }).change, /scope check/, `review: ${said}`);
   }
-  for (const said of ["Tests only, authored by tests-claude-1.", "This PR is tests-only.", "A tests-only change for F-031.", "the patch is purely tests-only"])
-    assert.match(buildMergeInput(facts(`F-031 journey. ${said}`, code)).change, /scope check/, said);
-  assert.doesNotMatch(buildMergeInput(facts("F-031 journey. Tests only.", testScope([f("tests/a.spec.ts")]))).change, /scope check/, "honest tests-only");
+  // the structural claim: a test author's tests/<feature-id> branch
+  assert.match(buildMergeInput(facts("F-031 journey", code, "tests/F-031")).change,
+    /\nscope check: head branch tests\/F-031 is a tests-first branch, but the diff changes 1 non-test path\(s\): bin\/tool \(plus 1 test path\(s\)\)$/);
+  assert.doesNotMatch(buildMergeInput(facts("F-031 journey", testScope([f("tests/a.spec.ts")]), "tests/F-031")).change, /scope check/, "honest tests-only on a tests/ branch");
+  assert.doesNotMatch(buildMergeInput(facts("F-031 journey", code, "feature/tests-for-x")).change, /scope check/, "only a tests/ prefix counts");
 });

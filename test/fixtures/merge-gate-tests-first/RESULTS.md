@@ -62,7 +62,8 @@ covers CI.
 
 Since #80 every ordinary PR's change carried `scope (from the diff): NOT tests-only, …`, and the capitalised NOT read as a defect:
 ordinary merges drifted to HOLD. v3 states it neutrally (`code change, N non-test path(s): …`); the decisive negative is a separate
-`scope check:` line, added only when the change or review calls the PR tests-only but the diff changes code.
+`scope check:` line, added only when the PR's head branch is a test author's `tests/<feature-id>` branch and the diff changes
+code (a structural fact: prose about "tests-only" is never read as a claim, QA PR83).
 
 Ordinary-code PRs (saved gate inputs of merged agent-stack PRs, real file lists; 2 calls each). `none` and `before` on the v2
 catalog, `after` on v3:
@@ -94,3 +95,7 @@ The tests-first set on v3 (3 calls each):
 | `stale-ci.json` | hold (held in code) | uncertain merge merge=0.59 hold=0.41; uncertain merge merge=0.67 hold=0.33; uncertain merge merge=0.55 hold=0.45 |
 | unknown scope (QA) | hold (held in code) | uncertain merge merge=0.58 hold=0.42; uncertain merge merge=0.6 hold=0.4; uncertain merge merge=0.59 hold=0.41 |
 | no scope line (QA) | hold (held in code) | act merge merge=0.88 hold=0.12; act merge merge=0.89 hold=0.11; act merge merge=0.91 hold=0.09 |
+
+On the final v3 text (the scope-check line keyed on a `tests/` branch), 3 calls: `claimed-tests-only-code-change.json`
+(tests/F-031 branch, code changed) uncertain hold 0.85 / 0.88 / 0.89. Spot checks, 1 call each: the reported PR merge 0.58,
+`positive.json` act merge 0.93, ordinary #82 merge 0.55, #78 merge 0.66.
