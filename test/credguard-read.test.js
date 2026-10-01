@@ -272,3 +272,124 @@ test("Codex accepts the installed guard as trusted (hooks/list)", { skip: !codex
   assert.equal(guard.key, `${fs.realpathSync(join(h, "home/config.toml"))}:pre_tool_use:1:0`);
   assert.equal(guard.currentHash, tomlJson(join(h, "home/config.toml")).hooks.state[guard.key].trusted_hash);
 });
+
+// ---- globs, cd, links and quoting against a real directory (the operator's attack list) ---------------------------
+test("globs follow bash's dotfile rule; dotglob, .* and ** still refuse; cd, links, copies, $'…', braces and variables resolve", () => {
+  const w = fs.mkdtempSync(join(root, "glob-")), d = join(w, "app"), bin = join(w, "bin");
+  fs.mkdirSync(d); fs.mkdirSync(bin);
+  fs.writeFileSync(join(d, ".env"), "FIXTURE_KEY=x\n"); fs.writeFileSync(join(d, "notes.txt"), "hi\n");
+  fs.writeFileSync(join(bin, "tool"), "#!/bin/sh\n"); fs.writeFileSync(join(bin, "other"), "x\n");
+  const dec = (command, cwd = w) => g.decide({ tool_name: "Bash", tool_input: { command }, cwd }, { home, pats: g.DEFAULT_PATTERNS }).deny;
+  // the false positive that started this: a glob over a directory with no credential files
+  assert.equal(dec("grep -rn TODO bin/*"), false);
+  assert.equal(dec("cat app/*"), false, "bash's * doesn't match .env (dotglob off)");
+  for (const c of ["shopt -s dotglob; cat app/*", "bash -O dotglob -c 'cat app/*'", "cat app/.*", "cat app/.e*", "cat app/**", "cat app/.en?"])
+    assert.equal(dec(c), true, c);
+  assert.equal(dec("shopt -s dotglob; shopt -u dotglob; cat app/*"), false, "dotglob turned off again");
+  fs.writeFileSync(join(d, "prod.env"), "K=v\n");
+  assert.equal(dec("cat app/*"), true, "a non-dot credential file matched by *"); fs.rmSync(join(d, "prod.env"));
+  // cd: relative paths resolve against the directory the command moved to
+  assert.equal(dec("cd ~/.config/agent-stack/secrets && cat cliproxy.env", "/"), true, "cd into the secrets dir, then a bare name");
+  assert.equal(dec("cd app; cat .env"), true); assert.equal(dec("cd app && cat notes.txt"), false);
+  assert.equal(dec("cd /; cd ~/.config/agent-stack && cat secrets/x.env"), true);
+  // links and copies (an existing symlink to .env also makes `cat app/*` print it)
+  fs.symlinkSync(join(d, ".env"), join(d, "readme-link"));
+  assert.equal(dec("cat app/readme-link"), true, "an existing symlink to .env");
+  assert.equal(dec("cat app/*"), true, "* now matches a link to .env");
+  for (const c of ["ln -s app/.env n && cat n", "cp app/.env /tmp/n.txt; cat /tmp/n.txt", "mv app/.env keep; head keep", "cp app/.env app/ && cat app/.env",
+    "dd if=app/.env of=out.txt; cat out.txt", "tee copy.txt < app/.env >/dev/null; cat copy.txt"]) assert.equal(dec(c), true, c);
+  assert.equal(dec("cp app/notes.txt n && cat n"), false, "copying an ordinary file taints nothing");
+  // quoting, braces, variables
+  for (const c of ["cat $'app/\\x2eenv'", "cat $'app/.e\\156v'", "cat app/.{e,x}nv", "cat \"app/.e\"nv", "cat app/\\.env", "F=app/.env; cat $F",
+    "export F=app/.env; cat \"$F\"", "D=app; cat ${D}/.env"]) assert.equal(dec(c), true, c);
+  assert.equal(dec("cat app/.{x,y}nv"), false, "braces that name nothing protected");
+});
+
+// QA PR59 (c5830bd9): brackets, directory state, globs over new copies, cp -t / directory copies, \U, and variables.
+test("QA PR59: bracket classes, every visited directory, tainted names in globs, cp -t, dir copies, \\U, command-local variables", () => {
+  const h = fs.mkdtempSync(join(root, "qa59-")), app = join(h, "app"), sec = join(h, ".config/agent-stack/secrets");
+  fs.mkdirSync(app); fs.mkdirSync(sec, { recursive: true }); fs.mkdirSync(join(h, "out"));
+  fs.writeFileSync(join(app, ".env"), "K=v\n"); fs.writeFileSync(join(app, "key.pem"), "x\n"); fs.writeFileSync(join(app, "notes"), "hi\n");
+  fs.writeFileSync(join(sec, "token.txt"), "t\n"); fs.symlinkSync(join(app, ".env"), join(app, "nlink"));
+  const dec = (command) => g.decide({ tool_name: "Bash", tool_input: { command }, cwd: h }, { home: h, pats: g.DEFAULT_PATTERNS }).deny;
+  for (const c of [
+    "cat app/.[e]nv", "cat app/key.[p]em", "cat app/.[!x]nv", "cat app/n[l]ink",                                  // f1
+    `cd "$HOME/.config/agent-stack/secrets"; (cd "$HOME"); cat token.txt`, "pushd ~/.config/agent-stack/secrets; popd; cat token.txt",
+    "cd ~/.config/agent-stack/secrets; cd -; cat token.txt", "env -C ~/.config/agent-stack/secrets cat token.txt",  // f2
+    "cp app/.env copied; cat cop*", "cp app/.env c1; cp c* c2; cat c2", "mv app/.env moved; cat mov*", "ln -s app/.env lk; cat l?", "dd if=app/.env of=d1; cat d*", // f3
+    'cp -t out "$HOME/.config/agent-stack/secrets/token.txt"; cat out/token.txt', 'cp -r "$HOME/.config/agent-stack/secrets" out/; cat out/secrets/token.txt', // f4
+    "cat $'app/\\U0000002eenv'",                                                                                       // f5
+    "F=app/.env bash -c 'cat \"$F\"'", "declare F=app/.env; cat $F", "read F <<< app/.env; cat $F", "for f in app/.env; do cat \"$f\"; done", // f6
+    "cat \"$(printf app/.env)\" # names app/.env", "X=$(echo app); cat app/.env",                                      // backstop / plain
+  ]) assert.equal(dec(c), true, c);
+  for (const c of ["cat app/n[o]tes", "cat app/[!.]otes", "cd app; cat notes", "cp app/notes n2; cat n*", "for f in app/notes; do cat \"$f\"; done",
+    "cat \"$UNSET\"", "ls app/.[e]nv", "cp -t out app/notes; cat out/notes"]) assert.equal(dec(c), false, c);
+});
+
+// QA PR59 refresh (9225d851): an assignment that may not reach this shell must not replace a protected value.
+test("QA PR59 refresh: subshell / prefix / branch scope, dotglob off in a subshell, [[:class:]], env -CDIR, read field splitting", () => {
+  const h = fs.mkdtempSync(join(root, "qa59r-")), app = join(h, "app"), sec = join(h, ".config/agent-stack/secrets");
+  fs.mkdirSync(app); fs.mkdirSync(sec, { recursive: true }); fs.mkdirSync(join(h, "out"));
+  fs.writeFileSync(join(app, ".env"), "K=v\n"); fs.writeFileSync(join(app, "safe.txt"), "hi\n"); fs.writeFileSync(join(sec, "token.txt"), "t\n");
+  const dec = (command) => g.decide({ tool_name: "Bash", tool_input: { command }, cwd: h }, { home: h, pats: g.DEFAULT_PATTERNS }).deny;
+  for (const c of [
+    'F=app/.env; (F=app/safe.txt); cat "$F"', 'F=app/.env; F=app/safe.txt true; cat "$F"',
+    'F=app/.env; if false; then F=app/safe.txt; fi; cat "$F"', 'F=app/.env; false && F=app/safe.txt; cat "$F"',
+    'F=app/.env; echo x | F=app/safe.txt; cat "$F"', 'F=app/.env; export F=app/safe.txt & cat "$F"',
+    "shopt -s dotglob; (shopt -u dotglob); cat app/*", "cat app/.[[:alpha:]]nv", "cat app/.[[:lower:]]n[[:alpha:]]",
+    'env -C"$HOME/.config/agent-stack/secrets" cat token.txt', "read -r F rest <<< 'app/.env ignore'; cat \"$F\"",
+    "read -r A B <<< 'x app/.env'; cat $B", "cp -t out app/.[e]nv; cat out/.env",
+  ]) assert.equal(dec(c), true, c);
+  for (const c of ['F=app/.env; F=app/safe.txt; cat "$F"', 'F=app/safe.txt true; cat app/safe.txt', "cat app/.[[:digit:]]nv",
+    "shopt -s dotglob; shopt -u dotglob; cat app/*", "read -r F rest <<< 'app/safe.txt app/.env'; cat \"$F\"",
+    "cp app/.env out/; cp app/safe.txt out/; cat out/safe.txt"]) assert.equal(dec(c), false, c);
+});
+
+// QA PR59 scope (79ae3e1b): conditional groups, env assignments, prefixed commands keep their effects, read options and IFS.
+test("QA PR59 scope: { … } after && / ||, env F=x cmd, X=1 before cd/cp/shopt/redirections, read -n / -d / IFS", () => {
+  const h = fs.mkdtempSync(join(root, "qa59s-")), app = join(h, "app"), sec = join(h, ".config/agent-stack/secrets");
+  fs.mkdirSync(app); fs.mkdirSync(sec, { recursive: true });
+  fs.writeFileSync(join(app, ".env"), "K=v\n"); fs.writeFileSync(join(app, "safe.txt"), "hi\n"); fs.writeFileSync(join(sec, "token.txt"), "t\n");
+  const dec = (command) => g.decide({ tool_name: "Bash", tool_input: { command }, cwd: h }, { home: h, pats: g.DEFAULT_PATTERNS }).deny;
+  for (const c of [
+    'F=app/.env; false && { true; F=app/safe.txt; }; cat "$F"', 'F=app/.env; true || { true; F=app/safe.txt; }; cat "$F"',
+    'F=app/.env; false && { { true; }; F=app/safe.txt; }; cat "$F"', "shopt -s dotglob; false && { true; shopt -u dotglob; }; cat app/*",
+    'F=app/.env; env F=app/safe.txt true; cat "$F"', 'F=app/.env; env -i F=app/safe.txt true; cat "$F"',
+    "X=1 cat < app/.env", "X=1 cp app/.env copied; cat copied", 'X=1 cd "$HOME/.config/agent-stack/secrets"; cat token.txt',
+    "X=1 shopt -s dotglob; cat app/*", "F=app/.env bash -c 'cat \"$F\"'",
+    'read -r -n 8 F <<< "app/.envJUNK"; cat "$F"', 'read -rn8 F <<< "app/.envJUNK"; cat "$F"', 'IFS=: read -r F rest <<< "app/.env:ignore"; cat "$F"',
+    'read -r -d , F <<< "app/.env,x"; cat "$F"', 'read -r <<< app/.env; cat "$REPLY"', 'read -r -a A <<< "x app/.env"; cat ${A[1]}',
+  ]) assert.equal(dec(c), true, c);
+  for (const c of ['F=app/.env; { F=app/safe.txt; }; cat "$F"', "X=1 cat app/safe.txt", 'F=app/safe.txt; env F=app/.env true; cat "$F"',
+    'IFS=: read -r F rest <<< "app/safe.txt:app/.env"; cat "$F"', 'read -r -n 4 F <<< "app/.env"; cat "$F"',
+    "X=1 true; cat app/safe.txt"]) assert.equal(dec(c), false, c);
+});
+
+// QA PR59 boundary (45f6af0f): F=x cmd "$F" expands the OLD value; read without -r removes backslashes.
+test("QA PR59 boundary: a prefix reaches the child's environment, not the command's own words; read without -r unescapes", () => {
+  const h = fs.mkdtempSync(join(root, "qa59b-")), app = join(h, "app");
+  fs.mkdirSync(app); fs.writeFileSync(join(app, ".env"), "K=v\n"); fs.writeFileSync(join(app, "safe.txt"), "hi\n");
+  const dec = (command) => g.decide({ tool_name: "Bash", tool_input: { command }, cwd: h }, { home: h, pats: g.DEFAULT_PATTERNS }).deny;
+  for (const c of ['F=app/.env; F=app/safe.txt cat "$F"', 'F=app/.env; F=app/safe.txt cat < "$F"', 'F=app/.env; env F=app/safe.txt cat "$F"',
+    "F=app/safe.txt; F=app/.env bash -c 'cat \"$F\"'", "F=app/safe.txt; F=app/.env env -S 'cat ${F}'", "read F <<< 'app/\\.env'; cat \"$F\"",
+    "read F rest <<< 'app/.e\\nv x'; cat \"$F\"", "IFS=: read -r F rest <<< \"app/.env:ignore\"; cat \"$F\"", "read -rd : F <<< 'app/.env:x'; cat \"$F\""])
+    assert.equal(dec(c), true, c);
+  for (const c of ["F=app/.env; F=app/safe.txt bash -c 'cat \"$F\"'", 'F=app/safe.txt; F=app/.env cat "$F"', "read -r F <<< 'app/\\.env'; cat \"$F\"",
+'read -rn12 F <<< "app/safe.txtJUNK"; cat "$F"', "read F <<< 'app/safe\\.txt'; cat \"$F\""])
+    assert.equal(dec(c), false, c);
+});
+
+// QA PR59 combination (b8ca0b59): the parent expands its part of a bash -c string first; read decodes, then cuts.
+test("QA PR59 combination: bash -c \"…\" takes the parent's old values; read -n / -d / continuation count decoded characters", () => {
+  const h = fs.mkdtempSync(join(root, "qa59c-")), app = join(h, "app");
+  fs.mkdirSync(app); fs.writeFileSync(join(app, ".env"), "K=v\n"); fs.writeFileSync(join(app, "safe.txt"), "hi\n");
+  const dec = (command) => g.decide({ tool_name: "Bash", tool_input: { command }, cwd: h }, { home: h, pats: g.DEFAULT_PATTERNS }).deny;
+  for (const c of ['F=app/.env; F=app/safe.txt bash -c "cat $F"', "F=app/safe.txt; F=app/.env bash -c 'cat \"$F\"'",
+    'F=app/safe.txt; F=app/.env bash -c "cat \\$F"', "F=app/safe.txt; F=app/.env bash -c 'cat '\"x\"' \"$F\"'",
+    'F=app/.env; F=app/safe.txt sh -c "cat \\"$F\\""', "read -n8 F <<< 'app/\\.envJUNK'; cat \"$F\"",
+    "read F <<< $'app/\\\\\\n.env'; cat \"$F\"", "read -d: F <<< 'app/\\.env:ignored'; cat \"$F\"", "read -d: F <<< 'app/.e\\:x:nv'; cat app/.env"])
+    assert.equal(dec(c), true, c);
+  for (const c of ['F=app/safe.txt; F=app/.env bash -c "cat $F"', "F=app/.env; F=app/safe.txt bash -c 'cat \"$F\"'",
+    "read F <<< 'app/safe\\.txt'; cat \"$F\"", "read -n12 F <<< 'app/safe.txtJUNK'; cat \"$F\"", 'echo "a\\b"; cat app/safe.txt'])
+    assert.equal(dec(c), false, c);
+});
