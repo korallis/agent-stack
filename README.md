@@ -324,7 +324,8 @@ up).
 Yes, once Slack is set up (the operator does it with the onboarding skill). Owner updates and decisions arrive in your
 Slack channel, and at the points worth seeing (a witness pass, a finished feature, a fix for a bug you reported) the
 update carries a screenshot, a short video or a PDF in its thread. Captures use demo or test data only, never secrets
-or real customer data. The Slack app needs the `files:write` scope; see
+or real customer data. The Slack app needs the `files:write` and `files:read` scopes (to send proof and to read
+files you send); see
 [docs/REFERENCE.md](docs/REFERENCE.md) ("Slack proof").
 
 ### What kinds of projects fit?

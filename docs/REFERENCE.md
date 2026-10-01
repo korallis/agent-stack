@@ -201,11 +201,12 @@ with `agent-login` and the pool uses it straight away.
   `--evidence-ref <absolute path>` (.png/.jpg/.gif/.webp, .mp4/.webm/.mov, .pdf; at most 50 MiB), and the daemon
   uploads it into that message's Slack thread (OpenRig 0.6.3 + patch 141). Seats are taught when, how and what never
   to show (CULTURE "Visual proof for the owner"; the QA, lead and witness guidance).
-  - The Slack app needs the bot scope `files:write`. `rig slack manifest` requests it; an app made before that adds
-    the scope and is reinstalled.
-  - `rig slack verify` checks only the configured required scopes, and the default list leaves `files:write` out, so
-    it says READY on an app that can't attach files. Add it once:
-    `rig slack setup --required-scopes chat:write,channels:history,channels:read,files:write`.
+  - The Slack app needs the bot scopes `files:write` (proof the seats send) and `files:read` (files the owner sends,
+    e.g. a screenshot in a reply). `rig slack manifest` requests both; an app made before that adds them and is
+    reinstalled.
+  - `rig slack verify` checks only the configured required scopes, and the default list leaves both out, so it says
+    READY on an app that can't send or read files. Add them once:
+    `rig slack setup --required-scopes chat:write,channels:history,channels:read,files:read,files:write`.
   - `openrig-slack-upload-check` shows, sending nothing, whether patch 141 is in, the channel, and whether
     `SLACK_BOT_TOKEN` is present; `--live` uploads a generated 1x1 PNG (or `--file <abs path>`) to the channel
     through the installed client. It reads the token by name and never prints it; a failure prints only Slack's

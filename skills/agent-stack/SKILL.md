@@ -157,9 +157,10 @@ lead confirms that with each seat.
     re-parks each row that is still blocked, still the seat's, and has no live wake (same blocker, same interval),
     printing each one. It never adds a second wake to a row that still has one; a row it can't read is listed. `agent-seat-handover <seat> --wakes` lists them and changes
     nothing.
-- **Slack proof attachments** need the app's bot scope `files:write` (in `rig slack manifest`; an older app adds it
-  and is reinstalled). `rig slack verify` checks only its required scopes, which by default leave `files:write` out,
-  so set them once: `rig slack setup --required-scopes chat:write,channels:history,channels:read,files:write`. Then
+- **Slack attachments** need the app's bot scopes `files:write` (proof seats send) and `files:read` (files the owner
+  sends, e.g. a screenshot in a reply); `rig slack manifest` has both, an older app adds them and is reinstalled.
+  `rig slack verify` checks only its required scopes, which by default leave both out, so set them once:
+  `rig slack setup --required-scopes chat:write,channels:history,channels:read,files:read,files:write`. Then
   `openrig-slack-upload-check` (dry: patch 141 in, channel, token present) and `openrig-slack-upload-check --live`
   (a 1x1 PNG into the channel; `--file <abs .mp4>` for video). A failure prints only Slack's code, an HTTP status or
   a fixed category. A row's text without its file means the daemon logged "attachment missing": read its log line.

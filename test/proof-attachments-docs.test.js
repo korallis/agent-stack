@@ -1,6 +1,6 @@
 // WO69: proof attachments (one file per owner update row, into its Slack thread) are documented and taught: when, how,
 // where to save the file (it must outlive the job: the daemon reads it when it posts) and what never to show; and the
-// Slack setup covers files:write and the upload check.
+// Slack setup covers files:write and files:read (inbound files) and the upload check.
 import { test } from "node:test";
 import assert from "node:assert/strict";
 import * as fs from "node:fs";
@@ -41,26 +41,35 @@ test("the agent-stack skill teaches the rule and the operator's Slack check", ()
   const k = flat("skills/agent-stack/SKILL.md");
   assert.match(k, /visual proof for the owner: ONE file per owner update row, `--evidence-ref <absolute path>`/);
   assert.match(k, /not a job's temp dir: the daemon reads it when it posts/);
-  assert.match(k, /`rig slack setup --required-scopes chat:write,channels:history,channels:read,files:write`/);
+  assert.match(k, /`rig slack setup --required-scopes chat:write,channels:history,channels:read,files:read,files:write`/);
   assert.match(k, /`openrig-slack-upload-check --live`/);
 });
 
-test("onboarding's Slack step: files:write, verify that checks it, then the upload check; later steps renumbered", () => {
+test("onboarding's Slack step: files:write and files:read, verify that checks it, then the upload check; later steps renumbered", () => {
   const o = read("skills/project-onboarding/SKILL.md");
   assert.match(o, /^3\. \*\*Slack, once per machine\*\*/m);
-  assert.match(o, /--required-scopes chat:write,channels:history,channels:read,files:write/);
-  assert.match(o, /it requests `files:write` for attachments; an older app adds\s+that bot scope and is reinstalled/);
+  assert.match(o, /--required-scopes chat:write,channels:history,channels:read,files:read,files:write/);
+  assert.match(o, /it requests `files:write` to send proof and `files:read` to read\s+files the owner sends/);
   assert.match(o, /`openrig-slack-upload-check`, then `openrig-slack-upload-check --live`/);
   const steps = [...o.slice(o.indexOf("## 2. Steps"), o.indexOf("## 3.")).matchAll(/^(\d+)\. \*\*/gm)].map((m) => Number(m[1]));
   assert.deepEqual(steps, [1, 2, 3, 4, 5, 6, 7, 8, 9, 10]);
 });
 
+test("every documented --required-scopes list keeps the baseline and both files: scopes", () => {
+  for (const f of ["docs/REFERENCE.md", "skills/agent-stack/SKILL.md", "skills/project-onboarding/SKILL.md", "changelog.d/WO69.md"]) {
+    const lists = [...flat(f).matchAll(/--required-scopes ([a-z:_,]+)/g)].map((m) => m[1].split(",").sort().join(","));
+    assert.ok(lists.length > 0, f);
+    for (const l of lists) assert.equal(l, "channels:history,channels:read,chat:write,files:read,files:write", f);
+  }
+});
+
 test("REFERENCE and README: the scope, verify's blind spot, the check tool, and what a missing file means", () => {
   const r = flat("docs/REFERENCE.md");
   assert.match(r, /\*\*Slack proof \(screenshots, video, PDF to the owner\):\*\*/);
-  assert.match(r, /bot scope `files:write`/); assert.match(r, /says READY on an app that can't attach files/);
+  assert.match(r, /bot scopes `files:write` \(proof the seats send\) and `files:read` \(files the owner sends/);
+  assert.match(r, /says READY on an app that can't send or read files/);
   assert.match(r, /`openrig-slack-upload-check` shows, sending nothing/); assert.match(r, /attachment missing/);
   const md = flat("README.md");
-  assert.match(md, /### Can it show me what it built, in Slack\?/); assert.match(md, /`files:write` scope/);
+  assert.match(md, /### Can it show me what it built, in Slack\?/); assert.match(md, /`files:write` and `files:read` scopes/);
   assert.match(md, /demo or test data only, never secrets or real customer data/);
 });

@@ -48,11 +48,12 @@ Record the answers in `~/.openrig/state/<project>-stage/` (plan, owner decisions
    yours with their OK; never touch production.
 3. **Slack, once per machine** (skip when `rig slack status` is all ✓ and `openrig-slack-upload-check --live` passed
    before). The owner gets updates, decisions and visual proof in Slack:
-   - their own app from `rig slack manifest --url` (it requests `files:write` for attachments; an older app adds
-     that bot scope and is reinstalled), tokens in a 0600 env file, never in a message;
-   - `rig slack setup --channel <id> --secrets-env-file <file> --required-scopes chat:write,channels:history,channels:read,files:write`
-     (without the last scope `rig slack verify` says READY on an app that can't attach files), then `rig slack verify`
-     and `rig slack enable`;
+   - their own app from `rig slack manifest --url` (it requests `files:write` to send proof and `files:read` to read
+     files the owner sends; an older app adds those bot scopes and is reinstalled), tokens in a 0600 env file, never
+     in a message;
+   - `rig slack setup --channel <id> --secrets-env-file <file> --required-scopes chat:write,channels:history,channels:read,files:read,files:write`
+     (without the two `files:` scopes `rig slack verify` says READY on an app that can't send or read files), then
+     `rig slack verify` and `rig slack enable`;
    - `openrig-slack-upload-check`, then `openrig-slack-upload-check --live`: a test image lands in the channel.
 4. **Create the team.** Write the answers file (`rig/template/onboarding/answers.example.env`) and run
    `agent-project-onboard <answers>`: a dry run that shows every step. Read it. Then run it with `--apply`. It clones,
