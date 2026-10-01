@@ -1398,9 +1398,9 @@ test("lockedTestsAuthor: the slice's 'Locked tests:' line gives the family, from
   assert.equal(lockedTestsAuthor([{ name: "PROGRESS.md", text: "Locked tests: tests-claude@shop, PR #9" }], seatsList).family, "claude", "from the rig's seat");
   assert.equal(lockedTestsAuthor([{ name: "PROGRESS.md", text: "" }, { name: "SPEC.md", text: "Locked tests: tests-kimi@shop" }], seatsList).family, "kimi", "SPEC.md when PROGRESS.md has none");
   const unknownSeat = lockedTestsAuthor([{ name: "PROGRESS.md", text: "Locked tests: someone@elsewhere" }], seatsList);
-  assert.equal(unknownSeat.family, null); assert.match(unknownSeat.reason, /someone@elsewhere is not a seat of this rig: pass --exclude-family/);
+  assert.equal(unknownSeat.family, null); assert.match(unknownSeat.reason, /names the locked tests' author \("someone@elsewhere"\) but no family can be read from it: pass --exclude-family/);
   const none = lockedTestsAuthor([{ name: "PROGRESS.md", text: "no such line" }, { name: "SPEC.md", text: "" }]);
-  assert.equal(none.family, null); assert.match(none.reason, /no "Locked tests: <seat> \(<family>\)" line in PROGRESS\.md or SPEC\.md/);
+  assert.equal(none.family, null); assert.match(none.reason, /no "Locked tests: <seat> \(<family>\)" or "locked-test author: <seat>" line in PROGRESS\.md or SPEC\.md/);
   assert.equal(lockedTestsAuthor([{ name: "P", text: "The locked tests: we will see" }]).family, null, "only a line that starts with it counts");
 });
 
@@ -1438,7 +1438,7 @@ test("agent-dispatch pick-seat: --exclude-family and the slice's locked-tests au
   // unknown author: nothing excluded, and it says so (never a guess)
   fs.writeFileSync(join(slice, "PROGRESS.md"), "# s1\nno author recorded\n");
   o = JSON.parse(pick("--role", "implementer", "--mission", "m1", "--slice", "s1").stdout);
-  assert.equal(o.exclude_family, null); assert.match(o.author_note, /locked tests' author unknown, nothing excluded: no "Locked tests: <seat> \(<family>\)" line/);
+  assert.equal(o.exclude_family, null); assert.match(o.author_note, /locked tests' author unknown, nothing excluded: no "Locked tests: <seat> \(<family>\)" or "locked-test author: <seat>" line/);
   assert.equal(o.candidates.length, 3);
   // the explicit flag wins over the slice; other roles are never filtered from the slice
   fs.writeFileSync(join(slice, "PROGRESS.md"), "Locked tests: tests-claude@shop (claude)\n");
@@ -1474,4 +1474,46 @@ test("eligibleFamilies: a provider whose accounts are all down counts 0 (unavail
   fs.writeFileSync(join(d, "agent-proxy-status"), `#!/bin/sh\necho '${JSON.stringify([{ provider: "claude", status: "active" }, { provider: "codex", status: "active" },
     { provider: "codex", status: "active", unavailable: true }, { provider: "kimi", status: "active", disabled: true }])}'\n`, { mode: 0o755 });
   try { process.env.PATH = `${d}:${old}`; assert.deepEqual(eligibleFamilies(), { claude: 1, codex: 1, kimi: 0 }); } finally { process.env.PATH = old; }
+});
+
+// ---- WO63: the "locked-test author: <seat>" form, anywhere, and the family from the seat's name ---------------------
+test("lockedTestsAuthor (WO63): 'locked-test author: <seat>' anywhere; family as written, from the rig's seat, or from its name", async () => {
+  const { lockedTestsAuthor, familyFromName } = await import("../orchestration/pickseat.js");
+  const spec = "## Implementer notes\nImplementing family: GPT-6 Sol · locked-test author: tests-claude-1 (UI journeys, PR 41)\n";
+  const rigSeats = [{ seat: "tests-claude-1@shop", family: "claude" }, { seat: "tests-codex-2@shop", family: "codex" }];
+  let r = lockedTestsAuthor([{ name: "PROGRESS.md", text: "" }, { name: "SPEC.md", text: spec }], rigSeats);
+  assert.equal(r.family, "claude"); assert.equal(r.seat, "tests-claude-1@shop"); assert.match(r.source, /SPEC\.md: "locked-test author: tests-claude-1 \(UI journeys, PR 41\)" \(tests-claude-1@shop is a claude seat\)/);
+  r = lockedTestsAuthor([{ name: "SPEC.md", text: spec }]);
+  assert.equal(r.family, "claude", "no rig seat: by its name"); assert.match(r.source, /a claude seat by its name/);
+  for (const [text, fam] of [["Locked-Test Author: tests-codex-2", "codex"], ["notes · LOCKED TEST AUTHOR: review-kimi-1 ; more", "kimi"],
+    ["locked-tests author: tests.claude (codex)", "codex"], ["Locked tests: tests-codex-1@shop", "codex"]])
+    assert.equal(lockedTestsAuthor([{ name: "SPEC.md", text }]).family, fam, text);
+  const unk = lockedTestsAuthor([{ name: "SPEC.md", text: "locked-test author: tests-a1" }]);
+  assert.equal(unk.family, null); assert.match(unk.reason, /SPEC\.md names the locked tests' author \("tests-a1"\) but no family can be read from it/);
+  assert.equal(lockedTestsAuthor([{ name: "SPEC.md", text: "Implementing family: GPT-6 Sol" }]).family, null, "the implementing family is not the author");
+  assert.deepEqual(["tests-claude-1", "impl-codex-2@shop", "review-kimi", "kimi2-x", "tests-a1", ""].map(familyFromName), ["claude", "codex", "kimi", "kimi", null, null]);
+  // QA PR70: a family written for another field on the same line is never the author's (both forms, every separator)
+  for (const sep of [" · ", "; ", " | ", ", ", " "]) for (const head of ["Locked tests: tests-claude", "locked-test author: tests-claude"]) {
+    const text = `${head}${sep}Implementing family: (codex)`;
+    const x = lockedTestsAuthor([{ name: "SPEC.md", text }]);
+    assert.equal(x.family, "claude", text); assert.doesNotMatch(x.source, /Implementing/, text);
+  }
+  assert.equal(lockedTestsAuthor([{ name: "SPEC.md", text: "Locked tests: tests-claude (codex) · Implementing family: (claude)" }]).family, "codex",
+    "a family written in the author's own field still wins");
+});
+
+test("agent-dispatch pick-seat (WO63): a SPEC 'locked-test author' note excludes that family", () => {
+  const n = (logicalId, runtime) => ({ canonicalSessionName: `${logicalId.replace(".", "-")}@shop`, logicalId, runtime, lifecycleState: "running", sessionStatus: "running",
+    agentActivity: { state: "idle" }, assignedWorkCount: 0, pendingWorkCount: 0 });
+  const nodes = [n("impl.claude-1", "claude-code"), n("impl.codex-1", "codex"), n("tests.claude-1", "claude-code")];
+  fs.writeFileSync(join(bin, "rig"), `#!/bin/sh\ncase "$*" in "ps --nodes --rig shop --json") echo '${JSON.stringify(nodes)}' ;; esac\n`, { mode: 0o755 });
+  const work = join(root, "wo63-work"), slice = join(work, "missions/m2/slices/s2"); fs.mkdirSync(slice, { recursive: true });
+  fs.writeFileSync(join(slice, "SPEC.md"), "# s2\n## Implementer notes\nImplementing family: GPT-6 Sol · locked-test author: tests-claude-1 (journeys)\n");
+  const r = spawnSync(process.execPath, [join(repo, "orchestration/dispatch.js"), "pick-seat", "--rig", "shop", "--role", "impl", "--task", "07: x", "--mission", "m2", "--slice", "s2"],
+    { encoding: "utf8", env: { PATH: `${bin}:${process.env.PATH}`, AGENT_STACK_STATE: process.env.AGENT_STACK_STATE, OPENRIG_WORK_ROOT: work,
+      AGENT_JEV_STUB: stub({ "intake.seat": { decided_by: "jev", band: "act", result: { seat: "impl-codex-1@shop" } } }) } });
+  assert.equal(r.status, 0, r.stderr);
+  const o = JSON.parse(r.stdout);
+  assert.equal(o.exclude_family, "claude"); assert.deepEqual(o.candidates, ["impl-codex-1@shop"]);
+  assert.match(o.because, /locked-test author: tests-claude-1 \(journeys\)/);
 });
