@@ -159,8 +159,9 @@ fi
 step "OpenRig $OPENRIG_VERSION"
 if [ $CHECK = 0 ]; then
   node22=$(mise where "node@$NODE_FOR_OPENRIG")/bin
-  # Inside a seat, queue create/handoff go through seat-tools/rig first (project tag + EC-3 worktree_path).
-  printf '#!/usr/bin/env bash\nif [ -n "${OPENRIG_NODE_ID:-}" ] && [ -z "${AGENT_STACK_RIG_HELPER:-}" ] && [ "${1:-}" = queue ] && [ -x "%s/seat-tools/rig" ]; then\n  case "${2:-}" in create|handoff|handoff-and-complete) exec "%s/seat-tools/rig" "$@" ;; esac\nfi\nexport PATH="%s:$PATH"\nexec "%s/openrig/bin/rig" "$@"\n' "$L" "$L" "$node22" "$L" > "$B/rig"; chmod 755 "$B/rig"
+  # Queue writes go through seat-tools/rig first: inside a seat create/handoff (project tag, EC-3 worktree_path, a human
+  # row's subject); outside one `queue create` too, so the operator's rows to a human get a subject as well (WO70).
+  printf '#!/usr/bin/env bash\nif [ -z "${AGENT_STACK_RIG_HELPER:-}" ] && [ "${1:-}" = queue ] && [ -x "%s/seat-tools/rig" ]; then\n  case "${2:-}" in\n    create) exec "%s/seat-tools/rig" "$@" ;;\n    handoff|handoff-and-complete) [ -n "${OPENRIG_NODE_ID:-}" ] && exec "%s/seat-tools/rig" "$@" ;;\n  esac\nfi\nexport PATH="%s:$PATH"\nexec "%s/openrig/bin/rig" "$@"\n' "$L" "$L" "$L" "$node22" "$L" > "$B/rig"; chmod 755 "$B/rig"
   # Never downgrade: install only when OpenRig is missing or the pin is NEWER; a newer install is kept and moves the pin.
   "$S/bin/openrig-ensure" | sed 's/^/   /'
   # Seats' tmux server gets its own unit first (skips itself if a server already runs; bin/openrig-tmux-adopt moves that one).
