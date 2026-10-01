@@ -63,7 +63,7 @@ test("live seats in ONE chained call after one listing; text as capture-pane pri
   const t = tmux({ alpha: pane("alpha"), "beta.x": pane("beta.x"), "o'q": pane("o'q") });
   const got = await new Adapter(t.exec).capturePanesContent(["alpha", "gone", "beta.x", "o'q"], 20);
   assert.equal(t.calls.length, 2);
-  assert.deepEqual(Object.fromEntries(got), { gone: null, alpha: pane("alpha"), "beta.x": pane("beta.x"), "o'q": pane("o'q") });
+  assert.deepEqual(Object.fromEntries([...got].map(([k, v]) => [k, v.text])), { gone: null, alpha: pane("alpha"), "beta.x": pane("beta.x"), "o'q": pane("o'q") });
   assert.match(t.calls[1], /capture-pane -p -t '=alpha:' -S -20/);
 });
 
@@ -73,7 +73,7 @@ test("chunks of 24: 50 distinct live sessions take 1 listing + 3 calls; each cal
   const got = await new Adapter(t.exec).capturePanesContent(Object.keys(sessions), 20);
   assert.equal(t.calls.length, 1 + 3);
   for (const c of t.calls.slice(1)) assert.ok(c.split(" \\; ").length <= 48, "24 seats = 48 chained commands at most");
-  for (let i = 0; i < 50; i++) assert.equal(got.get(`s${i}`), pane(`s${i}`));
+  for (let i = 0; i < 50; i++) assert.equal(got.get(`s${i}`)?.text, pane(`s${i}`));
 });
 
 test("QA PR79: a session that vanished after the listing is isolated by halving: only it is left out (per-seat read)", async () => {
@@ -89,7 +89,7 @@ test("QA PR79: a chunk whose output overflows the exec buffer is split until it 
   const sessions = Object.fromEntries(Array.from({ length: 24 }, (_, i) => [`w${i}`, big(`w${i}`)]));
   const t = tmux(sessions, { maxBuffer: 300_000 }); // 24 x 40 KB = 960 KB: two halvings to fit
   const got = await new Adapter(t.exec).capturePanesContent(Object.keys(sessions), 20);
-  for (const n of Object.keys(sessions)) assert.equal(got.get(n), sessions[n], n);
+  for (const n of Object.keys(sessions)) assert.equal(got.get(n)?.text, sessions[n], n);
   assert.equal(t.calls.length, 1 + 1 + 2 + 4, "listing, the full chunk, two halves, four quarters");
 });
 
@@ -98,14 +98,14 @@ test("tmux can't be listed -> null (the sweep falls back to per-seat); knownLive
   const t = tmux({ a: pane("a") }, { failListing: true });
   const got = await new Adapter(t.exec).capturePanesContent(["a"], 20, true, new Set(["a"]));
   assert.equal(t.calls.length, 1); assert.match(t.calls[0], /capture-pane -p -e -t '=a:'/);
-  assert.match(got.get("a"), /\x1b\[2m/);
+  assert.match(got.get("a").text, /\x1b\[2m/);
 });
 
 test("a pane that prints another call's marker text can't split the output (markers carry a per-call nonce)", async () => {
   const spoof = "__openrig_capture_00000000000000000000000000000000_1__\n";
   const t = tmux({ a: `x\n${spoof}y\n`, b: pane("b") });
   const got = await new Adapter(t.exec).capturePanesContent(["a", "b"], 20);
-  assert.equal(got.get("a"), `x\n${spoof}y\n`); assert.equal(got.get("b"), pane("b"));
+  assert.equal(got.get("a").text, `x\n${spoof}y\n`); assert.equal(got.get("b").text, pane("b"));
   const nonces = new Set(); for (let i = 0; i < 3; i++) {
     const tt = tmux({ a: pane("a") }); await new Adapter(tt.exec).capturePanesContent(["a"], 20);
     nonces.add(tt.calls[1].match(/__openrig_capture_([0-9a-f]+)_0__/)[1]);
@@ -113,12 +113,27 @@ test("a pane that prints another call's marker text can't split the output (mark
   assert.equal(nonces.size, 3);
 });
 
+test("upstream #309 review: each pane keeps the time its own chunk was read; a slow later chunk doesn't renew earlier ones", async () => {
+  const sessions = Object.fromEntries(Array.from({ length: 30 }, (_, i) => [`s${i}`, pane(`s${i}`)]));
+  const t = tmux(sessions);
+  let clock = 1_000_000;
+  const exec = async (cmd) => { const out = await t.exec(cmd); if (cmd.includes("capture-pane")) clock += cmd.includes("'=s24:'") ? 6_000 : 100; return out; };
+  const got = await new Adapter(exec).capturePanesContent(Object.keys(sessions), 20, false, null, () => new Date(clock));
+  assert.equal(got.get("s0").capturedAt.getTime(), 1_000_100);
+  assert.equal(got.get("s23").capturedAt.getTime(), 1_000_100, "the first chunk's time, not the sweep's end");
+  assert.equal(got.get("s24").capturedAt.getTime(), 1_006_100);
+  const gone = await new Adapter(tmux({ a: pane("a") }).exec).capturePanesContent(["missing"], 20, false, null, () => new Date(42));
+  assert.deepEqual(gone.get("missing"), { text: null, capturedAt: new Date(42) }, "a missing session carries the listing time");
+});
+
 test("the sweep uses the batch (plain, then ANSI for 'unknown' seats with no second listing) and keeps per-seat fallback, MF1, MF2", () => {
   const svc = newSide("daemon/dist/domain/seat-structural-activity-service.js");
-  assert.match(svc, /const plain = await this\.tmuxAdapter\.capturePanesContent\(names, this\.captureLines, false\)\.catch\(\(\) => null\);/);
-  assert.match(svc, /capturePanesContent\(unknown, this\.captureLines, true, new Set\(unknown\)\)/);
+  assert.match(svc, /const plain = await this\.tmuxAdapter\.capturePanesContent\(names, this\.captureLines, false, null, this\.now\)\.catch\(\(\) => null\);/);
+  assert.match(svc, /capturePanesContent\(unknown, this\.captureLines, true, new Set\(unknown\), this\.now\)/);
+  // #309 review: the observation keeps the capture's own time, not the end of the sweep
+  assert.match(svc, /observedAt = capture\.capturedAt;/); assert.match(svc, /observedAt: \(observedAt \?\? this\.now\(\)\)\.toISOString\(\)/);
   assert.match(svc, /await this\.pollSeat\(r\.session_name, prefetched\);/);
-  assert.match(svc, /if \(prefetched\?\.plain\?\.has\(sessionName\)\) \{\s*content = prefetched\.plain\.get\(sessionName\);\s*\}\s*else \{\s*try \{\s*content = await this\.tmuxAdapter\.capturePaneContent\(sessionName, this\.captureLines\);/);
+  assert.match(svc, /if \(prefetched\?\.plain\?\.has\(sessionName\)\) \{\s*const capture = prefetched\.plain\.get\(sessionName\);\s*content = capture\.text;[^}]*\}\s*else \{\s*try \{\s*content = await this\.tmuxAdapter\.capturePaneContent\(sessionName, this\.captureLines\);/);
   const removed = patch.split("\n").filter((l) => l.startsWith("-") && !l.startsWith("---")).map((l) => l.slice(1).trim());
   const added = patch.split("\n").filter((l) => l.startsWith("+") && !l.startsWith("+++")).map((l) => l.slice(1).trim());
   assert.ok(!removed.some((l) => /sweeping/.test(l)), "the single-flight guard is untouched (MF2)");
