@@ -64,11 +64,12 @@ them as the owner's.
   anywhere else is never read by the rebuild. Check with `agent-seat-recap show`.
 - Scratch checkouts for review or QA go under `~/Projects/<P>.worktrees/`, never `/tmp`, and are removed in a
   `finally`/`trap`. Test suites remove every `mkdtemp` directory they create.
-- `TMPDIR` and other temporary scratch go on disk and OUTSIDE any git repo: `$HOME/.cache/<rig>-tmp/<seat>`, created
-  and cleaned up in a `trap`. Never `/tmp` (a RAM disk on these hosts: a big scratch run takes memory from every seat),
-  and never inside a worktree (tests treat a directory under a git repo as a checkout). In a seat (its session name is
-  `<seat>@<rig>`), this sets it up:
-  `s=${OPENRIG_SESSION_NAME:-$USER@local}; export TMPDIR="$HOME/.cache/${s#*@}-tmp/${s%@*}"; mkdir -p "$TMPDIR"; trap 'rm -rf "$TMPDIR"' EXIT`
+- `TMPDIR` and other temporary scratch go on disk and OUTSIDE any git repo, under the seat's root
+  `$HOME/.cache/<rig>-tmp/<seat>`: each job makes its own directory there and its `trap` removes only that one (other
+  jobs of the seat may be using the root at the same time). Never `/tmp` (a RAM disk on these hosts: a big scratch run
+  takes memory from every seat), and never inside a worktree (tests treat a directory under a git repo as a checkout).
+  In a seat (its session name is `<seat>@<rig>`), this sets it up; the trap names the job's directory as it was made:
+  `s=${OPENRIG_SESSION_NAME:-$USER@local}; d="$HOME/.cache/${s#*@}-tmp/${s%@*}"; mkdir -p "$d"; export TMPDIR=$(mktemp -d "$d/job.XXXXXX"); trap "rm -rf -- $(printf %q "$TMPDIR")" EXIT`
 - Proof for a project in the workspace catalog: `rig proof show|judge <project-id>:<mission>/slices/<slice>` (the catalog
   id). Never switch the daemon's workspace to judge.
 - Never prompt: every seat runs without permission prompts (agent-stack README, "Never prompt";
