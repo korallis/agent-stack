@@ -196,6 +196,11 @@ with `agent-login` and the pool uses it straight away.
     live ticker.
   - `2` Seat Matrix: every seat of every rig, context use shaded (red at 80%+), activity glyphs, 24 h telemetry and the
     pool.
+  - `3` The River: one lane per rig, each open slice (its queue rows' `slice:` tag) a chip at the most advanced stage
+    one of its rows waits on (QUEUE, SPEC, TESTS, BUILD, REVIEW, QA, MERGE, DEPLOY by the destination's pod), pooled
+    stages marked, slices done today per rig, what waits longest. `⏎` on a chip opens its journey: every row, who had
+    it, worked vs waited time per row and per stage (from the row transitions), and what it waits on now (`[ ]` next
+    slice, `esc` back). It reads done rows (every 5 min) and transitions (that slice's newest 20 rows) only while open.
   - Keys: `←→` / `hjkl` move, `⏎` drills from a rig card into the matrix, `?` help, `q` quits.
   - It reads the daemon API and its event stream, the Jev decision log, `agent-proxy-status` and `agent-heavy status`
     through ONE cache. The cache refreshes every 5 s, never under 2 s, and backs off to 60 s when the daemon is slow.

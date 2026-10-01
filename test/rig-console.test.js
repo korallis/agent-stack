@@ -83,8 +83,10 @@ test("model: derived counts match the fixture; blocked rows by what they wait on
   const agents = fixture.raw.rigs.flatMap((r) => r.seats);
   assert.equal(f.count.working, agents.filter((s) => s.activity === "working").length);
   assert.equal(f.stuck.length, 2, "a stalled seat and an unknown one");
-  assert.equal(f.queue.blocked, 41); assert.equal(f.queue.pending, 18); assert.equal(f.queue.inProgress, 41);
-  assert.equal(f.queue.onRow + f.queue.onPr + f.queue.onOwner + f.queue.onOther, 41);
+  const n = (st) => fixture.raw.queue.filter((r) => r.state === st).length;
+  assert.deepEqual([f.queue.blocked, f.queue.pending, f.queue.inProgress], [n("blocked"), n("pending"), n("in-progress")]);
+  assert.ok(f.queue.blocked > 30, "the fixture has a real backlog");
+  assert.equal(f.queue.onRow + f.queue.onPr + f.queue.onOwner + f.queue.onOther, f.queue.blocked);
   assert.equal(f.owner.length, 3); assert.ok(f.owner[0].created <= f.owner[1].created, "oldest first");
   const raw = { ...fixture.raw, gates: [...fixture.raw.gates, { ts: "2026-09-30T23:59:00Z", decision: "merge", band: "act" }] };
   assert.equal(derive(raw).gate.total, 36, "yesterday's decision is not today's");

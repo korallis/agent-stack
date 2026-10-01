@@ -18,6 +18,7 @@ export interface Raw {
   host: { id: string; cores: number; load: number[]; memUsedGB: number; memTotalGB: number };
   daemon: { ok: boolean; latencyMs: number | null; version: string | null; cpuPct: number | null; loopUtil: number | null; error: string | null };
   rigs: Rig[]; queue: QRow[]; attention: QRow[]; gates: Gate[]; accounts: Account[]; heavy: Heavy[]; events: Event[];
+  done?: QRow[]; transitions?: Record<string, Transition[]>;   // phase 2: read only while the River or a journey is open
   refreshMs: number; sources: Record<string, string>;
 }
 
@@ -159,3 +160,88 @@ export function podsOf(seats: Seat[]): string[] {
   return set.sort((a, b) => (POD_ORDER.indexOf(a) + 1 || 99) - (POD_ORDER.indexOf(b) + 1 || 99) || a.localeCompare(b));
 }
 export const natural = (a: string, b: string) => a.localeCompare(b, undefined, { numeric: true });
+
+// ── phase 2: the River and a slice's journey ─────────────────────────────────────────────────────────────────────────
+// A slice is the work its queue rows are tagged with (slice:<id>, project:, mission:, pr:). The River places each slice
+// at the most advanced stage one of its open rows waits on (by the destination seat's pod), in its rig's lane.
+export interface Transition { id: number; ts: string; state: string; note: string; actor: string }
+export const RIVER: { label: string; pods: string[] }[] = [
+  { label: "QUEUE", pods: ["coord"] }, { label: "SPEC", pods: ["arch"] }, { label: "TESTS", pods: ["tests"] }, { label: "BUILD", pods: ["impl"] },
+  { label: "REVIEW", pods: ["review"] }, { label: "QA", pods: ["qa"] }, { label: "MERGE", pods: ["integ"] }, { label: "DEPLOY", pods: ["ops"] },
+];
+export type SliceState = "active" | "pending" | "blocked" | "owner";
+export interface Slice {
+  key: string; id: string; label: string; project: string | null; mission: string | null; rig: string;
+  rows: QRow[]; stage: number; state: SliceState; prs: string[]; since: string;
+}
+const tagOf = (r: QRow, k: string) => r.tags.find((t) => t.startsWith(`${k}:`))?.slice(k.length + 1) ?? null;
+/** A short id for a slice tag: "05-f-021-welcome-and-my-details" → "F-021"; "w2-wit" → "W2-WIT"; else its first 7. */
+export function sliceId(tag: string): string {
+  const f = tag.match(/(?:^|[-_])f-?(\d{2,4})(?:$|[-_])/i);
+  if (f) return `F-${f[1]}`;
+  const w = tag.match(/^(w\d+-wit)/i);
+  if (w) return w[1].toUpperCase();
+  return tag.slice(0, 7).toUpperCase();
+}
+const sliceLabel = (tag: string) => tag.replace(/^\d+-/, "").replace(/(?:^|-)f-?\d{2,4}(?=-|$)/i, "").replace(/^-+/, "").replace(/-/g, " ");
+export function stageOfPod(pod: string): number { return RIVER.findIndex((s) => s.pods.includes(pod)); }
+const rigOfSession = (s: string) => (s.includes("@") ? s.split("@").pop()! : "?");
+const podOfSession = (s: string, bySession: Map<string, Seat>) => bySession.get(s)?.pod ?? s.split("@")[0].split("-")[0];
+
+export function slices(raw: Raw): Slice[] {
+  const bySession = new Map(raw.rigs.flatMap((r) => r.seats).map((s) => [s.session, s]));
+  const groups = new Map<string, QRow[]>();
+  for (const r of raw.queue) {
+    const sl = tagOf(r, "slice");
+    if (!sl) continue;
+    const key = `${tagOf(r, "project") ?? rigOfSession(r.destination)}/${sl}`;
+    (groups.get(key) ?? groups.set(key, []).get(key)!).push(r);
+  }
+  const out: Slice[] = [];
+  for (const [key, rows] of groups) {
+    const tag = key.slice(key.indexOf("/") + 1);
+    const rigs = new Map<string, number>();
+    for (const r of rows) rigs.set(rigOfSession(r.destination), (rigs.get(rigOfSession(r.destination)) ?? 0) + 1);
+    const rig = [...rigs.entries()].sort((a, b) => b[1] - a[1])[0][0];
+    const stage = Math.max(0, ...rows.map((r) => stageOfPod(podOfSession(r.destination, bySession))));
+    const owner = rows.some((r) => isHuman(r.destination) || isHuman(r.blockedOn));
+    const state: SliceState = owner ? "owner" : rows.every((r) => r.state === "blocked") ? "blocked" : rows.some((r) => r.state === "in-progress") ? "active" : "pending";
+    out.push({ key, id: sliceId(tag), label: sliceLabel(tag), project: tagOf(rows[0], "project"), mission: tagOf(rows[0], "mission"), rig, rows, stage, state,
+      prs: [...new Set(rows.flatMap((r) => r.tags.filter((t) => t.startsWith("pr:")).map((t) => `#${t.slice(3)}`)))], since: rows.map((r) => r.created).sort()[0] });
+  }
+  return out.sort((a, b) => a.rig.localeCompare(b.rig) || b.stage - a.stage || a.since.localeCompare(b.since));
+}
+/** Slices finished today per rig: a done row updated today whose slice has no open row. */
+export function doneToday(raw: Raw): Record<string, string[]> {
+  const today = new Date(raw.at).toISOString().slice(0, 10), open = new Set(slices(raw).map((s) => s.key)), out: Record<string, Set<string>> = {};
+  for (const r of raw.done ?? []) {
+    const sl = tagOf(r, "slice");
+    if (!sl || !r.updated.startsWith(today)) continue;
+    const key = `${tagOf(r, "project") ?? rigOfSession(r.destination)}/${sl}`;
+    if (!open.has(key)) (out[rigOfSession(r.destination)] ??= new Set()).add(sliceId(sl));
+  }
+  return Object.fromEntries(Object.entries(out).map(([k, v]) => [k, [...v]]));
+}
+
+export interface JourneyStep { row: QRow; stage: number; worked: number; waited: number; first: string | null; last: string | null; open: boolean; known: boolean }
+/** One slice's rows in order, with worked (in progress) and waited (pending or blocked) time from their transitions. */
+export function journey(raw: Raw, key: string, now = raw.at): { slice: Slice | null; steps: JourneyStep[]; perStage: { worked: number; waited: number }[] } {
+  const bySession = new Map(raw.rigs.flatMap((r) => r.seats).map((s) => [s.session, s]));
+  const slice = slices(raw).find((s) => s.key === key) ?? null;
+  const tag = key.slice(key.indexOf("/") + 1), project = key.slice(0, key.indexOf("/"));
+  const rows = [...raw.queue, ...(raw.done ?? [])].filter((r) => tagOf(r, "slice") === tag && (tagOf(r, "project") ?? rigOfSession(r.destination)) === project);
+  const seen = new Set<string>();
+  const steps = rows.filter((r) => !seen.has(r.id) && seen.add(r.id)).sort((a, b) => a.created.localeCompare(b.created)).map((row) => {
+    const tr = (raw.transitions?.[row.id] ?? []).slice().sort((a, b) => a.ts.localeCompare(b.ts));
+    let worked = 0, waited = 0;
+    const open = row.state !== "done" && row.state !== "handed-off" && row.state !== "canceled";
+    for (let i = 0; i < tr.length; i++) {
+      const end = i + 1 < tr.length ? Date.parse(tr[i + 1].ts) : open ? now : Date.parse(tr[i].ts);
+      const d = Math.max(0, end - Date.parse(tr[i].ts));
+      if (tr[i].state === "in-progress") worked += d; else if (tr[i].state === "pending" || tr[i].state === "blocked") waited += d;
+    }
+    return { row, stage: stageOfPod(podOfSession(row.destination, bySession)), worked, waited, first: tr[0]?.ts ?? row.created, last: tr.at(-1)?.ts ?? row.updated, open, known: tr.length > 0 };
+  });
+  const perStage = RIVER.map((_, i) => steps.filter((s) => s.stage === i).reduce((a, s) => ({ worked: a.worked + s.worked, waited: a.waited + s.waited }), { worked: 0, waited: 0 }));
+  return { slice, steps, perStage };
+}

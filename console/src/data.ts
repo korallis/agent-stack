@@ -3,6 +3,8 @@
 //     rig list every 60 s and the active queue + owner attention every 30 s, sooner when a node or queue event says
 //     they changed. A slow or failed read doubles the interval (up to 60 s), a fast one halves it back. Nodes are read
 //     without ?full / ?refresh, which never capture a tmux pane;
+//   - the River (phase 2) only while it is open: done rows every 5 min (a 400-row read costs the daemon ~0.14 s); a slice's row transitions only for the journey
+//     on screen (its newest 20 rows, each re-read only when the row changed);
 //   - local sources (gate log, account pool, heavy slots, host) on their own slower clocks;
 //   - the ticker: the queue's recent transitions (a bounded read, with the queue tier) and queue creations from the
 //     live-only /api/queue/sse, whose events also pull the next queue read forward (never sooner than 2 s after the
@@ -12,14 +14,14 @@ import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
 import { execFile } from "node:child_process";
-import { eventLine, qrowFromItem, seatFromNode, transitionLine, type Account, type Event, type Gate, type Heavy, type Raw, type Rig } from "./model.ts";
+import { eventLine, journey, qrowFromItem, seatFromNode, transitionLine, type Account, type Event, type Gate, type Heavy, type Raw, type Rig } from "./model.ts";
 
 export interface Options {
   url: string; interval: number; procDir?: string; jevLog?: string | null; timeoutMs?: number;
   run?: (cmd: string, args: string[], timeoutMs: number) => Promise<string | null>; now?: () => number; events?: boolean;
   gateDayMax?: number;   // tests only
 }
-export const MIN_INTERVAL = 2000, MAX_INTERVAL = 60_000, RIGS_EVERY = 60_000, QUEUE_EVERY = 30_000;
+export const MIN_INTERVAL = 2000, MAX_INTERVAL = 60_000, RIGS_EVERY = 60_000, QUEUE_EVERY = 30_000, DONE_EVERY = 300_000, JOURNEY_ROWS = 20;
 /** The most of the gate log read for one UTC day; past it the count is shown as partial (a lower bound). */
 export const GATE_DAY_MAX = 64 << 20;
 
@@ -92,6 +94,10 @@ export class Cache {
   private summaryAt = -Infinity;
   private queueAt = -Infinity;
   private dirty = { rigs: false, queue: false };
+  private river = false;
+  private journeyKey: string | null = null;
+  private doneAt = -Infinity;
+  private trSeen = new Map<string, string>();   // qitem id -> its updated time when its transitions were read
   requests = 0;
   constructor(o: Options) {
     this.opt = { procDir: "/proc", jevLog: null, timeoutMs: 4000, events: true, gateDayMax: GATE_DAY_MAX, ...o, interval: Math.max(MIN_INTERVAL, o.interval) } as Cache["opt"];
@@ -170,6 +176,11 @@ export class Cache {
       for (const x of Array.isArray(tr) ? tr : []) { const l = transitionLine(x); if (l) this.addTicker(`t${x.transitionId}`, l); }
     }
     this.raw.rigs = rigs;
+    if (this.river && this.now() - this.doneAt >= DONE_EVERY) {
+      const done: any[] = await this.get("/api/queue/list?compact=1&state=done&limit=400");
+      this.raw.done = done.map(qrowFromItem); this.doneAt = this.now();
+    }
+    if (this.journeyKey) await this.readJourney(this.journeyKey);
     this.raw.daemon = { ok: hz.status === "ok", latencyMs: latency, version: hz.semver ?? null, cpuPct: this.daemonCpu(Number(hz.pid)),
       loopUtil: typeof hz.eventLoop?.utilization === "number" ? hz.eventLoop.utilization : null, error: null };
     this.raw.sources.daemon = "ok";
@@ -232,6 +243,23 @@ export class Cache {
         this.jevOffset += Buffer.byteLength(text);
       } finally { fs.closeSync(fd); }
     } catch { this.raw.sources.gates = "unavailable"; }
+  }
+  /** What the screen shows decides what the River tier reads: the done list while the River is open, transitions for
+   *  the one journey open. Opening either pulls the next read forward. */
+  setView(river: boolean, journeyKey: string | null) {
+    const pull = (river && !this.river) || (journeyKey !== null && journeyKey !== this.journeyKey);
+    this.river = river; this.journeyKey = journeyKey;
+    if (pull) this.soon();
+  }
+  private async readJourney(key: string) {
+    const rows = journey(this.raw, key).steps.map((s) => s.row).sort((a, b) => b.updated.localeCompare(a.updated)).slice(0, JOURNEY_ROWS);
+    const tr = (this.raw.transitions ??= {});
+    for (const r of rows) {
+      if (this.trSeen.get(r.id) === r.updated && tr[r.id]) continue;
+      const list: any[] = await this.get(`/api/queue/${encodeURIComponent(r.id)}/transitions`);
+      tr[r.id] = (Array.isArray(list) ? list : []).map((x) => ({ id: x.transitionId, ts: x.ts, state: x.state, note: x.transitionNote ?? "", actor: x.actorSession ?? "" }));
+      this.trSeen.set(r.id, r.updated);
+    }
   }
   private addTicker(key: string, e: Event) {
     if (this.ticker.has(key)) return;
