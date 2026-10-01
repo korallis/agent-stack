@@ -94,10 +94,15 @@ export function focusPane(c: Ctx, pane: string, x: number, y: number, w: number,
   const sel = c.select ?? 0, focused = FOCUS_PANES[(c.pane ?? 0) % FOCUS_PANES.length] === pane;
   if (pane === "decisions") {
     const per = c.expand ? 1 : Math.min(2, f.owner.length), dw = Math.floor(w / Math.max(1, per)) - 1;
-    const list = c.expand ? f.owner : f.owner.slice(focused ? Math.max(0, sel - 1) : 0).slice(0, per);
+    // expanded: as many cards as fit, scrolled so the selected one is drawn (QA PR92)
+    const fitN = Math.max(1, Math.floor((h - 1) / 8)), at = Math.min(Math.max(0, sel), Math.max(0, f.owner.length - 1));
+    const from = c.expand ? (focused ? Math.max(0, at - fitN + 1) : 0) : 0;
+    const list = c.expand ? f.owner.slice(from, from + fitN) : f.owner.slice(focused ? Math.max(0, sel - 1) : 0).slice(0, per);
+    if (c.expand && from > 0) s.put(x + w - 14, y, `▲ ${from} more`, { fg: t.title });
+    if (c.expand && from + fitN < f.owner.length) s.put(x + w - 14, y + h - 1, `▼ ${f.owner.length - from - fitN} more`, { fg: t.title });
     list.forEach((q, i) => {
-      const bx = c.expand ? x : x + i * (dw + 1), by = c.expand ? y + i * 8 : y, idx = f.owner.indexOf(q), on = focused && idx === sel % Math.max(1, f.owner.length);
-      if (by + 7 > y + h) return;
+      const bx = c.expand ? x : x + i * (dw + 1), by = c.expand ? y + 1 + i * 8 : y, idx = f.owner.indexOf(q), on = focused && idx === sel % Math.max(1, f.owner.length);
+      if (by + 7 > y + h && !(c.expand && i === 0)) return;
       const d = decision(q);
       panel(s, t, bx, by, c.expand ? w : dw, 7, "", { color: on ? t.title : t.border });
       s.put(bx + 2, by + 1, `${on ? "▶ " : ""}${String(idx + 1).padStart(2, "0")}  `, { fg: t.text, bold: true });
@@ -133,9 +138,14 @@ export function focusPane(c: Ctx, pane: string, x: number, y: number, w: number,
   s.put(x + 1, y, "PROGRESS TODAY", { fg: focused ? t.title : t.dim, bold: true });
   s.put(x + 1, y + 1, "slices done today / open · what the rig waits on", { fg: t.faint });
   const all = slices(raw), done = doneToday(raw), rigs = raw.rigs.filter((r) => r.seats.some((z) => z.kind === "agent")).map((r) => r.name);
+  // scrolled so the selected rig is drawn (QA PR92)
+  const fitR = Math.max(1, Math.floor((h - 3) / 2)), selR = Math.min(Math.max(0, sel), Math.max(0, rigs.length - 1));
+  const fromR = focused ? Math.max(0, selR - fitR + 1) : 0;
+  if (fromR > 0) s.put(x + w - 12, y + 1, `▲ ${fromR} more`, { fg: t.title });
+  if (fromR + fitR < rigs.length) s.put(x + w - 12, y + h - 1, `▼ ${rigs.length - fromR - fitR} more`, { fg: t.title });
   let ry = y + 3;
   rigs.forEach((rig, i) => {
-    if (ry + 1 >= y + h) return;
+    if (i < fromR || ry + 1 >= y + h) return;
     const open = all.filter((z) => z.rig === rig), d = (done[rig] ?? []).length, on = focused && i === sel;
     const owner = open.filter((z) => z.state === "owner").length, blocked = open.filter((z) => z.state === "blocked").length;
     const k = f.byRig[rig], down = k && k.working + k.idle + k.stuck + k.unknown === 0;
@@ -161,16 +171,20 @@ export function seatView(c: Ctx, session: string): void {
   if (c.expand) { seatPane(c, pane, session, seat, 1, 2, s.w - 2, s.h - 4); return seatFooter(c, pane, session); }
   let y = 2;
   s.put(2, y, session, { fg: t.text, bold: true });
+  let endX = 4 + session.length;
   if (seat) {
-    let x = s.put(4 + session.length, y, `${DOT[seat.activity]} ${seat.activity}${seat.why ? ` (${seat.why})` : ""}`, { fg: dotColor(c, seat.activity) });
-    s.put(x + 4, y, `${seat.model ?? "—"} · ${seat.runtime === "cx" ? "Codex" : seat.runtime === "cl" ? "Claude Code" : seat.runtime === "km" ? "Kimi" : seat.runtime}`, { fg: t.dim });
-  } else s.put(4 + session.length, y, "not a seat this daemon runs", { fg: t.blocked });
+    const x = s.put(endX, y, `${DOT[seat.activity]} ${seat.activity}${seat.why ? ` (${seat.why})` : ""}`, { fg: dotColor(c, seat.activity) });
+    endX = s.put(x + 4, y, `${seat.model ?? "—"} · ${seat.runtime === "cx" ? "Codex" : seat.runtime === "cl" ? "Claude Code" : seat.runtime === "km" ? "Kimi" : seat.runtime}`, { fg: t.dim });
+  } else endX = s.put(endX, y, "not a seat this daemon runs", { fg: t.blocked });
   const tl = tailOf(c, session);
-  s.put(s.w - 62, y, fit(tl ? (tl.content !== null ? `transcript tail · as of ${new Date(tl.at).toISOString().slice(11, 19)} · ${tl.state}` : `tail unavailable (${tl.state})`) : "tail: loading…", 60), { fg: tl?.content !== null ? t.dim : t.blocked });
-  s.put(s.w - 62, y + 1, "Read-only: the daemon's own transcript capture, no tmux.", { fg: t.faint });
+  const status = tl ? (tl.content !== null ? `transcript tail · as of ${new Date(tl.at).toISOString().slice(11, 19)}` : "tail unavailable") : "tail: loading…";
+  // the tail status never covers the seat's state or model (QA PR92): beside them when it fits, else on the next line
+  const sx = Math.max(endX + 3, s.w - 2 - status.length), below = sx + status.length > s.w - 2;
+  if (!below) s.put(sx, y, status, { fg: tl?.content !== null ? t.dim : t.blocked });
+  else s.put(s.w - 2 - Math.min(status.length, Math.floor(s.w / 2)), y + 1, fit(status, Math.floor(s.w / 2)), { fg: tl?.content !== null ? t.dim : t.blocked });
   const work = raw.queue.filter((r) => r.destination === session);
   const sl = work.map((r) => r.tags.find((x) => x.startsWith("slice:"))).find(Boolean);
-  s.put(2, y + 1, fit(sl ? `${sl.slice(6)}${seat ? ` · last activity ${since(raw, seat.lastActivityAt)} ago` : ""}` : seat ? `last activity ${since(raw, seat.lastActivityAt)} ago` : "", s.w - 66), { fg: t.dim });
+  s.put(2, y + 1, fit(sl ? `${sl.slice(6)}${seat ? ` · last activity ${since(raw, seat.lastActivityAt)} ago` : ""}` : seat ? `last activity ${since(raw, seat.lastActivityAt)} ago` : "", Math.floor(s.w / 2) - 4), { fg: t.dim });
   y += 3;
   s.put(1, y, "─".repeat(s.w - 2), { fg: t.border });
   const lw = Math.floor((s.w - 2) * 0.42);
@@ -189,7 +203,10 @@ export function seatPane(c: Ctx, pane: string, session: string, seat: Seat | nul
   const focused = SEAT_PANES[(c.pane ?? 0) % SEAT_PANES.length] === pane;
   if (pane === "terminal") {
     s.put(x, y, "LIVE TERMINAL", { fg: focused ? t.title : t.dim, bold: true });
-    const tl = tailOf(c, session), lines = tailLines(c, session), rows = h - 2, scroll = focused ? Math.max(0, c.select ?? 0) : 0;
+    const tl = tailOf(c, session), lines = tailLines(c, session), rows = h - 2;
+    // scrolling up stops at the first page of the text (QA PR92); the view state keeps the clamped value
+    const maxScroll = Math.max(0, lines.length - rows), scroll = focused ? Math.min(maxScroll, Math.max(0, c.select ?? 0)) : 0;
+    if (focused && c.clampSelect) c.clampSelect(scroll);
     const end = Math.max(0, lines.length - scroll), view = lines.slice(Math.max(0, end - rows), end);
     s.put(x + w - 30, y, fit(scroll ? `scrolled up ${scroll} lines` : `following · ${lines.length} lines`, 28), { fg: t.faint });
     if (!tl) s.put(x, y + 2, "loading the tail…", { fg: t.faint });

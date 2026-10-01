@@ -68,7 +68,8 @@ export function render(raw: Raw, hist: History, w: number, h: number, st: ViewSt
     return s;
   }
   const c: Ctx = { s, t, raw, f: derive(raw), frame: st.frame, view: st.view, rigFocus: st.rigFocus, seatFocus: st.seatFocus, note: st.note,
-    riverFocus: st.riverFocus ?? [0, 0], journey: st.journey ?? null, pane: st.pane ?? 0, expand: !!st.expand, select: st.select ?? 0, cmd: st.cmd ?? null };
+    riverFocus: st.riverFocus ?? [0, 0], journey: st.journey ?? null, pane: st.pane ?? 0, expand: !!st.expand, select: st.select ?? 0, cmd: st.cmd ?? null,
+    clampSelect: (n: number) => { st.select = n; } };
   if (st.seat) seatView(c, st.seat);
   else if (st.view === 1) matrix(c, hist);
   else if (st.view === 2) { if (st.journey) journeyView(c, st.journey); else river(c); }
@@ -109,9 +110,11 @@ function loadFixture(file: string): { raw: Raw; history: Sample[] } {
 /** What the first screen shows decides the first reads (QA PR90: a River or journey opened from the command line read
  *  nothing until a key was pressed); a seat opened with --seat reads its tail at once too. */
 export function initialReads(cache: Cache, st: ViewState) {
-  cache.setView(st.view === 2 && !st.seat, st.seat ? null : st.journey ?? null);
+  cache.setView(wantsDone(st), st.seat ? null : st.journey ?? null);
   cache.setSeat(st.seat ?? null);
 }
+/** The views that show done slices (the River's DONE column, Focus's progress) read the done list (QA PR92). */
+export const wantsDone = (st: ViewState) => !st.seat && (st.view === 2 || st.view === 3);
 
 const ctxOf = (st: ViewState, raw: Raw): Ctx => ({ s: new Screen(1, 1), t: PAD39A, raw, f: derive(raw), frame: 0, view: st.view, rigFocus: st.rigFocus, seatFocus: st.seatFocus,
   note: null, riverFocus: st.riverFocus, journey: st.journey, pane: st.pane, select: st.select } as Ctx);
@@ -242,8 +245,7 @@ async function main() {
 
   if (args.once) {
     if (cache) {
-      cache.setView(st.view === 2, st.journey ?? null);
-      cache.setSeat(st.seat ?? null);
+      initialReads(cache, st);
       await cache.tick();
       if (st.journey) { cache.setView(true, st.journey); await cache.tick(); }   // its rows are known after the first read
       cache.stop(); raw = cache.raw; hist.add(sampleOf(derive(raw), raw.at)); }
@@ -284,7 +286,7 @@ async function main() {
   };
   process.stdin.on("data", (chunk: string) => {
     for (const k of keys(chunk)) onKey(k);
-    cache?.setView(st.view === 2 && !st.seat, st.seat ? null : st.journey ?? null); cache?.setSeat(st.seat ?? null);
+    cache?.setView(wantsDone(st), st.seat ? null : st.journey ?? null); cache?.setSeat(st.seat ?? null);
     schedule();
   });
   draw();

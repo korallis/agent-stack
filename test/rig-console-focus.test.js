@@ -124,26 +124,52 @@ function stub() {
   return new Promise((r) => server.listen(0, "127.0.0.1", () => r({ url: `http://127.0.0.1:${server.address().port}`, seen, close: () => { server.closeAllConnections(); server.close(); } })));
 }
 
-test("data: the tail of ONE seat, read only while its drill-in is open (the daemon's transcript store, never tmux); tokens for the gauge", async () => {
-  const d = await stub(), c = new Cache({ url: d.url, interval: 5000, events: false, run: async () => null });
+test("data: the tail of ONE seat, read only while its drill-in is open, from the daemon's transcript FILE: never a route that can start a capture (QA PR92)", async () => {
+  const d = await stub(), tdir = fs.mkdtempSync(join(fs.existsSync("/tmp/claude-1000") ? "/tmp/claude-1000" : "/tmp", "rc-transcripts-"));
+  fs.mkdirSync(join(tdir, "alpha"));
+  fs.writeFileSync(join(tdir, "alpha", "impl-1@alpha.log"), "--- SESSION BOUNDARY: x ---\n\x1b[1m$ npm test\x1b[0m\r\n \x1b[32m✓ ok\x1b[0m\n");
+  const c = new Cache({ url: d.url, interval: 5000, events: false, run: async () => null, transcripts: tdir });
   try {
-    await c.tick(); assert.ok(!d.seen.some((u) => u.includes("/api/transcripts/")), "no drill-in, no tail");
+    await c.tick(); assert.equal(c.raw.tail ?? null, null, "no drill-in, no tail");
     assert.deepEqual([c.raw.rigs[0].seats[0].tokens, c.raw.rigs[0].seats[0].window, c.raw.rigs[0].seats[0].ingest.state], [80000, 200000, "live"]);
-    c.setSeat("impl-1@alpha"); d.seen.length = 0; await c.tick();
-    assert.deepEqual(d.seen.filter((u) => u.includes("/api/transcripts/")), ["/api/transcripts/impl-1%40alpha/tail?lines=150"]);
-    assert.equal(c.raw.tail.content, "$ npm test\n ✓ ok\n");
-    // QA PR92: the tail route STARTS a capture when ingest isn't live, so it is never asked then: the console says why
-    for (const [seat, why] of [["degraded-1@alpha", /capture is degraded \(capture_missing\)/], ["stale-1@alpha", /last transcript capture is \d+ s old/],
-      ["none-1@alpha", /reports no transcript capture/], ["ghost@alpha", /not a seat this daemon runs/]]) {
-      c.setSeat(seat); d.seen.length = 0; await c.tick();
-      assert.ok(!d.seen.some((u) => u.includes("/api/transcripts/")), `${seat}: no tail request`);
-      assert.equal(c.raw.tail.content, null); assert.match(c.raw.tail.error, why, seat); assert.match(c.raw.tail.error, /never starts a capture/);
+    c.setSeat("impl-1@alpha"); await c.tick();
+    assert.match(c.raw.tail.content, /\$ npm test\n+ ✓ ok/, "the file's tail, ANSI stripped as the daemon does (\\r becomes a line break)");
+    assert.ok(!/\x1b/.test(c.raw.tail.content));
+    for (const [seat, why] of [["degraded-1@alpha", /no transcript file for this seat \(the daemon's capture is degraded: capture_missing\)/],
+      ["ghost@alpha", /not a seat this daemon runs/]]) {
+      c.setSeat(seat); await c.tick();
+      assert.equal(c.raw.tail.content, null, seat); assert.match(c.raw.tail.error, why, seat);
+      if (seat !== "ghost@alpha") assert.match(c.raw.tail.error, /never starts a capture/);
     }
-    c.setSeat(null); d.seen.length = 0; await c.tick();
-    assert.ok(!d.seen.some((u) => u.includes("/api/transcripts/")) && c.raw.tail === null, "closed: no tail");
-    initialReads(c, st({ seat: "impl-1@alpha" })); d.seen.length = 0; await c.tick();
-    assert.ok(d.seen.some((u) => u.includes("/api/transcripts/impl-1%40alpha/tail")), "--seat reads its tail from the first tick");
-  } finally { c.stop(); d.close(); }
+    assert.ok(!d.seen.some((u) => u.includes("/api/transcripts/")), "the transcript route is never called, whatever the ingest state");
+    c.setSeat(null); await c.tick(); assert.equal(c.raw.tail, null, "closed: no tail");
+    initialReads(c, st({ seat: "impl-1@alpha" })); await c.tick();
+    assert.match(c.raw.tail.content, /npm test/, "--seat reads its tail from the first tick");
+  } finally { c.stop(); d.close(); fs.rmSync(tdir, { recursive: true, force: true }); }
+});
+
+test("QA PR92: Focus reads the done list itself; expanded decisions and the progress list keep the selection drawn; the tail stops at its first page; the seat header never overlaps", async () => {
+  const { wantsDone } = await src("main.ts");
+  assert.deepEqual([0, 1, 2, 3, 4].map((v) => wantsDone(st({ view: v }))), [false, false, true, true, false]);
+  assert.equal(wantsDone(st({ view: 3, seat: SEAT })), false, "a seat drill-in reads its tail, not the done list");
+  // many decisions, expanded: the ninth is drawn and marked when selected
+  const many = { ...fixture.raw, attention: Array.from({ length: 12 }, (_, i) => ({ ...fixture.raw.attention[0], id: `qitem-dec-${String(i).padStart(4, "0")}`, created: `2026-10-01T1${i % 10}:00:00Z`,
+    summary: `Decision number ${i + 1}: pick one. A yes B no` })) };
+  const f = derive(many), ninth = f.owner[8];
+  const ex = text(render(many, hist(), 100, 30, st({ view: 3, pane: 0, expand: true, select: 8 })));
+  assert.match(ex, new RegExp(`▶ 09  ${ninth.summary.split(":")[0]}:`), "the ninth card is drawn and selected"); assert.match(ex, /▲ \d+ more/);
+  // progress: many rigs, the last one selected
+  const rigs = Array.from({ length: 14 }, (_, i) => ({ id: `R${i}`, name: `rig${String(i).padStart(2, "0")}`, lifecycle: "running", seats: fixture.raw.rigs[1].seats.map((x) => ({ ...x, rig: `rig${String(i).padStart(2, "0")}`, session: x.session.replace("@alpha", `@rig${String(i).padStart(2, "0")}`) })) }));
+  const pr = text(render({ ...fixture.raw, rigs }, hist(), 100, 30, st({ view: 3, pane: 2, select: 13 })));
+  assert.match(pr, /▶ rig13/, "the selected rig is drawn");
+  // the tail's scroll stops at the first page, and the state remembers the clamp
+  const s1 = st({ seat: SEAT, pane: 1, select: 200 });
+  const t1 = text(render(fixture.raw, hist(), 120, 40, s1));
+  assert.match(t1, /Running the locked restore tests/, "the first lines are shown, not a blank pane");
+  assert.ok(s1.select < 200 && s1.select >= 0, `clamped to ${s1.select}`);
+  // 100 columns: the model and the tail status both readable
+  const hdr = render(fixture.raw, hist(), 100, 30, st({ seat: SEAT })).lines().slice(2, 4).join("\n");
+  assert.match(hdr, /gpt-6\.1-sol · Codex/); assert.match(hdr, /transcript tail · as of/);
 });
 
 test("CLI: --view focus|pool, --seat <seat@rig>, --theme (strict); RIG_CONSOLE_THEME", () => {

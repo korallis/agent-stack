@@ -207,7 +207,9 @@ with `agent-login` and the pool uses it straight away.
   - `5` Pool & System: 24 h braille graphs coloured along the value axis, the subscription pool, system health.
   - A seat's drill-in (`⏎` on a matrix cell or a timeline item, or `:seat <name>`): its open work and slice stages,
     context gauge (tokens when known; a warning past 80%), its recent queue history, and its live terminal tail, read
-    from the daemon's own transcript capture (`/api/transcripts/<seat>/tail`, no tmux) only while the drill-in is open.
+    only while the drill-in is open from the transcript file the daemon's own capture writes
+    (`$OPENRIG_TRANSCRIPTS_PATH`, else `~/.openrig/transcripts/<rig>/<seat>.log`): a file read, so it can never start a
+    capture (the daemon's tail route can) and costs the daemon nothing; it needs the daemon's host.
   - `:` commands (k9s): `home` `matrix` `river` `focus` `pool`, `seat <name>`, `rig <name>`, `slice <id>`,
     `theme <name>`, `help`, `q`; Tab completes. `Tab` moves between a view's panes and `e` expands the focused one.
   - Themes: Pad 39A (default), Catppuccin, Tokyo Night, Nord (`--theme`, `:theme`, `RIG_CONSOLE_THEME`).

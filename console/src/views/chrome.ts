@@ -8,7 +8,7 @@ import { ago, fit } from "../draw.ts";
 export interface Ctx { s: Screen; t: Theme; raw: Raw; f: Fleet; frame: number; view: number; rigFocus: number; seatFocus: [number, number]; note: string | null;
   riverFocus?: [number, number]; journey?: string | null;
   // phase 3: the focused pane (Tab), 'e' expanded, the selection in it, the ':' command being typed
-  pane?: number; expand?: boolean; select?: number; cmd?: string | null }
+  pane?: number; expand?: boolean; select?: number; cmd?: string | null; clampSelect?: (n: number) => void }
 export const VIEWS = ["Mission Control", "Seat Matrix", "River", "Focus", "Pool & System"];
 export const COMMANDS = ["home", "matrix", "river", "focus", "pool", "seat <name>", "rig <name>", "slice <id>", "theme pad39a|catppuccin|tokyo-night|nord", "help", "q"];
 const SPIN = "⣾⣽⣻⢿⡿⣟⣯⣷";
