@@ -14,12 +14,12 @@ import { fileURLToPath } from "node:url";
 const repo = join(dirname(fileURLToPath(import.meta.url)), "..");
 const readme = fs.readFileSync(join(repo, "README.md"), "utf8");
 const blocks = [...readme.matchAll(/```bash\n([\s\S]*?)```/g)].map((m) => m[1]);
-const RUNS = "# Runs as shown", ILLUSTRATIVE = "# Illustrative";
+const RUNS = "# Runs as shown", ILLUSTRATIVE = "# Illustrative", CHECKOUT = "# Runs from a checkout";   // the last: test/rig-console-docs.test.js
 const has = (cmd) => spawnSync("bash", ["-c", `command -v ${cmd}`]).status === 0;
 
 test("every bash block says whether it runs as shown or is illustrative", () => {
   assert.ok(blocks.length >= 8);
-  for (const b of blocks) assert.ok(b.startsWith(RUNS) || b.startsWith(ILLUSTRATIVE), b.split("\n")[0]);
+  for (const b of blocks) assert.ok(b.startsWith(RUNS) || b.startsWith(ILLUSTRATIVE) || b.startsWith(CHECKOUT), b.split("\n")[0]);
 });
 
 // Split a line into commands (| && ;) and words, keeping quoted strings whole.
@@ -73,7 +73,7 @@ test("illustrative blocks: every command exists and accepts every flag shown", (
         const local = ["bin", "system"].map((d) => join(repo, d, cmd)).find((p) => fs.existsSync(p))
           ?? { "./install.sh": join(repo, "install.sh"), "jev-decide": join(repo, "jev/bin/jev-decide.js"),
             "agent-dispatch": join(repo, "orchestration/dispatch.js"), "agent-merge-evidence": join(repo, "orchestration/merge-evidence.js"),
-            "agent-stuck-check": join(repo, "orchestration/stuck.js") }[cmd] ?? null;
+            "agent-stuck-check": join(repo, "orchestration/stuck.js"), "rig-console": join(repo, "console/src/main.ts") }[cmd] ?? null;
         if (local) {
           const src = fs.readFileSync(local, "utf8");
           for (const f of flags) assert.ok(src.includes(f), `${cmd} has no ${f} (${line})`);

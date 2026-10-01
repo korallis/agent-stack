@@ -12,6 +12,23 @@ teams, Claude Code and Codex CLI are the agents' workspaces, [CLIProxyAPI](https
 pools your subscriptions, [TypeSafe Jev](https://typesafe.ai) makes the small typed decisions (who builds this, may
 this merge), and Playwright gives the agents a real browser.
 
+## Watch the fleet: rig-console
+
+<p align="center"><img src="docs/assets/rig-console/demo.gif" alt="rig-console touring a demo fleet: Mission Control, the Seat Matrix, the River and a slice's journey, Focus, a seat's live terminal, Pool and System, and a theme switch" width="100%"></p>
+
+`rig-console` is a full-screen, read-only console for every team on the machine. One screen tells you what is
+working, what is stuck and why, what waits on you, how far each slice has got, and how much of each subscription is
+left.
+
+- **It answers "what needs me?" first.** Owner decisions lead the Focus view; the rest of the fleet is a pulse.
+- **"Stuck" is earned, never a guess.** A seat is stuck only when it has been quiet for 15 minutes and none of its
+  work has moved; the console always says why, with the ages.
+- **It is safe to leave open.** It only reads the fleet (its one write is its own 24 h history file); it never
+  touches tmux; it costs the daemon about 0.6% of one core.
+
+Try it on the demo fleet, no team needed: `rig-console --fixture docs/fixtures/demo-fleet.json`. The gallery, keys and
+more examples are in [rig-console in detail](#rig-console-in-detail).
+
 ## How it works
 
 ```mermaid
@@ -296,6 +313,116 @@ source. `agent-credguard-check` shows which running seats have `neon` and `verce
 credential read guard (a PreToolUse hook for Claude and Codex seats) refuses printing `.env`, `*runtime-url*`, `*.pem`
 and secrets files into a transcript: [docs/REFERENCE.md](docs/REFERENCE.md#credential-read-guard).
 
+## rig-console in detail
+
+Five views, a drill-in for any seat, a command bar and four themes. Every image here is drawn from the neutral demo
+fleet in `docs/fixtures/demo-fleet.json` by `node console/docs/make-assets.mjs`, so they can be redrawn after any UI
+change.
+
+<table>
+<tr>
+<td width="50%"><img src="docs/assets/rig-console/mission-control.png" alt="Mission Control"><br><b>1 Mission Control.</b> Working, idle, stuck, blocked, owner decisions and today's merge-gate decisions; one card per rig; work in flight by role; the account pool; system health; the event log.</td>
+<td width="50%"><img src="docs/assets/rig-console/seat-matrix.png" alt="Seat Matrix"><br><b>2 Seat Matrix.</b> Every seat of every rig: context use shaded (red at 80%), activity glyphs, 24 h telemetry, context pressure and the queue by rig.</td>
+</tr>
+<tr>
+<td><img src="docs/assets/rig-console/river.png" alt="The River"><br><b>3 The River.</b> One lane per rig; each open slice sits at the stage its work waits on, with each stage's median time in state and the share spent waiting.</td>
+<td><img src="docs/assets/rig-console/river-journey.png" alt="A slice's journey"><br><b>A slice's journey</b> (<code>⏎</code> on a slice): every row, who had it, worked vs waited per row and per stage, and what it waits on now.</td>
+</tr>
+<tr>
+<td><img src="docs/assets/rig-console/focus.png" alt="Calm Focus"><br><b>4 Focus.</b> What needs you first (answered in Slack, never from the console), then the fleet pulse, a live timeline and each rig's progress today.</td>
+<td><img src="docs/assets/rig-console/seat-drill-in.png" alt="A seat's drill-in"><br><b>A seat's drill-in</b> (<code>⏎</code> on a seat, or <code>:seat &lt;name&gt;</code>): its work and slice stages, a context gauge, recent history and its live terminal.</td>
+</tr>
+<tr>
+<td><img src="docs/assets/rig-console/pool.png" alt="Pool and System"><br><b>5 Pool &amp; System.</b> 24 h graphs, every subscription's 5-hour and weekly use (Codex has only a weekly window; accounts running on credits are counted), and system health.</td>
+<td><img src="docs/assets/rig-console/command-bar.png" alt="The command bar"><br><b>The <code>:</code> command bar.</b> Jump to a view, a seat, a rig or a slice, set the stuck threshold or the theme; <code>Tab</code> completes.</td>
+</tr>
+</table>
+
+Four themes, shown at 120 columns (`--theme`, `:theme`, or `RIG_CONSOLE_THEME`):
+
+<table>
+<tr>
+<td width="25%"><img src="docs/assets/rig-console/theme-pad39a.png" alt="Pad 39A theme"><br>Pad 39A (default)</td>
+<td width="25%"><img src="docs/assets/rig-console/theme-catppuccin.png" alt="Catppuccin theme"><br>Catppuccin</td>
+<td width="25%"><img src="docs/assets/rig-console/theme-tokyo-night.png" alt="Tokyo Night theme"><br>Tokyo Night</td>
+<td width="25%"><img src="docs/assets/rig-console/theme-nord.png" alt="Nord theme"><br>Nord</td>
+</tr>
+</table>
+
+It fits smaller terminals too. Mission Control at 120 columns:
+
+<img src="docs/assets/rig-console/mission-control-120.png" alt="Mission Control at 120 columns" width="70%">
+
+### Try it
+
+Each line runs from a checkout on the demo fleet. No team, daemon or account is needed:
+
+```bash
+# Runs from a checkout (the README test runs every line; interactive ones also with --once).
+cd ~/Projects/agent-stack
+rig-console --fixture docs/fixtures/demo-fleet.json                                     # the demo fleet, full screen
+rig-console --fixture docs/fixtures/demo-fleet.json --once --size 176x50 --view river   # one frame to stdout
+rig-console --fixture docs/fixtures/demo-fleet.json --view matrix --theme tokyo-night
+rig-console --fixture docs/fixtures/demo-fleet.json --view focus --stuck-minutes 10
+rig-console --fixture docs/fixtures/demo-fleet.json --seat impl-codex-4@gamma
+```
+
+Inside the console, `:stuck 10` changes the stuck threshold and `:theme nord` the theme. On your own machine, with
+OpenRig running:
+
+```bash
+# Illustrative: needs the OpenRig daemon (the README test checks each command and flag exists).
+rig-console
+rig-console --view focus --interval 10
+```
+
+### Keys
+
+| Key | What it does |
+| --- | --- |
+| `1` to `5` | Mission Control, Seat Matrix, River, Focus, Pool & System |
+| `←→↑↓` or `hjkl` | move between rigs, seats and slices |
+| `⏎` | open: a rig's seats, a seat's drill-in, a slice's journey |
+| `Tab` | next pane in Focus, Pool and a seat's drill-in |
+| `e` | expand the focused pane (again to collapse) |
+| `:` | the command bar: `home` `matrix` `river` `focus` `pool`, `seat <name>`, `rig <name>`, `slice <id>`, `stuck <minutes>`, `theme <name>` |
+| `[` `]` | previous and next slice, in a journey |
+| `j` `k` | select in a pane; scroll a seat's terminal |
+| `esc` | back |
+| `r` | refresh now |
+| `?` | help |
+| `q` | quit |
+
+### How "stuck" is decided
+
+A seat is **stuck** only when all three hold:
+
+1. the daemon reports its activity as unknown, stalled or waiting for input;
+2. its last activity is at least 15 minutes old (`--stuck-minutes`, `:stuck` or `RIG_CONSOLE_STUCK_MINUTES`);
+3. none of its open queue rows, and none of its own queue moves, changed in those minutes.
+
+Every verdict carries its reason and ages, for example `stalled for 42m · no queue movement on 1 open row for 38m`. A
+quiet seat that misses one of them is shown as "quiet, not stuck", with why. A bare "stalled" label caused false
+alarms before; the console never shows one.
+
+### What it guarantees
+
+- **Read-only.** It reads the daemon API and its live events, the Jev decision log, `agent-proxy-status` and
+  `agent-heavy status`. The only files it writes are its own 24 h history and its lock (`~/.local/state/agent-stack/rig-console/`).
+- **Never tmux.** It never polls tmux or asks the daemon to capture a pane. A seat's terminal is read from the
+  transcript file the daemon already writes, and only while that seat is open.
+- **Low load.** One cache refreshes every 5 seconds (never under 2) and backs off to 60 when the daemon is slow. The
+  River and Focus also read the completed rows, every 5 minutes and only while one of them is open; a slice's
+  transitions are read only while its journey is open. Measured on a running fleet: about 0.6% of one core of the
+  daemon.
+
+### Requirements
+
+- Linux and Node 22.18 or newer, which runs TypeScript directly (`install.sh` installs `rig-console` on the pinned Node
+  it uses for Jev).
+- A terminal of at least 100×30; best at 176×50. Truecolor, with 256- and 16-colour and `NO_COLOR` fallbacks.
+- For a live fleet, the OpenRig daemon on the same machine. The demo needs nothing else.
+
 ## FAQ
 
 ### What does it cost?
@@ -331,6 +458,30 @@ files you send); see
 ### What kinds of projects fit?
 Web apps, CLIs and APIs, new or existing. The team proves each feature through the interface its users use: a browser
 for web apps, the command for a CLI, the HTTP API for an API.
+
+## What changed lately
+
+Each entry links its changelog note. [CHANGELOG.md](CHANGELOG.md) has the releases.
+
+- **rig-console**, the fleet console above: [phase 1](changelog.d/WO78.md), [the River](changelog.d/WO78-phase2.md),
+  [Focus, drill-in, Pool, commands and themes](changelog.d/WO78-phase3.md), [a conservative "stuck" and stage
+  times](changelog.d/WO78-phase4.md).
+- **Merge gate v4: tests-first only when it applies.** An ordinary pull request's diff is stated neutrally ("code
+  change, N non-test paths"). The tests-first exception is checked only for a test author's `tests/<feature>` branch,
+  so plain wording in a PR no longer pushes a green change toward a hold ([WO79](changelog.d/WO79.md)).
+- **Fair heavy-run queue.** `agent-heavy` serves waiters first come, first served, and `--priority urgent|critical`
+  puts critical-path QA and merge-gate re-runs ahead of routine work without stopping a running job
+  ([WO81](changelog.d/WO81.md), [WO82](changelog.d/WO82.md)).
+- **One Playwright MCP dir per seat**, with an hourly retention timer: 48 h, or 6 h for rigs that handle client data
+  ([WO83](changelog.d/WO83.md), [unattributed files](changelog.d/WO83-unattributed.md)).
+- **Quota readings you can trust.** `agent-proxy-status` reads each provider's units (Anthropic fractions, Codex
+  percents) and Codex's windows by their length: Codex now has a weekly window only. An account that has used its
+  window but has credits is shown "on credits" and stays eligible; one past its limit says `OVER`
+  ([WO84](changelog.d/WO84.md), [WO85](changelog.d/WO85.md)). `cliproxy-quotawatch` follows the same rules, so it no
+  longer warns that Codex seats will stall while they run on credits
+  ([quotawatch](changelog.d/quotawatch-codex.md)).
+- **`agent-project-check` reads big queues again** without timing out: the newest 20,000 rows without bodies, then a
+  body only where a check needs one ([WO77](changelog.d/WO77.md)).
 
 ## Read more
 
