@@ -81,7 +81,7 @@ test("retention: 48 h by default, client-data rigs sooner; seat dirs and their n
   assert.ok(!fs.existsSync(join(pw, "qa-1@shop/link")), "the old link itself is gone; its target is untouched");
   assert.ok(fs.existsSync(join(pw, "qa-1@shop/net")), "the seat's net/ dir stays (the guard allows writes only there)");
   assert.ok(!fs.existsSync(join(pw, "qa-1@shop/sub")), "emptied subdirs go");
-  assert.match(r.stdout, /older than 6 h in ~\/.*impl-1@clientco/); assert.match(r.stdout, /keep 48 h, client-data rigs 6 h \(clientco\)/);
+  assert.match(r.stdout, /older than 6 h in ~\/.*impl-1@clientco/); assert.match(r.stdout, /keep 48 h, client-data rigs 6 h \(clientco\), unattributed 48 h/);
 });
 
 test("retention: settings from its file (overridden by the environment); bad values and unknown arguments refused", () => {
@@ -140,6 +140,29 @@ test("retention (QA PR87): never through a link: a symlinked MCP dir and a linke
   assert.ok(fs.existsSync(page) && fs.readdirSync(elsewhere).length === 0 && mode(elsewhere) === 0o755, "nothing moved, the link target's mode untouched");
   for (const v of ["nan", "inf", "-inf", "NaN"]) assert.notEqual(ret(home(), [], { KEEP_HOURS: v }).status, 0, v);
   assert.notEqual(ret(home(), [], { CLIENT_DATA_HOURS: "inf" }).status, 0);
+});
+
+test("retention: UNATTRIBUTED_HOURS ages what no seat can be told for (top-level files, the old net/ tree, unattributed-*); unset, it is KEEP_HOURS", () => {
+  const make = () => {
+    const h = home(), pw = PW(h), day = new Date().toISOString().slice(0, 10);
+    return { h, files: { top: put(join(pw, "page-old.yml"), 7), net: put(join(pw, "net/x@client/requests-1.log"), 7), moved: put(join(pw, `unattributed-${day}/page.yml`), 7),
+      seat: put(join(pw, "qa-1@shop/page.yml"), 7), fresh: put(join(pw, "page-new.yml"), 1) } };
+  };
+  const a = make();
+  assert.equal(ret(a.h).status, 0);
+  assert.ok(Object.values(a.files).every((f) => fs.existsSync(f)), "unset: 48 h for everything, 7 h old files stay");
+  const b = make();
+  const r = ret(b.h, [], { UNATTRIBUTED_HOURS: "6" });
+  assert.equal(r.status, 0, r.stderr);
+  assert.deepEqual(Object.fromEntries(Object.entries(b.files).map(([k, f]) => [k, fs.existsSync(f)])), { top: false, net: false, moved: false, seat: true, fresh: true });
+  assert.match(r.stdout, /unattributed 6 h$/m);
+  assert.ok(fs.existsSync(join(PW(b.h), "net")), "the old net/ dir itself stays for seats still on an old MCP");
+  for (const v of ["nan", "inf", "0", "-1", "soon"]) assert.notEqual(ret(home(), [], { UNATTRIBUTED_HOURS: v }).status, 0, v);
+  assert.equal(ret(home(), [], { UNATTRIBUTED_HOURS: "" }).status, 0, "empty means the default");
+  // QA PR91: a seat whose name starts with "unattributed-" is a seat: its rig's window, not the unattributed one
+  const c = home(), seatish = put(join(PW(c), "unattributed-review@normal/old.yml"), 7), arch = put(join(PW(c), "unattributed-2026-10-01/old.yml"), 7);
+  assert.equal(ret(c, [], { KEEP_HOURS: "48", UNATTRIBUTED_HOURS: "6" }).status, 0);
+  assert.deepEqual([fs.existsSync(seatish), fs.existsSync(arch)], [true, false]);
 });
 
 test("wiring: install.sh links both tools, enables the hourly timer, migrates once per apply; the units and guidance say so", () => {

@@ -5,14 +5,17 @@ The MCP's files (page snapshots, console and network logs, screenshots, PDFs) li
 ~/.local/state/agent-stack/playwright-mcp/<seat>/ (agent-playwright-mcp). A page snapshot of a staging app holds what
 the page showed, client data included, so nothing there is kept for long:
   - files older than KEEP_HOURS (default 48) are deleted;
-  - in a seat dir of a client-data rig (CLIENT_DATA_RIGS, space-separated rig names) after CLIENT_DATA_HOURS (default 6).
+  - in a seat dir of a client-data rig (CLIENT_DATA_RIGS, space-separated rig names) after CLIENT_DATA_HOURS (default 6);
+  - what no seat can be told for (top-level files, the old shared net/ tree, unattributed-*: written by an MCP from
+    before the per-seat dirs, any rig's, client data included) after UNATTRIBUTED_HOURS (default KEEP_HOURS); set it to
+    the client-data window when any rig is client-data.
 Settings: ~/.config/agent-stack/playwright-retention.env (NAME=value lines), overridden by the environment.
 A seat keeps evidence by copying it into its slice's proof dir; this dir is scratch.
 
 --migrate (install.sh): top-level files the MCP wrote before it had a dir per seat, untouched for an hour, are MOVED
 (renamed, never deleted, never into a link) into unattributed-<UTC date>/ (0700); that run deletes nothing. The old
 net/ tree stays where it is: seats on an MCP started before the per-seat dirs still write their logs there until they
-relaunch. The hourly run ages all of it (unattributed-*, the old net/ tree, stray top-level files) by KEEP_HOURS.
+relaunch. The hourly run ages all of it (unattributed-*, the old net/ tree, stray top-level files) by UNATTRIBUTED_HOURS.
 Their seat can't be told, so the operator purges a client-data window on request. A symlinked MCP dir is refused.
 Only regular files and symlinks (never followed) are removed; emptied subdirs go too, but never a seat dir or its net/.
 Prints one line per dir it changed and a total. Runs hourly (agent-playwright-retention.timer).
@@ -23,11 +26,12 @@ HOME = os.path.expanduser("~")
 BASE = os.path.join(HOME, ".local/state/agent-stack/playwright-mcp")
 CONF = os.path.join(HOME, ".config/agent-stack/playwright-retention.env")
 SEAT = re.compile(r"^[A-Za-z0-9._-]+@[A-Za-z0-9._-]+$")
+ARCHIVE = re.compile(r"^unattributed-\d{4}-\d{2}-\d{2}$")   # exactly what --migrate creates (a seat name is never this)
 MIGRATE_MIN_AGE = 3600   # seconds since a top-level file was last written before --migrate moves it
 
 
 def settings():
-    s = {"KEEP_HOURS": "48", "CLIENT_DATA_HOURS": "6", "CLIENT_DATA_RIGS": ""}
+    s = {"KEEP_HOURS": "48", "CLIENT_DATA_HOURS": "6", "CLIENT_DATA_RIGS": "", "UNATTRIBUTED_HOURS": ""}
     try:
         for line in open(CONF):
             m = re.match(r"^\s*([A-Z_]+)\s*=\s*(.*?)\s*$", line)
@@ -40,12 +44,13 @@ def settings():
             s[k] = os.environ[k]
     try:
         keep, client = float(s["KEEP_HOURS"]), float(s["CLIENT_DATA_HOURS"])
+        unattributed = float(s["UNATTRIBUTED_HOURS"]) if s["UNATTRIBUTED_HOURS"].strip() else keep
     except ValueError:
-        sys.exit("agent-playwright-retention: KEEP_HOURS and CLIENT_DATA_HOURS must be numbers")
+        sys.exit("agent-playwright-retention: KEEP_HOURS, CLIENT_DATA_HOURS and UNATTRIBUTED_HOURS must be numbers")
     # nan and inf would silently keep everything (QA PR87)
-    if not (math.isfinite(keep) and math.isfinite(client)) or keep <= 0 or client <= 0:
-        sys.exit("agent-playwright-retention: KEEP_HOURS and CLIENT_DATA_HOURS must be finite numbers above 0")
-    return keep, client, set(s["CLIENT_DATA_RIGS"].split())
+    if not all(math.isfinite(v) and v > 0 for v in (keep, client, unattributed)):
+        sys.exit("agent-playwright-retention: KEEP_HOURS, CLIENT_DATA_HOURS and UNATTRIBUTED_HOURS must be finite numbers above 0")
+    return keep, client, set(s["CLIENT_DATA_RIGS"].split()), unattributed
 
 
 def migrate(dry, now):
@@ -122,7 +127,7 @@ def main(argv):
         print(f"agent-playwright-retention: unknown argument {bad[0]!r}", file=sys.stderr)
         return 2
     dry = "--dry-run" in argv
-    keep, client, rigs = settings()
+    keep, client, rigs, unattributed = settings()
     if os.path.islink(BASE):   # never clean (or move) through a link: it would act on another tree (QA PR87)
         sys.exit(f"agent-playwright-retention: {BASE.replace(HOME, '~')} is a symbolic link: refusing")
     if not os.path.isdir(BASE):
@@ -141,19 +146,23 @@ def main(argv):
                 st = os.lstat(p)
             except OSError:
                 continue
-            if st.st_mtime < now - keep * 3600:
+            if st.st_mtime < now - unattributed * 3600:
                 total, total_bytes = total + 1, total_bytes + st.st_size
                 if not dry:
                     os.unlink(p)
             continue
-        rig = name.split("@", 1)[1] if SEAT.match(name) else None
-        hours = client if rig in rigs else keep
+        # a seat dir (seat@rig, whatever its name starts with): its rig's window (QA PR91); the old shared net/ tree and
+        # the --migrate archives: no rig can be told
+        if SEAT.match(name):
+            hours = client if name.split("@", 1)[1] in rigs else keep
+        else:
+            hours = unattributed if (name == "net" or ARCHIVE.match(name)) else keep
         n, size = prune(p, hours, now, dry, {os.path.join(p, "net")})
         if n:
             print(f"{'would delete' if dry else 'deleted'} {n} files ({size // 1024} KiB) older than {hours:g} h in {p.replace(HOME, '~')}")
         total, total_bytes = total + n, total_bytes + size
     print(f"{'would delete' if dry else 'deleted'} {total} files ({total_bytes // 1024} KiB); keep {keep:g} h, client-data rigs {client:g} h"
-          f" ({', '.join(sorted(rigs)) or 'none set'})")
+          f" ({', '.join(sorted(rigs)) or 'none set'}), unattributed {unattributed:g} h")
     return 0
 
 
