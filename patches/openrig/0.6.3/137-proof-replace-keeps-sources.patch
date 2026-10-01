@@ -1,0 +1,75 @@
+--- a/dist/commands/proof.js
++++ b/dist/commands/proof.js
+@@ -1,4 +1,5 @@
+ import fs from "node:fs";
++import { randomUUID } from "node:crypto";
+ import path from "node:path";
+ import { Command } from "commander";
+ import YAML from "yaml";
+@@ -85,6 +86,45 @@
+ function isVideoFile(filePath) {
+     return VIDEO_EXTENSIONS.has(path.extname(filePath).toLowerCase());
+ }
++/** Write a proof artifact without ever writing THROUGH an existing name. Without `replace` the file is created
++ *  exclusively ("wx"; an existing file or link of that name refuses). With `replace` the content goes to a fresh temp
++ *  file in the same directory and is renamed over the name: that swaps the directory entry, so a hardlink or a symlink
++ *  of that name (e.g. to a screenshot) keeps its content. `source` (the --file path) is never the target: an existing
++ *  name that is the same file (device + inode, so hardlinks and symlinks count) is refused. Returns null when written,
++ *  else "exists" or "is-source". */
++export function writeProofArtifact(target, content, { replace = false, source } = {}) {
++    const existing = fs.statSync(target, { throwIfNoEntry: false });
++    if (source && existing) {
++        const src = fs.statSync(source, { throwIfNoEntry: false });
++        if (src && src.dev === existing.dev && src.ino === existing.ino)
++            return "is-source";
++    }
++    if (!replace) {
++        try {
++            fs.writeFileSync(target, content, { encoding: "utf8", flag: "wx" });
++        }
++        catch (err) {
++            if (err.code === "EEXIST")
++                return "exists";
++            throw err;
++        }
++        return null;
++    }
++    // A random name, created exclusively; on failure only a temp THIS call created is removed.
++    const tmp = path.join(path.dirname(target), `.${path.basename(target)}.${process.pid}.${randomUUID()}.tmp`);
++    let created = false;
++    try {
++        fs.writeFileSync(tmp, content, { encoding: "utf8", flag: "wx" });
++        created = true;
++        fs.renameSync(tmp, target);
++    }
++    catch (err) {
++        if (created)
++            fs.rmSync(tmp, { force: true });
++        throw err;
++    }
++    return null;
++}
+ export function proofCommand() {
+     const cmd = new Command("proof").description("Capture evidence (add), record an attributed item judgment (judge), and read derived readiness (show). Capture, policy acceptance, higher outcome judgment and publication are separate.");
+     cmd.addHelpText("after", `
+@@ -437,12 +477,15 @@
+             }
+             fs.mkdirSync(proofDir, { recursive: true });
+             const frontmatter = YAML.stringify(header).trimEnd();
+-            try {
+-                fs.writeFileSync(target, `---\n${frontmatter}\n---\n\n${body}`, { encoding: "utf8", flag: opts.replace ? "w" : "wx" });
++            const written = writeProofArtifact(target, `---\n${frontmatter}\n---\n\n${body}`, { replace: opts.replace === true, source: opts.file });
++            if (written === "is-source") {
++                throw new ScopeCliError({
++                    fact: `Proof artifact '${fileName}' is the --file source itself.`,
++                    consequence: "The artifact was NOT dropped; the source evidence is left as it is.",
++                    action: "Pass a different --name, or drop from a copy outside proof/.",
++                });
+             }
+-            catch (err) {
+-                if (err.code !== "EEXIST")
+-                    throw err;
++            if (written === "exists") {
+                 throw new ScopeCliError({
+                     fact: `Proof artifact '${fileName}' already exists.`,
+                     consequence: "The existing artifact was not changed.",
