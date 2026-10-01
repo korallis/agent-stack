@@ -34,23 +34,32 @@ export function parseHeavy(text: string | null): Heavy[] {
   }
   return [...by.values()];
 }
+/** A quota reading as a percent. The proxy passes the upstream header through as a string: Anthropic's
+ *  unified-utilization headers are fractions (0.29, and 1.01 when over), Codex's used-percent headers are percents
+ *  ("100"), so the unit follows the provider, never the magnitude. */
+export function quotaPct(v: unknown, provider: string): number | null {
+  const n = typeof v === "number" ? v : typeof v === "string" && v.trim() !== "" ? Number(v) : NaN;
+  if (!Number.isFinite(n)) return null;
+  return Math.round(provider === "claude" ? n * 100 : n);
+}
 export function parseAccounts(text: string | null): Account[] {
   if (!text) return [];
   try {
     const a = JSON.parse(text);
     return (Array.isArray(a) ? a : []).map((x: any) => ({ label: String(x.label), provider: String(x.provider ?? ""), status: String(x.status ?? "?"),
-      short: typeof x.short_window_used === "number" ? x.short_window_used : null, weekly: typeof x.weekly_used === "number" ? x.weekly_used : null,
+      short: quotaPct(x.short_window_used, String(x.provider ?? "")), weekly: quotaPct(x.weekly_used, String(x.provider ?? "")),
       cooling: x.status !== "active" || (Array.isArray(x.cooldowns) && x.cooldowns.length > 0) }));
   } catch { return []; }
 }
-/** Today's merge-gate decisions from the Jev decision log (diagnosis calls excluded). */
+/** Today's merge-gate decisions from the Jev decision log. Diagnosis calls are excluded, whether the caller is
+ *  "diagnosis:<label>" or a seat with a diagnosis note ("<seat> diagnosis <what>"). */
 export function parseGates(lines: string[]): Gate[] {
   const out: Gate[] = [];
   for (const l of lines) {
     if (!l.includes('"review.merge_gate"')) continue;
     try {
       const d = JSON.parse(l);
-      if (d.decision !== "review.merge_gate" || String(d.caller ?? "").startsWith("diagnosis:")) continue;
+      if (d.decision !== "review.merge_gate" || /(^|\s)diagnosis(:|\s|$)/.test(String(d.caller ?? ""))) continue;
       out.push({ ts: String(d.ts), decision: String(d.result?.decision ?? "hold"), band: String(d.band ?? "?") });
     } catch { /* a torn line */ }
   }

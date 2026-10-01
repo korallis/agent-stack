@@ -105,11 +105,16 @@ test("sources: agent-heavy status (with or without the queue), the account pool,
     [{ cls: "build", held: 1, total: 2, waiting: 2 }, { cls: "browser", held: 0, total: 2, waiting: 0 }]);
   assert.deepEqual(parseHeavy("build 1/2  free\nbuild 2/2  free\n"), [{ cls: "build", held: 0, total: 2, waiting: 0 }]);
   assert.deepEqual(parseHeavy(null), []);
-  const a = parseAccounts(JSON.stringify([{ label: "codex-a", provider: "codex", status: "active", cooldowns: [{}], short_window_used: 100, weekly_used: null }]));
-  assert.deepEqual(a, [{ label: "codex-a", provider: "codex", status: "active", short: 100, weekly: null, cooling: true }]);
+  // the proxy's JSON (as agent-proxy-status --json prints it): strings; Anthropic fractions, Codex percents
+  const a = parseAccounts(JSON.stringify([{ label: "codex-a", provider: "codex", status: "active", cooldowns: [{}], short_window_used: "100", weekly_used: "0" },
+    { label: "claude-a", provider: "claude", status: "active", cooldowns: [], short_window_used: "0.29", weekly_used: "0.79" },
+    { label: "claude-b", provider: "claude", status: "active", cooldowns: [], short_window_used: "1.01", weekly_used: "0.85" },
+    { label: "kimi-a", provider: "kimi-ai", status: "active", short_window_used: null, weekly_used: null }]));
+  assert.deepEqual(a.map((x) => [x.label, x.short, x.weekly, x.cooling]), [["codex-a", 100, 0, true], ["claude-a", 29, 79, false], ["claude-b", 101, 85, false], ["kimi-a", null, null, false]]);
   assert.deepEqual(parseAccounts("not json"), []);
   const g = parseGates([JSON.stringify({ ts: "2026-10-01T10:00:00Z", decision: "review.merge_gate", band: "act", result: { decision: "merge" }, caller: "integ@x" }),
     JSON.stringify({ ts: "2026-10-01T10:01:00Z", decision: "review.merge_gate", band: "uncertain", result: { decision: "hold" }, caller: "diagnosis:qa" }),
+    JSON.stringify({ ts: "2026-10-01T10:01:30Z", decision: "review.merge_gate", band: "act", result: { decision: "merge" }, caller: "operator@kernel diagnosis pr#61 helper-old (not a merge gate)" }),
     JSON.stringify({ ts: "2026-10-01T10:02:00Z", decision: "seat.stuck", result: {} }), "{torn"]);
   assert.deepEqual(g, [{ ts: "2026-10-01T10:00:00Z", decision: "merge", band: "act" }]);
 });

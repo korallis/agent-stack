@@ -42,7 +42,7 @@ export function home(c: Ctx, hist: History): void {
       lines: f.owner.length ? [["WAITING", t.owner] as [string, RGB], ...f.owner.slice(0, 3).map((q) => [`${q.id.slice(-8)} ${q.destination.split("@")[0]}`] as [string]), [`oldest ${since(raw, f.owner[0].created)}`, t.dim]]
         : [["none waiting", t.dim]] },
     { title: "GATE TODAY", value: f.gate.total, color: f.gate.total ? t.merged : t.faint,
-      lines: [[`${f.gate.merge} merge ✓`, t.merged], [`${f.gate.hold} hold ▲`, f.gate.hold ? t.blocked : t.dim], [`${f.gate.uncertain} uncertain`, t.violet], [`${f.gate.act} act band`, t.dim]], spark: hist.series("gateToday", 24, now) },
+      lines: [[`${f.gate.merge} merge ✓`, t.merged], [`${f.gate.hold} hold ▲`, f.gate.hold ? t.blocked : t.dim], [`${f.gate.uncertain} uncertain`, t.violet], [`${f.gate.act} act band`, t.dim], ["since 00:00 UTC", t.faint]], spark: hist.series("gateToday", 24, now) },
   ];
   tiles.forEach((tile, i) => {
     const x = 1 + i * tw, w = tw - 1;

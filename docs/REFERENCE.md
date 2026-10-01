@@ -190,7 +190,8 @@ with `agent-login` and the pool uses it straight away.
 ## Operating a running fleet
 
 - **Watch the fleet: `rig-console`** (read-only, full screen; best at 176×50, works from 100×30).
-  - `1` Mission Control: working / idle / stuck / blocked / owner decisions / gate-today tiles, one card per rig
+  - `1` Mission Control: working / idle / stuck / blocked / owner decisions / gate-today (every rig's
+    `review.merge_gate` decisions since 00:00 UTC, diagnosis calls excluded) tiles, one card per rig
     (seat dots per pod), work in flight by role, owner decisions, the account pool, system health, the event log and a
     live ticker.
   - `2` Seat Matrix: every seat of every rig, context use shaded (red at 80%+), activity glyphs, 24 h telemetry and the
