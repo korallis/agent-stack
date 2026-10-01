@@ -246,7 +246,7 @@ if APPLY:
     run([os.environ.get("AGENT_REFRESH_GUIDANCE", f"{S}/bin/agent-refresh-guidance"), P, "--apply"], stdout=subprocess.DEVNULL)
 
 print(f"""
-Next (project-onboarding skill, steps 6-9):
+Next (project-onboarding skill, steps 7-10):
   review {W}/docs/lead-brief.md, then:  rig send {lead} "$(cat {W}/docs/lead-brief.md)"
   wait for plan-ready; review SPECs, waves, W slices and docs/VERIFY.md; agent-project-check {P};
   then (with the owner's OK unless PLAN_APPROVAL=operator): rig send {lead} "plan approved"

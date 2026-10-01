@@ -61,6 +61,11 @@ test("onboarding's Slack step: files:write and files:read, verify that checks it
   assert.match(o, /`openrig-slack-upload-check`, then `openrig-slack-upload-check --live`/);
   const steps = [...o.slice(o.indexOf("## 2. Steps"), o.indexOf("## 3.")).matchAll(/^(\d+)\. \*\*/gm)].map((m) => Number(m[1]));
   assert.deepEqual(steps, [1, 2, 3, 4, 5, 6, 7, 8, 9, 10]);
+  // QA PR75: agent-project-onboard's footer names the skill's steps from "Brief the lead" to "Approve the plan".
+  const num = (title) => Number(o.match(new RegExp(`^(\\d+)\\. \\*\\*${title}`, "m"))[1]);
+  const footer = read("bin/agent-project-onboard").match(/Next \(project-onboarding skill, steps (\d+)-(\d+)\):/);
+  assert.ok(footer, "the footer names a step range");
+  assert.deepEqual([Number(footer[1]), Number(footer[2])], [num("Brief the lead"), num("Approve the plan")]);
 });
 
 test("every documented --required-scopes list keeps the baseline and both files: scopes", () => {
