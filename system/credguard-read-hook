@@ -27,6 +27,8 @@ const DEFAULT_PATTERNS = ["**/.env", "**/.env.*", "**/*runtime-url*", "**/*.pem"
 const NET_TOOL = /^mcp__.+__browser_(network_requests|network_request|console_messages)$/;
 // Templates that hold no values.
 const EXEMPT = /(^|\/)\.env\.(example|sample|template)$/;
+// Not inside the Playwright scratch tree: every file there is raw MCP output, whatever its name.
+const exempt = (abs, home) => EXEMPT.test(abs) && !abs.startsWith(path.join(home, NET_DIR.slice(2)) + "/");
 
 function patterns(env = process.env, home = os.homedir()) {
   const file = env.AGENT_CREDGUARD_READ_PATHS || path.join(home, ".config/agent-stack/credguard-read-paths");
@@ -128,7 +130,7 @@ function taintedBy(abs, ctx) {
 }
 function checkAbs(abs, ctx) {
   if (taintedBy(abs, ctx)) return { path: abs, pattern: "a copy or link of a credential file made earlier in this command" };
-  const byPattern = (x) => !EXEMPT.test(x) && ctx.pats.find((p) => globRe(p, ctx.home).test(x));
+  const byPattern = (x) => !exempt(x, ctx.home) && ctx.pats.find((p) => globRe(p, ctx.home).test(x));
   let p = byPattern(abs);
   if (p) return { path: abs, pattern: p };
   let real = null;
@@ -166,7 +168,7 @@ function globHit(abs, ctx) {
   for (const smp of SAMPLES) {
     if (!okName(smp)) continue;
     const cand = path.join(dir, smp);
-    if (EXEMPT.test(cand)) continue;
+    if (exempt(cand, ctx.home)) continue;
     const p = ctx.pats.find((x) => globRe(x, ctx.home).test(cand));
     if (p) return { path: abs, pattern: p };
   }

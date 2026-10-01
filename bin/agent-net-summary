@@ -9,15 +9,20 @@ output carries request URLs, headers and console text where runtime tokens appea
 
 Query strings, fragments, user:password@ and ;params are dropped, and a path segment that looks like a token (long
 hex, a JWT, a long mixed letters-and-digits run) is shown as <masked>. Headers, bodies and console messages are never
-printed, only counted; a console log's "Total messages" line is shown. Exit 1 when a file can't be read.
+printed, only counted; a console log's "Total messages" line is shown. The file's kind is taken from its first line
+(request list, one request's details, console log) and only that kind's record lines are read; any other file prints
+nothing but the count. Exit 1 when a file can't be read.
 """
 import re
 import sys
 
-REQ = re.compile(r"(?:^|\s)(?:#?\d+\.?\s+)?\[(GET|HEAD|POST|PUT|PATCH|DELETE|OPTIONS|CONNECT|TRACE)\]\s+(\S+)")
-STATUS = re.compile(r"=>\s+\[(\d{3}|FAILED)\]")
-DETAIL_STATUS = re.compile(r"^\s*status:\s+\[(\d{3}|FAILED)\]")
-TOTALS = re.compile(r"^Total messages: \d+ \(Errors: \d+, Warnings: \d+\)$")
+METHODS = r"(GET|HEAD|POST|PUT|PATCH|DELETE|OPTIONS|CONNECT|TRACE)"
+# The record lines Playwright MCP 0.0.80 writes, matched whole (renderRequestLine / renderRequestDetails):
+LIST_LINE = re.compile(rf"^(\d+)\. \[{METHODS}\] (\S+)(?: => \[(\d{{3}}|FAILED)\].*)?$")   # browser_network_requests
+DETAIL_HEAD = re.compile(rf"^#(\d+) \[{METHODS}\] (\S+)$")                                  # browser_network_request
+DETAIL_STATUS = re.compile(r"^\s+status:\s+\[(\d{3}|FAILED)\]")   # read only before the first headers/body section
+TOTALS = re.compile(r"^Total messages: \d+ \(Errors: \d+, Warnings: \d+\)$")                 # browser_console_messages
+NOTE = re.compile(r"^Note: \d+ static requests? not shown, run with .* option to see (it|them)\.$")
 
 
 def tokenish(seg):
@@ -41,28 +46,39 @@ def safe_url(url):
 
 
 def summarise(text):
-    out, other, n, last = [], 0, 0, None
-    for line in text.splitlines():
-        m = REQ.search(line)
-        if m:
-            n += 1
-            s = STATUS.search(line)
-            out.append([n, m.group(1), safe_url(m.group(2)), s.group(1) if s else None])
-            last = out[-1]
-            continue
-        d = DETAIL_STATUS.match(line)
-        if d and last and last[3] is None:
-            last[3] = d.group(1)
-            continue
-        if TOTALS.match(line.strip()):
-            out.append(line.strip())
-            continue
-        if line.strip():
-            other += 1
-    lines = [x if isinstance(x, str) else f"{x[0]}. {x[1]} {x[2]}" + (f" => {x[3]}" if x[3] else "") for x in out]
+    """The file's kind comes from its first line; only that kind's own record lines are read, so text inside a console
+    message, a header or a body is never taken for a request, whatever it looks like."""
+    lines = [l for l in text.splitlines() if l.strip()]
+    out, shown = [], 0
+    first = lines[0] if lines else ""
+    if TOTALS.match(first):                     # a console log: the totals line only
+        out, shown = [first], 1
+    elif DETAIL_HEAD.match(first):              # one request's details: its first line, and the status in General
+        m = DETAIL_HEAD.match(first)
+        status = None
+        for l in lines[1:]:
+            if l.strip() in ("Request headers", "Response headers", "Request body", "Response body") or not DETAIL_STATUS.match(l) and ":" in l and l.strip().split(":")[0] not in ("status", "duration", "type"):
+                break
+            d = DETAIL_STATUS.match(l)
+            if d:
+                status, shown = d.group(1), 1
+                break
+        out = [f"1. {m.group(2)} {safe_url(m.group(3))}" + (f" => {status}" if status else "")]
+        shown += 1
+    elif LIST_LINE.match(first):                # the request list: numbered lines, numbers increasing, and its note
+        last = 0
+        for l in lines:
+            m = LIST_LINE.match(l)
+            if m and int(m.group(1)) > last:
+                last = int(m.group(1))
+                out.append(f"{len(out) + 1}. {m.group(2)} {safe_url(m.group(3))}" + (f" => {m.group(4)}" if m.group(4) else ""))
+                shown += 1
+            elif NOTE.match(l):
+                shown += 1
+    other = len(lines) - shown
     if other:
-        lines.append(f"({other} other line{'s' if other != 1 else ''} not shown: headers, bodies or console text)")
-    return lines
+        out.append(f"({other} other line{'s' if other != 1 else ''} not shown: headers, bodies or console text)")
+    return out
 
 
 def main(argv):

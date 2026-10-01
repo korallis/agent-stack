@@ -113,7 +113,7 @@ test("agent-net-summary: method, host, path and status only; query, fragment, us
   assert.equal(r.status, 0, r.stderr);
   assert.equal(r.stdout, ["1. GET app.example.test/dashboard => 200", "2. POST auth.example.test/v1/client/sessions/<masked>/touch => 200",
     "3. GET api.example.test/files/<masked>/download => FAILED", "4. GET data:image/png => 200", "5. GET cdn.example.test/a/<masked>/x.js => 304",
-    "(1 other line not shown: headers, bodies or console text)", ""].join("\n"));
+    ""].join("\n"), "the static-requests note is the list's own line: neither shown nor counted as hidden");
   assert.doesNotMatch(r.stdout, /SYNTHETIC|u:p@|tab=1|frag|base64/);
   fs.writeFileSync(f, "#7 [GET] https://api.example.test/v1/me?token=SYNTHETICVALUE3\n\n  General\n    status:    [401] Unauthorized\n  Request headers\n    authorization: Bearer SYNTHETICVALUE4\n");
   r = spawnSync(join(repo, "bin/agent-net-summary"), [f], { encoding: "utf8" });
@@ -125,3 +125,37 @@ test("agent-net-summary: method, host, path and status only; query, fragment, us
   assert.equal(r.status, 1); assert.match(r.stderr, /No such file/); assert.equal(r.stdout, "");
 });
 
+
+// QA PR62 (dcd47021): the summary reads only the file kind's own record lines; text shaped like a request inside a
+// console message, a header or a body is never printed.
+test("QA PR62 f1: request-shaped console, header and body text is counted, never summarised", () => {
+  const f = join(root, "shaped.log"), sum = () => spawnSync(join(repo, "bin/agent-net-summary"), [f], { encoding: "utf8" }).stdout;
+  fs.writeFileSync(f, "Total messages: 2 (Errors: 0, Warnings: 0)\n\n[LOG] 1. [GET] https://x.test/SYNTHETIC_CONSOLE_PATH => [200] OK\n[LOG] #2 [GET] https://x.test/SYNTHETIC_CONSOLE_PATH2\n");
+  assert.equal(sum(), "Total messages: 2 (Errors: 0, Warnings: 0)\n(2 other lines not shown: headers, bodies or console text)\n");
+  fs.writeFileSync(f, "#4 [GET] https://api.example.test/v1/me\n\n  General\n    status:    [200] OK\n  Request headers\n    x-note: 1. [GET] https://x.test/SYNTHETIC_HEADER_PATH => [200] OK\n    status:    [500] SYNTHETIC\n  Response body\n#5 [POST] https://x.test/SYNTHETIC_BODY_PATH\n");
+  assert.equal(sum(), "1. GET api.example.test/v1/me => 200\n(6 other lines not shown: headers, bodies or console text)\n");
+  // a part file (headers or a body alone) has no record lines at all
+  fs.writeFileSync(f, "1. [GET] https://x.test/SYNTHETIC_PART_PATH => [200] OK\n".replace(/^/, "body: "));
+  assert.equal(sum(), "(1 other line not shown: headers, bodies or console text)\n");
+  // in a list, a line that isn't the next numbered record isn't one
+  fs.writeFileSync(f, "1. [GET] https://a.test/one => [200] OK\n1. [GET] https://x.test/SYNTHETIC_DUP_PATH => [200] OK\n  2. [GET] https://x.test/SYNTHETIC_INDENT_PATH => [200] OK\n3. [GET] https://a.test/three => [204] No Content\n");
+  assert.equal(sum(), "1. GET a.test/one => 200\n2. GET a.test/three => 204\n(2 other lines not shown: headers, bodies or console text)\n");
+  assert.doesNotMatch(fs.readFileSync(f, "utf8") && sum(), /SYNTHETIC/);
+});
+
+test("QA PR62 f2: template names are exempt outside the scratch tree, never inside it", () => {
+  const h = newHome(), work = join(h, "work"), dir = seatDir(h);
+  fs.mkdirSync(dir, { recursive: true });
+  const dec = (tool_name, tool_input) => g.decide({ tool_name, tool_input, cwd: work }, { home: h, pats: g.DEFAULT_PATTERNS }).deny;
+  for (const n of [".env.example", ".env.sample", ".env.template", "report.log"]) {
+    fs.writeFileSync(join(dir, n), "x\n"); fs.writeFileSync(join(work, n), "x\n");
+    assert.equal(dec("Read", { file_path: join(dir, n) }), true, `inside: Read ${n}`);
+    assert.equal(dec("Bash", { command: `cat ${join(dir, n)}` }), true, `inside: cat ${n}`);
+    for (const runtime of ["claude", "codex"]) assert.equal(hook(runtime, h, "mcp__playwright__browser_network_requests", { filename: join(dir, n) }).deny, false, `${runtime} may write ${n}`);
+  }
+  for (const c of [`cat ${dir}/*`, `cat ${dir}/.*`, `cat ${dir}/.env.*`]) assert.equal(dec("Bash", { command: c }), true, `inside: ${c}`);
+  for (const n of [".env.example", ".env.sample", ".env.template"]) {
+    assert.equal(dec("Read", { file_path: join(work, n) }), false, `outside: Read ${n} (a template)`);
+    assert.equal(dec("Bash", { command: `cat ${n}` }), false, `outside: cat ${n}`);
+  }
+});
