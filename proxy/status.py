@@ -5,7 +5,7 @@
   agent-proxy-status --recent N last N routed requests from the redacted routing log
   agent-proxy-status --json     machine-readable (used by the dispatcher for capacity)
 """
-import json, pathlib, sys, time
+import json, math, pathlib, sys, time
 sys.path.insert(0, str(pathlib.Path(__file__).resolve().parent))
 from usage_collector import get, mgmt_key, LOG  # noqa: E402
 
@@ -16,9 +16,11 @@ def used_pct(v, provider):
     by magnitude printed Anthropic's 1.01 as 1% while the account was over its limit (2026-10-01). None when absent."""
     try:
         f = float(v)
-    except (TypeError, ValueError):
+    except (TypeError, ValueError, OverflowError):
         return None
-    return f * 100 if provider == "claude" else f
+    p = f * 100 if provider == "claude" else f
+    # NaN, Infinity or an overflow after scaling: no reading (json.dumps would emit bare NaN/Infinity, which isn't JSON)
+    return p if math.isfinite(p) else None
 
 
 def pct(p):
