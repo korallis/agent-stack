@@ -16,20 +16,35 @@ export function seatCandidates(all, role, families = {}, excludeFamily = null) {
       + `quality ${qualityScore(s.seat).toFixed(2)} (completed/returned/failed record)` }));
 }
 
-// Pure: who wrote a slice's locked tests, from its PROGRESS.md / SPEC.md line "Locked tests: <seat> (<family>) <PR>".
-// texts: [{ name, text }] in the order to look; seats: the rig's seats (to read a seat's family). Returns
-// { family, seat, source } or { family: null, reason }: never a guess.
+// Pure: who wrote a slice's locked tests, from its PROGRESS.md / SPEC.md. Two forms (case-insensitive):
+//   "Locked tests: <seat> (<family>) <PR>"   at the start of a line, and
+//   "locked-test author: <seat> (...)"       anywhere, e.g. in an "Implementing family: … · locked-test author: …" note.
+// The family: as written "(claude|codex|kimi)", else the seat's family in this rig (a bare "tests-claude-1" matches
+// "tests-claude-1@<rig>"), else the seat name's own family part (tests-claude-* -> claude, *-codex-* -> codex,
+// *kimi* -> kimi). texts: [{ name, text }] in the order to look. Returns { family, seat, source } or
+// { family: null, reason }: never a guess beyond those.
+const AUTHOR_LINE = [/^[ \t]*(?:[-*][ \t]*)?Locked tests:[ \t]*([^\n]+)/im, /\blocked[- ]tests?[- ]author[ \t]*:[ \t]*([^\n·;|]+)/i];
+export const familyFromName = (name) => {
+  const parts = String(name || "").split("@")[0].toLowerCase().split(/[-_.]/);
+  return ["claude", "codex", "kimi"].find((f) => parts.includes(f) || parts.some((p) => p.startsWith(f))) || null;
+};
 export function lockedTestsAuthor(texts, seats = []) {
   for (const { name, text } of texts) {
-    const m = String(text || "").match(/^[ \t]*(?:[-*][ \t]*)?Locked tests:[ \t]*(.+)$/im);
-    if (!m) continue;
-    const line = m[1].trim(), fam = line.match(/\((claude|codex|kimi)\)/i), seat = (line.match(/[\w.-]+@[\w.-]+/) || [])[0] || null;
-    if (fam) return { family: fam[1].toLowerCase(), seat, source: `${name}: "Locked tests: ${line}"` };
-    const known = seat && seats.find((s) => s.seat === seat);
-    if (known) return { family: known.family, seat, source: `${name}: "Locked tests: ${line}" (${seat} is a ${known.family} seat)` };
-    return { family: null, reason: `${name} names the locked tests' author ("${line}") but not its family, and ${seat ? `${seat} is not a seat of this rig` : "no seat"}: pass --exclude-family` };
+    for (const re of AUTHOR_LINE) {
+      const m = String(text || "").match(re);
+      if (!m) continue;
+      const line = m[1].trim(), quoted = `${name}: "${re === AUTHOR_LINE[0] ? `Locked tests: ${line}` : m[0].trim()}"`;
+      const fam = line.match(/\((claude|codex|kimi)\)/i);
+      const seat = (line.match(/^[\w.-]+(?:@[\w.-]+)?/) || [])[0] || null;
+      if (fam) return { family: fam[1].toLowerCase(), seat, source: quoted };
+      const known = seat && seats.find((s) => s.seat === seat || s.seat.startsWith(`${seat}@`));
+      if (known) return { family: known.family, seat: known.seat, source: `${quoted} (${known.seat} is a ${known.family} seat)` };
+      const byName = familyFromName(seat);
+      if (byName) return { family: byName, seat, source: `${quoted} (a ${byName} seat by its name)` };
+      return { family: null, reason: `${name} names the locked tests' author ("${line}") but no family can be read from it: pass --exclude-family` };
+    }
   }
-  return { family: null, reason: `no "Locked tests: <seat> (<family>)" line in ${texts.map((t) => t.name).join(" or ") || "the slice"}: pass --exclude-family` };
+  return { family: null, reason: `no "Locked tests: <seat> (<family>)" or "locked-test author: <seat>" line in ${texts.map((t) => t.name).join(" or ") || "the slice"}: pass --exclude-family` };
 }
 
 // Pure: what the lead does next with Jev's answer.
