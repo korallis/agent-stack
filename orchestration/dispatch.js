@@ -176,8 +176,12 @@ async function triage() {
 // Which family an implementer must NOT be: --exclude-family, else (implementer, with --mission and --slice) the locked
 // tests' author from the slice files. { family, source } or { family: null, reason }; null when nothing applies.
 function excludedFamily(role, all) {
-  const given = flag("--exclude-family");
-  if (given != null) {
+  // Present is one question, its value another: a trailing or valueless --exclude-family is an error, never "no filter".
+  const at = args.findIndex((a) => a === "--exclude-family" || a.startsWith("--exclude-family="));
+  if (at >= 0) {
+    const given = args[at].includes("=") ? args[at].slice(args[at].indexOf("=") + 1) : args[at + 1];
+    if (given == null || given.trim() === "" || given.startsWith("-"))
+      throw new Error(`--exclude-family needs a family: one of ${FAMILIES.join(", ")}`);
     const f = given.trim().toLowerCase();
     if (!FAMILIES.includes(f)) throw new Error(`--exclude-family "${given}": use one of ${FAMILIES.join(", ")}`);
     return { family: f, source: "--exclude-family" };
@@ -195,7 +199,7 @@ async function pickSeatCmd() {
   const role = normalizeRole(flag("--role"));   // impl -> implementer, qa -> qa, …; an unknown role fails loudly
   const all = seats(rigName), ex = excludedFamily(role, all);
   const exclusion = ex && (ex.family ? { exclude_family: ex.family, because: `the locked tests are by the ${ex.family} family (${ex.source}); the implementer must be the other family` }
-    : { exclude_family: null, note: `locked tests' author unknown, nothing excluded: ${ex.reason}` });
+    : { exclude_family: null, author_note: `locked tests' author unknown, nothing excluded: ${ex.reason}` });
   const candidates = seatCandidates(all, role, eligibleFamilies(), ex?.family || null);
   if (!candidates.length) return out({ action: "none free", ...exclusion, note: `no running ${role} seat${ex?.family ? ` outside the ${ex.family} family` : ""} without open work in ${rigName}: queue it to the least-loaded such seat or wait` });
   const rec = await decideOrStub("intake.seat", { task, role, ...(flag("--evidence") ? { evidence: flag("--evidence") } : {}), candidates }, { caller });

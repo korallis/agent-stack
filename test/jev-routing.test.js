@@ -1438,7 +1438,7 @@ test("agent-dispatch pick-seat: --exclude-family and the slice's locked-tests au
   // unknown author: nothing excluded, and it says so (never a guess)
   fs.writeFileSync(join(slice, "PROGRESS.md"), "# s1\nno author recorded\n");
   o = JSON.parse(pick("--role", "implementer", "--mission", "m1", "--slice", "s1").stdout);
-  assert.equal(o.exclude_family, null); assert.match(o.note, /locked tests' author unknown, nothing excluded: no "Locked tests: <seat> \(<family>\)" line/);
+  assert.equal(o.exclude_family, null); assert.match(o.author_note, /locked tests' author unknown, nothing excluded: no "Locked tests: <seat> \(<family>\)" line/);
   assert.equal(o.candidates.length, 3);
   // the explicit flag wins over the slice; other roles are never filtered from the slice
   fs.writeFileSync(join(slice, "PROGRESS.md"), "Locked tests: tests-claude@shop (claude)\n");
@@ -1455,6 +1455,17 @@ test("agent-dispatch pick-seat: --exclude-family and the slice's locked-tests au
   // a bad family is an error
   r = pick("--role", "impl", "--exclude-family", "gpt");
   assert.equal(r.status, 1); assert.match(r.stderr, /--exclude-family \\"gpt\\": use one of claude, codex, kimi/);
+  // QA PR69 f1: present but valueless is an error, never "no filter" (trailing, followed by an option, empty, = form)
+  for (const bad of [["--exclude-family"], ["--exclude-family", "--mission"], ["--exclude-family="], ["--exclude-family", ""]]) {
+    r = pick("--role", "impl", ...bad);
+    assert.equal(r.status, 1, bad.join(" ")); assert.equal(r.stdout, "", bad.join(" ")); assert.match(r.stderr, /--exclude-family needs a family: one of claude, codex, kimi/, bad.join(" "));
+  }
+  assert.equal(JSON.parse(pick("--role", "impl", "--exclude-family=claude").stdout).exclude_family, "claude", "the = form");
+  // QA PR69 f2: none free AND an unknown author: both reasons are kept
+  fs.writeFileSync(join(slice, "PROGRESS.md"), "no author line\n");
+  fs.writeFileSync(join(bin, "rig"), `#!/bin/sh\ncase "$*" in "ps --nodes --rig shop --json") echo '[]' ;; esac\n`, { mode: 0o755 });
+  o = JSON.parse(pick("--role", "implementer", "--mission", "m1", "--slice", "s1").stdout);
+  assert.equal(o.action, "none free"); assert.match(o.note, /no running implementer seat/); assert.match(o.author_note, /locked tests' author unknown/);
 });
 
 test("eligibleFamilies: a provider whose accounts are all down counts 0 (unavailable), not unknown; kimi included", async () => {
