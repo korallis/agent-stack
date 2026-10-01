@@ -1,0 +1,39 @@
+--- a/daemon/dist/domain/seat-identity-reconciler.js
++++ b/daemon/dist/domain/seat-identity-reconciler.js
+@@ -2,11 +2,13 @@
+ import { randomUUID } from "node:crypto";
+ import { SeatIdentityStore } from "./seat-identity-store.js";
+ import { RESERVED_HOST_IDS, validateHostRegistry } from "./hosts/hosts-registry-reader.js";
+-/** Default identity-reconcile cadence: 5s. Process identity changes rarely
++/** Default identity-reconcile cadence: 15s. Process identity changes rarely
+  *  (a seat's pane/process is stable for its whole life), and the check is
+  *  more expensive than the 1Hz activity poll (per-seat pane PID + command
+- *  tmux reads), so a slower cadence is the right cost/freshness trade. */
+-export const DEFAULT_IDENTITY_POLL_INTERVAL_MS = 5000;
++ *  tmux reads, two whole-host `ps` snapshots): ~200 spawns per sweep on an
++ *  87-seat host, each blocking the event loop while the daemon forks. At 5s
++ *  that was over a quarter of the daemon's CPU. */
++export const DEFAULT_IDENTITY_POLL_INTERVAL_MS = 15000;
+ /** Foreground commands that read as a bare shell (a seat that dropped to a
+  *  prompt, or an orphan/QA-squat shell occupying the pane). Mirrors the
+  *  SessionFingerprinter SHELL_NAMES vocabulary. `pane_current_command` may
+--- a/daemon/dist/domain/seat-structural-activity-service.js
++++ b/daemon/dist/domain/seat-structural-activity-service.js
+@@ -1,11 +1,14 @@
+ import { classifyPaneActivity, idleComposerEvidence } from "./session-transport.js";
+-export const DEFAULT_STRUCTURAL_POLL_INTERVAL_MS = 1000;
++// 5s, not 1s: every seat costs one or two tmux spawns per sweep, and each spawn blocks the event loop while the
++// daemon forks (anon_pipe_read until exec; ~12-20ms at ~1GB RSS). At 1s, 87 seats saturated the loop (healthz and
++// accept stalled). Hooks and the 1Hz window-activity sampler still carry fast working/idle changes.
++export const DEFAULT_STRUCTURAL_POLL_INTERVAL_MS = 5000;
+ // A cached observation is authoritative only while CURRENT. Past this window with no fresh capture — a
+ // tmux/capture outage, a stalled poller, or a same-name occupant transition — the READ refuses it and
+-// evicts it, so a stale positive verdict can never masquerade as liveness (MUST-FIX 1). 5× the poll
++// evicts it, so a stale positive verdict can never masquerade as liveness (MUST-FIX 1). 5× the poll (25s)
+ // tolerates a few missed ticks; a persistently failing/stuck poller ages the row out and the ACTIVITY
+ // projection falls back to the honest hook/unknown state.
+-export const DEFAULT_STRUCTURAL_STALE_MS = 5000;
++export const DEFAULT_STRUCTURAL_STALE_MS = 25000;
+ /**
+  * 5b82324b — the STRUCTURAL activity cache. Sibling of SeatActivityService (which reads ONLY the tmux
+  * window_activity TIMESTAMP and is deliberately text-blind): this service captures pane TEXT once per
