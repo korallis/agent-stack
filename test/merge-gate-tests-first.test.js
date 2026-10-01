@@ -17,11 +17,14 @@ const instr = q.instructions.join(" ");
 const dir = join(repo, "test/fixtures/merge-gate-tests-first");
 const fx = Object.fromEntries(fs.readdirSync(dir).filter((f) => f.endsWith(".json")).map((f) => [f.replace(/\.json$/, ""), JSON.parse(fs.readFileSync(join(dir, f), "utf8"))]));
 
-test("review.merge_gate is version 2 and states the tests-first rule and every exception", () => {
-  assert.equal(gate.version, 3);
+test("review.merge_gate is version 4 and states the tests-first rule and every exception", () => {
+  assert.equal(gate.version, 4);
   assert.deepEqual(gate.outputs.decision.uncertain_labels, ["hold"]);
   assert.deepEqual(gate.fallback, [{ kind: "code", result: { decision: "hold" } }], "unchanged: no Jev, no merge");
   assert.match(instr, /Test-first process: acceptance tests for a feature are reviewed and merged BEFORE the feature is built/);
+  // QA PR83 (v4): only a PR whose evidence relies on a failing test uses the exception; tests-only wording isn't a claim
+  assert.match(instr, /A PR relies on this exception when its evidence mentions any test that fails, would fail or is expected to fail, or feature work still pending; then every condition below applies in full/);
+  assert.match(instr, /An ordinary PR does not rely on it: when every required CI check passes on this head, QA's verdict for this head is PASS and the evidence mentions no failing, would-fail or expected-to-fail test, nothing needs excusing, its scope line saying code change is its normal state, and words such as 'tests-only' or 'test-first' in its title, description or review describe what the change is about; they do not invoke the exception and are not a blocker/);
   assert.match(instr, /its change carries the line 'scope \(from the diff\): tests-only', computed from the diff/);
   assert.match(instr, /tests that QA actually ran \(on this head, or on an earlier commit when the evidence shows the test files unchanged since, a carried run\) and saw fail exactly at the step needing the unbuilt feature, with the run's result in the evidence/);
   assert.match(instr, /QA's verdict for this head is FAIL or there is no QA verdict for it at all \(the exception never replaces the QA gate\)/);
@@ -31,16 +34,19 @@ test("review.merge_gate is version 2 and states the tests-first rule and every e
   assert.match(instr, /a test fails at a step that is already built/);
   assert.match(instr, /The exception never covers CI: every required CI check must pass on this exact head, tests-first included/);
   assert.match(instr, /or CI results that name another commit than head, are a blocker/);
+  assert.match(q.criteria.merge, /an ordinary PR with every check green, a QA PASS for this head and no failing test needs no exception/);
+  assert.match(q.criteria.hold, /for a PR that relies on the tests-first exception: /);
   assert.match(q.criteria.merge, /for a tests-only PR, tests failing only at the step that needs the unbuilt feature, as the evidence says, are expected/);
   assert.match(q.criteria.hold, /non-test code changed, a test fails at an already-built step, or the evidence does not say where its tests fail/);
 });
 
 test("the measured fixtures are complete gate inputs, anonymised, carry the builder's scope line, and differ from the positive only in their case", () => {
   assert.deepEqual(Object.keys(fx).sort(), ["app-file-changed", "claimed-tests-only-code-change", "failure-at-built-step", "failure-not-observed", "missing-review",
-    "no-failure-location", "positive", "qa-fail", "qa-missing", "red-ci", "stale-ci"]);
+    "no-failure-location", "ordinary-classifier", "ordinary-neutral", "positive", "qa-fail", "qa-missing", "red-ci", "stale-ci"]);
   for (const [name, input] of Object.entries(fx)) {
     for (const k of gate.inputs.required) assert.equal(typeof input[k], "string", `${name}.${k}`);
     assert.doesNotMatch(JSON.stringify(input), /\/home\/|github\.com\/|@[a-z]+\.(com|io)/i, `${name} carries no paths, links or addresses`);
+    if (name.startsWith("ordinary-")) { assert.match(input.change, /\nscope \(from the diff\): code change, 1 non-test path\(s\): orchestration\/merge-evidence\.js$/, name); continue; }
     assert.match(input.change, ["app-file-changed", "claimed-tests-only-code-change"].includes(name) ? /\nscope \(from the diff\): code change, 1 non-test path\(s\): app\/reports\/export\.ts/ : /\nscope \(from the diff\): tests-only, 3 path\(s\)/, name);
   }
   const p = fx.positive;
@@ -53,6 +59,12 @@ test("the measured fixtures are complete gate inputs, anonymised, carry the buil
   assert.match(fx["stale-ci"].ci, /no CI results exist on the current PR head/); assert.doesNotMatch(fx["stale-ci"].ci, new RegExp(p.head));
   assert.match(fx["missing-review"].review, /^review verdict: none for this head/);
   assert.doesNotMatch(fx["no-failure-location"].review, /failed at/);
+  // QA PR83: an ordinary green code change, described neutrally or with tests-only words; nothing else differs
+  const [oc, on] = [fx["ordinary-classifier"], fx["ordinary-neutral"]];
+  assert.match(oc.change, /^Tests-only classifier: fix code-change detection\./); assert.match(on.change, /^Correct scope classification\./);
+  assert.deepEqual({ ...oc, change: "", review: "" }, { ...on, change: "", review: "" });
+  assert.equal(oc.review.replaceAll("Tests-only classifier: fix code-change detection.", "Correct scope classification."), on.review);
+  for (const o of [oc, on]) { assert.match(o.ci, /all pass/); assert.match(o.review, /verdict=PASS candidate_sha=a{40}.* All 12 passed/); assert.doesNotMatch(o.change, /scope check/); }
 });
 
 test("testScope: tests-only from the diff, or the non-test paths named; a rename counts only when both sides are tests", () => {
