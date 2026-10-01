@@ -66,8 +66,9 @@ them as the owner's.
   `finally`/`trap`. Test suites remove every `mkdtemp` directory they create.
 - `TMPDIR` and other temporary scratch go on disk and OUTSIDE any git repo: `$HOME/.cache/<rig>-tmp/<seat>`, created
   and cleaned up in a `trap`. Never `/tmp` (a RAM disk on these hosts: a big scratch run takes memory from every seat),
-  and never inside a worktree (tests treat a directory under a git repo as a checkout). Example:
-  `export TMPDIR=$HOME/.cache/<rig>-tmp/<seat>; mkdir -p "$TMPDIR"; trap 'rm -rf "$TMPDIR"' EXIT`.
+  and never inside a worktree (tests treat a directory under a git repo as a checkout). In a seat (its session name is
+  `<seat>@<rig>`), this sets it up:
+  `s=${OPENRIG_SESSION_NAME:-$USER@local}; export TMPDIR="$HOME/.cache/${s#*@}-tmp/${s%@*}"; mkdir -p "$TMPDIR"; trap 'rm -rf "$TMPDIR"' EXIT`
 - Proof for a project in the workspace catalog: `rig proof show|judge <project-id>:<mission>/slices/<slice>` (the catalog
   id). Never switch the daemon's workspace to judge.
 - Never prompt: every seat runs without permission prompts (agent-stack README, "Never prompt";
