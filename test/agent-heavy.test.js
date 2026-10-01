@@ -147,8 +147,8 @@ const until = async (pred, ms = 5000) => { const t = Date.now(); while (!pred())
 test("status: every slot free when nothing runs; a bad class is a usage error", () => {
   const r = status();
   assert.equal(r.status, 0, r.stderr);
-  assert.equal(r.stdout, "build 1/2  free\nbuild 2/2  free\nbrowser 1/2  free\nbrowser 2/2  free\n");
-  assert.equal(status("browser").stdout, "browser 1/2  free\nbrowser 2/2  free\n");
+  assert.equal(r.stdout, "build 1/2  free\nbuild 2/2  free\nbuild queue  empty\nbrowser 1/2  free\nbrowser 2/2  free\nbrowser queue  empty\n");
+  assert.equal(status("browser").stdout, "browser 1/2  free\nbrowser 2/2  free\nbrowser queue  empty\n");
   assert.equal(status("gpu").status, 2);
 });
 
@@ -162,7 +162,7 @@ test("status: a running job shows its seat, cwd, command, age and remaining runt
   assert.match(line, /^build 1\/2  held  seat=impl-1@proj  age=0m0[0-9]s  remaining=(10m00s|9m5[0-9]s)  cwd=\S+seat-cwd-\S+  cmd=sleep 3$/);
   assert.match(status("build").stdout, /^build 2\/2  free$/m);
   await done;
-  assert.equal(status("build").stdout, "build 1/2  free\nbuild 2/2  free\n", "free again after the job");
+  assert.equal(status("build").stdout, "build 1/2  free\nbuild 2/2  free\nbuild queue  empty\n", "free again after the job");
   assert.equal(fs.existsSync(join(root, "agent-heavy/build.1.holder")), false, "the holder file is removed");
 });
 
