@@ -1,20 +1,34 @@
 #!/usr/bin/env bash
 # Upgrade (or reinstall) OpenRig and re-apply the local adjustments an upgrade overwrites.
 # usage: openrig-upgrade [--no-restart] [--allow-downgrade] [version]   (default: OPENRIG_VERSION, config/versions*.env)
+#   version            an exact version (0.6.3, v0.6.3) or an npm dist-tag (latest, next); options go before or after it
 #   --no-restart       install, patch and pin only; the running daemon is restarted separately after observing (docs/UPGRADE.md)
 #   --allow-downgrade  permit installing a version OLDER than the one installed (refused otherwise, before npm runs:
 #                      an older OpenRig against a database the newer one migrated is not a supported state)
+#   -h, --help         this text
+# An unknown option, a second version or an empty argument is refused (exit 2) before anything runs.
 # Stops with exit 1, before any restart, when the installed package is not the version asked for.
 set -euo pipefail
+usage() { awk 'NR > 1 && !/^#/ { exit } NR > 1 { sub(/^# ?/, ""); print }' "$(readlink -f "$0")"; }
+# Parse everything first (no effects): a flag after the version used to be ignored, so `openrig-upgrade 0.6.3
+# --no-restart` restarted the daemon.
+restart=1 downgrade=0 want=
+for a in "$@"; do case $a in
+  --no-restart) restart=0 ;;
+  --allow-downgrade) downgrade=1 ;;
+  -h|--help) usage; exit 0 ;;
+  -*) echo "openrig-upgrade: unknown option '$a'. Nothing was done." >&2; usage >&2; exit 2 ;;
+  *) if [ -n "$want" ]; then echo "openrig-upgrade: more than one version given ('$want', '$a'). Nothing was done." >&2; usage >&2; exit 2; fi
+     if ! [[ $a =~ ^[A-Za-z0-9][A-Za-z0-9.+-]*$ ]]; then echo "openrig-upgrade: '$a' is not a version or dist-tag. Nothing was done." >&2; usage >&2; exit 2; fi
+     want=$a ;;
+esac; done
 # Never act for another HOME: an inherited OPENRIG_HOME outside $HOME (a seat's env under a test HOME) names a daemon and
 # database this HOME doesn't own.
 if [ -n "${OPENRIG_HOME:-}" ]; then case "$(realpath -m "$OPENRIG_HOME")/" in "$(realpath -m "$HOME")/"*) ;; *)
   echo "$(basename "$0"): OPENRIG_HOME=$OPENRIG_HOME is not under HOME=$HOME; refusing. Nothing changed." >&2; exit 2 ;; esac; fi
 S=$(cd "$(dirname "$(readlink -f "$0")")/.." && pwd)
 source "$S/config/versions.defaults.env"; [ -f "$S/config/versions.env" ] && source "$S/config/versions.env"   # tracked defaults, local override
-restart=1 downgrade=0
-while [ $# -gt 0 ]; do case $1 in --no-restart) restart=0; shift ;; --allow-downgrade) downgrade=1; shift ;; *) break ;; esac; done
-V=${1:-$OPENRIG_VERSION}; N22=$(mise where node@$NODE_FOR_OPENRIG); P=$HOME/.local/share/agent-stack/openrig
+V=${want:-$OPENRIG_VERSION}; N22=$(mise where node@$NODE_FOR_OPENRIG); P=$HOME/.local/share/agent-stack/openrig
 # Resolve the target to an exact version BEFORE anything is installed: a leading "v" is dropped, and a dist-tag
 # ("latest", "next") is asked of the registry. The guard and the install then use that exact version.
 [ -x "$S/bin/semver-cmp" ] || { echo "openrig-upgrade: needs $S/bin/semver-cmp; nothing changed" >&2; exit 1; }
