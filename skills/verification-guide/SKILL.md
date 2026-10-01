@@ -24,6 +24,8 @@ Ask the owner only what the repo can't tell you.
 - **Run:** the repo's own dev or preview command, the port, the env it needs, and the seed data. Use the deployed URL
   when the project deploys on merge.
 - **Drive:** the tool that exercises it: the Playwright MCP browser for web, a shell for a CLI, `curl` for an API.
+  Network and console listings go to a file in the seat's scratch dir (`filename`), then `agent-net-summary <file>`;
+  the raw listing never goes into the transcript or the proof.
 - **Observe:** what proves it: what the screen shows, a response body, an exit code, a database row read back.
 - **Isolate:** whether two runs can share one instance. If they can't, say so and say how to get a clean one.
 

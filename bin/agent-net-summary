@@ -1,0 +1,89 @@
+#!/usr/bin/env python3
+"""agent-net-summary <file>...: a Playwright MCP network or console log, reduced to what is safe to print.
+
+The credential guard lets browser_network_requests, browser_network_request and browser_console_messages run only
+with `filename` in the seat's scratch dir (~/.local/state/agent-stack/playwright-mcp/net/<seat>/), because their raw
+output carries request URLs, headers and console text where runtime tokens appear. This prints, per request:
+
+    <n>. <METHOD> <host><path> => <status>
+
+Query strings, fragments, user:password@ and ;params are dropped, and a path segment that looks like a token (long
+hex, a JWT, a long mixed letters-and-digits run) is shown as <masked>. Headers, bodies and console messages are never
+printed, only counted; a console log's "Total messages" line is shown. Exit 1 when a file can't be read.
+"""
+import re
+import sys
+
+REQ = re.compile(r"(?:^|\s)(?:#?\d+\.?\s+)?\[(GET|HEAD|POST|PUT|PATCH|DELETE|OPTIONS|CONNECT|TRACE)\]\s+(\S+)")
+STATUS = re.compile(r"=>\s+\[(\d{3}|FAILED)\]")
+DETAIL_STATUS = re.compile(r"^\s*status:\s+\[(\d{3}|FAILED)\]")
+TOTALS = re.compile(r"^Total messages: \d+ \(Errors: \d+, Warnings: \d+\)$")
+
+
+def tokenish(seg):
+    if len(seg) > 64 or seg.startswith("eyJ"):
+        return True
+    if len(seg) >= 16 and re.fullmatch(r"[0-9a-fA-F-]+", seg):
+        return True
+    return len(seg) >= 20 and bool(re.search(r"[A-Za-z]", seg)) and bool(re.search(r"\d", seg))
+
+
+def safe_url(url):
+    if url.startswith("data:"):
+        return "data:" + url[5:].split(",", 1)[0].split(";", 1)[0]
+    m = re.match(r"^([a-zA-Z][a-zA-Z0-9+.-]*):(//)?([^/?#]*)([^?#]*)", url)
+    if not m:
+        return "<unparsed url>"
+    host = m.group(3).rsplit("@", 1)[-1].lower()
+    path = m.group(4).split(";", 1)[0]
+    segs = ["<masked>" if s and tokenish(s) else s for s in path.split("/")]
+    return host + "/".join(segs) if m.group(2) else f"{m.group(1)}:" + "/".join(segs)
+
+
+def summarise(text):
+    out, other, n, last = [], 0, 0, None
+    for line in text.splitlines():
+        m = REQ.search(line)
+        if m:
+            n += 1
+            s = STATUS.search(line)
+            out.append([n, m.group(1), safe_url(m.group(2)), s.group(1) if s else None])
+            last = out[-1]
+            continue
+        d = DETAIL_STATUS.match(line)
+        if d and last and last[3] is None:
+            last[3] = d.group(1)
+            continue
+        if TOTALS.match(line.strip()):
+            out.append(line.strip())
+            continue
+        if line.strip():
+            other += 1
+    lines = [x if isinstance(x, str) else f"{x[0]}. {x[1]} {x[2]}" + (f" => {x[3]}" if x[3] else "") for x in out]
+    if other:
+        lines.append(f"({other} other line{'s' if other != 1 else ''} not shown: headers, bodies or console text)")
+    return lines
+
+
+def main(argv):
+    if not argv or argv[0] in ("-h", "--help"):
+        print(__doc__.strip())
+        return 0 if argv else 2
+    rc = 0
+    for f in argv:
+        try:
+            with open(f, encoding="utf-8", errors="replace") as fh:
+                text = fh.read()
+        except OSError as e:
+            print(f"{f}: {e.strerror}", file=sys.stderr)
+            rc = 1
+            continue
+        if len(argv) > 1:
+            print(f"== {f}")
+        for line in summarise(text):
+            print(line)
+    return rc
+
+
+if __name__ == "__main__":
+    sys.exit(main(sys.argv[1:]))

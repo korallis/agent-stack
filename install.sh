@@ -79,7 +79,7 @@ place "$S/system/seat-bin-credguard" "$L/seat-bin/credguard" 755
 for f in neon neonctl vercel vc; do link "$L/seat-bin/credguard" "$L/seat-bin/$f"; done
 mkdir -p "$L/seat-tools"; place "$S/system/seat-tools-rig" "$L/seat-tools/rig" 755   # queue writes get the project tag + EC-3 worktree_path
 link "$L/bin/agent-login" "$B/agent-login"
-for f in claude-pool agent-heavy openrig-ensure playwright-browsers agent-claude-trust openrig-upgrade openrig-update agent-project-new agent-project-onboard agent-owner-address agent-project-check agent-never-prompt-check agent-credguard-check agent-skills-check agent-seat-recap agent-seat-handover agent-human-inbox-tidy openrig-daemon-cycle openrig-tmux-adopt agent-queue-backfill agent-refresh-guidance agent-project-repair agent-waves-sync; do link "$S/bin/$f" "$B/$f"; done
+for f in claude-pool agent-heavy openrig-ensure playwright-browsers agent-claude-trust openrig-upgrade openrig-update agent-project-new agent-project-onboard agent-owner-address agent-project-check agent-net-summary agent-never-prompt-check agent-credguard-check agent-skills-check agent-seat-recap agent-seat-handover agent-human-inbox-tidy openrig-daemon-cycle openrig-tmux-adopt agent-queue-backfill agent-refresh-guidance agent-project-repair agent-waves-sync; do link "$S/bin/$f" "$B/$f"; done
 link "$S/proxy/status.py" "$B/agent-proxy-status"
 if [ $CHECK = 0 ] || mise where "node@$NODE_FOR_JEV" >/dev/null 2>&1; then
   launcher jev-mcp "$NODE_FOR_JEV" "$S/jev/bin/jev-mcp.js"
@@ -199,7 +199,10 @@ if [ $CHECK = 0 ]; then
   claude mcp get jev >/dev/null 2>&1 || claude mcp add --scope user jev -- "$B/jev-mcp" >/dev/null
   # Playwright MCP: the pinned release with Playwright's own Chrome for Testing (see system/codex/config.toml). An
   # existing user-scope entry with other args (the old @latest + --executable-path) is replaced.
-  pw=(npx -y "@playwright/mcp@$PW_MCP" --headless --browser chromium --secrets "$SEC/playwright.env")
+  # --output-dir: outside every repo; its net/ subdir (0700) holds the network/console logs the credential guard
+  # protects (WO57: they carry runtime tokens; seats read them through agent-net-summary).
+  PWO="$HOME/.local/state/agent-stack/playwright-mcp"; mkdir -p "$PWO/net"; chmod 700 "$PWO/net"
+  pw=(npx -y "@playwright/mcp@$PW_MCP" --headless --browser chromium --secrets "$SEC/playwright.env" --output-dir "$PWO")
   "$S/system/playwright-mcp-config" | sed 's/^/   /'   # secrets file (0600) + the Codex MCP args with --secrets
   if ! claude mcp get playwright 2>/dev/null | grep -qF -- "Args: ${pw[*]:1}"; then
     claude mcp remove --scope user playwright >/dev/null 2>&1 || true
@@ -215,8 +218,8 @@ if [ $CHECK = 0 ]; then
   "$S/bin/playwright-browsers" >/dev/null || todo "playwright chromium for @playwright/mcp@$PW_MCP"
 fi
 claude plugin list 2>/dev/null | grep -q superpowers && ok "Superpowers (Claude Code)" || todo "Superpowers (Claude Code)"
-claude mcp get playwright 2>/dev/null | grep -qF -- "Args: -y @playwright/mcp@$PW_MCP --headless --browser chromium --secrets $SEC/playwright.env" \
-  && ok "Playwright MCP (Claude Code): @playwright/mcp@$PW_MCP, Chrome for Testing, --secrets" || todo "WARN: Playwright MCP (Claude Code) not on @playwright/mcp@$PW_MCP --browser chromium --secrets $SEC/playwright.env"
+claude mcp get playwright 2>/dev/null | grep -qF -- "Args: -y @playwright/mcp@$PW_MCP --headless --browser chromium --secrets $SEC/playwright.env --output-dir $HOME/.local/state/agent-stack/playwright-mcp" \
+  && ok "Playwright MCP (Claude Code): @playwright/mcp@$PW_MCP, Chrome for Testing, --secrets, --output-dir" || todo "WARN: Playwright MCP (Claude Code) not on @playwright/mcp@$PW_MCP --browser chromium --secrets $SEC/playwright.env --output-dir ~/.local/state/agent-stack/playwright-mcp"
 "$S/system/playwright-mcp-config" --check | sed 's/^/   /' || true   # secrets file 0600 + Codex args with --secrets
 "$S/bin/playwright-browsers" --check >/dev/null && ok "Playwright MCP browser installed" || todo "Playwright MCP browser: run playwright-browsers"
 codex plugin list 2>/dev/null | grep -q "superpowers.*installed" && ok "Superpowers (Codex)" || todo "Superpowers (Codex)"

@@ -49,9 +49,11 @@ url = "https://mcp.neon.tech/mcp"
 # Bump it deliberately (0.0.80 = CfT 153, 0.0.82 = CfT 154).
 # --secrets: test credentials live in that dotenv file (0600); the MCP types a value when given its NAME and shows
 # <secret>NAME</secret> instead of the value in every snapshot and code line (system/playwright-mcp-config).
+# --output-dir: the MCP's files live outside every repo; network/console logs go to its net/<seat>/ subdir, which the
+# credential guard protects (they carry runtime tokens; read them through agent-net-summary).
 [mcp_servers.playwright]
 command = "npx"
-args = ["-y", "@playwright/mcp@0.0.80", "--headless", "--browser", "chromium", "--secrets", "@HOME@/.config/agent-stack/secrets/playwright.env"]
+args = ["-y", "@playwright/mcp@0.0.80", "--headless", "--browser", "chromium", "--secrets", "@HOME@/.config/agent-stack/secrets/playwright.env", "--output-dir", "@HOME@/.local/state/agent-stack/playwright-mcp"]
 # Browser actions are pre-approved so QA seats never stall on per-action prompts.
 default_tools_approval_mode = "approve"
 
