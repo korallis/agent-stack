@@ -293,7 +293,8 @@ Details are in the `agent-stack` skill. What went wrong before: [docs/incidents/
   - Page snapshots hold what the page showed, client data included. `agent-playwright-retention` (hourly timer)
     deletes them after `KEEP_HOURS` (48), and in a client-data rig's seat dirs after `CLIENT_DATA_HOURS` (6). Set
     `CLIENT_DATA_RIGS="rig1 rig2"` in `~/.config/agent-stack/playwright-retention.env`; `--dry-run` shows what would
-    go.
+    go. What no seat can be told for (top-level files, the old shared `net/` tree, `unattributed-*`) uses
+    `UNATTRIBUTED_HOURS` (default `KEEP_HOURS`): set it to the client-data window when any rig is client-data.
   - Seats keep evidence by copying it into the slice's proof dir.
   - `install.sh --apply` moves (never deletes, never into a link) the shared dir's top-level files untouched for an
     hour into `unattributed-<date>/`.
