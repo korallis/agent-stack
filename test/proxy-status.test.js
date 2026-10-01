@@ -76,7 +76,28 @@ test("WO85: Codex windows by their reported length; no 5 h limit; a used-up week
   assert.match(t.stdout.split("\n")[0], /\s5h\s+weekly\s+credits\s/);
   assert.match(row("codex-a"), /\s-\s+100%\s+in use\s/, "no 5 h column value, the week, on credits");
   assert.match(row("codex-b"), /\s-\s+42%\s+yes\s/);
-  assert.match(row("codex-c"), /\s-\s+100%\s+none\s/);
+  assert.match(row("codex-c"), /\s-\s+100% OVER\s+none\s/, "used up with no credits: over");
   assert.doesNotMatch(row("codex-a"), /OVER/);
   assert.match(t.stdout, /^eligible: codex 6\/7 \(1 over limit\)$/m, "only the account with no credits left is ineligible");
+});
+
+// QA PR96: on credits is never over, at any reading; over_limit is the one verdict dispatch, recovery and the console read.
+test("WO85: on credits above 100% (and unlimited credits) stays eligible; used up with no credits says OVER", () => {
+  const cx = (note, used, has, unl = "False") => ({ note, provider: "codex", disabled: false, status: "active", unavailable: false, cooldowns: [], success: 1, failed: 0,
+    quota: { observed_at: "t", signals: { "X-Codex-Primary-Used-Percent": used, "X-Codex-Primary-Window-Minutes": "10080", "X-Codex-Secondary-Used-Percent": "0",
+      "X-Codex-Secondary-Window-Minutes": "0", "X-Codex-Credits-Has-Credits": has, "X-Codex-Credits-Unlimited": unl } } });
+  const files = [cx("credit101", "101", "True"), cx("unlim101", "101", "False", "True"), cx("nocred100", "100", "False"),
+    { note: "claude-b", provider: "claude", disabled: false, status: "active", unavailable: false, cooldowns: [], success: 1, failed: 0, quota: { observed_at: "t", signals: { "Anthropic-Ratelimit-Unified-5h-Utilization": "1.01", "Anthropic-Ratelimit-Unified-7d-Utilization": "0.5" } } }];
+  const d = fs.mkdtempSync(join(dir, "wo85b-"));
+  fs.copyFileSync(join(repo, "proxy/status.py"), join(d, "status.py"));
+  fs.writeFileSync(join(d, "usage_collector.py"), `import json, pathlib\nLOG = pathlib.Path("/nonexistent")\ndef mgmt_key(): return "k"\ndef get(path, key): return {"files": json.loads(${JSON.stringify(JSON.stringify(files))})}\n`);
+  const go = (...a) => spawnSync("python3", [join(d, "status.py"), ...a], { encoding: "utf8" });
+  const by = Object.fromEntries(JSON.parse(go("--json").stdout).map((r) => [r.label, r]));
+  assert.deepEqual(["credit101", "unlim101", "nocred100", "claude-b"].map((l) => [l, by[l].on_credits, by[l].over_limit]),
+    [["credit101", true, false], ["unlim101", true, false], ["nocred100", false, true], ["claude-b", false, true]]);
+  const t = go().stdout, row = (n) => t.split("\n").find((l) => l.startsWith(n + " "));
+  assert.match(row("credit101"), /\s101%\s+in use\s/); assert.doesNotMatch(row("credit101"), /OVER/);
+  assert.match(row("nocred100"), /100% OVER\s+none\s/);
+  assert.match(row("claude-b"), /101% OVER\s+50%\s/, "the Anthropic overrun is unchanged");
+  assert.match(t, /^eligible: claude 0\/1 \(1 over limit\), codex 2\/3 \(1 over limit\)\s+!! a provider pool has NO eligible accounts$/m);
 });

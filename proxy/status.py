@@ -23,11 +23,11 @@ def used_pct(v, provider):
     return p if math.isfinite(p) else None
 
 
-def pct(p):
-    """A percent for the table; past 100 it says OVER."""
+def pct(p, over=False):
+    """A percent for the table; a used-up window on an account over its limit says OVER (on credits it never does)."""
     if p is None:
         return "-"
-    return f"{p:.0f}% OVER" if p > 100 else f"{p:.0f}%"
+    return f"{p:.0f}% OVER" if over and p >= 100 else f"{p:.0f}%"
 
 
 def minutes(v):
@@ -91,11 +91,12 @@ def accounts():
         r["weekly_pct"] = used_pct(r["weekly_used"], r["provider"])
         # a window used up (100%) while credits are reported carries on on credits: still eligible, never "over"
         r["on_credits"] = bool(r["has_credits"] or r["credits_unlimited"]) and any(p is not None and p >= 100 for p in (r["short_window_pct"], r["weekly_pct"]))
-        # over its limit: a window strictly above 100% (Anthropic's 1.01), or a Codex window used up with the credits
-        # explicitly reported as none (a missing credits header is not evidence either way)
-        r["over_limit"] = any(p is not None and p > 100 for p in (r["short_window_pct"], r["weekly_pct"])) or (
+        # over its limit: never while on credits, at any reading (QA PR96); otherwise a window strictly above 100%
+        # (Anthropic's 1.01), or a Codex window used up with the credits explicitly reported as none (a missing credits
+        # header is not evidence either way)
+        r["over_limit"] = not r["on_credits"] and (any(p is not None and p > 100 for p in (r["short_window_pct"], r["weekly_pct"])) or (
             r["provider"] == "codex" and r["has_credits"] is False and not r["credits_unlimited"]
-            and any(p is not None and p >= 100 for p in (r["short_window_pct"], r["weekly_pct"])))
+            and any(p is not None and p >= 100 for p in (r["short_window_pct"], r["weekly_pct"]))))
     return sorted(rows, key=lambda r: r["label"] or "")
 
 
@@ -116,7 +117,7 @@ def main():
         state = "DISABLED" if r["disabled"] else ("UNAVAILABLE" if r["unavailable"] else r["status"])
         cd = ",".join(c.get("model", "*") + "→" + str(c.get("until", c.get("next_retry_after", "?")))[:19] for c in r["cooldowns"]) or "-"
         credits = "in use" if r["on_credits"] else "yes" if r["has_credits"] or r["credits_unlimited"] else "none" if r["has_credits"] is False else "-"
-        print(f"{r['label']:<9} {r['provider']:<7} {state:<12} {pct(r['short_window_pct']):>10} {pct(r['weekly_pct']):>9} {credits:>8} {r['success']:>4} {r['failed']:>4}  {cd}")
+        print(f"{r['label']:<9} {r['provider']:<7} {state:<12} {pct(r['short_window_pct'], r['over_limit']):>10} {pct(r['weekly_pct'], r['over_limit']):>9} {credits:>8} {r['success']:>4} {r['failed']:>4}  {cd}")
     by, over = {}, {}
     for r in rows:
         # an account past its limit is not eligible, whatever its proxy status says

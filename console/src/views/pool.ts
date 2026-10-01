@@ -67,13 +67,14 @@ export function poolPane(c: Ctx, hist: History, pane: string, x: number, y: numb
     raw.accounts.slice(0, h - 3).forEach((a, i) => {
       const yy = y + 2 + i, [word, wc] = accountState(t, a);
       // a window used up while the account runs on credits is drawn flat in the info colour: used, not exhausted
-      const flat = (v: number | null) => (a.onCredits && (v ?? 0) >= 100 ? t.info : undefined);
+      const flat = (v: number | null) => (a.onCredits && !a.over && (v ?? 0) >= 100 ? t.info : undefined);
+      const numColor = (v: number | null) => (v === null ? t.faint : a.over && v >= 100 ? t.stuck : flat(v) ?? t.text);
       s.put(x + 2, yy, fit(a.label, 10), { fg: t.text });
       s.put(x + 13, yy, fit(a.provider === "claude" ? "cl" : a.provider === "codex" ? "cx" : "km", 4), { fg: t.dim });
       gmeter(c, x + 19, yy, mw, a.short === null ? null : a.short / 100, flat(a.short));
-      s.put(x + 20 + mw, yy, rpad(a.short === null ? "—" : `${a.short}%`, 5), { fg: (a.short ?? 0) > 100 ? t.stuck : a.short === null ? t.faint : t.text });
+      s.put(x + 20 + mw, yy, rpad(a.short === null ? "—" : `${a.short}%`, 5), { fg: numColor(a.short) });
       gmeter(c, x + 27 + mw, yy, mw, a.weekly === null ? null : a.weekly / 100, flat(a.weekly));
-      s.put(x + 28 + 2 * mw, yy, rpad(a.weekly === null ? "—" : `${a.weekly}%`, 5), { fg: (a.weekly ?? 0) > 100 ? t.stuck : a.weekly === null ? t.faint : t.text });
+      s.put(x + 28 + 2 * mw, yy, rpad(a.weekly === null ? "—" : `${a.weekly}%`, 5), { fg: numColor(a.weekly) });
       s.put(x + 35 + 2 * mw, yy, fit(word, w - 37 - 2 * mw), { fg: wc });
     });
     if (!raw.accounts.length) s.put(x + 2, y + 2, "proxy status unavailable", { fg: t.faint });

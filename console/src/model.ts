@@ -12,8 +12,9 @@ export interface Rig { id: string; name: string; lifecycle: string; seats: Seat[
 export interface QRow { id: string; state: string; priority: string; source: string; destination: string; blockedOn: string | null; tags: string[]; created: string; updated: string; summary: string | null }
 export interface Gate { ts: string; decision: string; band: string }
 /** short / weekly: used percent of each window the provider reports (null: no such limit, e.g. Codex has no 5 h window
- *  since 2026-10); onCredits: a window is used up and the account carries on on credits, so it is not exhausted. */
-export interface Account { label: string; provider: string; status: string; short: number | null; weekly: number | null; cooling: boolean; onCredits?: boolean }
+ *  since 2026-10); onCredits: a window is used up and the account carries on on credits, so it is not exhausted;
+ *  over: past its limit, as agent-proxy-status decides it for dispatch and recovery (the console never second-guesses it). */
+export interface Account { label: string; provider: string; status: string; short: number | null; weekly: number | null; cooling: boolean; onCredits?: boolean; over?: boolean }
 export interface Heavy { cls: string; held: number; total: number; waiting: number }
 export interface Event { at: string; kind: string; rig: string | null; text: string; seat?: string | null }
 export interface Raw {

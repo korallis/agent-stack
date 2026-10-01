@@ -59,16 +59,16 @@ export function ticker(c: Ctx, y: number): void {
 }
 
 /** A quota reading's colour: none reported is faint; a window used up while the account runs on credits is info, not
- *  red (it isn't exhausted); otherwise green, amber from 75%, red from 95%. */
+ *  red, at any reading (it isn't exhausted); otherwise green, amber from 75%, red from 95%. */
 export function quotaColor(t: Theme, a: Account, v: number | null): RGB {
   if (v === null) return t.faint;
-  if (a.onCredits && v >= 100) return t.info;
+  if (a.onCredits && !a.over && v >= 100) return t.info;
   return v >= 95 ? t.stuck : v >= 75 ? t.blocked : t.working;
 }
 /** An account's state word, its colour, and whether it can take work: over its limit, on credits, active, or
  *  cooling / its status. */
 export function accountState(t: Theme, a: Account): [string, RGB, boolean] {
-  if ((a.short ?? 0) > 100 || (a.weekly ?? 0) > 100) return ["○ over", t.stuck, false];
+  if (a.over) return ["○ over", t.stuck, false];
   if (a.status === "active" && !a.cooling) return a.onCredits ? ["● on credits", t.info, true] : ["● active", t.working, true];
   return [a.cooling ? "○ cooling" : `○ ${a.status}`, t.blocked, false];
 }
