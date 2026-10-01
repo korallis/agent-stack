@@ -77,6 +77,9 @@ project-workspace.md) and the `mission-slice-sop` skill. Verify each point on di
    - decision requests use `--human-intent decision` and stay pending: the owner's Slack reply closes them, and parking or
      claiming one makes that reply a no-op;
    - scratch checkouts go under `~/Projects/<P>.worktrees/`, never `/tmp`, removed in a trap;
+   - `TMPDIR` and temp scratch go on disk outside any git repo: each job's own `mktemp -d` directory under the seat root
+     `$HOME/.cache/<rig>-tmp/<seat>`, removed by that job's trap (never the shared root); never `/tmp` (a RAM disk
+     here) and never inside a worktree (tests take a dir under a repo for a checkout); example in CULTURE.md;
    - judge proof as `rig proof judge <project-id>:<mission>/slices/<slice>`;
    - merge = cross-family review + live Jev act band + merge pinned to head.
 10. Done needs an agent witness: a fresh agent uses the deployed feature through the real UI and records
