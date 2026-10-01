@@ -48,6 +48,7 @@ test("the Jev catalog has intake.seat and seat.stuck", () => {
 
 // ---- merge evidence ------------------------------------------------------------------------------------------------
 const facts = (over = {}) => ({ pr: 42, head: H, base: B, baseRef: "main", headRef: "agent/x", mergeable: "MERGEABLE", mergeState: "CLEAN", isDraft: false,
+  scope: "scope (from the diff): NOT tests-only, 1 non-test path(s): src/a.ts",
   change: "Adds login", checks: [{ name: "verify", bucket: "pass" }, { name: "qa-evidence", bucket: "pass" }],
   independentReview: { state: "success", description: "QA PASS", creator: "rev" },
   brb: { file: "/w/proof/brb-a.md", artifact_type: "qa", verdict: "PASS", candidate_sha: H, money_evidence: "Ship: YES, 5 criteria passed" },

@@ -113,11 +113,17 @@ export const flagOnly = (f) => /(^|\/)features\.json$/.test(f.path) && f.oldPath
   && !(f.unknown || f.renamed || f.newFile || f.deleted || f.modeChange || f.binary) && f.added.length > 0
   && [...f.added, ...f.removed].every((l) => FLAG_LINE.test(l)) && flagKeys(f.added) === flagKeys(f.removed);
 
-// Pure (WO75): is the change tests only? A test path is under a tests/test/e2e/__tests__/cypress/playwright/spec
-// directory (anywhere in the path) or is a *.test.* / *.spec.* file; a rename counts only if both sides are tests. The
-// merge gate's tests-first exception applies only when this line says tests-only: a fact from the diff, not a reading.
-export const isTestPath = (p) => /(^|\/)(tests?|e2e|__tests__|cypress|playwright|specs?)\//i.test(p || "")
-  || /\.(test|spec)\.[cm]?[jt]sx?$/i.test(p || "");
+// Pure (WO75): is the change tests only? A test path is under a tests/test/__tests__/e2e/cypress/playwright directory
+// (anywhere in the path) or is a *.test.* / *.spec.* source file; a rename counts only if both sides are tests. A
+// "spec"/"specs" directory is NOT a test directory (runtime specs, API schemas), and some files are never tests
+// wherever they sit: CI configuration, package manifests and lockfiles, build and tool configs, Dockerfiles, Prisma
+// schemas and anything under migrations/ or schema/. The merge gate's tests-first exception applies only when this
+// line says tests-only: a fact from the diff, not a reading (QA PR80).
+const NEVER_TEST = (p) => isCI(p)
+  || /(^|\/)(package(-lock)?\.json|npm-shrinkwrap\.json|pnpm-lock\.yaml|yarn\.lock|bun\.lockb?|Dockerfile[^/]*|[^/]*\.config\.[cm]?[jt]s|tsconfig[^/]*\.json|[^/]*\.prisma)$/i.test(p)
+  || /(^|\/)(migrations?|schema)\//i.test(p);
+export const isTestPath = (p) => !!p && !NEVER_TEST(p)
+  && (/(^|\/)(tests?|__tests__|e2e|cypress|playwright)\//i.test(p) || /\.(test|spec)\.[cm]?[jt]sx?$/i.test(p));
 export function testScope(files) {
   if (!files?.length) return "scope (from the diff): unknown, the diff could not be read";
   const nonTest = files.filter((f) => !known(f) || !isTestPath(f.path) || !isTestPath(f.oldPath));
@@ -781,6 +787,9 @@ export function gateProblems(f) {
   if (f.reviewVerdict) { if (f.reviewVerdict.state !== "success") p.push(f.reviewVerdict.state ? `review verdict ${f.reviewVerdict.state}` : `no verifiable review verdict (${f.reviewVerdict.why})`); }
   else if (f.independentReview?.state !== "success") p.push(f.independentReview ? `independent review is ${f.independentReview.state}` : `independent review missing${f.reviewProblem ? ` (${f.reviewProblem})` : ""}`);
   if (!f.brbNA && !(f.brb && f.brb.artifact_type === "qa" && f.brb.verdict === "PASS" && f.brb.candidate_sha === f.head)) p.push("no bug-review-board qa PASS for this head");
+  // WO75 (QA PR80): the diff's scope line is what the tests-first exception rests on; a diff this helper couldn't read
+  // (or a missing line) fails closed in every band.
+  if (!/^scope \(from the diff\): (NOT )?tests-only/.test(f.scope || "")) p.push(`the diff scope could not be computed (${f.scope || "no scope line"})`);
   return p;
 }
 

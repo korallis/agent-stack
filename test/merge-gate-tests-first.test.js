@@ -25,7 +25,7 @@ test("review.merge_gate is version 2 and states the tests-first rule and every e
   assert.match(instr, /its change carries the line 'scope \(from the diff\): tests-only', computed from the diff/);
   assert.match(instr, /tests that QA actually ran \(on this head, or on an earlier commit when the evidence shows the test files unchanged since, a carried run\) and saw fail exactly at the step needing the unbuilt feature, with the run's result in the evidence/);
   assert.match(instr, /QA's verdict for this head is FAIL or there is no QA verdict for it at all \(the exception never replaces the QA gate\)/);
-  assert.match(instr, /when the scope line says NOT tests-only or is absent/);
+  assert.match(instr, /when the scope line says NOT tests-only, says unknown, or is absent/);
   assert.match(instr, /when QA did not run the tests \(a predicted or inferred failure/);
   assert.match(instr, /a bare count such as '2 failed' names no step/);
   assert.match(instr, /a test fails at a step that is already built/);
@@ -63,16 +63,23 @@ test("testScope: tests-only from the diff, or the non-test paths named; a rename
   assert.equal(testScope([f("tests/x.ts", "src/x.ts")]), "scope (from the diff): NOT tests-only, 1 non-test path(s): src/x.ts → tests/x.ts");
   assert.equal(testScope([{ ...f("tests/a.ts"), unknown: true }]).startsWith("scope (from the diff): NOT tests-only"), true, "an unreadable entry is never tests-only");
   assert.equal(testScope([]), "scope (from the diff): unknown, the diff could not be read");
+  // QA PR80: runtime specs, API schemas, CI under a test-named dir, manifests, configs and migrations are never tests
+  for (const p of ["packages/daemon/specs/rigs/launch/kernel/rig.yaml", "spec/openapi.yaml", ".github/workflows/test/ci.yaml", "tests/package.json",
+    "tests/playwright.config.ts", "test/migrations/0001.sql", "e2e/Dockerfile", "tests/schema/user.json", "db/schema.prisma"])
+    assert.match(testScope([f(p)]), /^scope \(from the diff\): NOT tests-only/, p);
+  assert.match(testScope([f("tests/acceptance/fixtures/seed/F-1.json"), f("tests/acceptance/F-1/flow.spec.ts")]), /tests-only, 2 path/);
 });
 
 test("outcome (QA PR80): a live Jev merge in the act band still HOLDs when a deterministic gate isn't green", () => {
   const rec = { decided_by: "jev", band: "act", result: { decision: "merge" }, signals: { decision: { confidence: 0.9 } } };
   const green = { head: "a".repeat(40), isDraft: false, mergeable: "MERGEABLE", mergeState: "CLEAN", checks: [{ name: "ci", bucket: "pass" }],
-    reviewVerdict: { state: "success" }, brb: { artifact_type: "qa", verdict: "PASS", candidate_sha: "a".repeat(40) } };
+    reviewVerdict: { state: "success" }, brb: { artifact_type: "qa", verdict: "PASS", candidate_sha: "a".repeat(40) },
+    scope: "scope (from the diff): tests-only, 1 path(s), all tests, fixtures or test helpers: tests/a.spec.ts" };
   assert.equal(outcome(rec, green).code, 0);
   for (const [why, facts] of [["QA FAIL", { ...green, brb: { ...green.brb, verdict: "FAIL" } }], ["no QA", { ...green, brb: null }],
     ["red check", { ...green, checks: [{ name: "ci", bucket: "fail" }] }], ["no checks", { ...green, checks: [] }],
-    ["review missing", { ...green, reviewVerdict: { state: null, why: "none" } }]]) {
+    ["review missing", { ...green, reviewVerdict: { state: null, why: "none" } }],
+    ["diff unreadable", { ...green, scope: "scope (from the diff): unknown, the diff could not be read" }], ["no scope line", { ...green, scope: undefined }]]) {
     const o = outcome(rec, facts);
     assert.equal(o.code, 1, why); assert.match(o.text, /live Jev merge in the act band, but a gate this helper checks is not green/, why);
   }
