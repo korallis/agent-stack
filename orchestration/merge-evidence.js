@@ -113,6 +113,19 @@ export const flagOnly = (f) => /(^|\/)features\.json$/.test(f.path) && f.oldPath
   && !(f.unknown || f.renamed || f.newFile || f.deleted || f.modeChange || f.binary) && f.added.length > 0
   && [...f.added, ...f.removed].every((l) => FLAG_LINE.test(l)) && flagKeys(f.added) === flagKeys(f.removed);
 
+// Pure (WO75): is the change tests only? A test path is under a tests/test/e2e/__tests__/cypress/playwright/spec
+// directory (anywhere in the path) or is a *.test.* / *.spec.* file; a rename counts only if both sides are tests. The
+// merge gate's tests-first exception applies only when this line says tests-only: a fact from the diff, not a reading.
+export const isTestPath = (p) => /(^|\/)(tests?|e2e|__tests__|cypress|playwright|specs?)\//i.test(p || "")
+  || /\.(test|spec)\.[cm]?[jt]sx?$/i.test(p || "");
+export function testScope(files) {
+  if (!files?.length) return "scope (from the diff): unknown, the diff could not be read";
+  const nonTest = files.filter((f) => !known(f) || !isTestPath(f.path) || !isTestPath(f.oldPath));
+  if (!nonTest.length)
+    return `scope (from the diff): tests-only, ${files.length} path(s), all tests, fixtures or test helpers: ${files.map((f) => f.path).slice(0, 8).join(", ")}${files.length > 8 ? ", …" : ""}`;
+  return `scope (from the diff): NOT tests-only, ${nonTest.length} non-test path(s): ${nonTest.map((f) => (f.oldPath && f.oldPath !== f.path ? `${f.oldPath} → ${f.path}` : f.path)).slice(0, 8).join(", ")}${nonTest.length > 8 ? ", …" : ""}${files.length > nonTest.length ? ` (plus ${files.length - nonTest.length} test path(s))` : ""}`;
+}
+
 // Pure: why the bug-review-board proof doesn't apply, or null (it is required).
 export function brbNotApplicable({ createdAt, cutoff, files }) {
   if (cutoff && createdAt && Date.parse(createdAt) < Date.parse(cutoff.iso))
@@ -536,7 +549,7 @@ export function buildMergeInput(f) {
     f.rollback ? `rollback: ${f.rollback}` : `rollback: not stated (proposed default: revert the squash commit on ${f.baseRef})`,
   ].join("\n");
   // Free text from PR comments and statuses goes out to Jev: redact anything credential-shaped (shas are kept).
-  return { pr: f.pr, head: f.head, base: f.base, change: redact(f.change), review: redact(review), ci, limits: redact(limits) };
+  return { pr: f.pr, head: f.head, base: f.base, change: redact([f.change, f.scope].filter(Boolean).join("\n")), review: redact(review), ci, limits: redact(limits) };
 }
 
 function frontmatter(path) {
@@ -737,7 +750,7 @@ export function gather(pr, { repo, mission, slice, change, deploy, rollback, con
     throw new Error(`the PR moved while its evidence was collected (head ${v.headRefOid.slice(0, 12)} -> ${again.headRefOid.slice(0, 12)}, base ${v.baseRefOid.slice(0, 12)} -> ${again.baseRefOid.slice(0, 12)}); run it again`);
   return {
     pr: v.number, head: v.headRefOid, base: v.baseRefOid, baseRef: v.baseRefName, headRef: v.headRefName,
-    mergeable: v.mergeable, mergeState: v.mergeStateStatus, reviewDecision: v.reviewDecision || null, isDraft: v.isDraft, change: change || [v.title, firstSection(v.body)].filter(Boolean).join(". "), checks,
+    mergeable: v.mergeable, mergeState: v.mergeStateStatus, reviewDecision: v.reviewDecision || null, isDraft: v.isDraft, change: change || [v.title, firstSection(v.body)].filter(Boolean).join(". "), scope: testScope(files), checks,
     requirements, observedChecks, unstable, gateHistory: gateRuns, gateContext: cfg.gate.context, reviewContext: cfg.review.context, sources: { review: cfg.review.source, qa: cfg.qa.source, gate: cfg.gate.source },
     authorFamily: author.family, independentReview, reviewProblem, reviewNote, reviewLinkProblem,
     reviewVerdict: reviewVerdictFacts,
@@ -774,7 +787,14 @@ export function gateProblems(f) {
 // The integrator's standing below-bar path: live Jev merge in the review band, every deterministic gate green ->
 // ask the other-family independent reviewer for a one-line exact-head "confirm <sha>", then merge.
 export function outcome(rec, facts) {
-  if (passes(rec)) return { code: 0, text: `merge gate: PASS (live Jev merge, act band) for ${facts.head}` };
+  // WO75 (QA PR80): the act band never skips the deterministic gates. Jev judges the evidence; code still refuses a
+  // head whose required checks, review verdict or QA PASS isn't green, whatever Jev answered.
+  if (passes(rec)) {
+    const problems = gateProblems(facts);
+    return problems.length
+      ? { code: 1, text: `merge gate: HOLD (live Jev merge in the act band, but a gate this helper checks is not green: ${problems.join("; ")})` }
+      : { code: 0, text: `merge gate: PASS (live Jev merge, act band) for ${facts.head}` };
+  }
   if (rec?.stubbed) return { code: 1, text: `merge gate: HOLD (a STUBBED answer, not a live Jev decision: ${rec.decided_by}/${rec.band}/${rec.result?.decision})` };
   // Below the act bar = the review or the uncertain band (the integrator role's "MERGE below the act confidence bar").
   if (rec?.decided_by === "jev" && ["review", "uncertain"].includes(rec?.band) && rec?.result?.decision === "merge") {
