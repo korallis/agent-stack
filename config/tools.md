@@ -54,7 +54,7 @@ servers marked "latest" track upstream, the rest are pinned in `config/versions.
 | `cliproxyapi-health.timer`, `openrig-health.timer` | Restart the proxy / daemon if they stop answering |
 | `cliproxy-usage.timer` | Records each request's account, model, status and quota (no content) |
 | `cliproxy-authwatch.timer` | Alerts when one account keeps failing to sign in |
-| `cliproxy-quotawatch.timer` | Warns at 80% of any account's 5-hour or weekly allowance |
+| `cliproxy-quotawatch.timer` | Warns at 80% of any account's 5-hour or weekly allowance; Codex windows by their length; accounts on credits get a daily low note, never a stall alert |
 | `agent-repos-sync.timer` | Fast-forwards every project's shared checkout to origin/main every 5 minutes (OpenRig judges 'merged' against it) |
 | `openrig-update.timer` | Upgrades OpenRig from upstream when no project team is running, with validation and rollback |
 

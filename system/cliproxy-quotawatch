@@ -1,7 +1,10 @@
 #!/usr/bin/env bash
 # Warn before the pooled subscriptions run out. Reads the latest quota headers each account returned (routing log
 # only: no content, no secrets). Per account: normal alert when its 5-hour or weekly window passes the threshold.
-# Per provider: critical alert when EVERY account of that provider is past it (failover has nowhere left to go).
+# Per provider: critical alert when EVERY account of that provider is past it and none has credits to carry on with
+# (failover has nowhere left to go). Accounts that have used up a window but have credits keep working at a cost: one
+# low-urgency note per provider a day, never "will stall". Codex windows are read by their reported length (since
+# 2026-10 primary is the weekly window and there is no 5-hour one); without lengths, by position as before.
 # Each alert repeats at most every 3 hours. Runs from cliproxy-quotawatch.timer every 10 minutes.
 set -euo pipefail
 log=${QUOTAWATCH_LOG:-$HOME/.local/share/agent-stack/logs/proxy-usage.jsonl}
@@ -9,38 +12,62 @@ state=${QUOTAWATCH_STATE:-$HOME/.local/state/agent-stack/quotawatch}; mkdir -p "
 threshold=${QUOTAWATCH_PCT:-80}; quiet_s=$((3 * 3600))
 [ -r "$log" ] || exit 0
 
-# account<TAB>provider<TAB>5h%<TAB>week%  (latest reading per account among the last 20k requests)
+# account<TAB>provider<TAB>5h%<TAB>week%<TAB>credits  (latest reading per account among the last 20k requests; "-" is
+# no such window; credits: yes (has credits or unlimited), no (reported as none) or - (not reported))
 readings=$(tail -n 20000 "$log" | jq -r '
+  def flag($v): ($v // "" | tostring | ascii_downcase);
   select(.quota != null and (.quota | length) > 0)
-  | .quota as $q
+  | .quota as $q | .account as $a
   | if ($q["Anthropic-Ratelimit-Unified-5h-Utilization"] != null) then
-      [.account, "claude", (($q["Anthropic-Ratelimit-Unified-5h-Utilization"]|tonumber)*100), (($q["Anthropic-Ratelimit-Unified-7d-Utilization"] // "0"|tonumber)*100)]
+      [$a, "claude", (($q["Anthropic-Ratelimit-Unified-5h-Utilization"]|tonumber)*100), (($q["Anthropic-Ratelimit-Unified-7d-Utilization"] // "0"|tonumber)*100), "-"]
     elif ($q["X-Codex-Primary-Used-Percent"] != null) then
-      [.account, "codex", ($q["X-Codex-Primary-Used-Percent"]|tonumber), ($q["X-Codex-Secondary-Used-Percent"] // "0"|tonumber)]
+      [ [0, "Primary"], [1, "Secondary"] | . as [$i, $n]
+        | {used: ($q["X-Codex-\($n)-Used-Percent"] | tonumber? // null), mins: ($q["X-Codex-\($n)-Window-Minutes"] | tonumber? // null)}
+        | select(.used != null)
+        | .slot = (if .mins == null then (if $i == 0 then "short" else "weekly" end) elif .mins <= 0 then null
+                   elif .mins <= 1440 then "short" else "weekly" end)
+        | select(.slot != null) ] as $w
+      | [$a, "codex", ([$w[] | select(.slot == "short")][0].used // "-"), ([$w[] | select(.slot == "weekly")][0].used // "-"),
+         (if flag($q["X-Codex-Credits-Has-Credits"]) == "true" or flag($q["X-Codex-Credits-Unlimited"]) == "true" then "yes"
+          elif flag($q["X-Codex-Credits-Has-Credits"]) == "false" then "no" else "-" end)]
     else empty end
   | @tsv' 2>/dev/null | awk -F'\t' '{last[$1]=$0} END {for (a in last) print last[a]}')
 [ -n "$readings" ] || exit 0
 
-alert() { # alert <key> <urgency> <title> <message>
+alert() { # alert <key> <urgency> <title> <message> [quiet seconds]
   local stamp="$state/$1"
-  if [ -f "$stamp" ] && [ $(( $(date +%s) - $(stat -c %Y "$stamp") )) -lt "$quiet_s" ]; then return; fi
+  if [ -f "$stamp" ] && [ $(( $(date +%s) - $(stat -c %Y "$stamp") )) -lt "${5:-$quiet_s}" ]; then return; fi
   touch "$stamp"; logger -t cliproxy-quotawatch "$3: $4"
   notify-send --urgency="$2" --app-name="Agent stack" "$3" "$4" 2>/dev/null || true
   echo "$3: $4"
 }
+pct() { [ "$1" = - ] && echo -1 || echo "${1%.*}"; }   # "-" (no such window) never passes a threshold
 
-while IFS=$'\t' read -r account provider h5 wk; do
-  h5=${h5%.*}; wk=${wk%.*}
+while IFS=$'\t' read -r account provider h5 wk credits; do
+  h5=$(pct "$h5"); wk=$(pct "$wk")
+  # a used-up window with credits: carries on at a cost, noted per provider below
+  if [ "$credits" = yes ] && { [ "$h5" -ge 100 ] || [ "$wk" -ge 100 ]; }; then continue; fi
   [ "$h5" -ge "$threshold" ] && alert "$account-5h" normal "Quota: $account at ${h5}% of its 5-hour window" "The proxy will shift work to the other $provider accounts. Check agent-proxy-status."
-  [ "$wk" -ge "$threshold" ] && alert "$account-week" normal "Quota: $account at ${wk}% of its weekly allowance" "Plan heavy runs around it, or add another $provider subscription (agent-login $provider <label>)."
+  if [ "$wk" -ge "$threshold" ]; then
+    if [ "$credits" = yes ]; then
+      alert "$account-week" normal "Quota: $account at ${wk}% of its weekly allowance" "It has credits, so when the week runs out it carries on on credits (a cost, not a stall). Check agent-proxy-status."
+    else
+      alert "$account-week" normal "Quota: $account at ${wk}% of its weekly allowance" "Plan heavy runs around it, or add another $provider subscription (agent-login $provider <label>)."
+    fi
+  fi
 done <<< "$readings"
 
 for provider in claude codex; do
   total=$(awk -F'\t' -v p="$provider" '$2==p' <<< "$readings" | wc -l)
   [ "$total" -gt 0 ] || continue
-  over=$(awk -F'\t' -v p="$provider" -v t="$threshold" '$2==p && (int($3)>=t || int($4)>=t)' <<< "$readings" | wc -l)
+  # past the threshold with no credits to fall back on: these are the accounts that stall
+  over=$(awk -F'\t' -v p="$provider" -v t="$threshold" '$2==p && $5!="yes" && (($3!="-" && int($3)>=t) || ($4!="-" && int($4)>=t))' <<< "$readings" | wc -l)
   if [ "$over" -eq "$total" ]; then
     alert "$provider-all" critical "Quota: every $provider account is past ${threshold}%" "All $total $provider accounts are near a limit; seats on $provider models will stall soon. Pause a rig, wait for the window to reset, or add a subscription."
+  fi
+  oncredit=$(awk -F'\t' -v p="$provider" '$2==p && $5=="yes" && (($3!="-" && int($3)>=100) || ($4!="-" && int($4)>=100))' <<< "$readings" | wc -l)
+  if [ "$oncredit" -gt 0 ]; then
+    alert "$provider-credits" low "Quota: $oncredit $provider account$([ "$oncredit" -gt 1 ] && echo s) on credits" "They have used a window and carry on on credits: working, at a cost. Check agent-proxy-status." $((24 * 3600))
   fi
 done
 exit 0
