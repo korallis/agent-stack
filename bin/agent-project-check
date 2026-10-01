@@ -311,7 +311,7 @@ for key, lvl, what in (("mission_files", "FAIL", "missions have SPEC/PROGRESS/NO
 # A failed read must say so: an empty result here used to skip the whole queue section silently.
 q = []
 try:
-    qr = subprocess.run(["rig", "queue", "list", "-A", "-a", "--full", "--json", "--limit", "20000"], capture_output=True, text=True, timeout=180)
+    qr = run(["rig", "queue", "list", "-A", "-a", "--full", "--json", "--limit", "20000"], timeout=180)
     if qr.returncode != 0:
         rep("WARN", "could not read the queue", f"rig queue list exit {qr.returncode}: {(qr.stderr or qr.stdout).strip()[-200:]}")
     elif not qr.stdout.strip():

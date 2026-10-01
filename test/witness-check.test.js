@@ -269,6 +269,12 @@ test("agent-project-check: a failed queue read WARNs with the exit code; an empt
     assert.equal(find(r, "queue rows").length, 0);
     rigStub(`echo 'not json'`);
     assert.match(find(rows(), "could not read the queue")[0].detail, /not JSON/);
+    // QA PR60 f1: no rig on PATH at all: a report, with the queue WARN, not a crash
+    fs.rmSync(join(bin, "rig"));
+    const noRig = spawnSync("python3", [join(repo, "bin/agent-project-check"), W, "--json"], { encoding: "utf8",
+      env: { PATH: `${bin}:/usr/bin:/bin`, HOME: home, OPENRIG_URL: "http://127.0.0.1:9", AGENT_OWNER_ADDRESS: "owner@external" }, timeout: 120000 });
+    assert.doesNotMatch(noRig.stderr, /Traceback/, noRig.stderr.slice(-400));
+    assert.match(find(JSON.parse(noRig.stdout), "could not read the queue")[0].detail, /rig queue list exit 127: rig: No such file/);
     rigStub(`exit 0`);   // QA PR60: exit 0 with no output is not an empty queue
     assert.match(find(rows(), "could not read the queue")[0].detail, /exited 0 with no output/);
     for (const [out, kind] of [["null", "NoneType"], ['{"rows": []}', "dict"]]) {
