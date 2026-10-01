@@ -1,5 +1,5 @@
 // Unit tests: Jev response validation + policy, and recovery permission rules (no network).
-process.env.AGENT_STACK_STATE = (await import("node:fs")).mkdtempSync("/tmp/claude-1000/agst-");
+process.env.AGENT_STACK_STATE = (await import("node:fs")).mkdtempSync(`${(await import("node:os")).tmpdir()}/agst-`);
 import { test } from "node:test";
 import assert from "node:assert/strict";
 const { buildRequest, validateResponse, applyPolicy, ValidationError, InputError } = await import("../jev/lib/engine.js");

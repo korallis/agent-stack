@@ -1,4 +1,4 @@
-process.env.AGENT_STACK_STATE = (await import("node:fs")).mkdtempSync("/tmp/claude-1000/agst-");
+process.env.AGENT_STACK_STATE = (await import("node:fs")).mkdtempSync(`${(await import("node:os")).tmpdir()}/agst-`);
 import { test } from "node:test";
 import assert from "node:assert/strict";
 const { permittedActions, ruleClass, BUDGET } = await import("../orchestration/recover.js");

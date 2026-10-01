@@ -1,6 +1,6 @@
 // WO35: model defaults, and Jev as the decision layer (merge evidence, seat picking, stuck seats). Jev is never called
 // for real here: AGENT_JEV_STUB supplies its answers, and gh, rig and tmux are stubs.
-process.env.AGENT_STACK_STATE = (await import("node:fs")).mkdtempSync("/tmp/claude-1000/agst-wo35-");
+process.env.AGENT_STACK_STATE = (await import("node:fs")).mkdtempSync(`${(await import("node:os")).tmpdir()}/agst-wo35-`);
 import { test } from "node:test";
 import assert from "node:assert/strict";
 import { spawnSync } from "node:child_process";
@@ -14,7 +14,7 @@ const { buildMergeInput, passes, outcome, gateProblems, parseDiff, brbCutoff, br
   reviewFromPrReviews, reviewVerdict, observedFrom, familyFromHeading, familyFromDescription, isGateReport, firstSection } = await import("../orchestration/merge-evidence.js");
 const { seatCandidates, nextStep } = await import("../orchestration/pickseat.js");
 const st = await import("../orchestration/stuck.js");
-const root = fs.mkdtempSync("/tmp/claude-1000/wo35-");
+const root = fs.mkdtempSync(join((await import("node:os")).tmpdir(), "wo35-"));
 process.on("exit", () => { fs.rmSync(root, { recursive: true, force: true }); fs.rmSync(process.env.AGENT_STACK_STATE, { recursive: true, force: true }); });
 const bin = join(root, "bin"); fs.mkdirSync(bin);
 const stub = (answers) => { const f = join(root, `jev-${Math.random().toString(36).slice(2)}.json`); fs.writeFileSync(f, JSON.stringify(answers)); return f; };
@@ -93,15 +93,16 @@ test("agent-merge-evidence --decide: reads gh and the proof file, exits 0 only o
 case "$*" in
   "pr view 42 -R o/r --json headRefOid,baseRefOid") n=$(cat "${root}/views" 2>/dev/null || echo 0); echo $((n+1)) > "${root}/views"; h=${H}; [ -f "${root}/move" ] && h=${"c".repeat(40)}; printf '{"headRefOid":"%s","baseRefOid":"${B}"}\\n' "$h" ;;
   "pr diff 42 -R o/r") printf 'diff --git a/src/login.ts b/src/login.ts\\n--- a/src/login.ts\\n+++ b/src/login.ts\\n@@ -1 +1 @@\\n-old\\n+new\\n' ;;
-  "pr view 42 -R o/r --json"*) echo '{"number":42,"title":"Adds login","createdAt":"2026-09-30T14:00:00Z","headRefOid":"${H}","baseRefOid":"${B}","baseRefName":"main","headRefName":"agent/x","mergeable":"MERGEABLE","isDraft":false,"comments":[{"body":"looks good","url":"https://x/c0","createdAt":"2026-09-30T09:00:00Z","author":{"login":"a"}},{"body":"## Blast radius\\nSafe because: only a nullable column (${H.slice(0, 7)}).","url":"https://x/c1","createdAt":"2026-09-30T10:00:00Z","author":{"login":"rev"}},{"body":"Implementation update on ${H.slice(0, 7)}: my tests pass, all fixes are ready for review.","url":"https://x/c3","createdAt":"2026-09-30T11:00:00Z","author":{"login":"builder"}}],"reviews":[{"body":"Lenses applied: correctness, security. Verified the login tests pass on ${H.slice(0, 7)}; one finding fixed.","url":"https://x/r1","submittedAt":"2026-09-30T10:05:00Z","author":{"login":"rev"},"commit":{"oid":"${H}"}}]}' ;;
-  "pr checks 42 -R o/r --required --json"*) echo '[{"name":"verify","state":"FAILURE","bucket":"fail"},{"name":"qa-evidence","state":"SUCCESS","bucket":"pass"}]'; exit 1 ;;
-  "api repos/o/r/commits/${H}/statuses?per_page=100 --paginate --slurp") echo '[{"context":"independent-review","state":"success","description":"QA PASS","creator":{"login":"rev"},"target_url":"https://x/r1"}]' ;;
+  "pr view 42 -R o/r --json"*) printf '%s\\n' '{"number":42,"title":"Adds login","createdAt":"2026-09-30T14:00:00Z","headRefOid":"${H}","baseRefOid":"${B}","baseRefName":"main","headRefName":"agent/x","mergeable":"MERGEABLE","isDraft":false,"comments":[{"body":"looks good","url":"https://x/c0","createdAt":"2026-09-30T09:00:00Z","author":{"login":"a"}},{"body":"## Blast radius\\nSafe because: only a nullable column (${H.slice(0, 7)}).","url":"https://x/c1","createdAt":"2026-09-30T10:00:00Z","author":{"login":"rev"}},{"body":"Implementation update on ${H.slice(0, 7)}: my tests pass, all fixes are ready for review.","url":"https://x/c3","createdAt":"2026-09-30T11:00:00Z","author":{"login":"builder"}}],"reviews":[{"body":"Lenses applied: correctness, security. Verified the login tests pass on ${H.slice(0, 7)}; one finding fixed.","url":"https://x/r1","submittedAt":"2026-09-30T10:05:00Z","author":{"login":"rev"},"commit":{"oid":"${H}"}}]}' ;;
+  "pr checks 42 -R o/r --required --json"*) printf '%s\\n' '[{"name":"verify","state":"FAILURE","bucket":"fail"},{"name":"qa-evidence","state":"SUCCESS","bucket":"pass"}]'; exit 1 ;;
+  "api repos/o/r/commits/${H}/statuses?per_page=100 --paginate --slurp") printf '%s\\n' '[{"context":"independent-review","state":"success","description":"QA PASS","creator":{"login":"rev"},"target_url":"https://x/r1"}]' ;;
   *) echo "unexpected gh $*" >&2; exit 9 ;;
 esac
 `, { mode: 0o755 });
   const run = (answer) => spawnSync(process.execPath, [join(repo, "orchestration/merge-evidence.js"), "42", "--repo", "o/r", "--mission", "m1", "--slice", "s1", "--deploy", "none", "--decide"],
     { encoding: "utf8", env: { PATH: `${bin}:${process.env.PATH}`, OPENRIG_WORK_ROOT: work, AGENT_JEV_STUB: stub({ "review.merge_gate": answer }) } });
   let r = run({ decided_by: "jev", band: "act", result: { decision: "merge" } });
+  assert.ok(r.stdout.trim(), `no output (exit ${r.status}): ${r.stderr}`);
   const out = JSON.parse(r.stdout);
   assert.match(out.input.ci, /verify=fail[\s\S]*NOT passing: verify/, "a failing check (gh exits 1) is still reported");
   assert.match(out.input.review, /Ship: YES, all criteria passed in the browser/, "wrapped YAML evidence read whole");

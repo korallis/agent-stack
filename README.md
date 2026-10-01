@@ -331,6 +331,8 @@ for web apps, the command for a CLI, the HTTP API for an API.
 - [docs/PROJECT-ENV.md](docs/PROJECT-ENV.md): keeping agents on development data.
 - [docs/UPGRADE.md](docs/UPGRADE.md): upgrading OpenRig. [docs/incidents/](docs/incidents/): what went wrong before.
 - [config/tools.md](config/tools.md): every tool and version.
+- Tests: `node --test 'test/*.test.js'` (on the owner's machine, through `agent-heavy build --`). GitHub Actions runs
+  them on every pull request and on main ([.github/workflows/test.yml](.github/workflows/test.yml), check `test`).
 
 ## Read before you use it
 

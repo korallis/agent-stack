@@ -6,6 +6,10 @@ has no version numbers; entries are grouped by the day they merged, newest first
 ## [Unreleased]
 
 ### Added
+- GitHub Actions CI (`.github/workflows/test.yml`, check `test`): the test suite on every pull request and on main,
+  so the merge gate reads a real exact-head check. Tests that need the owner's machine (OpenRig, rig, codex,
+  install.sh's prerequisites) skip with their reason. `agent-project-check` reports a missing tool instead of
+  crashing.
 - Credential read guard: a PreToolUse hook for Claude Code (Bash, Read, Grep) and Codex (its shell tool) refuses a
   command or read that would print a credential file (`.env*`, `*runtime-url*`, `*.pem`, `prod.env`, the secrets
   directory, plus local globs) into a seat's transcript, and says how to use the values by name. Installed

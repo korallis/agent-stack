@@ -23,8 +23,17 @@ def rep(level, what, detail=""):
     results.append((level, what, detail))
 
 
+def run(cmd, **kw):
+    """subprocess.run that treats a missing or unrunnable tool (rig, tmux, npx, … on a machine without them) as a failed
+    command with no output, so a check reports it instead of the whole script crashing."""
+    try:
+        return subprocess.run(cmd, **{"capture_output": True, "text": True, **kw})
+    except (FileNotFoundError, PermissionError, NotADirectoryError) as e:
+        return subprocess.CompletedProcess(cmd, 127, "", f"{cmd[0]}: {e.strerror or e}")
+
+
 def sh(*cmd):
-    r = subprocess.run(cmd, capture_output=True, text=True)
+    r = run(list(cmd))
     return r.stdout if r.returncode == 0 else ""
 
 
@@ -39,7 +48,7 @@ def owner_names():
     """The names an Owner decisions source may use for the owner: agent-owner-address --names (per machine: "owner",
     the owner address's name part, AGENT_OWNER_NAMES). Never a name written in this repo."""
     try:
-        r = subprocess.run([os.path.join(os.path.dirname(os.path.realpath(__file__)), "agent-owner-address"), "--names"],
+        r = run([os.path.join(os.path.dirname(os.path.realpath(__file__)), "agent-owner-address"), "--names"],
                            capture_output=True, text=True, timeout=30)
         names = [n.strip() for n in r.stdout.splitlines() if n.strip()] if r.returncode == 0 else []
     except (OSError, subprocess.TimeoutExpired):
@@ -163,7 +172,7 @@ if specs:
                          r"|model[^\n]{0,40}(is not available|unavailable|not supported)|invalid model", re.I)
     stuck_fable, unread = [], []
     for seat in fable if running else []:
-        cap = subprocess.run(["tmux", "capture-pane", "-p", "-S", "-80", "-t", seat], capture_output=True, text=True)
+        cap = run(["tmux", "capture-pane", "-p", "-S", "-80", "-t", seat], capture_output=True, text=True)
         if cap.returncode != 0:
             unread.append(seat)
         elif CONSENT.search(cap.stdout):
@@ -420,7 +429,7 @@ if recent:
 if specs:
     import yaml
     sp = specs[0]
-    au = subprocess.run(["rig", "spec", "audit", sp], capture_output=True, text=True).stdout
+    au = run(["rig", "spec", "audit", sp], capture_output=True, text=True).stdout
     # OpenRig's audit reads any dotted name in CULTURE as a seat id; the Jev decision ids (review.merge_gate, …) are not
     # seats, so those findings are dropped. Every other finding still WARNs.
     try:
@@ -433,9 +442,10 @@ if specs:
     clean = "audit clean" in au or (findings and not real)
     rep("OK" if clean else "WARN", "rig spec audit (OpenRig authoring check) is clean"
         + (f" (ignoring {len(findings) - len(real)} Jev decision id(s) read as seat ids)" if clean and findings else ""),
-        "" if clean else (real[0] if real else (au.strip().splitlines()[1].strip() if len(au.strip().splitlines()) > 1 else "")))
+        "" if clean else (real[0] if real else (au.strip().splitlines()[1].strip() if len(au.strip().splitlines()) > 1
+                                                  else "" if au.strip() else "no output from `rig spec audit` (is rig installed?)")))
     if running:
-        dc = subprocess.run(["rig", "doctor", "--spec", sp], capture_output=True, text=True).stdout
+        dc = run(["rig", "doctor", "--spec", sp], capture_output=True, text=True).stdout
         rep("OK" if "[OK] spec_live_conformance" in dc else "FAIL", "running rig matches its spec (rig doctor --spec)")
     d = yaml.safe_load(read(sp))
     cfile = ((d.get("managed_blocks") or {}).get("claude-code")) or "CLAUDE.md"
@@ -458,7 +468,7 @@ if specs:
                 noskills.append(f"{seat}:{'/'.join(miss)}")
     # Stale blocks: exactly what agent-refresh-guidance would change (it names blocks by their path under rig/, as
     # OpenRig does, e.g. startup/context.md), so this check and the refresh can't disagree.
-    rg = subprocess.run([os.path.join(os.path.dirname(os.path.realpath(__file__)), "agent-refresh-guidance"), W, "--json"],
+    rg = run([os.path.join(os.path.dirname(os.path.realpath(__file__)), "agent-refresh-guidance"), W, "--json"],
                         capture_output=True, text=True)
     try:
         stale = [f"{c['seat']}/{c['file']} ({'; '.join(c['reasons'])})" for c in json.loads(rg.stdout)["changed"]]
@@ -473,7 +483,7 @@ if specs:
         "run agent-refresh-guidance --apply: " + ", ".join(stale[:6]) if stale else "")
     rep("OK" if not noskills else "WARN", "every seat has the skills its role declares", ", ".join(noskills[:6]))
 def git(*a):
-    return subprocess.run(["git", "-C", REPO, *a], capture_output=True, text=True).stdout.strip()
+    return run(["git", "-C", REPO, *a], capture_output=True, text=True).stdout.strip()
 TRUNK = (git("symbolic-ref", "-q", "--short", "refs/remotes/origin/HEAD").removeprefix("origin/")
          or git("branch", "--show-current") or "main")
 behind = git("rev-list", "--count", f"{TRUNK}..origin/{TRUNK}")
@@ -494,7 +504,7 @@ if TRUNK != "main":
     ok = "agent-stack.mainMirror" in (read(pp_path) or "") and os.access(pp_path, os.X_OK)
     rep("OK" if ok else "FAIL", "pre-push hook keeps the main mirror off the remote",
         "" if ok else f"git runs hooks from {os.path.dirname(pp_path)}: put an executable agent-stack pre-push check there (system/git-hooks/pre-push)")
-tim = subprocess.run(["systemctl", "--user", "is-active", "agent-repos-sync.timer"], capture_output=True, text=True).stdout.strip()
+tim = run(["systemctl", "--user", "is-active", "agent-repos-sync.timer"], capture_output=True, text=True).stdout.strip()
 rep("OK" if tim == "active" else "FAIL", "agent-repos-sync.timer active (keeps every project's main current)")
 hook = read(f"{REPO}/.git/hooks/pre-commit") or ""
 rep("OK" if "OpenRig MANAGED BLOCK" in hook else "FAIL", "repo pre-commit hook refuses OpenRig seat blocks",
@@ -511,7 +521,7 @@ rep("OK" if "seat-tools" in (read(f"{HOME}/.config/agent-stack/env.sh") or "") e
 
 # ---- 5b. OpenRig version and local patches (2026-09-30: a stale pin downgraded 0.6.1 to 0.5.17, patches gone) ----
 AS = os.path.dirname(os.path.dirname(os.path.realpath(__file__)))
-ens = subprocess.run([f"{AS}/bin/openrig-ensure", "--check"], capture_output=True, text=True)
+ens = run([f"{AS}/bin/openrig-ensure", "--check"], capture_output=True, text=True)
 lines = [l for l in ens.stdout.splitlines() if l.strip()] or [f"--  FAIL: openrig-ensure --check gave nothing ({ens.stderr.strip()[:120]})"]
 for l in lines:   # "ok  <what>" / "--  WARN: <what>" / "--  FAIL: <what>"
     body = l[4:]
@@ -558,7 +568,7 @@ def bundled_major(pkg):
     """Chrome for Testing major version that this @playwright/mcp release's own Playwright installs (None if unknown)."""
     if pkg not in _bundled:
         try:
-            plan = subprocess.run(["npx", "-y", "-p", pkg, "playwright", "install", "--dry-run", "chromium"],
+            plan = run(["npx", "-y", "-p", pkg, "playwright", "install", "--dry-run", "chromium"],
                                   capture_output=True, text=True, timeout=180).stdout
             m = re.search(r"Chrome for Testing (\d+)\.", plan)
             _bundled[pkg] = int(m.group(1)) if m else None
@@ -568,7 +578,7 @@ def bundled_major(pkg):
 
 def browser_major(path):
     try:
-        m = re.search(r"(\d+)\.\d+", subprocess.run([path, "--version"], capture_output=True, text=True, timeout=20).stdout)
+        m = re.search(r"(\d+)\.\d+", run([path, "--version"], capture_output=True, text=True, timeout=20).stdout)
         return int(m.group(1)) if m else None
     except (OSError, subprocess.TimeoutExpired):
         return None
