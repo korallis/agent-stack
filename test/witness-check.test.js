@@ -250,3 +250,49 @@ test("agent-project-check WARNs on an unsourced Owner decisions bullet and on on
     assert.equal(lacks.level, "WARN"); assert.match(lacks.detail, /missing Operator and lead rules/);
   } finally { fs.rmSync(specDir, { recursive: true, force: true }); }
 });
+
+// WO55: a failed queue read WARNs with its exit code (it used to skip the whole queue section silently), and a window
+// with no rows says so.
+test("agent-project-check: a failed queue read WARNs with the exit code; an empty window says so; recent rows are judged", () => {
+  const specDir = join(W, "rig"); fs.mkdirSync(specDir, { recursive: true });
+  fs.writeFileSync(join(specDir, "team.yaml"), `name: t\npods:\n  - id: coord\n    members:\n      - id: lead\n        cwd: "${home}"\n`);
+  const rigStub = (queueScript) => fs.writeFileSync(join(bin, "rig"), `#!/bin/sh\ncase "$*" in\n  "queue list"*) ${queueScript} ;;\n  *) exit 1 ;;\nesac\n`, { mode: 0o755 });
+  const rows = () => JSON.parse(spawnSync("python3", [join(repo, "bin/agent-project-check"), W, "--json"], { encoding: "utf8",
+    env: { PATH: `${bin}:${process.env.PATH}`, HOME: home, OPENRIG_URL: "http://127.0.0.1:9", AGENT_OWNER_ADDRESS: "owner@external" }, timeout: 120000 }).stdout);
+  const find = (r, p) => r.filter((x) => x.check.startsWith(p));
+  const iso = (msAgo) => new Date(Date.now() - msAgo).toISOString();
+  const row = (at, extra = {}) => ({ qitemId: `qitem-${at}`, destinationSession: "impl-a@t", sourceSession: "lead@t", tsCreated: at, tags: ["project:P", "mission:m1"], body: "worktree_path=/x", ...extra });
+  try {
+    rigStub(`echo "daemon timed out" >&2; exit 3`);
+    let r = rows();
+    assert.deepEqual(find(r, "could not read the queue").map((x) => [x.level, x.detail]), [["WARN", "rig queue list exit 3: daemon timed out"]]);
+    assert.equal(find(r, "queue rows").length, 0);
+    rigStub(`echo 'not json'`);
+    assert.match(find(rows(), "could not read the queue")[0].detail, /not JSON/);
+    // QA PR60 f1: no rig on PATH at all: a report, with the queue WARN, not a crash
+    fs.rmSync(join(bin, "rig"));
+    const noRig = spawnSync("python3", [join(repo, "bin/agent-project-check"), W, "--json"], { encoding: "utf8",
+      env: { PATH: `${bin}:/usr/bin:/bin`, HOME: home, OPENRIG_URL: "http://127.0.0.1:9", AGENT_OWNER_ADDRESS: "owner@external" }, timeout: 120000 });
+    assert.doesNotMatch(noRig.stderr, /Traceback/, noRig.stderr.slice(-400));
+    assert.match(find(JSON.parse(noRig.stdout), "could not read the queue")[0].detail, /rig queue list exit 127: rig: No such file/);
+    rigStub(`exit 0`);   // QA PR60: exit 0 with no output is not an empty queue
+    assert.match(find(rows(), "could not read the queue")[0].detail, /exited 0 with no output/);
+    for (const [out, kind] of [["null", "NoneType"], ['{"rows": []}', "dict"]]) {
+      rigStub(`echo '${out}'`);
+      assert.match(find(rows(), "could not read the queue")[0].detail, new RegExp(`not a list of rows \\(${kind}\\)`), out);
+    }
+    rigStub(`echo '${JSON.stringify([row(iso(3 * 86400e3))])}'`);   // only rows older than the 24h window
+    r = rows();
+    assert.equal(find(r, "could not read the queue").length, 0);
+    const empty = find(r, "queue rows since");
+    assert.equal(empty.length, 1); assert.equal(empty[0].level, "OK"); assert.match(empty[0].check, /none for this project in the window/);
+    assert.match(empty[0].detail, /^1 row\(s\) of this rig in total/);
+    rigStub(`echo '${JSON.stringify([row(iso(3600e3)), row(iso(1800e3), { tags: ["mission:m1"] })])}'`);
+    r = rows();
+    assert.deepEqual(find(r, "queue rows").map((x) => x.level), ["WARN", "OK", "OK"], "recent rows: the three tag checks run");
+    assert.match(find(r, "queue rows since")[0].detail, /^1\/2$/);
+  } finally {
+    fs.writeFileSync(join(bin, "rig"), "#!/bin/sh\nexit 1\n", { mode: 0o755 });
+    fs.rmSync(specDir, { recursive: true, force: true });
+  }
+});

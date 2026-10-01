@@ -308,11 +308,24 @@ for key, lvl, what in (("mission_files", "FAIL", "missions have SPEC/PROGRESS/NO
     rep("OK" if not bad[key] else lvl, what, f"{len(bad[key])}: " + ", ".join(bad[key][:4]) if bad[key] else "")
 
 # ---- 4. queue: wave maps + execution-data tags ------------------------------------------------------
+# A failed read must say so: an empty result here used to skip the whole queue section silently.
 q = []
 try:
-    q = json.loads(sh("rig", "queue", "list", "-A", "-a", "--full", "--json", "--limit", "20000") or "[]")
+    qr = run(["rig", "queue", "list", "-A", "-a", "--full", "--json", "--limit", "20000"], timeout=180)
+    if qr.returncode != 0:
+        rep("WARN", "could not read the queue", f"rig queue list exit {qr.returncode}: {(qr.stderr or qr.stdout).strip()[-200:]}")
+    elif not qr.stdout.strip():
+        rep("WARN", "could not read the queue", "rig queue list exited 0 with no output")
+    else:
+        parsed = json.loads(qr.stdout)
+        if isinstance(parsed, list):
+            q = parsed
+        else:
+            rep("WARN", "could not read the queue", f"rig queue list returned JSON that is not a list of rows ({type(parsed).__name__})")
+except (OSError, subprocess.TimeoutExpired) as e:
+    rep("WARN", "could not read the queue", f"rig queue list: {e}")
 except json.JSONDecodeError:
-    rep("WARN", "could not read the queue (daemon down?)")
+    rep("WARN", "could not read the queue", "rig queue list returned output that is not JSON (daemon down?)")
 mine = [r for r in q if rig and ((r.get("destinationSession") or "").endswith(f"@{rig}")
                                  or (r.get("sourceSession") or "").endswith(f"@{rig}"))]
 maps = {}
@@ -403,6 +416,9 @@ recent = [r for r in mine if (r.get("tsCreated") or "") >= since
 tagged = [r for r in recent if any(t.startswith("project:") for t in (r.get("tags") or []))]
 scoped = [r for r in recent if any(t.startswith(("mission:", "slice:")) for t in (r.get("tags") or []))]
 wtp = [r for r in recent if "worktree_path=" in (r.get("body") or "")]
+if not recent and q:
+    rep("OK", f"queue rows since {since[:16]}Z: none for this project in the window, so the tag checks have nothing to judge",
+        f"{len(mine)} row(s) of this rig in total; the window starts at the later of the seat helper's install time and 24h ago")
 if recent:
     pct = lambda a: f"{len(a)}/{len(recent)}"
     rep("OK" if len(tagged) == len(recent) else "WARN", f"queue rows since {since[:16]}Z carry project:<id>", pct(tagged))
