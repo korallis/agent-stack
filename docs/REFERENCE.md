@@ -253,7 +253,11 @@ Details are in the `agent-stack` skill. What went wrong before: [docs/incidents/
   `VITEST_MAX_THREADS`/`VITEST_MAX_FORKS` (Vitest 3). `node --test` and Jest read no such variable: pass
   `--test-concurrency=4` / `--maxWorkers=4`. Without a systemd user session it warns and runs the job unconfined, under
   `timeout` for the max runtime. Every scope is cleared afterwards (`reset-failed`), so failed ones don't pile up. It refuses long-lived servers (`npm start`,
-  `start:*`, `dev`, `next start`, `vite`), which run outside it. `agent-heavy status` shows who holds each slot.
+  `start:*`, `dev`, `next start`, `vite`), which run outside it. `agent-heavy status` shows who holds each slot and who waits.
+  Waiters queue first come, first served per class (a ticket each in the slot dir; only the first K live tickets, K =
+  free slots, may try a slot, and a dead waiter's ticket is skipped). `--priority urgent|critical` (or
+  `AGENT_HEAVY_PRIORITY`) sorts ahead of routine: for critical-path QA and merge-gate re-runs. It only orders the
+  queue and never preempts a running job.
   A nested call of the same class (a script that wraps its own runs) runs inline in the parent's slot; a different
   class takes its own slot. The rig template's CULTURE.md makes it binding, and `agent-project-check` WARNs when a
   project's conventions lack it.
