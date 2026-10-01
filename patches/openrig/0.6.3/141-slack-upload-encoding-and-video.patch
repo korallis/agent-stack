@@ -1,0 +1,112 @@
+--- a/daemon/dist/domain/gateway/slack/slack-api.js
++++ b/daemon/dist/domain/gateway/slack/slack-api.js
+@@ -71,6 +71,22 @@
+                     signal,
+                 });
+             }
++            else if (shape === "form-post") {
++                // The form shape, as Slack's own Web API client sends every call: url-encoded fields, arrays and
++                // objects as JSON strings. files.getUploadURLExternal rejects a JSON body ("invalid_arguments:
++                // missing required field: length / filename") although its reference lists JSON.
++                const form = new URLSearchParams();
++                for (const [k, v] of Object.entries(body)) {
++                    if (v !== undefined && v !== null)
++                        form.set(k, typeof v === "object" ? JSON.stringify(v) : String(v));
++                }
++                res = await fetchImpl(`https://slack.com/api/${method}`, {
++                    method: "POST",
++                    headers: { authorization: `Bearer ${token}`, "content-type": "application/x-www-form-urlencoded; charset=utf-8" },
++                    body: form.toString(),
++                    signal,
++                });
++            }
+             else {
+                 res = await fetchImpl(`https://slack.com/api/${method}`, {
+                     method: "POST",
+@@ -163,13 +179,14 @@
+ //   3. files.completeUploadExternal ({ files, channel_id, thread_ts?, initial_comment? })
+ // Scope: files:write. thread_ts attaches the file INTO the conversation thread.
+ export async function getUploadURLExternal(token, filename, length, fetchImpl = defaultFetch, timeoutMs = DEFAULT_TIMEOUT_MS) {
+-    const r = await callWebApi("files.getUploadURLExternal", token, { filename, length }, fetchImpl, timeoutMs);
++    const r = await callWebApi("files.getUploadURLExternal", token, { filename, length }, fetchImpl, timeoutMs, "form-post");
+     if (!r.ok)
+         return { ok: false, error: r.error };
+     return { ok: true, uploadUrl: r.json.upload_url, fileId: r.json.file_id };
+ }
+-/** Leg 2: POST the raw bytes to the pre-signed upload URL (octet-stream, no auth header). */
+-export async function uploadBytesExternal(uploadUrl, bytes, fetchImpl = defaultFetch, timeoutMs = DEFAULT_TIMEOUT_MS) {
++/** Leg 2: POST the raw bytes to the pre-signed upload URL (octet-stream, no auth header). The default timeout grows
++ *  with the size (a video can be tens of MB): 15 s plus 1 s per 512 KiB. */
++export async function uploadBytesExternal(uploadUrl, bytes, fetchImpl = defaultFetch, timeoutMs = DEFAULT_TIMEOUT_MS + Math.ceil(bytes.length / 524_288) * 1000) {
+     try {
+         return await withTimeout(timeoutMs, async (signal) => {
+             const res = await fetchImpl(uploadUrl, {
+@@ -193,7 +210,7 @@
+         body.thread_ts = input.threadTs;
+     if (input.initialComment)
+         body.initial_comment = input.initialComment;
+-    const r = await callWebApi("files.completeUploadExternal", token, body, fetchImpl, timeoutMs);
++    const r = await callWebApi("files.completeUploadExternal", token, body, fetchImpl, timeoutMs, "form-post");
+     return { ok: r.ok, error: r.error };
+ }
+ /** S10 (H) — read recent message TEXTS for reconcile-by-marker: a timeout is an AMBIGUOUS
+--- a/daemon/dist/domain/gateway/slack/slack-delivery.js
++++ b/daemon/dist/domain/gateway/slack/slack-delivery.js
+@@ -16,7 +16,11 @@
+ import path from "node:path";
+ import { postChatMessage, getUploadURLExternal, uploadBytesExternal, completeUploadExternal, fetchRecentMessageTexts } from "./slack-api.js";
+ import { buildOutboundMessage, attributionFromSession, reconcileToken } from "./message.js";
+-const LOCAL_IMAGE_EXT = new Set([".png", ".jpg", ".jpeg", ".gif", ".webp"]);
++/** Local evidence files that ride the external-upload flow into the thread: images, video (Slack plays mp4/webm/mov
++ *  inline) and PDF. Anything else (e.g. a PROOF.md pointer) is a clean skip. */
++const LOCAL_ATTACHMENT_EXT = new Set([".png", ".jpg", ".jpeg", ".gif", ".webp", ".mp4", ".webm", ".mov", ".pdf"]);
++/** Well under Slack's 1 GB per-file limit, and bounded for a daemon that holds the bytes in memory. */
++export const LOCAL_ATTACHMENT_MAX_BYTES = 50 * 1024 * 1024;
+ const TRANSPORT_FAILURE_RECEIPT_PREFIX = "::transport-failure-receipt::";
+ const TRANSPORT_FAILURE_RECEIPT_REPAIRED = "::repaired";
+ function transportFailureReceiptKey(decisionId, failureClass, detail) {
+@@ -41,18 +45,25 @@
+         return { key, error: `pending transport-failure receipt is unreadable: ${e.message}` };
+     }
+ }
+-/** Default local-image reader: absolute path, image extension, readable — else null. */
++/** Default local-attachment reader: an absolute path with an allowed extension, a regular file of at most
++ *  LOCAL_ATTACHMENT_MAX_BYTES, readable — else null (not an attachment), or { skipped } when it is an allowed
++ *  attachment that can't be sent (too large, missing, unreadable), so the miss is logged rather than silent. */
+ export function defaultReadLocalImage(refPath) {
++    if (!path.isAbsolute(refPath))
++        return null;
++    if (!LOCAL_ATTACHMENT_EXT.has(path.extname(refPath).toLowerCase()))
++        return null;
+     try {
+-        if (!path.isAbsolute(refPath))
+-            return null;
+-        if (!LOCAL_IMAGE_EXT.has(path.extname(refPath).toLowerCase()))
+-            return null;
++        const st = fs.statSync(refPath);
++        if (!st.isFile())
++            return { skipped: "not a regular file" };
++        if (st.size > LOCAL_ATTACHMENT_MAX_BYTES)
++            return { skipped: `${st.size} bytes is over the ${LOCAL_ATTACHMENT_MAX_BYTES}-byte attachment cap` };
+         const bytes = fs.readFileSync(refPath);
+         return { bytes: new Uint8Array(bytes), filename: path.basename(refPath) };
+     }
+-    catch {
+-        return null;
++    catch (e) {
++        return { skipped: `unreadable (${e.code ?? "error"})` };
+     }
+ }
+ /** Build the subsystem DeliverFn. Contract mirrors the retired connector handleDecision. */
+@@ -240,7 +251,10 @@
+         const local = q.evidenceRef && !/^https:\/\//.test(String(q.evidenceRef))
+             ? (opts.readLocalImage ?? defaultReadLocalImage)(String(q.evidenceRef))
+             : null;
+-        if (local) {
++        if (local?.skipped) {
++            log(`ATTACHMENT skipped for ${q.qitemId ?? decision.decisionId}: ${path.basename(String(q.evidenceRef))} ${local.skipped} (text delivered; attachment missing)`);
++        }
++        else if (local) {
+             const intoThread = threadTs ?? res.ts;
+             const up = await getUploadURLExternal(opts.botToken, local.filename, local.bytes.length, opts.fetchImpl);
+             if (up.ok && up.uploadUrl && up.fileId) {

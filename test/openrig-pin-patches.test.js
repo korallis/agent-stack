@@ -15,7 +15,7 @@ test("the pinned OpenRig version has its patch directory, every patch there is '
   assert.equal(pin, "0.6.3");
   const dir = join(repo, "patches/openrig", pin), patches = fs.readdirSync(dir).filter((f) => f.endsWith(".patch")).map((f) => f.replace(/\.patch$/, ""));
   assert.deepEqual(patches, ["132-project-scoped-proof", "133-unclaimed-human-routes-to-source", "135-codex-idle-composer", "136-poll-cadence",
-    "137-proof-replace-keeps-sources", "139-batch-seat-tmux-reads", "140-delivery-outcome-resolved-close"]);
+    "137-proof-replace-keeps-sources", "139-batch-seat-tmux-reads", "140-delivery-outcome-resolved-close", "141-slack-upload-encoding-and-video"]);
   const section = readme.slice(readme.indexOf(`## ${pin}`), readme.indexOf("## The 0.6.1 set"));
   for (const p of patches) assert.match(section, new RegExp("\\| `" + p + "` \\| (\\*\\*)?kept"), p);
   for (const [, p] of section.matchAll(/\| `([\w-]+)` \| \*\*dropped\*\*/g)) assert.ok(!patches.includes(p), `${p} is dropped but still carried`);

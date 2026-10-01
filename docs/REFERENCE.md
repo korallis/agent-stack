@@ -197,6 +197,9 @@ with `agent-login` and the pool uses it straight away.
   then relaunch it once. Append; never rewrite the file. Prefix names with the project.
 - **`rig ps` shows ATTN `user_prompt_submit`** while a seat works on a turn; that is not a stuck seat.
 - **Never stop or restart `openrig.service`** while rigs run: restart the daemon with `openrig-daemon-cycle`.
+- **Slack attachments:** `openrig-slack-upload-check` shows whether the installed daemon can upload proof (patch 141 in,
+  channel, bot token present yes/no) without sending anything; `--live` uploads a generated 1x1 PNG (or `--file <abs
+  path>`) to the configured channel through the installed client. It reads `SLACK_BOT_TOKEN` by name and never prints it.
 
 Details are in the `agent-stack` skill. What went wrong before: [docs/incidents/](incidents/).
 
@@ -300,6 +303,7 @@ Details are in the `agent-stack` skill. What went wrong before: [docs/incidents/
 | Project views missed most queue rows | rows lacked `project:<id>` and `worktree_path=` | the `rig` launcher sends seat `queue create/handoff` through `seat-tools/rig`, which adds both |
 | Running seats kept old team rules; two seats lost their OpenRig instructions | managed blocks are written at launch; a git reset/merge of AGENTS.md wipes them | `agent-refresh-guidance <P> --apply` refreshes/restores them; a repo pre-commit hook stops them being committed |
 | `rig spec audit`: no start-up context | team specs had no rig-level startup file | `rig/startup/context.md` (identity, environment, system check, skills) in every team spec |
+| Slack proof screenshots never reached the thread ("ATTACHMENT upload-url FAILED … invalid_arguments; text delivered; attachment missing") | OpenRig 0.6.3 sends `files.getUploadURLExternal` as JSON, which Slack rejects; only images were attachable | patch 141: both upload calls form-encoded; video (.mp4/.webm/.mov) and PDF attachable up to 50 MiB; check with `openrig-slack-upload-check` |
 | TUI: "no wave declared", readiness unknown/legacy, merged work shown unmerged | waves in queue rows (ignored when mission.yaml exists); YAML without official `metadata:`; no proof policy; stale local `main` | `agent-project-repair <P> --apply`; `agent-repos-sync.timer`; `agent-project-check` now asks the daemon what the TUI shows |
 
 After an OpenRig upgrade run `openrig-upgrade <version>` and re-check these.
