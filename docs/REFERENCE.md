@@ -189,6 +189,19 @@ with `agent-login` and the pool uses it straight away.
 
 ## Operating a running fleet
 
+- **Watch the fleet: `rig-console`** (read-only, full screen; best at 176×50, works from 100×30).
+  - `1` Mission Control: working / idle / stuck / blocked / owner decisions / gate-today (every rig's
+    `review.merge_gate` decisions since 00:00 UTC, diagnosis calls excluded) tiles, one card per rig
+    (seat dots per pod), work in flight by role, owner decisions, the account pool, system health, the event log and a
+    live ticker.
+  - `2` Seat Matrix: every seat of every rig, context use shaded (red at 80%+), activity glyphs, 24 h telemetry and the
+    pool.
+  - Keys: `←→` / `hjkl` move, `⏎` drills from a rig card into the matrix, `?` help, `q` quits.
+  - It reads the daemon API and its event stream, the Jev decision log, `agent-proxy-status` and `agent-heavy status`
+    through ONE cache. The cache refreshes every 5 s, never under 2 s, and backs off to 60 s when the daemon is slow.
+    It never polls tmux and changes nothing.
+  - Its 24 h history lives in `$AGENT_STACK_STATE/rig-console/history.json`.
+  - `rig-console --once --fixture console/fixtures/demo.json` draws the neutral demo.
 - **Relaunch a seat only when it is idle.** Codex: `C-u`, `/quit`, Enter. Claude: `/exit`. Then
   `rig launch <rigId> <pod.member>` (the rig ID, not its name). Check that it resumed its own conversation (Codex
   `resume <thread>`, Claude `--resume <session-id>` on its command line).
