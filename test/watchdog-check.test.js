@@ -76,6 +76,9 @@ test("a context.message spec counts like a top-level message; two such sweeps FA
   const two = check([["m1", 900, "integ-codex@demo", CTX("integ-codex@demo", "Merge sweep: inspect PRs")],
     ["m2", 900, "integ-claude@demo", CTX("integ-claude@demo", "Merge sweep: again")]]);
   assert.deepEqual([two.merge.level, two.merge.detail], ["FAIL", "2 active (integ-claude@demo, integ-codex@demo)"]);
+  const twoDaily = check([["d1", 86400, "coord-lead-claude@demo", CTX("coord-lead-claude@demo", "Daily summary: one")],
+    ["d2", 43200, "coord-lead-codex@demo", DAILY]]);
+  assert.deepEqual([twoDaily.daily.level, twoDaily.daily.detail], ["FAIL", "2 active (coord-lead-claude@demo, coord-lead-codex@demo)"]);
   const emptyWins = check([["m1", 900, "integ-codex@demo", 'target:\n  session: "integ-codex@demo"\nmessage: ""\ncontext:\n  message: "Merge sweep: hidden"\n']]);
   assert.deepEqual([emptyWins.merge.level, emptyWins.merge.detail], ["WARN", "none active"], "an empty top-level message is what is delivered");
 });
