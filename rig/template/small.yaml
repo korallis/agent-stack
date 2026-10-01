@@ -60,7 +60,7 @@ pods:
         agent_ref: "path:@AGENT_STACK@/rig/template/agents/test-author"
         profile: default
         runtime: claude-code
-        model: "claude-opus-5-5"
+        model: "claude-sonnet-5-5"
         cwd: "@WT@/tests-claude"
         restore_policy: resume_if_possible
     edges: []
@@ -72,14 +72,14 @@ pods:
         agent_ref: "path:@AGENT_STACK@/rig/template/agents/implementer"
         profile: default
         runtime: codex
-        model: "gpt-6-astra"
+        model: "gpt-6.1-sol"
         cwd: "@WT@/impl-codex-1"
         restore_policy: resume_if_possible
       - id: claude-ui
         agent_ref: "path:@AGENT_STACK@/rig/template/agents/implementer"
         profile: default
         runtime: claude-code
-        model: "claude-opus-5-5"
+        model: "claude-sonnet-5-5"
         cwd: "@WT@/impl-claude-ui"
         restore_policy: resume_if_possible
     edges: []
@@ -91,7 +91,7 @@ pods:
         agent_ref: "path:@AGENT_STACK@/rig/template/agents/qa"
         profile: default
         runtime: codex
-        model: "gpt-6-sol"
+        model: "gpt-6.1-sol"
         cwd: "@WT@/qa-codex"
         restore_policy: resume_if_possible
     edges: []
@@ -110,7 +110,7 @@ pods:
         agent_ref: "path:@AGENT_STACK@/rig/template/agents/reviewer"
         profile: default
         runtime: codex
-        model: "gpt-6-sol"
+        model: "gpt-6.1-sol"
         cwd: "@WT@/review-codex"
         restore_policy: resume_if_possible
       - id: kimi

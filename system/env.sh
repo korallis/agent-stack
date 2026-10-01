@@ -14,7 +14,7 @@ if [ -n "${OPENRIG_NODE_ID:-}" ] && [ -r "$HOME/.config/agent-stack/secrets/clip
   export ANTHROPIC_AUTH_TOKEN="$(sed -n 's/^CLIPROXY_CLIENT_KEY=//p' "$HOME/.config/agent-stack/secrets/cliproxy.env")"
   export API_TIMEOUT_MS=600000
   export ANTHROPIC_DEFAULT_OPUS_MODEL=claude-opus-5-5
-  export ANTHROPIC_DEFAULT_SONNET_MODEL=claude-sonnet-5
+  export ANTHROPIC_DEFAULT_SONNET_MODEL=claude-sonnet-5-5
   export ANTHROPIC_DEFAULT_HAIKU_MODEL=claude-haiku-4-5-20251001
   export ANTHROPIC_DEFAULT_FABLE_MODEL=claude-fable-5-1
   # Kimi K3 through the proxy: use model "kimi-k3[1m]" for the 1M window. "kimi-k3-256k" is not a model

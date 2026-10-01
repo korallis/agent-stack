@@ -42,7 +42,7 @@ pods:
         agent_ref: "path:@AGENT_STACK@/rig/template/agents/deputy"
         profile: default
         runtime: codex
-        model: gpt-6-sol
+        model: gpt-6.1-sol
         cwd: "@WT@/coord-deputy-codex"
         restore_policy: resume_if_possible
     edges:
@@ -67,7 +67,7 @@ pods:
         agent_ref: "path:@AGENT_STACK@/rig/template/agents/architect"
         profile: default
         runtime: codex
-        model: gpt-6-sol
+        model: gpt-6.1-sol
         cwd: "@WT@/arch-codex"
         restore_policy: resume_if_possible
     edges: []
@@ -79,84 +79,84 @@ pods:
         agent_ref: "path:@AGENT_STACK@/rig/template/agents/implementer"
         profile: default
         runtime: claude-code
-        model: claude-opus-5-5
+        model: claude-sonnet-5-5
         cwd: "@WT@/impl-claude-1"
         restore_policy: resume_if_possible
       - id: claude-2
         agent_ref: "path:@AGENT_STACK@/rig/template/agents/implementer"
         profile: default
         runtime: claude-code
-        model: claude-opus-5-5
+        model: claude-sonnet-5-5
         cwd: "@WT@/impl-claude-2"
         restore_policy: resume_if_possible
       - id: claude-3
         agent_ref: "path:@AGENT_STACK@/rig/template/agents/implementer"
         profile: default
         runtime: claude-code
-        model: claude-opus-5-5
+        model: claude-sonnet-5-5
         cwd: "@WT@/impl-claude-3"
         restore_policy: resume_if_possible
       - id: claude-4
         agent_ref: "path:@AGENT_STACK@/rig/template/agents/implementer"
         profile: default
         runtime: claude-code
-        model: claude-opus-5-5
+        model: claude-sonnet-5-5
         cwd: "@WT@/impl-claude-4"
         restore_policy: resume_if_possible
       - id: claude-5
         agent_ref: "path:@AGENT_STACK@/rig/template/agents/implementer"
         profile: default
         runtime: claude-code
-        model: claude-opus-5-5
+        model: claude-sonnet-5-5
         cwd: "@WT@/impl-claude-5"
         restore_policy: resume_if_possible
       - id: claude-6
         agent_ref: "path:@AGENT_STACK@/rig/template/agents/implementer"
         profile: default
         runtime: claude-code
-        model: claude-opus-5-5
+        model: claude-sonnet-5-5
         cwd: "@WT@/impl-claude-6"
         restore_policy: resume_if_possible
       - id: codex-1
         agent_ref: "path:@AGENT_STACK@/rig/template/agents/implementer"
         profile: default
         runtime: codex
-        model: gpt-6-sol
+        model: gpt-6.1-sol
         cwd: "@WT@/impl-codex-1"
         restore_policy: resume_if_possible
       - id: codex-2
         agent_ref: "path:@AGENT_STACK@/rig/template/agents/implementer"
         profile: default
         runtime: codex
-        model: gpt-6-sol
+        model: gpt-6.1-sol
         cwd: "@WT@/impl-codex-2"
         restore_policy: resume_if_possible
       - id: codex-3
         agent_ref: "path:@AGENT_STACK@/rig/template/agents/implementer"
         profile: default
         runtime: codex
-        model: gpt-6-sol
+        model: gpt-6.1-sol
         cwd: "@WT@/impl-codex-3"
         restore_policy: resume_if_possible
       - id: codex-4
         agent_ref: "path:@AGENT_STACK@/rig/template/agents/implementer"
         profile: default
         runtime: codex
-        model: gpt-6-sol
+        model: gpt-6.1-sol
         cwd: "@WT@/impl-codex-4"
         restore_policy: resume_if_possible
       - id: codex-5
         agent_ref: "path:@AGENT_STACK@/rig/template/agents/implementer"
         profile: default
         runtime: codex
-        model: gpt-6-sol
+        model: gpt-6.1-sol
         cwd: "@WT@/impl-codex-5"
         restore_policy: resume_if_possible
       - id: codex-6
         agent_ref: "path:@AGENT_STACK@/rig/template/agents/implementer"
         profile: default
         runtime: codex
-        model: gpt-6-sol
+        model: gpt-6.1-sol
         cwd: "@WT@/impl-codex-6"
         restore_policy: resume_if_possible
     edges: []
@@ -189,21 +189,21 @@ pods:
         agent_ref: "path:@AGENT_STACK@/rig/template/agents/reviewer"
         profile: default
         runtime: codex
-        model: gpt-6-sol
+        model: gpt-6.1-sol
         cwd: "@WT@/review-codex-1"
         restore_policy: resume_if_possible
       - id: codex-2
         agent_ref: "path:@AGENT_STACK@/rig/template/agents/reviewer"
         profile: default
         runtime: codex
-        model: gpt-6-sol
+        model: gpt-6.1-sol
         cwd: "@WT@/review-codex-2"
         restore_policy: resume_if_possible
       - id: codex-3
         agent_ref: "path:@AGENT_STACK@/rig/template/agents/reviewer"
         profile: default
         runtime: codex
-        model: gpt-6-sol
+        model: gpt-6.1-sol
         cwd: "@WT@/review-codex-3"
         restore_policy: resume_if_possible
     edges: []
@@ -222,7 +222,7 @@ pods:
         agent_ref: "path:@AGENT_STACK@/rig/template/agents/recovery"
         profile: default
         runtime: codex
-        model: gpt-6-sol
+        model: gpt-6.1-sol
         cwd: "@WT@/integ-codex"
         restore_policy: resume_if_possible
     edges:

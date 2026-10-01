@@ -46,8 +46,8 @@ lists them with every other skill.
 Each seat runs the model that suits its job. These are the defaults in every team template:
 
 - architects: Claude Fable 5.1 (it bills your account's usage credits, outside the subscription pool);
-- Codex builders: GPT-6 Astra; UI builders: Claude Opus 5.5;
-- reviewers: three AI families (Claude Opus 5.5, GPT-6 Sol, Kimi K3).
+- Codex builders: GPT-6.1 Sol; UI builders and locked-test authors: Claude Sonnet 5.5;
+- reviewers: three AI families (Claude Opus 5.5, GPT-6.1 Sol, Kimi K3).
 
 Jev makes the routine decisions: which seat builds a slice, whether a pull request may merge, and whether a working
 seat is stuck. Code gathers the facts and sets the bar; anything Jev isn't sure about goes to the lead or to you.

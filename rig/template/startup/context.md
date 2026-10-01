@@ -32,4 +32,7 @@
    need a one-time consent. If Claude Code asks for it, or says the model is unavailable, stop and tell the lead in
    one row: "Fable needs its one-time consent: run `/model fable` once in <your seat>, then relaunch me at idle".
    Never carry on silently on another model.
+6. Your model is the one your rig pins (2026-10-01 routing): Codex seats `gpt-6.1-sol`; Claude test authors and UI
+   implementers `claude-sonnet-5-5`; lead and Claude reviewers `claude-opus-5-5`; architect `claude-fable-5-1`; Kimi
+   seats `kimi-k3`. If your footer shows another model, tell the lead.
 If anything is missing, tell the lead in one message; don't work around it.

@@ -34,7 +34,7 @@ pods:
         agent_ref: "path:@AGENT_STACK@/rig/template/agents/lead"
         profile: default
         runtime: codex
-        model: "gpt-6-sol"
+        model: "gpt-6.1-sol"
         cwd: "@WT@/coord-lead-codex"
         restore_policy: resume_if_possible
     edges: []
@@ -46,7 +46,7 @@ pods:
         agent_ref: "path:@AGENT_STACK@/rig/template/agents/architect"
         profile: default
         runtime: codex
-        model: "gpt-6-astra"
+        model: "gpt-6.1-sol"
         cwd: "@WT@/arch-astra"
         restore_policy: resume_if_possible
     edges: []
@@ -70,35 +70,35 @@ pods:
         agent_ref: "path:@AGENT_STACK@/rig/template/agents/implementer"
         profile: default
         runtime: codex
-        model: "gpt-6-sol"
+        model: "gpt-6.1-sol"
         cwd: "@WT@/impl-codex-1"
         restore_policy: resume_if_possible
       - id: codex-2
         agent_ref: "path:@AGENT_STACK@/rig/template/agents/implementer"
         profile: default
         runtime: codex
-        model: "gpt-6-sol"
+        model: "gpt-6.1-sol"
         cwd: "@WT@/impl-codex-2"
         restore_policy: resume_if_possible
       - id: codex-3
         agent_ref: "path:@AGENT_STACK@/rig/template/agents/implementer"
         profile: default
         runtime: codex
-        model: "gpt-6-sol"
+        model: "gpt-6.1-sol"
         cwd: "@WT@/impl-codex-3"
         restore_policy: resume_if_possible
       - id: codex-4
         agent_ref: "path:@AGENT_STACK@/rig/template/agents/implementer"
         profile: default
         runtime: codex
-        model: "gpt-6-sol"
+        model: "gpt-6.1-sol"
         cwd: "@WT@/impl-codex-4"
         restore_policy: resume_if_possible
       - id: astra
         agent_ref: "path:@AGENT_STACK@/rig/template/agents/implementer"
         profile: default
         runtime: codex
-        model: "gpt-6-astra"
+        model: "gpt-6.1-sol"
         cwd: "@WT@/impl-astra"
         restore_policy: resume_if_possible
     edges: []
@@ -110,7 +110,7 @@ pods:
         agent_ref: "path:@AGENT_STACK@/rig/template/agents/qa"
         profile: default
         runtime: codex
-        model: "gpt-6-sol"
+        model: "gpt-6.1-sol"
         cwd: "@WT@/qa-codex"
         restore_policy: resume_if_possible
     edges: []
@@ -129,7 +129,7 @@ pods:
         agent_ref: "path:@AGENT_STACK@/rig/template/agents/reviewer"
         profile: default
         runtime: codex
-        model: "gpt-6-astra"
+        model: "gpt-6.1-sol"
         cwd: "@WT@/review-astra"
         restore_policy: resume_if_possible
     edges: []
@@ -141,7 +141,7 @@ pods:
         agent_ref: "path:@AGENT_STACK@/rig/template/agents/integrator"
         profile: default
         runtime: codex
-        model: "gpt-6-sol"
+        model: "gpt-6.1-sol"
         cwd: "@WT@/integ-codex"
         restore_policy: resume_if_possible
     edges: []

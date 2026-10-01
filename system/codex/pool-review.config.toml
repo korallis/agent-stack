@@ -1,5 +1,5 @@
 # agent-stack role profile for OpenRig seats (codex_config_profile: pool-review). Profiles replace -s, so sandbox is set here.
-model = "gpt-6-sol"
+model = "gpt-6.1-sol"
 model_reasoning_effort = "high"
 sandbox_mode = "danger-full-access"
 approval_policy = "never"

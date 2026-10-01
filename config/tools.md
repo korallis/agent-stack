@@ -10,7 +10,7 @@ servers marked "latest" track upstream, the rest are pinned in `config/versions.
 | OpenRig (`rig`) | 0.5.17 (pinned) | Runs the teams: seats, queue, handoffs, reminders | `bin/openrig-upgrade`, kept current by `openrig-update` |
 | CLIProxyAPI | 8.0.3 (pinned) | Pools Claude, ChatGPT and Kimi subscriptions with failover | download + sha256 check |
 | Claude Code | latest via mise (validated 2.1.283) | Harness for Claude Opus / Fable and Kimi K3 seats | `mise use -g claude@latest` |
-| Codex CLI | latest via mise (validated 0.157.1) | Harness for GPT-6 Sol / Astra seats | `mise use -g codex@latest` |
+| Codex CLI | latest via mise (validated 0.157.1) | Harness for GPT-6.1 Sol seats | `mise use -g codex@latest` |
 | Node.js | 26.8.2 global, 22 for OpenRig, 24 for Jev | Runtimes | mise |
 | ripgrep, fd | system packages (validated 15.2.0, 10.5.0) | Fast, `.gitignore`-aware search for agents | your package manager |
 | TOON CLI (`toon`) | latest (validated 4.1.1) | Compacts table-shaped JSON before it goes into prompts | `npm i -g @toon-format/cli` |
