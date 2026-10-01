@@ -12,7 +12,7 @@ const repo = join(dirname(fileURLToPath(import.meta.url)), "..");
 const src = (f) => import(join(repo, "console/src", f));
 const { Screen, frame, dump, detectDepth, to256, to16 } = await src("term.ts");
 const { bigNumber, braille, fit, sparkline } = await src("draw.ts");
-const { seatFromNode, derive, eventLine, isHuman } = await src("model.ts");
+const { seatFromNode, derive, eventLine, isHuman, classify } = await src("model.ts");
 const { Cache, parseHeavy, parseAccounts, parseGates, MIN_INTERVAL } = await src("data.ts");
 const { History } = await src("history.ts");
 const { render, parseArgs } = await src("main.ts");
@@ -82,7 +82,9 @@ test("model: derived counts match the fixture; blocked rows by what they wait on
   const f = derive(fixture.raw);
   const agents = fixture.raw.rigs.flatMap((r) => r.seats);
   assert.equal(f.count.working, agents.filter((s) => s.activity === "working").length);
-  assert.equal(f.stuck.length, 2, "a stalled seat and an unknown one");
+  // phase 4: stuck is derived (classify); the raw signal alone is "unknown, not stuck"
+  const fc = derive(classify(fixture.raw));
+  assert.deepEqual([fc.stuck.map((s) => s.session), fc.unknown.map((s) => s.session)], [["impl-codex-5@gamma"], ["tests-codex@beta"]]);
   const n = (st) => fixture.raw.queue.filter((r) => r.state === st).length;
   assert.deepEqual([f.queue.blocked, f.queue.pending, f.queue.inProgress], [n("blocked"), n("pending"), n("in-progress")]);
   assert.ok(f.queue.blocked > 30, "the fixture has a real backlog");

@@ -10,7 +10,7 @@ export interface Ctx { s: Screen; t: Theme; raw: Raw; f: Fleet; frame: number; v
   // phase 3: the focused pane (Tab), 'e' expanded, the selection in it, the ':' command being typed
   pane?: number; expand?: boolean; select?: number; cmd?: string | null; clampSelect?: (n: number) => void }
 export const VIEWS = ["Mission Control", "Seat Matrix", "River", "Focus", "Pool & System"];
-export const COMMANDS = ["home", "matrix", "river", "focus", "pool", "seat <name>", "rig <name>", "slice <id>", "theme pad39a|catppuccin|tokyo-night|nord", "help", "q"];
+export const COMMANDS = ["home", "matrix", "river", "focus", "pool", "seat <name>", "rig <name>", "slice <id>", "stuck <minutes>", "theme pad39a|catppuccin|tokyo-night|nord", "help", "q"];
 const SPIN = "⣾⣽⣻⢿⡿⣟⣯⣷";
 
 export function header(c: Ctx, crumb: string): void {
@@ -82,7 +82,7 @@ export function footer(c: Ctx, keys: [string, string][], status: string): void {
   }
   const warn: string[] = [];
   if (f.owner.length) warn.push(`▲ ${f.owner.length} owner decision${f.owner.length > 1 ? "s" : ""} waiting`);
-  if (f.stuck.length) warn.push(`${f.stuck.length} seat${f.stuck.length > 1 ? "s" : ""} stuck or unknown`);
+  if (f.stuck.length) warn.push(`${f.stuck.length} seat${f.stuck.length > 1 ? "s" : ""} stuck`);
   if (f.ctxHigh.length) warn.push(`${f.ctxHigh.length} ctx ≥ 80%`);
   const w = warn.join(" · ");
   s.put(1, s.h - 1, fit(status, Math.max(0, s.w - [...w].length - 5)), { fg: t.dim });

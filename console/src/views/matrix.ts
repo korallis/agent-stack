@@ -49,7 +49,7 @@ export function matrix(c: Ctx, hist: History): void {
     s.put(2, y, "◆ OWNER INBOX", { fg: t.owner, bold: true }); s.put(17, y, "nothing waiting on the owner", { fg: t.dim }); y += 1;
   }
   let x = s.put(2, y, `AGENTS ${f.agents.length}`, { fg: t.text, bold: true });
-  for (const [label, v, col] of [["WORKING", f.count.working, t.working], ["IDLE", f.count.idle, t.idle], ["STUCK/UNKNOWN", f.stuck.length, f.stuck.length ? t.stuck : t.dim],
+  for (const [label, v, col] of [["WORKING", f.count.working, t.working], ["IDLE", f.count.idle, t.idle], ["STUCK", f.stuck.length, f.stuck.length ? t.stuck : t.dim],
     ["DOWN", f.count.detached + f.count.stopped, t.faint], ["BLOCKED ROWS", f.queue.blocked, t.blocked], ["CTX ≥ 80%", f.ctxHigh.length, f.ctxHigh.length ? t.stuck : t.dim], ["GATE TODAY", f.gate.total, t.merged]] as [string, number, RGB][]) {
     x = s.put(x + 3, y, `${label} `, { fg: t.dim });
     const partial = label === "GATE TODAY" && f.gate.partial;   // a lower bound when the day's log was over the read cap
@@ -218,7 +218,7 @@ export function matrix(c: Ctx, hist: History): void {
     sx = s.put(sx + 2, bottom + 1, `${DOT[sel.activity]} ${sel.activity}${sel.why ? ` (${sel.why})` : ""}`, { fg: dotColor(c, sel.activity) });
     s.put(sx + 2, bottom + 1, fit(`CTX ${sel.ctx ?? "—"}% · ${sel.runtime} ${sel.model ?? "—"} · assigned ${sel.assigned} / pending ${sel.pending} / in progress ${sel.inProgress} / blocked ${sel.blocked} · last activity ${since(raw, sel.lastActivityAt)} ago`, s.w - sx - 4), { fg: t.dim });
   } else s.put(2, bottom + 1, "SELECTED  — (an empty slot: this rig has no seat here)", { fg: t.faint });
-  const exc = [...f.stuck.map((x) => `${x.session}: ${x.why ?? x.activity}`), ...f.rigs.filter((r) => r.health === "down").map((r) => `${r.rig.name}: down (${r.count.detached + r.count.stopped} seats)`)];
+  const exc = [...f.stuck.map((x) => `${x.session} stuck: ${x.why}`), ...(f.unknown.length ? [`${f.unknown.length} quiet, not stuck`] : []), ...f.rigs.filter((r) => r.health === "down").map((r) => `${r.rig.name}: down (${r.count.detached + r.count.stopped} seats)`)];
   s.put(2, bottom + 2, "EXCEPTIONS ", { fg: exc.length ? t.blocked : t.dim, bold: true });
   s.put(13, bottom + 2, fit(exc.join("  ·  ") || "none", s.w - 16), { fg: exc.length ? t.text : t.dim });
   ticker(c, s.h - 3);

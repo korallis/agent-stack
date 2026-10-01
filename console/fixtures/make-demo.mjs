@@ -34,7 +34,8 @@ const rigs = [
 // a few sharp cases: a stalled seat, an unknown one, context pressure
 const g = rigs[3].seats;
 Object.assign(g.find((x) => x.name === "codex-5" && x.pod === "impl"), { activity: "stuck", why: "stalled", ctx: 89 });
-Object.assign(rigs[2].seats.find((x) => x.pod === "tests" && x.name === "codex"), { activity: "unknown", why: "activity unknown" });
+Object.assign(rigs[2].seats.find((x) => x.pod === "tests" && x.name === "codex"), { activity: "unknown", why: "activity unknown", lastActivityAt: iso(18 * 60_000) });
+Object.assign(g.find((x) => x.name === "codex-5" && x.pod === "impl"), { lastActivityAt: iso(42 * 60_000) });
 Object.assign(rigs[2].seats.find((x) => x.pod === "arch"), { ctx: 92, activity: "working" });
 Object.assign(rigs[1].seats.find((x) => x.pod === "ops"), { ctx: 84, activity: "working" });
 Object.assign(g.find((x) => x.pod === "impl" && x.name === "codex-7"), { ctx: 81 });
@@ -51,6 +52,12 @@ for (let i = 0; i < 100; i++) {
     source: pick(agentSessions), destination: dest, blockedOn: state !== "blocked" ? null : kind < 0.5 ? `pr:${400 + Math.floor(rnd() * 30)}` : kind < 0.85 ? `qitem-20261001${String(100000 + i).slice(-6)}-0000abcd` : "human@kernel",
     tags: [`project:${dest.split("@")[1]}`, `mission:m4-data-lifecycle`, `slice:${tagFor(pick(FEATURES))}`], created: iso(60_000 * (5 + Math.floor(rnd() * 300))), updated: iso(60_000 * Math.floor(rnd() * 30)), summary: null });
 }
+// phase 4's sharp cases: a seat stalled 42 min whose open row hasn't moved for 38 min (stuck), and a quiet seat whose
+// queue moved 3 min ago (unknown, not stuck)
+queue.push({ id: "qitem-20261001132800-stuk0001", state: "in-progress", priority: "routine", source: "coord-lead-claude@gamma", destination: "impl-codex-5@gamma", blockedOn: null,
+  tags: ["project:gamma", "mission:m4-data-lifecycle", "slice:f-063-lifecycle-webhooks"], created: iso(90 * 60_000), updated: iso(38 * 60_000), summary: "F-063 lifecycle webhooks: build" });
+queue.push({ id: "qitem-20261001140300-quie0001", state: "in-progress", priority: "routine", source: "coord-lead-claude@beta", destination: "tests-codex@beta", blockedOn: null,
+  tags: ["project:beta", "mission:m4-data-lifecycle", "slice:f-064-data-residency-report"], created: iso(40 * 60_000), updated: iso(3 * 60_000), summary: "F-064 locked tests" });
 // one slice's whole journey (gamma, F-055): spec → tests → build → review → QA → merge held for the owner
 const J = "slice:f-055-backup-and-restore-drill", jtags = ["project:gamma", "mission:m4-data-lifecycle", J, "pr:412"];
 const jrows = [
