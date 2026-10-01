@@ -1,0 +1,159 @@
+--- a/daemon/dist/adapters/tmux.js
++++ b/daemon/dist/adapters/tmux.js
+@@ -95,6 +95,9 @@
+     return { ok: false, code: "unknown", message: err.message };
+ }
+ /** Shell-quote a string using single quotes (POSIX-safe). */
++/** Patch 142: the most sessions one batched capture chains. Not a byte bound: a chunk whose output overflows exec's
++ *  1 MiB buffer fails and is split in half (capturePanesContent). */
++const CAPTURE_BATCH = 24;
+ function shellQuote(s) {
+     // Replace each ' with '"'"' (end quote, double-quote the apostrophe, resume quote)
+     return "'" + s.replace(/'/g, "'\"'\"'") + "'";
+@@ -750,6 +753,79 @@
+             return null;
+         }
+     }
++    /** Patch 142: capture many sessions' panes with a few tmux calls instead of one per session. One `list-sessions`
++     *  says which targets exist: a missing one maps to null (as a failed per-target capture), without a fork. The live
++     *  ones are captured in chunks of CAPTURE_BATCH chained commands (`display-message` marker, then `capture-pane`),
++     *  each pane's output delimited by a marker unique to the call. tmux stops a chain at its first failing command,
++     *  so a chunk that fails is split in half and retried (an oversized output or a session gone since the listing);
++     *  a single session that still fails is left OUT of the map: the caller reads it per target. Null when tmux can't be listed at all. `ansi` keeps SGR escapes (`-e`). `knownLive` (the
++     *  sessions a capture moments ago found) skips the listing. */
++    async capturePanesContent(targets, lines = 20, ansi = false, knownLive = null) {
++        let live = knownLive;
++        if (!live) {
++            try {
++                live = new Set((await this.exec(`tmux list-sessions -F '#{session_name}'`)).split("\n").map((s) => s.trim()).filter(Boolean));
++            }
++            catch {
++                return null;
++            }
++        }
++        const out = new Map();
++        const present = [];
++        for (const t of new Set(targets)) {
++            if (live.has(t))
++                present.push(t);
++            else
++                out.set(t, null);
++        }
++        // A chunk that fails is split in half and retried, down to one session: its output overflowed exec's 1 MiB
++        // buffer (wide, colour-dense panes: each capture is the visible pane plus the requested history) or a session
++        // vanished since the listing. A single session that still fails is left out: the caller reads it per target.
++        const captureChunk = async (chunk) => {
++            const nonce = randomUUID().replace(/-/g, "");
++            const mark = (k) => `__openrig_capture_${nonce}_${k}__`;
++            // `=<name>:` targets exactly that session's current pane: no prefix match, and a name with a "." (which `-t
++            // <name>` would read as window.pane) still resolves, so one odd name can't fail its whole chunk.
++            const cmd = "tmux " + chunk.map((t, k) => `display-message -p -t ${shellQuote(`=${t}:`)} ${shellQuote(mark(k))} \\; capture-pane -p${ansi ? " -e" : ""} -t ${shellQuote(`=${t}:`)} -S -${lines}`).join(" \\; ");
++            let output;
++            try {
++                output = await this.exec(cmd);
++            }
++            catch {
++                if (chunk.length > 1) {
++                    const half = Math.ceil(chunk.length / 2);
++                    await captureChunk(chunk.slice(0, half));
++                    await captureChunk(chunk.slice(half));
++                }
++                return; // a single session that failed: read per target by the caller
++            }
++            const segments = chunk.map(() => null);
++            let cur = -1;
++            const outLines = output.split("\n");
++            if (outLines.length && outLines[outLines.length - 1] === "")
++                outLines.pop(); // the final newline, not a line
++            for (const line of outLines) {
++                const m = line.startsWith(`__openrig_capture_${nonce}_`) ? /_(\d+)__$/.exec(line) : null;
++                if (m && line === mark(Number(m[1]))) {
++                    cur = Number(m[1]);
++                    segments[cur] = [];
++                }
++                else if (cur >= 0) {
++                    segments[cur].push(line);
++                }
++            }
++            chunk.forEach((t, k) => {
++                if (segments[k] === null)
++                    return; // its marker never printed: read per target
++                // each capture-pane prints its lines newline-terminated, as the per-target read returns them
++                const text = segments[k].length ? segments[k].join("\n") + "\n" : "";
++                out.set(t, text === "" ? null : text);
++            });
++        };
++        for (let i = 0; i < present.length; i += CAPTURE_BATCH)
++            await captureChunk(present.slice(i, i + CAPTURE_BATCH));
++        return out;
++    }
+     /** Like capturePaneContent, but keeps SGR escapes (`-e`) so a dim placeholder can be told from typed text. */
+     async capturePaneContentAnsi(paneId, lines = 20) {
+         try {
+--- a/daemon/dist/domain/seat-structural-activity-service.js
++++ b/daemon/dist/domain/seat-structural-activity-service.js
+@@ -58,14 +58,21 @@
+     /** Capture + structurally classify one seat's pane, caching the observation keyed by session name. A
+      *  null or failed capture INVALIDATES the prior row (never leaves a stale positive verdict) and
+      *  returns null (MUST-FIX 1). */
+-    async pollSeat(sessionName) {
++    /** `prefetched` (patch 142): the sweep's batched captures. A session it has (null = gone or empty) is used as is; one
++     *  it lacks is captured here, per seat, exactly as before. */
++    async pollSeat(sessionName, prefetched) {
+         let content;
+-        try {
+-            content = await this.tmuxAdapter.capturePaneContent(sessionName, this.captureLines);
++        if (prefetched?.plain?.has(sessionName)) {
++            content = prefetched.plain.get(sessionName);
+         }
+-        catch {
+-            this.latestBySession.delete(sessionName);
+-            return null;
++        else {
++            try {
++                content = await this.tmuxAdapter.capturePaneContent(sessionName, this.captureLines);
++            }
++            catch {
++                this.latestBySession.delete(sessionName);
++                return null;
++            }
+         }
+         if (content === null) {
+             this.latestBySession.delete(sessionName);
+@@ -75,7 +82,9 @@
+         // Codex >= 0.158 draws a dim placeholder in its composer, which the plain-text signatures can't see; only when
+         // nothing else classified the pane, re-read it with SGR escapes and look for an idle composer.
+         if (c.state === "unknown" && this.tmuxAdapter.capturePaneContentAnsi) {
+-            const ansi = await this.tmuxAdapter.capturePaneContentAnsi(sessionName, this.captureLines).catch(() => null);
++            const ansi = prefetched?.ansi?.has(sessionName)
++                ? prefetched.ansi.get(sessionName)
++                : await this.tmuxAdapter.capturePaneContentAnsi(sessionName, this.captureLines).catch(() => null);
+             const evidence = ansi ? idleComposerEvidence(ansi) : null;
+             if (evidence)
+                 c = { state: "agent_idle", reason: "idle_composer", evidence };
+@@ -112,9 +121,24 @@
+                 if (!live.has(s))
+                     this.latestBySession.delete(s); // release memory + never serve a stale read
+             }
++            // Patch 142: one batched plain capture for every seat, then one batched ANSI capture for the seats it leaves
++            // "unknown" (the idle-composer check), instead of a tmux fork per seat (each blocks the event loop ~12-20 ms
++            // at ~1 GB RSS). Anything the batch didn't cover is read per seat inside pollSeat, as before.
++            let prefetched;
++            if (this.tmuxAdapter.capturePanesContent) {
++                const names = rows.map((r) => r.session_name);
++                const plain = await this.tmuxAdapter.capturePanesContent(names, this.captureLines, false).catch(() => null);
++                let ansi = null;
++                if (plain && this.tmuxAdapter.capturePaneContentAnsi) {
++                    const unknown = names.filter((n) => typeof plain.get(n) === "string" && classifyPaneActivity(plain.get(n)).state === "unknown");
++                    if (unknown.length) // just captured, so known to exist: no second listing
++                        ansi = await this.tmuxAdapter.capturePanesContent(unknown, this.captureLines, true, new Set(unknown)).catch(() => null);
++                }
++                prefetched = { plain, ansi };
++            }
+             await Promise.all(rows.map(async (r) => {
+                 try {
+-                    await this.pollSeat(r.session_name);
++                    await this.pollSeat(r.session_name, prefetched);
+                 }
+                 catch { /* isolate: one seat's failure never crashes the sweep */ }
+             }));
