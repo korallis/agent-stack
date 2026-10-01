@@ -116,7 +116,7 @@ pods:
     edges: []
 
   - id: review
-    label: "Independent review (Kimi reviews Codex PRs; Astra second opinion on risky)"
+    label: "Independent review (Kimi reviews Codex PRs; a second GPT-6.1 Sol opinion on risky ones)"
     members:
       - id: kimi
         agent_ref: "path:@AGENT_STACK@/rig/template/agents/reviewer"

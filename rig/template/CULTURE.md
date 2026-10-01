@@ -153,7 +153,7 @@ Six skills from agent-stack are installed for every seat. Each has a fixed momen
 |---|---|
 | Lead / orchestration (holds the whole backlog; 1M context) | Opus 5.5 `[1m]` |
 | Deputy, merge owner, recovery | GPT-6.1 Sol (Codex) |
-| Plan decomposition, acceptance criteria, architecture | Opus 5.5 |
+| Plan decomposition, acceptance criteria, architecture | Fable 5.1 (`team.yaml` keeps Opus 5.5) |
 | Volume implementation, unit tests, lint/renames/docs | GPT-6.1 Sol (Codex) |
 | Frontend/UI and large migrations | Sonnet 5.5 |
 | Escalation after two red CI runs on a feature | a fresh seat on the same model (GPT-6.1 Sol); the operator may set GPT-6 Astra case by case |

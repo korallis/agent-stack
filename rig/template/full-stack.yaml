@@ -4,7 +4,7 @@
 # locked tests; Opus 5.5 reviews Codex PRs; Kimi K3 is the third-family / long-context reviewer. Seats: lead coord-lead-claude, merge owner integ-codex.
 # The lead routes each task to a seat with Jev intake.specialist over the idle seats of the right kind.
 # Busy implementers are capped by verification capacity (3 per QA seat, 2 per reviewer): about 9 at once.
-# Resources: ~13 GB RAM idle; subscription quota is the real limit (18 Codex seats, 8 Opus seats, 1 Kimi seat).
+# Resources: ~13 GB RAM idle; subscription quota is the real limit (18 Codex seats on GPT-6.1 Sol; Claude: 3 Opus 5.5, 4 Sonnet 5.5, 1 Fable 5.1; 1 Kimi seat).
 # Copy to <workspace>/rig/, replace @RIG@ (e.g. <project>-fs), @REPO@, @WT@, @AGENT_STACK@ (this repo), create one git
 # worktree per seat, then:  rig spec validate full-stack.yaml  →  rig up full-stack.yaml
 version: "0.2"
@@ -95,7 +95,7 @@ pods:
     edges: []
 
   - id: impl
-    label: "Implementation: Sol for volume, Opus for UI and migrations, Astra for escalations only"
+    label: "Implementation: GPT-6.1 Sol for volume and escalations (a fresh seat on the same model; Astra case by case), Sonnet 5.5 for UI and migrations"
     members:
       - id: codex-1
         agent_ref: "path:@AGENT_STACK@/rig/template/agents/implementer"
