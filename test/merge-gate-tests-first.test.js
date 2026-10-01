@@ -97,4 +97,8 @@ test("WO79: an ordinary PR's scope line is neutral; the contradiction line appea
   assert.match(claimed.change, /\nscope check: the change or review calls this tests-only, but the diff changes 1 non-test path\(s\): bin\/tool \(plus 1 test path\(s\)\)$/);
   const honest = buildMergeInput(facts("F-031 locked journey. Tests only.", testScope([f("tests/a.spec.ts")])));
   assert.doesNotMatch(honest.change, /scope check/, "a tests-only diff is no contradiction");
+  for (const said of ["This is not a tests-only change.", "Review: isn't tests only; app code changes.", "no tests-only claim here", "non-tests-only refactor"])
+    assert.doesNotMatch(buildMergeInput(facts(`Refactor export. ${said}`, code)).change, /scope check/, said);
+  for (const said of ["Tests only.", "A tests-only PR.", "test-only fixtures"])
+    assert.match(buildMergeInput(facts(`F-031 journey. ${said}`, code)).change, /scope check/, said);
 });

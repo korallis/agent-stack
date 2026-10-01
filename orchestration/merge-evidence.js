@@ -559,7 +559,8 @@ export function buildMergeInput(f) {
   ].join("\n");
   // Free text from PR comments and statuses goes out to Jev: redact anything credential-shaped (shas are kept).
   // WO79: only when the PR or its review CLAIMS tests-only but the diff changes code is the scope a decisive negative.
-  const claimsTestsOnly = /\btests?[- ]only\b/i.test(`${f.change || ""}\n${review}`);
+  // A claim, not a mention: "not tests-only", "isn't a tests only change", "no tests-only" don't count.
+  const claimsTestsOnly = /(?<!\b(?:not|isn't|is not|no|non)[- ](?:an? |purely |just )?)\btests?[- ]only\b/i.test(`${f.change || ""}\n${review}`);
   const contradiction = claimsTestsOnly && /^scope \(from the diff\): code change,/.test(f.scope || "")
     ? `scope check: the change or review calls this tests-only, but the diff changes ${f.scope.replace(/^scope \(from the diff\): code change, /, "")}`
     : null;
