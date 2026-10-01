@@ -559,8 +559,15 @@ export function buildMergeInput(f) {
   ].join("\n");
   // Free text from PR comments and statuses goes out to Jev: redact anything credential-shaped (shas are kept).
   // WO79: only when the PR or its review CLAIMS tests-only but the diff changes code is the scope a decisive negative.
-  // A claim, not a mention: "not tests-only", "isn't a tests only change", "no tests-only" don't count.
-  const claimsTestsOnly = /(?<!\b(?:not|isn't|is not|no|non)[- ](?:an? |purely |just )?)\btests?[- ]only\b/i.test(`${f.change || ""}\n${review}`);
+  // A claim, not a mention (QA PR83): only the PR's own description counts (reviews negate, quote and describe), and
+  // only affirmative forms: a sentence that starts "Tests only", "this PR/change/patch is tests-only", or "a tests-only
+  // PR/change/patch". "not tests-only", "the tests-only classifier", "said tests-only; …" are not claims.
+  const NEG = String.raw`(?<!\b(?:not|isn't|is not|no|non)[- ](?:an? |purely |just )?)`;
+  const claimsTestsOnly = [
+    new RegExp(String.raw`(?:^|[.!?]\s+|\n)\s*tests?[- ]only\b`, "i"),
+    new RegExp(String.raw`\b(?:this|the)\s+(?:pr|change|patch|diff)\s+(?:is|are)\s+(?:purely\s+|only\s+)?tests?[- ]only\b`, "i"),
+    new RegExp(NEG + String.raw`\btests?[- ]only\s+(?:pr|change|patch|diff)\b`, "i"),
+  ].some((re) => re.test(f.change || ""));
   const contradiction = claimsTestsOnly && /^scope \(from the diff\): code change,/.test(f.scope || "")
     ? `scope check: the change or review calls this tests-only, but the diff changes ${f.scope.replace(/^scope \(from the diff\): code change, /, "")}`
     : null;

@@ -97,8 +97,13 @@ test("WO79: an ordinary PR's scope line is neutral; the contradiction line appea
   assert.match(claimed.change, /\nscope check: the change or review calls this tests-only, but the diff changes 1 non-test path\(s\): bin\/tool \(plus 1 test path\(s\)\)$/);
   const honest = buildMergeInput(facts("F-031 locked journey. Tests only.", testScope([f("tests/a.spec.ts")])));
   assert.doesNotMatch(honest.change, /scope check/, "a tests-only diff is no contradiction");
-  for (const said of ["This is not a tests-only change.", "Review: isn't tests only; app code changes.", "no tests-only claim here", "non-tests-only refactor"])
-    assert.doesNotMatch(buildMergeInput(facts(`Refactor export. ${said}`, code)).change, /scope check/, said);
-  for (const said of ["Tests only.", "A tests-only PR.", "test-only fixtures"])
+  // QA PR83: negations, descriptions and history in the review or the description are not claims
+  for (const said of ["This is not tests-only.", "This isn't tests-only.", "This changes the tests-only classifier.",
+    "The old description said tests-only; this review confirms application code changed.", "This is not a tests-only change.", "non-tests-only refactor"]) {
+    assert.doesNotMatch(buildMergeInput(facts(`Refactor export. ${said}`, code)).change, /scope check/, `description: ${said}`);
+    assert.doesNotMatch(buildMergeInput({ ...facts("Refactor export.", code), reviewVerdict: { state: "success", source: "status" }, verdictReport: { kind: "review", url: "u", at: "t", author: "r", excerpt: said } }).change, /scope check/, `review: ${said}`);
+  }
+  for (const said of ["Tests only, authored by tests-claude-1.", "This PR is tests-only.", "A tests-only change for F-031.", "the patch is purely tests-only"])
     assert.match(buildMergeInput(facts(`F-031 journey. ${said}`, code)).change, /scope check/, said);
+  assert.doesNotMatch(buildMergeInput(facts("F-031 journey. Tests only.", testScope([f("tests/a.spec.ts")]))).change, /scope check/, "honest tests-only");
 });
