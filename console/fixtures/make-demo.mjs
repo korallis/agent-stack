@@ -97,10 +97,19 @@ for (let m = 1440; m > 0; m--) {
   history.push({ t, working: Math.round(14 + day * 24 + rnd() * 4), idle: Math.round(40 - day * 20 + rnd() * 3), stuck: rnd() < 0.05 ? 1 : 0,
     pending: Math.round(10 + day * 12 + rnd() * 4), inProgress: Math.round(20 + day * 25), blocked: Math.round(30 + day * 15 + rnd() * 5), gateToday: Math.round(Math.max(0, (h - 0) * 1.5)) });
 }
+// a terminal tail for the seats a screenshot opens, and some queue history (neutral, made up)
+const tails = {
+  "impl-codex-4@gamma": ["--- SESSION BOUNDARY: restore attempt from snapshot X at 2026-10-01T09:00:00Z ---", "› Running the locked restore tests.", "", "$ npm test -- restore-progress --run",
+    "", " RUN  v3.2.4 restore-progress", "", " ✓ progress survives a dropped connection          184ms", " ✓ replayed events do not duplicate progress         92ms",
+    " ✓ completed restore remains complete after reconnect 76ms", "", " Test Files  1 passed (1)", "      Tests  3 passed (3)", "", "• The reconnect cases pass. Checking the diff before opening the PR.",
+    "", "$ git diff --stat", " src/restore/progress.ts | 28 ++++++++++++++++++++--------", " 1 file changed, 20 insertions(+), 8 deletions(-)", "", "$ npm run typecheck", "> tsc --noEmit", "• Checking types…"].join("\n"),
+};
+const queueHistory = [["claimed", "F-055 fix round"], ["handed off to review-claude-1@gamma", "PR #412 ready for cross-family review"], ["resumed", "locked tests green"], ["claimed", "F-056 restore from snapshot"]]
+  .map(([change, summary], i) => ({ id: 9000 + i, ts: iso((20 + i * 37) * 60_000), actor: "impl-codex-4@gamma", change, summary, rig: "gamma", qitemId: `qitem-demo-${i}` }));
 const raw = {
   at: AT, host: { id: "host-demo01", cores: 32, load: [6.4, 7.1, 6.8], memUsedGB: 41.2, memTotalGB: 64 },
   daemon: { ok: true, latencyMs: 12, version: "0.6.3", cpuPct: 5.1, loopUtil: 0.18, error: null },
-  rigs, queue, attention, gates, accounts, done, transitions, heavy: [{ cls: "build", held: 2, total: 2, waiting: 1 }, { cls: "browser", held: 1, total: 2, waiting: 0 }], events,
+  rigs, queue, attention, gates, accounts, done, transitions, tails, history: queueHistory, heavy: [{ cls: "build", held: 2, total: 2, waiting: 1 }, { cls: "browser", held: 1, total: 2, waiting: 0 }], events,
   refreshMs: 5000, sources: { daemon: "ok", accounts: "ok", heavy: "ok", gates: "ok" },
 };
 fs.writeFileSync(fileURLToPath(new URL("./demo.json", import.meta.url)), JSON.stringify({ note: "Neutral demo data for rig-console (made up).", raw, history }) + "\n");

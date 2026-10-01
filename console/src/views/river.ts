@@ -136,7 +136,7 @@ export function river(c: Ctx): void {
     s.put(sx + 2, s.h - 5, fit(`${cur.rig}${cur.mission ? ` · ${cur.mission}` : ""} · at ${RIVER[cur.stage].label} · ${cur.rows.length} open rows · ${cur.state === "owner" ? "waiting on the owner" : cur.state} · open ${since(raw, cur.since)} · ${cur.prs.join(" ") || "no PR yet"}`, s.w - sx - 4), { fg: t.dim });
   }
   ticker(c, s.h - 3);
-  footer(c, [["←→", "along the river"], ["↑↓", "rig lane"], ["⏎", "slice journey"], ["1-3", "views"], ["esc", "home"], ["?", "help"], ["q", "quit"]],
+  footer(c, [["←→", "along the river"], ["↑↓", "rig lane"], ["⏎", "slice journey"], ["1-5", "views"], ["esc", "home"], ["?", "help"], ["q", "quit"]],
     `[river] ${all.length} slices · ${L.length} lanes · read-only`);
 }
 
@@ -225,7 +225,7 @@ export function journeyView(c: Ctx, key: string): void {
       s.put(rx + 24, qy + 1 + i, fit(`${r.destination.split("@")[0]}${r.priority !== "routine" ? ` · ${r.priority}` : ""}`, rwid - 26), { fg: t.text });
     });
   }
-  footer(c, [["esc", "back to the river"], ["[ ]", "prev / next slice"], ["1-3", "views"], ["?", "help"], ["q", "quit"]],
+  footer(c, [["esc", "back to the river"], ["[ ]", "prev / next slice"], ["1-5", "views"], ["?", "help"], ["q", "quit"]],
     `[journey] ${sl?.id ?? tag} · ${j.steps.length} rows · read-only · transitions read for this slice only`);
 }
 

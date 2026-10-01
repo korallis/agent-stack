@@ -196,7 +196,7 @@ export function home(c: Ctx, hist: History): void {
     }
   }
   ticker(c, s.h - 3);
-  footer(c, [["⏎", "rig seats"], ["←→", "select rig"], ["1-2", "views"], ["r", "refresh"], ["?", "help"], ["q", "quit"]],
+  footer(c, [["⏎", "rig seats"], ["←→", "select rig"], ["1-5", "views"], ["r", "refresh"], ["?", "help"], ["q", "quit"]],
     `[mission control] ${raw.host.id} · ${f.agents.length} seats · read-only · as of ${new Date(raw.at).toISOString().slice(11, 19)} UTC`);
 }
 

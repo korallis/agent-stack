@@ -5,6 +5,8 @@
 //     without ?full / ?refresh, which never capture a tmux pane;
 //   - the River (phase 2) only while it is open: done rows every 5 min (a 400-row read costs the daemon ~0.14 s); a slice's row transitions only for the journey
 //     on screen (its newest 20 rows, each re-read only when the row changed);
+//   - the seat drill-in (phase 3) only while it is open: that one seat's terminal tail from the daemon's transcript
+//     store (/api/transcripts/<seat>/tail: the daemon's own 15 s capture, no extra tmux), every tick;
 //   - local sources (gate log, account pool, heavy slots, host) on their own slower clocks;
 //   - the ticker: the queue's recent transitions (a bounded read, with the queue tier) and queue creations from the
 //     live-only /api/queue/sse, whose events also pull the next queue read forward (never sooner than 2 s after the
@@ -96,6 +98,7 @@ export class Cache {
   private dirty = { rigs: false, queue: false };
   private river = false;
   private journeyKey: string | null = null;
+  private seatTail: string | null = null;
   private doneAt = -Infinity;
   private trSeen = new Map<string, string>();   // qitem id -> its updated time when its transitions were read
   requests = 0;
@@ -174,6 +177,10 @@ export class Cache {
       this.raw.queue = queue.map(qrowFromItem); this.raw.attention = attention.map(qrowFromItem); this.queueAt = this.now();
       const tr: any[] = await this.get("/api/queue/recent-transitions?scope=instance&limit=40");
       for (const x of Array.isArray(tr) ? tr : []) { const l = transitionLine(x); if (l) this.addTicker(`t${x.transitionId}`, l); }
+      const hist = new Map((this.raw.history ?? []).map((h) => [h.id, h]));
+      for (const x of Array.isArray(tr) ? tr : []) if (typeof x.transitionId === "number")
+        hist.set(x.transitionId, { id: x.transitionId, ts: x.ts, actor: x.actorSession ?? "", change: x.change ?? "", summary: x.summary ?? null, rig: x.rig ?? null, qitemId: x.qitemId ?? "" });
+      this.raw.history = [...hist.values()].sort((a, b) => b.ts.localeCompare(a.ts)).slice(0, 400);
     }
     this.raw.rigs = rigs;
     if (this.river && this.now() - this.doneAt >= DONE_EVERY) {
@@ -181,6 +188,7 @@ export class Cache {
       this.raw.done = done.map(qrowFromItem); this.doneAt = this.now();
     }
     if (this.journeyKey) await this.readJourney(this.journeyKey);
+    if (this.seatTail) await this.readTail(this.seatTail);
     this.raw.daemon = { ok: hz.status === "ok", latencyMs: latency, version: hz.semver ?? null, cpuPct: this.daemonCpu(Number(hz.pid)),
       loopUtil: typeof hz.eventLoop?.utilization === "number" ? hz.eventLoop.utilization : null, error: null };
     this.raw.sources.daemon = "ok";
@@ -246,6 +254,24 @@ export class Cache {
   }
   /** What the screen shows decides what the River tier reads: the done list while the River is open, transitions for
    *  the one journey open. Opening either pulls the next read forward. */
+  /** The one seat whose terminal tail is read (the drill-in on screen), or null. */
+  setSeat(session: string | null) {
+    const pull = session !== null && session !== this.seatTail;
+    this.seatTail = session;
+    if (session === null) this.raw.tail = null;
+    if (pull) this.soon();
+  }
+  private async readTail(session: string) {
+    this.requests++;
+    try {
+      const res = await fetch(`${this.opt.url}/api/transcripts/${encodeURIComponent(session)}/tail?lines=150`, { signal: AbortSignal.timeout(this.opt.timeoutMs) });
+      const body: any = await res.json().catch(() => ({}));
+      this.raw.tail = res.ok ? { session, content: String(body.content ?? ""), at: this.now(), state: body.ingestHealth?.state ?? "live", error: null }
+        : { session, content: null, at: this.now(), state: body.ingestHealth?.state ?? "unavailable", error: String(body.error ?? `HTTP ${res.status}`).slice(0, 200) };
+    } catch (e) {
+      this.raw.tail = { session, content: null, at: this.now(), state: "unavailable", error: e instanceof Error ? e.message.slice(0, 120) : "unreachable" };
+    }
+  }
   setView(river: boolean, journeyKey: string | null) {
     const pull = (river && !this.river) || (journeyKey !== null && journeyKey !== this.journeyKey);
     this.river = river; this.journeyKey = journeyKey;

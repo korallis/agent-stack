@@ -5,20 +5,24 @@ export type Activity = "working" | "idle" | "stuck" | "unknown" | "detached" | "
 export interface Seat {
   rig: string; pod: string; name: string; session: string; runtime: string; model: string | null;
   ctx: number | null; activity: Activity; why: string | null; assigned: number; pending: number; inProgress: number; blocked: number;
-  lastActivityAt: string | null; kind: string;
+  lastActivityAt: string | null; kind: string; tokens?: number | null; window?: number | null;
 }
 export interface Rig { id: string; name: string; lifecycle: string; seats: Seat[] }
 export interface QRow { id: string; state: string; priority: string; source: string; destination: string; blockedOn: string | null; tags: string[]; created: string; updated: string; summary: string | null }
 export interface Gate { ts: string; decision: string; band: string }
 export interface Account { label: string; provider: string; status: string; short: number | null; weekly: number | null; cooling: boolean }
 export interface Heavy { cls: string; held: number; total: number; waiting: number }
-export interface Event { at: string; kind: string; rig: string | null; text: string }
+export interface Event { at: string; kind: string; rig: string | null; text: string; seat?: string | null }
 export interface Raw {
   at: number;
   host: { id: string; cores: number; load: number[]; memUsedGB: number; memTotalGB: number };
   daemon: { ok: boolean; latencyMs: number | null; version: string | null; cpuPct: number | null; loopUtil: number | null; error: string | null };
   rigs: Rig[]; queue: QRow[]; attention: QRow[]; gates: Gate[]; accounts: Account[]; heavy: Heavy[]; events: Event[];
   done?: QRow[]; transitions?: Record<string, Transition[]>;   // phase 2: read only while the River or a journey is open
+  // phase 3: the queue's recent transitions as they came (a seat's history), and the one seat's terminal tail
+  history?: { id: number; ts: string; actor: string; change: string; summary: string | null; rig: string | null; qitemId: string }[];
+  tail?: { session: string; content: string | null; at: number; state: string; error: string | null } | null;
+  tails?: Record<string, string>;   // the neutral fixture's terminal tails (a live console reads one at a time instead)
   refreshMs: number; sources: Record<string, string>;
 }
 
@@ -45,6 +49,8 @@ export function seatFromNode(n: Record<string, any>): Seat {
     ctx: n.contextUsage?.availability === "known" && typeof n.contextUsage.usedPercentage === "number" ? Math.round(n.contextUsage.usedPercentage) : null,
     activity, why, assigned: n.assignedWorkCount ?? 0, pending: n.pendingWorkCount ?? 0, inProgress: n.inProgressWorkCount ?? 0,
     blocked: n.blockedWorkCount ?? 0, lastActivityAt: n.lastActivityAt ?? null, kind: String(n.nodeKind ?? "agent"),
+    tokens: typeof n.contextUsage?.totalInputTokens === "number" ? n.contextUsage.totalInputTokens : null,
+    window: typeof n.contextUsage?.contextWindowSize === "number" ? n.contextUsage.contextWindowSize : null,
   };
 }
 export function qrowFromItem(q: Record<string, any>): QRow {
@@ -58,8 +64,8 @@ export function eventLine(e: Record<string, any>): Event | null {
   const short = (s: unknown) => (typeof s === "string" ? s.split("@")[0] : "?");
   const sum = (s: unknown) => (typeof s === "string" && s ? ` · ${s}` : "");
   switch (e.type) {
-    case "queue.created": return { at, kind: "QUEUED", rig: rigOf(e.destinationSession), text: `${short(e.sourceSession)} → ${short(e.destinationSession)} ${e.priority !== "routine" ? `(${e.priority})` : ""}${sum(e.summary)}`.trim() };
-    case "queue.claimed": return { at, kind: "CLAIMED", rig: rigOf(e.actorSession ?? e.destinationSession), text: `${short(e.actorSession ?? e.destinationSession)} took ${String(e.qitemId ?? "").slice(-8)}${sum(e.summary)}` };
+    case "queue.created": return { at, kind: "QUEUED", rig: rigOf(e.destinationSession), seat: e.destinationSession ?? null, text: `${short(e.sourceSession)} → ${short(e.destinationSession)} ${e.priority !== "routine" ? `(${e.priority})` : ""}${sum(e.summary)}`.trim() };
+    case "queue.claimed": return { at, kind: "CLAIMED", rig: rigOf(e.actorSession ?? e.destinationSession), seat: e.actorSession ?? e.destinationSession ?? null, text: `${short(e.actorSession ?? e.destinationSession)} took ${String(e.qitemId ?? "").slice(-8)}${sum(e.summary)}` };
     case "queue.handed_off": return { at, kind: "HANDOFF", rig: rigOf(e.toSession), text: `${short(e.fromSession)} → ${short(e.toSession)}${sum(e.summary)}` };
     case "queue.updated":
       if (e.toState === "done") return { at, kind: "DONE", rig: rigOf(e.actorSession), text: `${short(e.actorSession)}${sum(e.summary)}` };
@@ -79,7 +85,7 @@ export function transitionLine(x: Record<string, any>): Event | null {
   const kind = /^claimed/.test(ch) ? "CLAIMED" : /^handed off/.test(ch) ? "HANDOFF" : /^(completed|done|closed)/.test(ch) ? "DONE"
     : /^blocked/.test(ch) ? "BLOCKED" : /^resumed/.test(ch) ? "RESUMED" : /^created/.test(ch) ? "QUEUED" : ch.split(" ")[0].toUpperCase().slice(0, 8);
   const what = ch.replace(/\b([A-Za-z0-9._-]+)@[A-Za-z0-9._-]+/g, "$1");
-  return { at: x.ts, kind, rig: typeof x.rig === "string" ? x.rig : null, text: `${short(x.actorSession)} ${what}${x.summary ? ` · ${x.summary}` : ""}` };
+  return { at: x.ts, kind, rig: typeof x.rig === "string" ? x.rig : null, seat: typeof x.actorSession === "string" ? x.actorSession : null, text: `${short(x.actorSession)} ${what}${x.summary ? ` · ${x.summary}` : ""}` };
 }
 
 // ── derived fleet view ──────────────────────────────────────────────────────────────────────────────────────────────
