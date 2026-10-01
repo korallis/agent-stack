@@ -91,7 +91,12 @@ test("illustrative blocks: every command exists and accepts every flag shown", (
   }
 });
 
-test("blocks that run as shown do what the README says, in a throwaway HOME", { timeout: 20 * 60 * 1000 }, () => {
+// These blocks run ./install.sh --check, which stops at once when a prerequisite of the owner's machine is absent (a CI
+// runner has no mise, notify-send, …). The list comes from install.sh itself; without them the test skips, saying why.
+const prereqs = (fs.readFileSync(join(repo, "install.sh"), "utf8").match(/for c in ([^;]+); do command -v/) || [, ""])[1].trim().split(/\s+/).filter(Boolean);
+const missingPrereqs = prereqs.filter((c) => spawnSync("sh", ["-c", `command -v ${c}`], { encoding: "utf8" }).status !== 0);
+test("blocks that run as shown do what the README says, in a throwaway HOME",
+  { timeout: 20 * 60 * 1000, skip: missingPrereqs.length ? `install.sh prerequisites missing here: ${missingPrereqs.join(", ")}` : false }, () => {
   const home = fs.mkdtempSync(join(fs.existsSync("/tmp/claude-1000") ? "/tmp/claude-1000" : "/tmp", "readme-"));
   try {
     const env = { HOME: home, USER: process.env.USER || "user", PATH: `${join(repo, "bin")}:${process.env.PATH}` };
