@@ -55,7 +55,7 @@ export function ticker(c: Ctx, y: number): void {
 }
 
 export function kindColor(t: Theme, kind: string) {
-  return ({ DONE: t.merged, QUEUED: t.info, CLAIMED: t.working, HANDOFF: t.violet, BLOCKED: t.blocked, PROOF: t.merged, UP: t.working, DOWN: t.stuck } as Record<string, any>)[kind] ?? t.dim;
+  return ({ DONE: t.merged, QUEUED: t.info, CLAIMED: t.working, HANDOFF: t.violet, BLOCKED: t.blocked, RESUMED: t.info, PROOF: t.merged, UP: t.working, DOWN: t.stuck } as Record<string, any>)[kind] ?? t.dim;
 }
 
 export function footer(c: Ctx, keys: [string, string][], status: string): void {

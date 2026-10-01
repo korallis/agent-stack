@@ -121,7 +121,7 @@ test("sources: agent-heavy status (with or without the queue), the account pool,
 });
 
 // A stub daemon: records every request; one rig; queue rows; an activity stream and an event stream.
-function stubDaemon({ delayMs = 0, events = [] } = {}) {
+function stubDaemon({ delayMs = 0, events = [], transitions = [], eventDelayMs = 0 } = {}) {
   const seen = [];
   const server = http.createServer((req, res) => {
     seen.push({ url: req.url, lastEventId: req.headers["last-event-id"] ?? null });
@@ -129,9 +129,9 @@ function stubDaemon({ delayMs = 0, events = [] } = {}) {
     if (req.url === "/healthz") return json({ status: "ok", pid: process.pid, semver: "0.6.3", selfHostId: "host-stub", eventLoop: { utilization: 0.1 } });
     if (req.url === "/api/rigs/summary") return json([{ id: "R1", name: "alpha", lifecycleState: "running" }, { id: "R0", name: "old", archivedAt: "x" }]);
     if (req.url.startsWith("/api/rigs/R1/nodes")) return json([{ canonicalSessionName: "impl-codex-1@alpha", logicalId: "impl.codex-1", podNamespace: "impl", rigName: "alpha", runtime: "codex", lifecycleState: "running", nodeKind: "agent", activityState: { display: "working" } }]);
-    if (req.url.startsWith("/api/queue/list")) return json(req.url.includes("attention=1") ? [] : [{ qitemId: "q1", state: "blocked", blockedOn: "qitem-x", destinationSession: "impl-codex-1@alpha", tags: [], tsCreated: "2026-10-01T10:00:00Z", tsUpdated: "2026-10-01T10:00:00Z" }]);
-    if (req.url === "/api/activity/events") { res.writeHead(200, { "content-type": "text/event-stream" }); res.write(`event: seat.activity_changed\ndata: ${JSON.stringify({ type: "seat.activity_changed", seq: 500 })}\n\n`); return; }
-    if (req.url === "/api/events") { res.writeHead(200, { "content-type": "text/event-stream" }); for (const e of events) res.write(`id: ${e.seq}\ndata: ${JSON.stringify(e)}\n\n`); return; }
+    if (req.url.startsWith("/api/queue/list?")) return json(req.url.includes("attention=1") ? [] : [{ qitemId: "q1", state: "blocked", blockedOn: "qitem-x", destinationSession: "impl-codex-1@alpha", tags: [], tsCreated: "2026-10-01T10:00:00Z", tsUpdated: "2026-10-01T10:00:00Z" }]);
+    if (req.url.startsWith("/api/queue/recent-transitions")) return json(transitions);
+    if (req.url === "/api/queue/sse") { res.writeHead(200, { "content-type": "text/event-stream" }); res.flushHeaders(); setTimeout(() => { for (const e of events) res.write(`id: ${e.seq}\ndata: ${JSON.stringify(e)}\n\n`); }, eventDelayMs); return; }
     res.writeHead(404); res.end();
   });
   return new Promise((r) => server.listen(0, "127.0.0.1", () => r({ url: `http://127.0.0.1:${server.address().port}`, seen, close: () => { server.closeAllConnections(); server.close(); } })));
@@ -143,7 +143,8 @@ test("cache: one read of every daemon source, never the per-seat capture options
   try {
     await c.tick();
     assert.equal(c.interval, MIN_INTERVAL, "never under 2 s, whatever was asked");
-    assert.deepEqual(d.seen.map((x) => x.url), ["/healthz", "/api/rigs/summary", "/api/rigs/R1/nodes", "/api/queue/list?compact=1&state=pending,in-progress,blocked&limit=5000", "/api/queue/list?compact=1&attention=1&limit=200"]);
+    assert.deepEqual(d.seen.map((x) => x.url), ["/healthz", "/api/rigs/summary", "/api/rigs/R1/nodes", "/api/queue/list?compact=1&state=pending,in-progress,blocked&limit=5000",
+      "/api/queue/list?compact=1&attention=1&limit=200", "/api/queue/recent-transitions?scope=instance&limit=40"]);
     assert.ok(d.seen.every((x) => !/full=true|refresh=true/.test(x.url)), "no tmux capture asked of the daemon");
     assert.deepEqual(ran, ["agent-proxy-status --json", "agent-heavy status"], "local sources, by name: never tmux");
     assert.equal(c.raw.rigs.length, 1); assert.equal(c.raw.rigs[0].seats[0].activity, "working"); assert.equal(c.raw.queue[0].blockedOn, "qitem-x");
@@ -155,7 +156,7 @@ test("cache: tiers: seats every tick; the rig list every 60 s and the queue ever
   let now = 0;
   const d = await stubDaemon();
   const c = new Cache({ url: d.url, interval: 5000, events: false, run: async () => null, now: () => now });
-  const urls = () => { const u = d.seen.map((x) => x.url.split("?")[0] + (x.url.includes("attention=1") ? "?attention" : "")); d.seen.length = 0; return u; };
+  const urls = () => { const u = d.seen.map((x) => x.url.split("?")[0] + (x.url.includes("attention=1") ? "?attention" : "")).filter((u) => u !== "/api/queue/recent-transitions"); d.seen.length = 0; return u; };
   try {
     await c.tick(); assert.equal(urls().length, 5, "everything on the first read");
     now = 5000; await c.tick(); assert.deepEqual(urls(), ["/healthz", "/api/rigs/R1/nodes"]);
@@ -187,17 +188,52 @@ test("cache: a slow or failing daemon doubles the interval (to 60 s at most); a 
   } finally { c.stop(); d.close(); }
 });
 
-test("events: joins /api/events just behind a live seq from the activity stream (never a full replay); queue events reach the ticker", async () => {
-  const d = await stubDaemon({ events: [{ type: "view.changed", seq: 301 }, { type: "queue.created", seq: 302, sourceSession: "qa-1@alpha", destinationSession: "impl-1@alpha", priority: "routine", createdAt: "2026-10-01 10:00:00" }] });
+test("ticker (QA PR86): queue transitions (bounded read) and live creations from /api/queue/sse, on a quiet fleet too; no general event stream, no replay", async () => {
+  const transitions = [{ transitionId: 7, ts: "2026-10-01T10:00:02Z", actorSession: "impl-1@alpha", change: "handed off to qa-1@alpha", summary: "F-1 ready", rig: "alpha" },
+    { transitionId: 8, ts: "2026-10-01T10:00:03Z", actorSession: "qa-1@alpha", change: "claimed", summary: null, rig: "alpha" }];
+  const d = await stubDaemon({ transitions, events: [{ type: "queue.created", seq: 302, qitemId: "q9", sourceSession: "qa-1@alpha", destinationSession: "impl-1@alpha", priority: "urgent", createdAt: "2026-10-01 10:00:04" }], eventDelayMs: 500 });
   const c = new Cache({ url: d.url, interval: 60_000, events: true, run: async () => null });
   try {
     c.start();
     const t0 = Date.now();
-    while (!c.raw.events.length && Date.now() - t0 < 5000) await new Promise((r) => setTimeout(r, 25));
-    const ev = d.seen.filter((x) => x.url === "/api/events");
-    assert.ok(ev.length >= 1); assert.equal(ev[0].lastEventId, "300", "200 events behind the live seq 500");
-    assert.equal(c.raw.events.length, 1); assert.equal(c.raw.events[0].kind, "QUEUED");
+    while (c.raw.events.length < 3 && Date.now() - t0 < 5000) await new Promise((r) => setTimeout(r, 25));
+    assert.deepEqual(c.raw.events.map((e) => [e.kind, e.text]), [["QUEUED", "qa-1 → impl-1 (urgent)"], ["CLAIMED", "qa-1 claimed"], ["HANDOFF", "impl-1 handed off to qa-1 · F-1 ready"]]);
+    assert.ok(!d.seen.some((x) => /^\/api\/(events|activity\/events)/.test(x.url)), "no general stream, no activity bootstrap, nothing replayed");
+    assert.ok(d.seen.some((x) => x.url === "/api/queue/sse"));
+    const t1 = Date.now();
+    while (d.seen.filter((x) => x.url.startsWith("/api/queue/list?compact=1&state")).length < 2 && Date.now() - t1 < 4000) await new Promise((r) => setTimeout(r, 50));
+    assert.ok(d.seen.filter((x) => x.url.startsWith("/api/queue/list?compact=1&state")).length >= 2, `the queue event pulled the next queue read forward (not 60 s later): ${d.seen.map((x) => x.url.split("?")[0]).join(" ")}`);
+    assert.equal(c.raw.events.filter((e) => e.kind === "CLAIMED").length, 1, "a transition read twice is shown once");
   } finally { c.stop(); d.close(); }
+});
+
+test("gate today (QA PR86): every decision of the UTC day, found by a binary search, whatever the log's size; partial only past the cap, and said", async () => {
+  const { dayStart, GATE_DAY_MAX } = await src("data.ts");
+  const dir = fs.mkdtempSync(join(scratch, "jev-")), file = join(dir, "jev-decisions.jsonl");
+  const line = (ts, o = {}) => JSON.stringify({ ts, decision: "review.merge_gate", band: "act", result: { decision: "merge" }, caller: "integ@x", pad: "x".repeat(300), ...o }) + "\n";
+  let text = "";
+  for (let i = 0; i < 6000; i++) text += line(`2026-09-30T${String(Math.floor(i / 250)).padStart(2, "0")}:00:00Z`);   // yesterday, ~2 MB
+  text += line("2026-10-01T00:00:01Z");                                                                                // today's first
+  for (let i = 0; i < 9000; i++) text += line("2026-10-01T01:00:00Z", { decision: "seat.stuck" });                     // unrelated, ~3 MB
+  text += line("2026-10-01T09:00:00Z", { result: { decision: "hold" } }) + line("2026-10-01T09:00:01Z", { caller: "diagnosis:qa" });
+  fs.writeFileSync(file, text);
+  assert.ok(text.length > 4 << 20, "past the old 4 MB tail");
+  const fd = fs.openSync(file, "r");
+  assert.equal(dayStart(fd, text.length, "2026-10-01T00:00:00"), text.indexOf('{"ts":"2026-10-01'));
+  assert.equal(dayStart(fd, text.length, "2026-10-02T00:00:00"), text.length);
+  assert.equal(dayStart(fd, text.length, "2026-09-01T00:00:00"), 0);
+  fs.closeSync(fd);
+  const d = await stubDaemon(), now = Date.parse("2026-10-01T12:00:00Z");
+  const c = new Cache({ url: d.url, interval: 5000, events: false, run: async () => null, now: () => now, jevLog: file });
+  try {
+    await c.tick();
+    assert.deepEqual(c.raw.gates.map((g) => g.decision), ["merge", "hold"], "today's merge from before the old 4 MB tail is counted");
+    assert.equal(c.raw.sources.gates, "ok");
+    fs.appendFileSync(file, line("2026-10-01T11:00:00Z"));
+    c.lastLocal.gates = 0; await c.tick();
+    assert.equal(c.raw.gates.length, 3, "then read on from where it left off");
+  } finally { c.stop(); d.close(); }
+  assert.ok(GATE_DAY_MAX >= 32 << 20);
 });
 
 test("history: one sample a minute, 24 h kept, shared safely through the file; series by bucket", () => {
@@ -208,6 +244,14 @@ test("history: one sample a minute, 24 h kept, shared safely through the file; s
   const other = new History(file); assert.equal(other.samples.length, 2);
   other.add(s(120_000, 4)); h.add(s(180_000, 5));
   assert.deepEqual(new History(file).samples.map((x) => x.working), [1, 3, 4, 5], "two writers merged by minute");
+  // QA PR86: a writer holding the lock makes the other skip its write, not overwrite; its sample goes out next time
+  const lockFile = `${file}.lock`; fs.writeFileSync(lockFile, "");
+  const t0 = Date.now(); assert.equal(other.add(s(240_000, 6)), true); assert.ok(Date.now() - t0 < 2000, "never waits long");
+  assert.deepEqual(new History(file).samples.map((x) => x.working), [1, 3, 4, 5], "nothing written while another writer holds the lock");
+  fs.rmSync(lockFile); h.add(s(300_000, 7)); other.add(s(360_000, 8));
+  assert.deepEqual(new History(file).samples.map((x) => x.working), [1, 3, 4, 5, 6, 7, 8], "the held-back sample is merged on the next write");
+  fs.writeFileSync(lockFile, ""); fs.utimesSync(lockFile, new Date(0), new Date(0));
+  other.add(s(420_000, 9)); assert.ok(!fs.existsSync(lockFile) && new History(file).samples.at(-1).working === 9, "a stale lock (a crashed writer) is taken over");
   for (let m = 4; m < 1500; m++) h.add(s(m * 60_000, m));
   assert.ok(h.samples.length <= 1440 && h.samples[0].t >= 1499 * 60_000 - 1440 * 60_000);
   const series = h.series("working", 24, 1500 * 60_000);

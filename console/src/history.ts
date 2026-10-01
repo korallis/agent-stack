@@ -31,8 +31,21 @@ export class History {
     this.samples.push(s);
     this.samples = this.samples.filter((x) => s.t - x.t <= KEEP * STEP_MS).slice(-KEEP);
     if (this.file) {
+      const lock = `${this.file}.lock`;
+      let held = false;
       try {
         fs.mkdirSync(path.dirname(this.file), { recursive: true });
+        // One writer at a time (QA PR86): read, merge and rename under an exclusive lock file, so two consoles never
+        // overwrite each other's minute. A lock older than 10 s is a crashed writer's; a busy lock skips this write,
+        // and the sample, kept in memory, goes out with the next one.
+        for (let i = 0; i < 20 && !held; i++) {
+          try { fs.closeSync(fs.openSync(lock, "wx")); held = true; }
+          catch {
+            try { if (Date.now() - fs.statSync(lock).mtimeMs > 10_000) fs.rmSync(lock, { force: true }); } catch { /* gone */ }
+            Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, 10);
+          }
+        }
+        if (!held) return true;
         // merge with what another console wrote meanwhile
         let disk: Sample[] = [];
         try { disk = JSON.parse(fs.readFileSync(this.file, "utf8")).samples ?? []; } catch { /* none */ }
@@ -43,6 +56,7 @@ export class History {
         fs.writeFileSync(tmp, JSON.stringify({ version: 1, samples: this.samples }));
         fs.renameSync(tmp, this.file);
       } catch { /* history is best effort; the console keeps running */ }
+      finally { if (held) fs.rmSync(lock, { force: true }); }
     }
     return true;
   }

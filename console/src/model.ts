@@ -71,6 +71,16 @@ export function eventLine(e: Record<string, any>): Event | null {
   }
 }
 
+/** A queue transition (GET /api/queue/recent-transitions) as one ticker line. */
+export function transitionLine(x: Record<string, any>): Event | null {
+  if (!x || typeof x.change !== "string" || typeof x.ts !== "string") return null;
+  const ch = x.change, short = (v: unknown) => (typeof v === "string" ? v.split("@")[0] : "?");
+  const kind = /^claimed/.test(ch) ? "CLAIMED" : /^handed off/.test(ch) ? "HANDOFF" : /^(completed|done|closed)/.test(ch) ? "DONE"
+    : /^blocked/.test(ch) ? "BLOCKED" : /^resumed/.test(ch) ? "RESUMED" : /^created/.test(ch) ? "QUEUED" : ch.split(" ")[0].toUpperCase().slice(0, 8);
+  const what = ch.replace(/\b([A-Za-z0-9._-]+)@[A-Za-z0-9._-]+/g, "$1");
+  return { at: x.ts, kind, rig: typeof x.rig === "string" ? x.rig : null, text: `${short(x.actorSession)} ${what}${x.summary ? ` · ${x.summary}` : ""}` };
+}
+
 // ── derived fleet view ──────────────────────────────────────────────────────────────────────────────────────────────
 export const POD_ORDER = ["coord", "arch", "impl", "integ", "ops", "qa", "review", "tests"];
 export const STAGES: { label: string; pods: string[] }[] = [

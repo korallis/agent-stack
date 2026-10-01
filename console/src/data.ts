@@ -4,20 +4,23 @@
 //     they changed. A slow or failed read doubles the interval (up to 60 s), a fast one halves it back. Nodes are read
 //     without ?full / ?refresh, which never capture a tmux pane;
 //   - local sources (gate log, account pool, heavy slots, host) on their own slower clocks;
-//   - live events from /api/events, joined near the tail (never a replay of the whole history), for the ticker and to
-//     pull the next refresh forward (never sooner than 2 s after the last).
+//   - the ticker: the queue's recent transitions (a bounded read, with the queue tier) and queue creations from the
+//     live-only /api/queue/sse, whose events also pull the next queue read forward (never sooner than 2 s after the
+//     last). No cursor and no replay: it works on a quiet fleet as on a busy one (QA PR86).
 // It never runs tmux: no per-seat polling, and phase 1 has no terminal tail at all.
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
 import { execFile } from "node:child_process";
-import { eventLine, qrowFromItem, seatFromNode, type Account, type Event, type Gate, type Heavy, type Raw, type Rig } from "./model.ts";
+import { eventLine, qrowFromItem, seatFromNode, transitionLine, type Account, type Event, type Gate, type Heavy, type Raw, type Rig } from "./model.ts";
 
 export interface Options {
   url: string; interval: number; procDir?: string; jevLog?: string | null; timeoutMs?: number;
   run?: (cmd: string, args: string[], timeoutMs: number) => Promise<string | null>; now?: () => number; events?: boolean;
 }
 export const MIN_INTERVAL = 2000, MAX_INTERVAL = 60_000, RIGS_EVERY = 60_000, QUEUE_EVERY = 30_000;
+/** The most of the gate log read for one UTC day; past it the count is shown as partial (a lower bound). */
+export const GATE_DAY_MAX = 64 << 20;
 
 const runDefault = (cmd: string, args: string[], timeoutMs: number) => new Promise<string | null>((resolve) => {
   execFile(cmd, args, { timeout: timeoutMs, maxBuffer: 4 << 20 }, (err, stdout) => resolve(err ? null : stdout));
@@ -73,12 +76,14 @@ export class Cache {
   lastDaemonAt = 0;
   private timer: NodeJS.Timeout | null = null;
   private busy = false;
+  private again = false;
   private stopped = false;
   private jevOffset = 0;
   private gates: Gate[] = [];
   private lastLocal: Record<string, number> = {};
   private cpu: { ticks: number; at: number; pid: number } | null = null;
-  private seq: number | null = null;
+  private ticker = new Map<string, Event & { key: string }>();
+  private gateDay = "";
   private abort: AbortController | null = null;
   private listeners: (() => void)[] = [];
   private summary: any[] | null = null;
@@ -103,7 +108,8 @@ export class Cache {
   stop() { this.stopped = true; if (this.timer) clearTimeout(this.timer); this.abort?.abort(); }
   /** Pulls the next refresh forward (an event, or 'r'), never sooner than MIN_INTERVAL after the last daemon read. */
   soon() {
-    if (this.stopped || this.busy) return;
+    if (this.stopped) return;
+    if (this.busy) { this.again = true; return; }   // a change arrived during a read: one more read right after it
     const wait = Math.max(0, this.lastDaemonAt + MIN_INTERVAL - this.now());
     if (this.timer) clearTimeout(this.timer);
     this.timer = setTimeout(() => void this.tick(), wait);
@@ -133,7 +139,11 @@ export class Cache {
     this.raw.at = this.now(); this.raw.refreshMs = this.interval;
     this.busy = false;
     this.changed();
-    if (!this.stopped) { if (this.timer) clearTimeout(this.timer); this.timer = setTimeout(() => void this.tick(), this.interval); }
+    if (!this.stopped) {
+      if (this.timer) clearTimeout(this.timer);
+      const wait = this.again ? MIN_INTERVAL : this.interval; this.again = false;
+      this.timer = setTimeout(() => void this.tick(), wait);
+    }
   }
 
   private async readDaemon() {
@@ -154,6 +164,8 @@ export class Cache {
       const queue: any[] = await this.get("/api/queue/list?compact=1&state=pending,in-progress,blocked&limit=5000");
       const attention: any[] = await this.get("/api/queue/list?compact=1&attention=1&limit=200");
       this.raw.queue = queue.map(qrowFromItem); this.raw.attention = attention.map(qrowFromItem); this.queueAt = this.now();
+      const tr: any[] = await this.get("/api/queue/recent-transitions?scope=instance&limit=40");
+      for (const x of Array.isArray(tr) ? tr : []) { const l = transitionLine(x); if (l) this.addTicker(`t${x.transitionId}`, l); }
     }
     this.raw.rigs = rigs;
     this.raw.daemon = { ok: hz.status === "ok", latencyMs: latency, version: hz.semver ?? null, cpuPct: this.daemonCpu(Number(hz.pid)),
@@ -189,55 +201,58 @@ export class Cache {
     const today = new Date(this.now()).toISOString().slice(0, 10);
     this.raw.gates = this.gates = this.gates.filter((g) => g.ts.startsWith(today));
   }
-  /** Reads the decision log from where it left off (the last 4 MB the first time, or after a rotation). */
+  /** Reads the decision log for the current UTC day: the first time (and at each new day) from the day's first line,
+   *  found by a binary search over the append-only, time-ordered log; then from where it left off. When the day alone
+   *  is over GATE_DAY_MAX, only its last GATE_DAY_MAX are read and the count is marked partial, never shown as whole. */
   private readGates(file: string) {
     try {
-      const st = fs.statSync(file);
-      if (st.size < this.jevOffset) this.jevOffset = 0;
-      const from = this.jevOffset || Math.max(0, st.size - (4 << 20));
+      const st = fs.statSync(file), day = new Date(this.now()).toISOString().slice(0, 10);
       const fd = fs.openSync(file, "r");
       try {
-        const buf = Buffer.alloc(st.size - from); fs.readSync(fd, buf, 0, buf.length, from);
-        const text = buf.toString("utf8"), cut = text.lastIndexOf("\n") + 1;
-        const lines = text.slice(0, cut).split("\n");
-        if (!this.jevOffset && from > 0) lines.shift();   // the first, partial line of the tail
-        this.gates.push(...parseGates(lines));
-        this.jevOffset = from + Buffer.byteLength(text.slice(0, cut));
+        if (day !== this.gateDay || st.size < this.jevOffset) {
+          this.gateDay = day; this.gates = []; this.raw.sources.gates = "ok";
+          let from = dayStart(fd, st.size, `${day}T00:00:00`);
+          if (st.size - from > GATE_DAY_MAX) { from = st.size - GATE_DAY_MAX; this.raw.sources.gates = "partial"; }
+          this.jevOffset = from;
+        }
+        const len = st.size - this.jevOffset;
+        if (len <= 0) return;
+        const buf = Buffer.alloc(len); fs.readSync(fd, buf, 0, len, this.jevOffset);
+        let text = buf.toString("utf8");
+        const cut = text.lastIndexOf("\n") + 1;
+        text = text.slice(0, cut);
+        let lines = text.split("\n");
+        // a start inside a line (the partial case) drops that line
+        if (this.jevOffset > 0 && !isLineStart(fd, this.jevOffset)) lines = lines.slice(1);
+        this.gates.push(...parseGates(lines).filter((g) => g.ts.startsWith(day)));
+        this.jevOffset += Buffer.byteLength(text);
       } finally { fs.closeSync(fd); }
-      this.raw.sources.gates = "ok";
     } catch { this.raw.sources.gates = "unavailable"; }
+  }
+  private addTicker(key: string, e: Event) {
+    if (this.ticker.has(key)) return;
+    this.ticker.set(key, { ...e, key });
+    const all = [...this.ticker.values()].sort((a, b) => b.at.localeCompare(a.at)).slice(0, 60);
+    this.ticker = new Map(all.map((x) => [x.key, x]));
+    this.raw.events = all.map(({ key: _k, ...rest }) => rest);
   }
 
   // ── live events ──────────────────────────────────────────────────────────────────────────────────────────────────
-  /** /api/events replays everything after Last-Event-ID and then skips live events at or below it, so it needs a real
-   *  recent seq: the first event of the live-only activity stream gives one. Joins 200 events back for the ticker. */
+  /** The live-only queue stream: a creation goes on the ticker as it happens (creations aren't transitions); every
+   *  queue event marks the queue changed and pulls the next read forward. Reconnects with backoff. */
   private async events() {
     let backoff = 2000;
     while (!this.stopped) {
       try {
-        if (this.seq === null) this.seq = await this.liveSeq();
-        if (this.seq !== null) {
-          await this.stream("/api/events", { "Last-Event-ID": String(this.seq === 0 ? 0 : Math.max(1, this.seq - 200)) }, (e) => {
-            if (typeof e.seq === "number") this.seq = e.seq + 200;   // reconnect near where we were
-            const line = eventLine(e);
-            if (line) { this.raw.events = [line, ...this.raw.events].slice(0, 60); this.changed(); }
-            if (/^queue\./.test(String(e.type))) { this.dirty.queue = true; this.soon(); }
-            if (/^node\./.test(String(e.type))) { this.dirty.rigs = true; this.soon(); }
-          });
-        }
-        backoff = 2000;
+        await this.stream("/api/queue/sse", {}, (e) => {
+          backoff = 2000;
+          if (e.type === "queue.created") { const l = eventLine(e); if (l) { this.addTicker(`c${e.qitemId ?? e.seq}`, l); this.changed(); } }
+          this.dirty.queue = true; this.soon();
+        });
       } catch { /* daemon away: retry */ }
       if (this.stopped) break;
       await new Promise((r) => setTimeout(r, backoff)); backoff = Math.min(60_000, backoff * 2);
     }
-  }
-  private async liveSeq(): Promise<number | null> {
-    let seq: number | null = null;
-    const ac = new AbortController(); const t = setTimeout(() => ac.abort(), 20_000);
-    try { await this.stream("/api/activity/events", {}, (e) => { if (typeof e.seq === "number") { seq = e.seq; ac.abort(); } }, ac); }
-    catch { /* aborted on the first event, or no event within 20 s */ }
-    finally { clearTimeout(t); }
-    return seq;
   }
   private async stream(p: string, headers: Record<string, string>, onEvent: (e: any) => void, ac = new AbortController()) {
     this.abort = ac;
@@ -256,4 +271,35 @@ export class Cache {
       if (this.stopped) { ac.abort(); break; }
     }
   }
+}
+
+/** The offset of the first line whose "ts" is at or after `dayIso` in a time-ordered JSONL log (binary search over
+ *  line starts; reads a few KB per step). */
+export function dayStart(fd: number, size: number, dayIso: string): number {
+  const lineAt = (pos: number): { start: number; ts: string | null } | null => {
+    let start = pos;
+    if (pos > 0) {
+      const b = Buffer.alloc(65536); const n = fs.readSync(fd, b, 0, b.length, pos - 1);
+      const i = b.subarray(0, n).indexOf(10);
+      if (i < 0) return null;
+      start = pos - 1 + i + 1;
+    }
+    if (start >= size) return null;
+    const b = Buffer.alloc(4096); const n = fs.readSync(fd, b, 0, b.length, start);
+    const m = b.subarray(0, n).toString("utf8").match(/"ts"\s*:\s*"([^"]+)"/);
+    return { start, ts: m ? m[1] : null };
+  };
+  let lo = 0, hi = size;
+  while (hi - lo > 1) {
+    const mid = Math.floor((lo + hi) / 2), l = lineAt(mid);
+    if (!l || l.ts === null || l.ts >= dayIso) hi = mid; else lo = mid;
+  }
+  // lineAt(lo) is before the day (or lo is 0), lineAt(hi) is the first line at or after it
+  const l0 = lineAt(0);
+  if (lo === 0 && l0 && l0.ts !== null && l0.ts >= dayIso) return 0;
+  const first = lineAt(hi);
+  return first ? first.start : size;
+}
+function isLineStart(fd: number, pos: number): boolean {
+  const b = Buffer.alloc(1); fs.readSync(fd, b, 0, 1, pos - 1); return b[0] === 10;
 }
