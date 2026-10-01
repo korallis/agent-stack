@@ -122,6 +122,9 @@ while [[ $# -gt 0 && $1 != "--" ]]; do case $1 in
   *) echo "unknown arg $1" >&2; exit 2;; esac; done
 case $priority in critical) rank=0;; urgent) rank=1;; routine) rank=2;;
   *) echo "agent-heavy: bad priority '$priority' (routine, urgent or critical)" >&2; exit 2;; esac
+# The resolved lane is the default for every nested call (inline or in another class), whether it came from the flag
+# or the environment.
+export AGENT_HEAVY_PRIORITY=$priority
 [[ ${1:-} == "--" ]] && shift
 [[ $# -gt 0 ]] || { echo "no command given" >&2; exit 2; }
 case $class in

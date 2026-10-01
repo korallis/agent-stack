@@ -175,3 +175,32 @@ test("status: an empty queue says so; the docs name the order and the priority l
   assert.match(src, /--priority urgent\|critical \(or AGENT_HEAVY_PRIORITY\) sorts ahead of routine/);
   assert.match(src, /never stops or preempts a running job/);
 });
+
+test("QA PR85: the resolved priority (flag over env) is the lane of nested calls, also through an inline same-class call", async () => {
+  for (const [label, parentArgs, parentEnv, nestedFirst] of [
+    ["flag urgent", ["--priority", "urgent"], {}, true],
+    ["flag routine over env critical", ["--priority", "routine"], { AGENT_HEAVY_PRIORITY: "critical" }, false],
+    ["env urgent", [], { AGENT_HEAVY_PRIORITY: "urgent" }, true]]) {
+    const L = lab();
+    const order = join(L.d, "order"), kids = [];
+    const go = (args, env = {}) => { const p = spawn(heavyBin, args, { env: { ...L.env, ...env } }); kids.push(p); let err = ""; p.stderr.on("data", (b) => (err += b)); return new Promise((r) => p.on("exit", (code) => r({ code, err }))); };
+    const bq = () => (fs.existsSync(join(L.env.AGENT_HEAVY_DIR, "queue.browser")) ? fs.readdirSync(join(L.env.AGENT_HEAVY_DIR, "queue.browser")).filter((f) => f.endsWith(".ticket")) : []);
+    try {
+      // the one browser slot is held; an older routine browser waiter queues first
+      const holder = go(["browser", "--", "bash", "-c", `echo H >> ${order}; while [ ! -f ${L.d}/release-H ]; do sleep 0.05; done`]);
+      await until(() => L.ran().includes("H"), `${label}: holder running`);
+      const older = go(["browser", "--", "bash", "-c", `echo older >> ${order}`], { AGENT_HEAVY_PRIORITY: "routine" });
+      await until(() => bq().length === 1, `${label}: older waiter queued`);
+      // the parent build calls a nested build (inline) that calls a browser job
+      const parent = go(["build", ...parentArgs, "--", heavyBin, "build", "--", heavyBin, "browser", "--", "bash", "-c", `echo nested >> ${order}`], parentEnv);
+      await until(() => bq().length === 2, `${label}: nested browser queued`);
+      const lanes = bq().map((f) => fs.readFileSync(join(L.env.AGENT_HEAVY_DIR, "queue.browser", f), "utf8").match(/^priority=(\w+)$/m)[1]).sort();
+      assert.deepEqual(lanes, nestedFirst ? ["routine", "urgent"] : ["routine", "routine"], label);
+      fs.writeFileSync(join(L.d, "release-H"), "");
+      const rs = await Promise.all([holder, older, parent]);
+      assert.deepEqual(rs.map((r) => r.code), [0, 0, 0], label);
+      assert.match(rs[2].err, /nested build run: already inside build\.1; running inline/, label);
+      assert.deepEqual(L.ran(), nestedFirst ? ["H", "nested", "older"] : ["H", "older", "nested"], label);
+    } finally { fs.writeFileSync(join(L.d, "release-H"), ""); kids.forEach((k) => { try { k.kill("SIGKILL"); } catch {} }); }
+  }
+});
