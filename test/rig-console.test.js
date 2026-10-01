@@ -403,3 +403,18 @@ test("WO85: Codex accounts: no 5 h reading, the week, and 'on credits' is never 
   const over = { ...fixture.raw, accounts: parseAccounts(JSON.stringify([{ label: "claude-b", provider: "claude", status: "active", cooldowns: [], short_window_used: "1.01", weekly_used: "0.85" }])) };
   assert.match(render(over, hist(), 176, 50, st({ view: 4 })).lines().join("\n"), /claude-b[^\n]*101%[^\n]*○ over/);
 });
+
+test("WO85: the Pool shows how many accounts run on credits, prominently (a cost signal); nothing when none do", async () => {
+  const { PAD39A: t } = await src("theme.ts");
+  const acc = (label, onCredits) => ({ label, provider: "codex", status: "active", cooldowns: [], short_window_used: null, weekly_used: onCredits ? "100" : "40", on_credits: onCredits });
+  const raw = { ...fixture.raw, accounts: parseAccounts(JSON.stringify([acc("codex-a", true), acc("codex-b", true), acc("codex-c", false)])) };
+  const scr = render(raw, hist(), 176, 50, st({ view: 4 })), lines = scr.lines();
+  const ty = lines.findIndex((l) => l.includes("SUBSCRIPTION POOL"));
+  assert.match(lines[ty], /SUBSCRIPTION POOL[^\n]*● 2 on credits/, "the count in the panel title");
+  const x = lines[ty].indexOf("● 2 on credits"), cell = scr.cells[ty * scr.w + x];
+  assert.ok(cell.bold && cell.fg.join() === t.info.join(), "bold, in the info colour");
+  assert.match(lines.join("\n"), /● 2 of 3 accounts on credits \(a cost signal\): codex-a, codex-b/);
+  assert.match(render(raw, hist(), 176, 50, st()).lines().join("\n"), /ACCOUNT POOL[^\n]*● 2 on credits/, "Home's account pool too");
+  const none = { ...fixture.raw, accounts: parseAccounts(JSON.stringify([acc("codex-c", false)])) };
+  assert.doesNotMatch(render(none, hist(), 176, 50, st({ view: 4 })).lines().join("\n") + render(none, hist(), 176, 50, st()).lines().join("\n"), /on credits/);
+});

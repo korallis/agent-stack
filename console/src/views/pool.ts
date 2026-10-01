@@ -54,7 +54,14 @@ export function poolPane(c: Ctx, hist: History, pane: string, x: number, y: numb
     return;
   }
   if (pane === "accounts") {
-    panel(s, t, x, y, w, h, "SUBSCRIPTION POOL", { color, right: w >= 72 ? "local proxy · 5 h window / weekly" : undefined });
+    const credits = raw.accounts.filter((a) => a.onCredits);
+    panel(s, t, x, y, w, h, "SUBSCRIPTION POOL", { color, right: !credits.length && w >= 72 ? "local proxy · 5 h window / weekly" : undefined });
+    // on credits is a cost signal: the count in the title, the accounts on the last line
+    if (credits.length) {
+      const r = ` ● ${credits.length} on credits `;
+      s.put(x + w - 2 - [...r].length, y, r, { fg: t.info, bold: true });
+      if (h - 3 > raw.accounts.length) s.put(x + 2, y + h - 2, fit(`● ${credits.length} of ${raw.accounts.length} accounts on credits (a cost signal): ${credits.map((a) => a.label).join(", ")}`, w - 4), { fg: t.info, bold: true });
+    }
     const mw = Math.max(6, Math.floor((w - 48) / 2));
     s.put(x + 2, y + 1, fit("ACCOUNT    PROV  5 H" + " ".repeat(mw + 2) + "WEEK", w - 4), { fg: t.faint });
     raw.accounts.slice(0, h - 3).forEach((a, i) => {

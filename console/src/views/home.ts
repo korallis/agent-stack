@@ -158,7 +158,9 @@ export function home(c: Ctx, hist: History): void {
     const room = bottom - ly;
     const accH = Math.min(raw.accounts.length + 2, Math.max(0, room - 5));
     if (accH >= 3) {
-      panel(s, t, 1, ly, lw, accH, "ACCOUNT POOL", { right: "local proxy · 5h window / weekly" });
+      const onCredits = raw.accounts.filter((a) => a.onCredits).length;
+      panel(s, t, 1, ly, lw, accH, "ACCOUNT POOL", { right: onCredits ? undefined : "local proxy · 5h window / weekly" });
+      if (onCredits) { const r = ` ● ${onCredits} on credits `; s.put(1 + lw - 2 - [...r].length, ly, r, { fg: t.info, bold: true }); }
       raw.accounts.slice(0, accH - 2).forEach((a, i) => {
         const yy = ly + 1 + i, mw = Math.max(6, Math.floor((lw - 50) / 2));
         s.put(3, yy, fit(a.label, 10), { fg: t.text });
