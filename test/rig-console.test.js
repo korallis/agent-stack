@@ -363,3 +363,13 @@ test("install.sh installs rig-console as a launcher on the pinned Node, like the
   const install = fs.readFileSync(join(repo, "install.sh"), "utf8");
   assert.match(install, /launcher rig-console "\$NODE_FOR_JEV" "\$S\/console\/src\/main\.ts"/);
 });
+
+test("Home at short heights: the work-in-flight strip never runs into the ticker, the key hints or the status line", () => {
+  for (const h of [30, 31, 32, 33, 34, 35, 36, 40, 50]) for (const w of [100, 176]) {
+    const rows = render(fixture.raw, hist(), w, h, st()).lines(), [keys, status] = rows.slice(-2);
+    assert.doesNotMatch(keys + status, /[─│╭╮╰╯▶]|WORK IN FLIGHT|QUEUE \d| act \d| pend /, `${w}x${h}: the last two rows are the footer's own`);
+    assert.match(keys, /^ {2}⏎ {2}rig seats {3}←→ {2}select rig {3}1-5 {2}views {3}r {2}refresh/, `${w}x${h}: clean key hints`);
+    assert.doesNotMatch(rows.at(-3), /WORK IN FLIGHT|QUEUE \d/, `${w}x${h}: the ticker row is the ticker's`);
+  }
+  assert.match(render(fixture.raw, hist(), 176, 50, st()).lines().join("\n"), /WORK IN FLIGHT/, "shown where it fits");
+});
