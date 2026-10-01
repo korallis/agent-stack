@@ -39,3 +39,27 @@ test("141: the local attachment is opened once, non-blocking, and read through t
   assert.match(a, /fs\.closeSync\(fd\)/);
   assert.doesNotMatch(a, /fs\.statSync\(refPath\)|fs\.readFileSync\(refPath\)/);
 });
+
+test("132: Windows scopes, catalog source observation, project identity and the projectRoot pin (#136 review)", () => {
+  const a = added("132-project-scoped-proof.patch");
+  assert.match(a, /const qualified = rawScope === undefined \|\| path\.win32\.isAbsolute\(rawScope\) \? null : QUALIFIED_SCOPE\.exec\(rawScope\);/);
+  assert.match(a, /const observation = \(c, project\) => project \? \{ state: "unavailable", revision: "unverified" \} : proofSourceObservation\(c\);/);
+  assert.match(a, /project: \{ id: p\.id, root: p\.root \}/);
+  assert.match(a, /new JudgmentError\("project_changed", .*, 409\)/);
+  assert.match(a, /target\(c, body\.scope, body\.project, body\.projectRoot\)/);
+  assert.match(a, /\.\.\.\(view\.project\?\.root \? \{ projectRoot: view\.project\.root \} : \{\}\)/, "the CLI pins the prepared root");
+});
+
+test("132: a catalog project's own root bounds evidence, policy and scope identity (#136 CodeRabbit, CWE-22)", () => {
+  const a = added("132-project-scoped-proof.patch");
+  assert.match(a, /function policyOf\(dir, io, readManifest = manifest, rootOverride\) \{\n.*\n    const root = rootOverride \?\? workspaceOf\(dir, io, false\);/);
+  assert.match(a, /const defaultPolicyRead = \(dir, io, root\) => policyOf\(dir, io, manifest, root\);/);
+  assert.match(a, /export function readSliceReadiness\(dir, io = proofFs, readPolicy = defaultPolicyRead, root\) \{/);
+  assert.match(a, /const scopeRoot = root \?\? workspaceOf\(dir, io, false\)/);
+  assert.match(a, /file = path\.resolve\(scopeRoot, address\.ref\);/); assert.match(a, /contained\(scopeRoot, file\);/);
+  assert.match(a, /export function recordJudgment\(missionsRoot, input, actor, provenance, projectRoot\) \{\n    const dir = resolveProofScope\(missionsRoot, input\.scope\), root = projectRoot \? contained\(projectRoot, dir\) && path\.resolve\(projectRoot\) : workspaceOf\(dir, proofFs\);/);
+  assert.equal((a.match(/readSliceReadiness\(dir, proofFs, defaultPolicyRead, projectRoot\)/g) || []).length, 3, "the prepared read and both returns");
+  assert.match(a, /recordJudgment\(root, \{ \.\.\.input, scope: scope \}, identity\.session, resolveRecordedProvenance\(c, identity\), project\?\.root\)/);
+  for (const r of [/readProjectReadiness\(root, undefined, bound\)/, /readMissionReadiness\(dir, undefined, bound\)/, /readSliceReadiness\(dir, undefined, undefined, bound\)/]) assert.match(a, r);
+  assert.doesNotMatch(a, /readPolicy = policyOf\b/, "policyOf's third parameter is the manifest reader, never the default ProofPolicyRead");
+});
