@@ -46,26 +46,34 @@ Record the answers in `~/.openrig/state/<project>-stage/` (plan, owner decisions
 
    Verify with the password-hash check in PROJECT-ENV. Creating branches and stores in the provider is the owner's or
    yours with their OK; never touch production.
-3. **Create the team.** Write the answers file (`rig/template/onboarding/answers.example.env`) and run
+3. **Slack, once per machine** (skip when `rig slack status` is all ✓ and `openrig-slack-upload-check --live` passed
+   before). The owner gets updates, decisions and visual proof in Slack:
+   - their own app from `rig slack manifest --url` (it requests `files:write` for attachments; an older app adds
+     that bot scope and is reinstalled), tokens in a 0600 env file, never in a message;
+   - `rig slack setup --channel <id> --secrets-env-file <file> --required-scopes chat:write,channels:history,channels:read,files:write`
+     (without the last scope `rig slack verify` says READY on an app that can't attach files), then `rig slack verify`
+     and `rig slack enable`;
+   - `openrig-slack-upload-check`, then `openrig-slack-upload-check --live`: a test image lands in the channel.
+4. **Create the team.** Write the answers file (`rig/template/onboarding/answers.example.env`) and run
    `agent-project-onboard <answers>`: a dry run that shows every step. Read it. Then run it with `--apply`. It clones,
    creates the repo, workspace and worktrees without starting seats, pulls the development env, stages the files
    below, and then starts the team, so seats launch with their env and rules in place.
-4. **The owner's plan** goes to `~/Projects/<Name>-work/docs/PLAN.md`: their goal, users, what people must be able to
+5. **The owner's plan** goes to `~/Projects/<Name>-work/docs/PLAN.md`: their goal, users, what people must be able to
    do, rules and limits, out of scope, stack and hosting, and what done looks like. Write it from their words and
    docs; mark anything you inferred. For an issues-based project, one mission per issue, and the issue workflow:
    research, plan, implement, verify; never close an issue; when done, comment on it (what was wrong, what changed with
    the PR link, where to see it, exact re-test steps), reassign it to its creator and ask them to re-test.
-5. **CULTURE.** In `<Name>-work/rig/CULTURE.md`, the owner's own decisions go under "Owner decisions" (dated, one
+6. **CULTURE.** In `<Name>-work/rig/CULTURE.md`, the owner's own decisions go under "Owner decisions" (dated, one
    bullet each, ending with its source: `(owner, via operator relay of <ref>)`); operator and lead rules go under
    "Operator and lead rules"; and the project's facts under "## <Name> specifics": trunk, package manager, required checks and merge path,
    databases and env (what seats use and never touch), deploys (what a merge ships, where the witness runs).
    `agent-project-onboard` appends both from the staged files; then run `agent-refresh-guidance <Name> --apply`.
-6. **Brief the lead.** Review `<Name>-work/docs/lead-brief.md` (rendered from
+7. **Brief the lead.** Review `<Name>-work/docs/lead-brief.md` (rendered from
    `rig/template/onboarding/lead-brief.md`), then send it:
    `rig send <lead seat> "$(cat ~/Projects/<Name>-work/docs/lead-brief.md)"`.
-7. **Wait for plan-ready** from the lead (a queue row to you). The brief tells the lead to dispatch no builder until
+8. **Wait for plan-ready** from the lead (a queue row to you). The brief tells the lead to dispatch no builder until
    you send "plan approved".
-8. **Review the plan before builders start:**
+9. **Review the plan before builders start:**
    - every slice SPEC has research findings, a plan, a Territory and a proof contract;
    - waves in each mission.yaml, load-bearing work (schema, auth, payments, data cleanup) in its own wave;
    - a W witness slice at the end of each user-facing wave;
@@ -73,7 +81,7 @@ Record the answers in `~/.openrig/state/<project>-stage/` (plan, owner decisions
    - `agent-project-check <Name>`: no FAIL.
 
    Send gaps back to the lead, and review again.
-9. **Approve the plan.** Unless the owner delegated plan approval to you (CULTURE records which), send them the plan
+10. **Approve the plan.** Unless the owner delegated plan approval to you (CULTURE records which), send them the plan
    summary as ONE decision request (`--human-intent decision`): the team, missions, waves, the first wave's slices,
    and what will need their decision later. With their OK (or yours when delegated), tell the lead:
    `rig send <lead seat> "plan approved"`. Then report to the owner (`--human-intent update`) how to follow along

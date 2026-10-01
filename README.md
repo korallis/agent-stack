@@ -320,6 +320,13 @@ you gave standing approval.
 shows one seat live. The lead sends a daily summary; decisions reach you as desktop notifications (and Slack, if set
 up).
 
+### Can it show me what it built, in Slack?
+Yes, once Slack is set up (the operator does it with the onboarding skill). Owner updates and decisions arrive in your
+Slack channel, and at the points worth seeing (a witness pass, a finished feature, a fix for a bug you reported) the
+update carries a screenshot, a short video or a PDF in its thread. Captures use demo or test data only, never secrets
+or real customer data. The Slack app needs the `files:write` scope; see
+[docs/REFERENCE.md](docs/REFERENCE.md) ("Slack proof").
+
 ### What kinds of projects fit?
 Web apps, CLIs and APIs, new or existing. The team proves each feature through the interface its users use: a browser
 for web apps, the command for a CLI, the HTTP API for an API.

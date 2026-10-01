@@ -197,9 +197,21 @@ with `agent-login` and the pool uses it straight away.
   then relaunch it once. Append; never rewrite the file. Prefix names with the project.
 - **`rig ps` shows ATTN `user_prompt_submit`** while a seat works on a turn; that is not a stuck seat.
 - **Never stop or restart `openrig.service`** while rigs run: restart the daemon with `openrig-daemon-cycle`.
-- **Slack attachments:** `openrig-slack-upload-check` shows whether the installed daemon can upload proof (patch 141 in,
-  channel, bot token present yes/no) without sending anything; `--live` uploads a generated 1x1 PNG (or `--file <abs
-  path>`) to the configured channel through the installed client. It reads `SLACK_BOT_TOKEN` by name and never prints it.
+- **Slack proof (screenshots, video, PDF to the owner):** an update row to the owner carries one file with
+  `--evidence-ref <absolute path>` (.png/.jpg/.gif/.webp, .mp4/.webm/.mov, .pdf; at most 50 MiB), and the daemon
+  uploads it into that message's Slack thread (OpenRig 0.6.3 + patch 141). Seats are taught when, how and what never
+  to show (CULTURE "Visual proof for the owner"; the QA, lead and witness guidance).
+  - The Slack app needs the bot scope `files:write`. `rig slack manifest` requests it; an app made before that adds
+    the scope and is reinstalled.
+  - `rig slack verify` checks only the configured required scopes, and the default list leaves `files:write` out, so
+    it says READY on an app that can't attach files. Add it once:
+    `rig slack setup --required-scopes chat:write,channels:history,channels:read,files:write`.
+  - `openrig-slack-upload-check` shows, sending nothing, whether patch 141 is in, the channel, and whether
+    `SLACK_BOT_TOKEN` is present; `--live` uploads a generated 1x1 PNG (or `--file <abs path>`) to the channel
+    through the installed client. It reads the token by name and never prints it; a failure prints only Slack's
+    code, an HTTP status or a fixed category.
+  - A row's text without its file: the daemon logged `ATTACHMENT … (text delivered; attachment missing)` with the
+    reason (e.g. `missing_scope`, over the size cap, or the file was gone when it posted).
 
 Details are in the `agent-stack` skill. What went wrong before: [docs/incidents/](incidents/).
 
