@@ -6,7 +6,11 @@
 //   - the River (phase 2) only while it is open: done rows every 5 min (a 400-row read costs the daemon ~0.14 s); a slice's row transitions only for the journey
 //     on screen (its newest 20 rows, each re-read only when the row changed);
 //   - the seat drill-in (phase 3) only while it is open: that one seat's terminal tail from the daemon's transcript
-//     store (/api/transcripts/<seat>/tail: the daemon's own 15 s capture, no extra tmux), every tick;
+//     store (/api/transcripts/<seat>/tail: the daemon's own 15 s capture), every tick. That route STARTS a capture
+//     when the seat's ingest isn't live, so it is asked only when this tick's node read says the ingest is live with a
+//     capture under a minute old (QA PR92); otherwise the drill-in says why there is no tail. The console never starts
+//     a capture.
+export const TAIL_FRESH_MS = 60_000;
 //   - local sources (gate log, account pool, heavy slots, host) on their own slower clocks;
 //   - the ticker: the queue's recent transitions (a bounded read, with the queue tier) and queue creations from the
 //     live-only /api/queue/sse, whose events also pull the next queue read forward (never sooner than 2 s after the
@@ -262,6 +266,14 @@ export class Cache {
     if (pull) this.soon();
   }
   private async readTail(session: string) {
+    const seat = this.raw.rigs.flatMap((r) => r.seats).find((s) => s.session === session);
+    const ing = seat?.ingest, age = ing?.at ? this.now() - Date.parse(ing.at) : Infinity;
+    if (!seat || !ing || ing.state !== "live" || !(age < TAIL_FRESH_MS)) {
+      const why = !seat ? "not a seat this daemon runs" : !ing ? "the daemon reports no transcript capture for it"
+        : ing.state !== "live" ? `its transcript capture is ${ing.state}${ing.reason ? ` (${ing.reason})` : ""}` : `its last transcript capture is ${Number.isFinite(age) ? Math.round(age / 1000) + " s" : "of unknown age"} old`;
+      this.raw.tail = { session, content: null, at: this.now(), state: ing?.state ?? "unavailable", error: `no tail: ${why}; the console never starts a capture` };
+      return;
+    }
     this.requests++;
     try {
       const res = await fetch(`${this.opt.url}/api/transcripts/${encodeURIComponent(session)}/tail?lines=150`, { signal: AbortSignal.timeout(this.opt.timeoutMs) });

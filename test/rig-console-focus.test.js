@@ -111,8 +111,11 @@ function stub() {
     const json = (b, code = 200) => { res.writeHead(code, { "content-type": "application/json" }); res.end(JSON.stringify(b)); };
     if (req.url === "/healthz") return json({ status: "ok", pid: process.pid });
     if (req.url === "/api/rigs/summary") return json([{ id: "R1", name: "alpha" }]);
-    if (req.url.startsWith("/api/rigs/R1/nodes")) return json([{ canonicalSessionName: "impl-1@alpha", logicalId: "impl.1", podNamespace: "impl", rigName: "alpha", lifecycleState: "running", nodeKind: "agent", activityState: { display: "working" },
-      contextUsage: { availability: "known", usedPercentage: 40, totalInputTokens: 80000, contextWindowSize: 200000 } }]);
+    const node = (name, ingest) => ({ canonicalSessionName: `${name}@alpha`, logicalId: `impl.${name}`, podNamespace: "impl", rigName: "alpha", lifecycleState: "running", nodeKind: "agent",
+      activityState: { display: "working" }, contextUsage: { availability: "known", usedPercentage: 40, totalInputTokens: 80000, contextWindowSize: 200000 }, transcriptIngest: ingest });
+    const fresh = new Date().toISOString(), old = new Date(Date.now() - 5 * 60_000).toISOString();
+    if (req.url.startsWith("/api/rigs/R1/nodes")) return json([node("impl-1", { state: "live", reason: "capture_fresh", lastCapturedAt: fresh }),
+      node("degraded-1", { state: "degraded", reason: "capture_missing", lastCapturedAt: null }), node("stale-1", { state: "live", reason: "capture_fresh", lastCapturedAt: old }), node("none-1", undefined)]);
     if (req.url.startsWith("/api/queue/")) return json([]);
     if (req.url.startsWith("/api/transcripts/impl-1%40alpha/tail")) return json({ session: "impl-1@alpha", lines: 150, content: "$ npm test\n ✓ ok\n", ingestHealth: { state: "live" } });
     if (req.url.startsWith("/api/transcripts/")) return json({ error: "No transcript", ingestHealth: { state: "unavailable" } }, 404);
@@ -125,11 +128,17 @@ test("data: the tail of ONE seat, read only while its drill-in is open (the daem
   const d = await stub(), c = new Cache({ url: d.url, interval: 5000, events: false, run: async () => null });
   try {
     await c.tick(); assert.ok(!d.seen.some((u) => u.includes("/api/transcripts/")), "no drill-in, no tail");
-    assert.deepEqual([c.raw.rigs[0].seats[0].tokens, c.raw.rigs[0].seats[0].window], [80000, 200000]);
+    assert.deepEqual([c.raw.rigs[0].seats[0].tokens, c.raw.rigs[0].seats[0].window, c.raw.rigs[0].seats[0].ingest.state], [80000, 200000, "live"]);
     c.setSeat("impl-1@alpha"); d.seen.length = 0; await c.tick();
     assert.deepEqual(d.seen.filter((u) => u.includes("/api/transcripts/")), ["/api/transcripts/impl-1%40alpha/tail?lines=150"]);
     assert.equal(c.raw.tail.content, "$ npm test\n ✓ ok\n");
-    c.setSeat("ghost@alpha"); await c.tick(); assert.equal(c.raw.tail.content, null); assert.match(c.raw.tail.error, /No transcript/);
+    // QA PR92: the tail route STARTS a capture when ingest isn't live, so it is never asked then: the console says why
+    for (const [seat, why] of [["degraded-1@alpha", /capture is degraded \(capture_missing\)/], ["stale-1@alpha", /last transcript capture is \d+ s old/],
+      ["none-1@alpha", /reports no transcript capture/], ["ghost@alpha", /not a seat this daemon runs/]]) {
+      c.setSeat(seat); d.seen.length = 0; await c.tick();
+      assert.ok(!d.seen.some((u) => u.includes("/api/transcripts/")), `${seat}: no tail request`);
+      assert.equal(c.raw.tail.content, null); assert.match(c.raw.tail.error, why, seat); assert.match(c.raw.tail.error, /never starts a capture/);
+    }
     c.setSeat(null); d.seen.length = 0; await c.tick();
     assert.ok(!d.seen.some((u) => u.includes("/api/transcripts/")) && c.raw.tail === null, "closed: no tail");
     initialReads(c, st({ seat: "impl-1@alpha" })); d.seen.length = 0; await c.tick();

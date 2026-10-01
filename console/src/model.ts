@@ -6,6 +6,7 @@ export interface Seat {
   rig: string; pod: string; name: string; session: string; runtime: string; model: string | null;
   ctx: number | null; activity: Activity; why: string | null; assigned: number; pending: number; inProgress: number; blocked: number;
   lastActivityAt: string | null; kind: string; tokens?: number | null; window?: number | null;
+  ingest?: { state: string; reason: string | null; at: string | null } | null;   // the daemon's transcript capture for this seat
 }
 export interface Rig { id: string; name: string; lifecycle: string; seats: Seat[] }
 export interface QRow { id: string; state: string; priority: string; source: string; destination: string; blockedOn: string | null; tags: string[]; created: string; updated: string; summary: string | null }
@@ -51,6 +52,7 @@ export function seatFromNode(n: Record<string, any>): Seat {
     blocked: n.blockedWorkCount ?? 0, lastActivityAt: n.lastActivityAt ?? null, kind: String(n.nodeKind ?? "agent"),
     tokens: typeof n.contextUsage?.totalInputTokens === "number" ? n.contextUsage.totalInputTokens : null,
     window: typeof n.contextUsage?.contextWindowSize === "number" ? n.contextUsage.contextWindowSize : null,
+    ingest: n.transcriptIngest ? { state: String(n.transcriptIngest.state ?? "unknown"), reason: n.transcriptIngest.reason ?? null, at: n.transcriptIngest.lastCapturedAt ?? null } : null,
   };
 }
 export function qrowFromItem(q: Record<string, any>): QRow {
