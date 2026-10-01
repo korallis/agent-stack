@@ -43,10 +43,10 @@ has no version numbers; entries are grouped by the day they merged, newest first
 - The lead's and the merge owner's role texts and the CULTURE template use the new Jev helpers.
 
 ### Fixed
-- `agent-merge-evidence` finds the blast radius in any form: `### Blast radius`, a bold lead-in, or a "Blast radius:"
-  paragraph. It prefers the selected review's own section, then the newest note naming this head. It used to take an
-  older review's `## Blast radius` that didn't name the head. The excerpt has its own budget, so a paragraph deep in a
-  long review isn't cut off.
+- `rig/template/openrig-shared` is no longer tracked: it was a symlink to an absolute path in the owner's home, which
+  the public tree exposed. `install.sh` creates it as a local link, `openrig-upgrade` refreshes it, and git ignores
+  it. A test now fails on any tracked absolute symlink or real `/home/<name>` path. After pulling this, run
+  `./install.sh` once to recreate the link.
 - The credential read guard resolves paths the way the shell will run the command. It no longer refuses
   `grep x bin/*`: globs follow bash's dotfile rule, while dotglob, `.*` and `**` are still refused. It follows `cd`,
   existing symlinks, and copies or links the command makes of a credential file. It decodes `$'…'` escapes, `{a,b}`
