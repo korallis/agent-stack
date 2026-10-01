@@ -66,6 +66,20 @@ test("no sweep or summary WARNs; one on the wrong seat WARNs and names it", () =
   assert.deepEqual([wrong.merge.level, wrong.merge.detail], ["WARN", "1 active (impl-a@demo)"]);
 });
 
+// QA PR77: OpenRig delivers `message ?? context.message`, so a spec may carry the message under context.
+const CTX = (seat, text) => `target:\n  session: "${seat}"\ncontext:\n  message: "${text}"\n`;
+test("a context.message spec counts like a top-level message; two such sweeps FAIL; an empty top-level message wins", () => {
+  const one = check([["m1", 900, "integ-codex@demo", CTX("integ-codex@demo", "Merge sweep: inspect PRs")],
+    ["d1", 86400, "coord-lead-claude@demo", CTX("coord-lead-claude@demo", "Daily summary: write it")]]);
+  assert.deepEqual([one.merge.level, one.merge.detail], ["OK", ""]);
+  assert.deepEqual([one.daily.level, one.daily.detail], ["OK", ""]);
+  const two = check([["m1", 900, "integ-codex@demo", CTX("integ-codex@demo", "Merge sweep: inspect PRs")],
+    ["m2", 900, "integ-claude@demo", CTX("integ-claude@demo", "Merge sweep: again")]]);
+  assert.deepEqual([two.merge.level, two.merge.detail], ["FAIL", "2 active (integ-claude@demo, integ-codex@demo)"]);
+  const emptyWins = check([["m1", 900, "integ-codex@demo", 'target:\n  session: "integ-codex@demo"\nmessage: ""\ncontext:\n  message: "Merge sweep: hidden"\n']]);
+  assert.deepEqual([emptyWins.merge.level, emptyWins.merge.detail], ["WARN", "none active"], "an empty top-level message is what is delivered");
+});
+
 test("a watchdog whose spec can't be read is not counted and is said, never taken for a sweep", () => {
   const r = check([["m1", 900, "integ-claude@demo", MERGE], ["u1", 900, "integ-claude@demo", MERGE], ["d1", 86400, "coord-lead-claude@demo", DAILY]], ["u1"]);
   assert.equal(r.merge.level, "WARN");

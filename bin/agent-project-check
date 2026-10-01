@@ -202,9 +202,16 @@ if specs:
             return None
         try:
             import yaml
-            msg = (yaml.safe_load(spec["specYaml"]) or {}).get("message")
+            doc = yaml.safe_load(spec["specYaml"]) or {}
         except Exception:
             return None
+        if not isinstance(doc, dict):
+            return None
+        # What OpenRig delivers: the top-level message, else context.message (`message ?? context.message`; an empty
+        # top-level string is a message, not a fallback).
+        msg = doc.get("message")
+        if msg is None and isinstance(doc.get("context"), dict):
+            msg = doc["context"].get("message")
         return " ".join(msg.split()) if isinstance(msg, str) else None
     kinds, unread = {"merge": [], "daily": []}, []
     for j in wd:
