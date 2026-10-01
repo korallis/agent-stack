@@ -13,7 +13,9 @@ QUOTA_KEYS = (
     "Anthropic-Ratelimit-Unified-5h-Utilization", "Anthropic-Ratelimit-Unified-7d-Utilization",
     "Anthropic-Ratelimit-Unified-Status", "Anthropic-Ratelimit-Unified-Overage-Status",
     "X-Codex-Primary-Used-Percent", "X-Codex-Secondary-Used-Percent", "X-Codex-Plan-Type",
-    "X-Codex-Credits-Has-Credits",
+    # each Codex window's length: which window is the weekly one (cliproxy-quotawatch, agent-proxy-status; WO85)
+    "X-Codex-Primary-Window-Minutes", "X-Codex-Secondary-Window-Minutes",
+    "X-Codex-Credits-Has-Credits", "X-Codex-Credits-Unlimited",
 )
 
 
