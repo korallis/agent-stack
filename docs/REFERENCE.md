@@ -571,7 +571,8 @@ the lead or a person. Send Jev evidence, not conclusions.
 
   If a verifiable source disagrees with the first one, the verdict is CONFLICT and lists both. If none is
   verifiable, it is `NONE VERIFIABLE`, with what each source lacked. For the gate, the review must be `success`.
-- **Dispatch:** `agent-dispatch pick-seat --rig R --role implementer --task "..."` lists the running seats of the role
+- **Dispatch:** `agent-dispatch pick-seat --rig R --role implementer --task "..."` (the role, or its pod's short name:
+  `impl`, `review`, `qa`, `arch`, `integ`, `tests`, `ops`; an unknown role is an error naming the valid ones) lists the running seats of the role
   that are idle with no open work, with their load notes (code), and Jev's `intake.seat` picks one. On review or uncertain the lead picks
   and records why in the row.
 - **Stuck seats:** `agent-stuck-check` runs every 10 minutes. For a seat holding work whose screen stopped changing,

@@ -1286,3 +1286,37 @@ process.stdout.write(typeof out === "string" ? out : JSON.stringify(out));
   const staleQA = run({ view: { ...fixture.view, comments: [c(`qa-codex-1@shop\nHead: ${OLD}\nVerdict: SHIP`, 1)] } });
   assert.match(staleQA.review, /MISSING: no bug-review-board proof for a{40}/);
 });
+
+// ---- WO51: pick-seat accepts pod short names, knows QA seats, and fails loudly on an unknown role -----------------
+test("roles: every template pod maps to its role; --role takes pod short names; an unknown role names the valid ones", async () => {
+  const { seatInfo, normalizeRole, ROLES } = await import("../orchestration/lib.js");
+  const node = (logicalId) => ({ canonicalSessionName: `${logicalId.replace(".", "-")}@shop`, logicalId, runtime: "codex", lifecycleState: "running", sessionStatus: "running" });
+  assert.deepEqual(["qa.codex-1", "tests.claude", "ops.codex", "impl.codex-1", "review.claude", "arch.claude", "integ.codex", "coord.lead-claude", "coord.deputy-codex"].map((id) => seatInfo(node(id)).role),
+    ["qa", "test-author", "recovery", "implementer", "reviewer", "architect", "integrator", "lead", "deputy"]);
+  for (const [alias, role] of [["impl", "implementer"], ["review", "reviewer"], ["qa", "qa"], ["arch", "architect"], ["integ", "integrator"], ["tests", "test-author"],
+    ["ops", "recovery"], ["tester", "qa"], ["Implementer", "implementer"], [" reviewer ", "reviewer"]]) assert.equal(normalizeRole(alias), role, alias);
+  for (const r of ROLES) assert.equal(normalizeRole(r), r);
+  // QA PR55 f1: inherited object keys are not roles or aliases.
+  for (const bad of ["constructor", "__proto__", "toString", "hasOwnProperty", "prototype"]) assert.throws(() => normalizeRole(bad), /unknown role/, bad);
+  assert.equal(seatInfo(node("constructor.x")).role, undefined, "an unmapped pod has no role, even one named like an Object key");
+  assert.throws(() => normalizeRole("frontend"), /unknown role "frontend": use one of lead \(coord\), deputy, architect \(arch\), implementer \(impl\), reviewer \(review\), integrator \(integ\), qa \(tester\), test-author \(tests, test\), recovery \(ops\)/);
+});
+
+test("agent-dispatch pick-seat end to end: --role impl and --role qa find their seats; an unknown role is an error", () => {
+  const n = (logicalId, runtime = "codex") => ({ canonicalSessionName: `${logicalId.replace(".", "-")}@shop`, logicalId, runtime, lifecycleState: "running", sessionStatus: "running",
+    agentActivity: { state: "idle" }, assignedWorkCount: 0, pendingWorkCount: 0 });
+  const nodes = [n("coord.lead-claude", "claude-code"), n("impl.codex-1"), n("qa.codex-1"), n("qa.codex-2"), n("review.claude", "claude-code")];
+  fs.writeFileSync(join(bin, "rig"), `#!/bin/sh\ncase "$*" in "ps --nodes --rig shop --json") echo '${JSON.stringify(nodes)}' ;; esac\n`, { mode: 0o755 });
+  const pick = (role) => spawnSync(process.execPath, [join(repo, "orchestration/dispatch.js"), "pick-seat", "--rig", "shop", "--role", role, "--task", "04-export: CSV"],
+    { encoding: "utf8", env: { PATH: `${bin}:${process.env.PATH}`, AGENT_STACK_STATE: process.env.AGENT_STACK_STATE,
+      AGENT_JEV_STUB: stub({ "intake.seat": { decided_by: "jev", band: "act", result: { seat: "qa-codex-1@shop" } } }) } });
+  let r = pick("impl"); assert.equal(r.status, 0, r.stderr); assert.deepEqual(JSON.parse(r.stdout).candidates, ["impl-codex-1@shop"]);
+  r = pick("qa"); assert.equal(r.status, 0, r.stderr);
+  const o = JSON.parse(r.stdout);
+  assert.deepEqual(o.candidates, ["qa-codex-1@shop", "qa-codex-2@shop"], "QA seats can be picked"); assert.equal(o.next.action, "dispatch");
+  r = pick("review"); assert.deepEqual(JSON.parse(r.stdout).candidates, ["review-claude@shop"]);
+  for (const bad of ["frontend", "constructor", "__proto__"]) {   // QA PR55 f1: inherited Object keys are unknown too
+    r = pick(bad);
+    assert.equal(r.status, 1, bad); assert.equal(r.stdout, "", bad); assert.match(r.stderr, new RegExp(`unknown role \\\\"${bad}\\\\": use one of lead`), bad);
+  }
+});
