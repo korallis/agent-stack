@@ -39,7 +39,8 @@ alert() { # alert <key> <urgency> <title> <message> [quiet seconds]
   if [ -f "$stamp" ] && [ $(( $(date +%s) - $(stat -c %Y "$stamp") )) -lt "${5:-$quiet_s}" ]; then return; fi
   touch "$stamp"; logger -t cliproxy-quotawatch "$3: $4"
   notify-send --urgency="$2" --app-name="Agent stack" "$3" "$4" 2>/dev/null || true
-  echo "$3: $4"
+  # by hand, also on the terminal; under systemd stdout is the journal, which logger already wrote to (one line, not two)
+  [ -n "${JOURNAL_STREAM:-}" ] || echo "$3: $4"
 }
 pct() { [ "$1" = - ] && echo -1 || echo "${1%.*}"; }   # "-" (no such window) never passes a threshold
 

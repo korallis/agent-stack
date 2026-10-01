@@ -83,3 +83,17 @@ test("the routing log keeps what quotawatch needs: each Codex window's length an
   for (const k of ["X-Codex-Primary-Window-Minutes", "X-Codex-Secondary-Window-Minutes", "X-Codex-Credits-Has-Credits", "X-Codex-Credits-Unlimited"])
     assert.ok(r.stdout.split("\n").includes(k), k);
 });
+
+test("under systemd each alert reaches the journal once (logger), not twice (logger and stdout)", () => {
+  const log = join(root, "log-journal.jsonl"), calls = join(root, "calls-journal");
+  fs.writeFileSync(log, JSON.stringify(cl("claude-a", "1.01", "0.5")) + "\n");
+  const go = (extra) => spawnSync("bash", [join(repo, "system/cliproxy-quotawatch")], { encoding: "utf8",
+    env: { PATH: `${bin}:/usr/bin:/bin`, HOME: root, QUOTAWATCH_LOG: log, QUOTAWATCH_STATE: join(root, `state-j-${Math.random()}`), CALLS: calls, ...extra } });
+  const r = go({ JOURNAL_STREAM: "8:12345" });
+  assert.equal(r.status, 0, r.stderr);
+  assert.equal(r.stdout, "", "stdout is the journal there: logger has it");
+  const c = fs.readFileSync(calls, "utf8").split("\n");
+  assert.equal(c.filter((l) => l.startsWith("logger") && l.includes("claude-a at 101% of its 5-hour window")).length, 1);
+  assert.equal(c.filter((l) => l.startsWith("notify-send") && l.includes("claude-a at 101%")).length, 1);
+  assert.match(go({}).stdout, /claude-a at 101% of its 5-hour window/, "by hand: printed as well");
+});
