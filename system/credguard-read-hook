@@ -664,9 +664,15 @@ function keyNames(text) {
 
 // Pure: the decision for one hook input. { deny: false } or { deny: true, reason }.
 // The seat's scratch dir for Playwright network/console output: PW_DIR/<seat>/net (OPENRIG_SESSION_NAME, else "local",
-// reduced as agent-playwright-mcp reduces it for the seat's output dir).
+// reduced as agent-playwright-mcp reduces it for the seat's output dir: [A-Za-z0-9._@-], no leading dot).
+const seatName = (env) => (env.OPENRIG_SESSION_NAME || "local").replace(/[^A-Za-z0-9._@-]/g, "_").replace(/^\./, "_");
 function netDir(home, env = process.env) {
-  return path.join(home, PW_DIR.slice(2), (env.OPENRIG_SESSION_NAME || "local").replace(/[^A-Za-z0-9._@-]/g, "_"), "net");
+  return path.join(home, PW_DIR.slice(2), seatName(env), "net");
+}
+// The same dir under an MCP started before the per-seat dirs (one shared --output-dir): PW_DIR/net/<seat>. Allowed until
+// the seat relaunches, so its browser tooling keeps working; retention ages it (WO83).
+function legacyNetDir(home, env = process.env) {
+  return path.join(home, PW_DIR.slice(2), "net", seatName(env));
 }
 
 // What a call writes, named by the file's prefix, so agent-net-summary knows a file's kind from its origin and never
@@ -681,13 +687,14 @@ function netKind(tool, ti = {}) {
 // A Playwright network/console call: null when its output goes to a file in the seat's scratch dir (an absolute path
 // below it, named <kind>-…, no symlink on the way; the dir is created 0700), else why not.
 function netVerdict(ti, home, env = process.env, tool = "") {
-  const dir = netDir(home, env), f = ti.filename, kind = netKind(tool, ti);
+  const f = ti.filename, kind = netKind(tool, ti);
   if (typeof f !== "string" || !f.trim()) return "it has no filename, so the output would come back as text";
   if (!path.isAbsolute(f)) return "its filename is not an absolute path in your scratch dir";
   const abs = path.resolve(f);
-  if (!abs.startsWith(dir + path.sep)) return `its filename is not inside your scratch dir ${dir.replace(home, "~")}`;
+  const dir = [netDir(home, env), legacyNetDir(home, env)].find((d) => abs.startsWith(d + path.sep));
+  if (!dir) return `its filename is not inside your scratch dir ${netDir(home, env).replace(home, "~")}`;
   if (!path.basename(abs).startsWith(`${kind}-`)) return `its file name must start with "${kind}-" (what this call writes)`;
-  const top = path.dirname(path.dirname(dir));   // PW_DIR, above the seat's MCP output dir
+  const top = path.join(home, PW_DIR.slice(2));   // above the MCP output dir (the seat's, or the shared one before WO83)
   for (let p = abs; p.length >= top.length; p = path.dirname(p)) {
     try { if (fs.lstatSync(p).isSymbolicLink()) return `${p.replace(home, "~")} is a symlink`; } catch { /* not there yet */ }
     if (p === top) break;
@@ -704,6 +711,8 @@ function netDenial(tool, why, home, env = process.env, ti = {}) {
     "not masked by --secrets.",
     `Send it to a file in your scratch dir with the tool's own filename argument (an absolute path):`,
     `  ${short}({ …, filename: "${file.replace("~", home)}" })`,
+    `(If the browser tool answers "File access denied", its MCP started before the per-seat dirs; until you relaunch, use`,
+    `  ${legacyNetDir(home, env).replace(home, "~")}/${netKind(tool, ti)}-1.log instead.)`,
     `then print a summary that keeps method, host, path and status only (no query strings, no headers):`,
     `  agent-net-summary ${file}`,
     `The scratch dir is protected like a credential file: don't open the raw file.`,
@@ -768,5 +777,5 @@ function main() {
   process.exit(0);
 }
 
-module.exports = { DEFAULT_PATTERNS, VERCEL_DIR, BYPASS, PW_DIR, NET_DIR, NET_TOOL, netDir, netKind, netVerdict, patterns, globRe, protectedPath, lex, parseArgs, bashVerdict, keyNames, decide };
+module.exports = { DEFAULT_PATTERNS, VERCEL_DIR, BYPASS, PW_DIR, NET_DIR, NET_TOOL, netDir, legacyNetDir, netKind, netVerdict, patterns, globRe, protectedPath, lex, parseArgs, bashVerdict, keyNames, decide };
 if (require.main === module) main();

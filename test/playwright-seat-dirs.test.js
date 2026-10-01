@@ -25,6 +25,11 @@ test("launcher: the seat's own output dir (0700, with net/), any --output-dir gi
   assert.equal(r.stdout.trim(), `npx ${ARGS.join(" ")} --output-dir ${join(PW(h), "qa-codex-1@shop")}`);
   for (const d of [PW(h), join(PW(h), "qa-codex-1@shop"), join(PW(h), "qa-codex-1@shop/net")]) assert.equal(mode(d), 0o700, d);
   assert.match(launch(h, { OPENRIG_SESSION_NAME: "a b/../x@y" }).stdout, /playwright-mcp\/a_b_.._x@y$/m, "a seat name can't leave the dir");
+  // QA PR87: dot-only names can't name the parent dirs
+  for (const [name, dirName] of [["..", "_."], [".", "_"], [".hidden@x", "_hidden@x"]]) {
+    const out = launch(h, { OPENRIG_SESSION_NAME: name }).stdout.trim();
+    assert.ok(out.endsWith(`--output-dir ${join(PW(h), dirName)}`), `${name}: ${out}`);
+  }
   const noProc = join(root, `noproc${n}`); fs.mkdirSync(noProc);   // no ancestor with a seat (these tests may run inside one)
   assert.match(launch(h, { AGENT_PLAYWRIGHT_MCP_PROC: noProc }).stdout.trim(), /playwright-mcp\/local$/, "no seat (the operator's shell, a human): local");
 });
@@ -84,23 +89,47 @@ test("retention: settings from its file (overridden by the environment); bad val
   assert.equal(ret(home()).status, 0, "no MCP dir yet: nothing to do");
 });
 
-test("retention --migrate: files from the shared dir move (never deleted) into unattributed-<date>/ (0700); seat dirs stay", () => {
+test("retention --migrate: old top-level files move (never deleted, never into a link); the old net/ tree and recent files stay for running seats", () => {
   const h = home(), pw = PW(h);
-  const top = put(join(pw, "page-2026-10-01T10-00-00.yml"), 80, "snapshot"), net = put(join(pw, "net/qa-1@shop/requests-1.log"), 80, "raw");
-  const seat = put(join(pw, "qa-1@shop/page.yml"), 1);
+  const top = put(join(pw, "page-2026-10-01T10-00-00.yml"), 80, "snapshot"), recent = put(join(pw, "page-just-now.png"), 0.1, "fresh");
+  const net = put(join(pw, "net/qa-1@shop/requests-1.log"), 80, "raw"), seat = put(join(pw, "qa-1@shop/page.yml"), 1);
   const r = ret(h, ["--migrate"]);
   assert.equal(r.status, 0, r.stderr);
   const day = new Date().toISOString().slice(0, 10), dest = join(pw, `unattributed-${day}`);
-  assert.match(r.stdout, /moved 2 entries into ~\/.*unattributed-/);
+  assert.match(r.stdout, /moved 1 entries into ~\/.*unattributed-/);
   assert.equal(fs.readFileSync(join(dest, "page-2026-10-01T10-00-00.yml"), "utf8"), "snapshot", "moved, not deleted (even though 80 h old)");
-  assert.equal(fs.readFileSync(join(dest, "net/qa-1@shop/requests-1.log"), "utf8"), "raw");
   assert.equal(mode(dest), 0o700);
-  assert.ok(!fs.existsSync(top) && !fs.existsSync(net) && fs.existsSync(seat));
-  put(join(pw, "page-later.yml"), 1, "again");
+  assert.ok(!fs.existsSync(top) && fs.existsSync(seat));
+  assert.ok(fs.existsSync(recent), "a file an old MCP wrote in the last hour stays (its seat may still copy it)");
+  assert.ok(fs.existsSync(net), "the old net/ tree stays: seats on an old MCP still write there until they relaunch");
+  put(join(pw, "page-later.yml"), 2, "again");
   assert.match(ret(h, ["--migrate"]).stdout, /moved 1 entries/, "re-runnable; an existing name is never overwritten");
   assert.match(ret(h, ["--migrate"]).stdout, /nothing to migrate/);
-  ret(h);   // the hourly run then ages the moved files like any other
-  assert.ok(!fs.existsSync(join(dest, "page-2026-10-01T10-00-00.yml")));
+  // the hourly run ages it all: the moved files, the old net/ tree, stray top-level files an old MCP keeps writing
+  const stray = put(join(pw, "page-stray.yml"), 60);
+  assert.equal(ret(h).status, 0);
+  for (const f of [join(dest, "page-2026-10-01T10-00-00.yml"), net, stray]) assert.ok(!fs.existsSync(f), f);
+  assert.ok(fs.existsSync(recent) && fs.existsSync(join(pw, "net")), "recent files and the net/ dir itself stay");
+});
+
+test("retention (QA PR87): never through a link: a symlinked MCP dir and a linked unattributed-* destination are refused; non-finite hours refused", () => {
+  const h = home(), outside = join(h, "outside");
+  const victim = put(join(outside, "qa@demo/keep.txt"), 70);
+  fs.mkdirSync(dirname(PW(h)), { recursive: true }); fs.symlinkSync(outside, PW(h));
+  for (const args of [[], ["--migrate"]]) {
+    const r = ret(h, args);
+    assert.notEqual(r.status, 0, args.join(" ")); assert.match(r.stderr, /is a symbolic link: refusing/);
+  }
+  assert.ok(fs.existsSync(victim), "nothing outside was deleted");
+  const h2 = home(), pw2 = PW(h2), elsewhere = join(h2, "elsewhere");
+  fs.mkdirSync(elsewhere, { mode: 0o755 }); fs.chmodSync(elsewhere, 0o755);
+  const page = put(join(pw2, "page.yml"), 5);
+  fs.symlinkSync(elsewhere, join(pw2, `unattributed-${new Date().toISOString().slice(0, 10)}`));
+  const m = ret(h2, ["--migrate"]);
+  assert.notEqual(m.status, 0); assert.match(m.stderr, /not a plain directory \(a link\?\): refusing/);
+  assert.ok(fs.existsSync(page) && fs.readdirSync(elsewhere).length === 0 && mode(elsewhere) === 0o755, "nothing moved, the link target's mode untouched");
+  for (const v of ["nan", "inf", "-inf", "NaN"]) assert.notEqual(ret(home(), [], { KEEP_HOURS: v }).status, 0, v);
+  assert.notEqual(ret(home(), [], { CLIENT_DATA_HOURS: "inf" }).status, 0);
 });
 
 test("wiring: install.sh links both tools, enables the hourly timer, migrates once per apply; the units and guidance say so", () => {

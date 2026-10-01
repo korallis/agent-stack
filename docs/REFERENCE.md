@@ -282,9 +282,13 @@ Details are in the `agent-stack` skill. What went wrong before: [docs/incidents/
     `CLIENT_DATA_RIGS="rig1 rig2"` in `~/.config/agent-stack/playwright-retention.env`; `--dry-run` shows what would
     go.
   - Seats keep evidence by copying it into the slice's proof dir.
-  - `install.sh --apply` moves (never deletes) what the MCP wrote before, in the one shared dir, into
-    `unattributed-<date>/`; the hourly run then ages it like the rest.
-  - Seats pick the new MCP command up when relaunched.
+  - `install.sh --apply` moves (never deletes, never into a link) the shared dir's top-level files untouched for an
+    hour into `unattributed-<date>/`.
+  - Seats pick the new MCP command up when they relaunch (the normal idle-gated way; no mass relaunch). Until then
+    their old MCP keeps working: the guard also allows its old network/console dir `playwright-mcp/net/<seat>/` (the
+    denial names it), and that tree is not moved.
+  - The hourly run ages the moved files, the old tree and any stray top-level file like the rest. A symlinked MCP dir
+    or destination is refused.
 - **Seats never depend on the daemon unit.** Every seat lives in the tmux server of `openrig-tmux.service`, not in
   `openrig.service`. tmux ties each pane to the unit its server runs in, which is how `systemctl stop openrig.service`
   once stopped every seat. Restart the daemon with `openrig-daemon-cycle` (the health check does too), never with

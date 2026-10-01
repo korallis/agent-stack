@@ -11,7 +11,8 @@ the seat's rig.
 The seat is OPENRIG_SESSION_NAME. A runtime may start MCP servers with a trimmed environment (Codex passes only a few
 variables), so when it is absent here it is read from the nearest ancestor process that has it (/proc/<pid>/environ:
 the seat's own codex or claude). No seat (the operator's own shell, a human): "local". The name is reduced to
-[A-Za-z0-9._@-], as the credential guard does for the net/ dir it allows (system/credguard-read-hook netDir).
+[A-Za-z0-9._@-] with no leading dot, as the credential guard does for the net/ dir it allows (system/credguard-read-hook
+netDir).
 """
 import os, re, sys
 
@@ -37,7 +38,8 @@ def from_ancestors(pid):
 
 def seat():
     s = os.environ.get("OPENRIG_SESSION_NAME") or from_ancestors(os.getppid()) or "local"
-    return re.sub(r"[^A-Za-z0-9._@-]", "_", s)
+    # a leading dot becomes "_" too, so "." and ".." can't name the parent dirs (QA PR87); same as the guard's netDir
+    return re.sub(r"^\.", "_", re.sub(r"[^A-Za-z0-9._@-]", "_", s))
 
 
 def main(argv):

@@ -65,6 +65,18 @@ test("WO57: with a filename in the seat's scratch dir each tool is allowed in bo
     assert.equal(hook("claude", h, other, {}).deny, false, other);
 });
 
+test("WO83: a seat on an MCP from before the per-seat dirs keeps working: the old net/<seat>/ dir is still allowed, and the denial names it", () => {
+  const h = newHome(), legacy = join(h, ".local/state/agent-stack/playwright-mcp/net", SEAT);
+  for (const rt of ["claude", "codex"]) {
+    const ok = hook(rt, h, "mcp__playwright__browser_network_requests", { filename: join(legacy, "requests-old.log") });
+    assert.equal(ok.deny, false, rt);
+  }
+  assert.equal(fs.statSync(legacy).mode & 0o777, 0o700, "made 0700 like the new one");
+  const r = hook("claude", h, "mcp__playwright__browser_console_messages", {});
+  assert.equal(r.deny, true); assert.match(r.reason, /File access denied[\s\S]*playwright-mcp\/net\/qa-one@shop\/console-1\.log/);
+  assert.equal(hook("claude", h, "mcp__playwright__browser_network_requests", { filename: join(h, ".local/state/agent-stack/playwright-mcp/net/someone@else/requests-1.log") }).deny, true, "another seat's old dir is still refused");
+});
+
 test("WO57: a symlink anywhere from the MCP output dir down is refused (the write would land elsewhere)", () => {
   const h = newHome(), dir = seatDir(h), out = dirname(dirname(dir));
   fs.mkdirSync(join(h, "outside"), { recursive: true });

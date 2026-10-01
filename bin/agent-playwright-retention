@@ -9,18 +9,21 @@ the page showed, client data included, so nothing there is kept for long:
 Settings: ~/.config/agent-stack/playwright-retention.env (NAME=value lines), overridden by the environment.
 A seat keeps evidence by copying it into its slice's proof dir; this dir is scratch.
 
---migrate (install.sh): files the MCP wrote before it had a dir per seat (the dir's top level and its old net/ tree)
-are MOVED, never deleted, into unattributed-<UTC date>/ (0700); that run deletes nothing. The hourly run then applies
-KEEP_HOURS to them like any other file. Their seat can't be told, so the operator purges a client-data window on request.
+--migrate (install.sh): top-level files the MCP wrote before it had a dir per seat, untouched for an hour, are MOVED
+(renamed, never deleted, never into a link) into unattributed-<UTC date>/ (0700); that run deletes nothing. The old
+net/ tree stays where it is: seats on an MCP started before the per-seat dirs still write their logs there until they
+relaunch. The hourly run ages all of it (unattributed-*, the old net/ tree, stray top-level files) by KEEP_HOURS.
+Their seat can't be told, so the operator purges a client-data window on request. A symlinked MCP dir is refused.
 Only regular files and symlinks (never followed) are removed; emptied subdirs go too, but never a seat dir or its net/.
 Prints one line per dir it changed and a total. Runs hourly (agent-playwright-retention.timer).
 """
-import os, re, shutil, sys, time
+import math, os, re, sys, time
 
 HOME = os.path.expanduser("~")
 BASE = os.path.join(HOME, ".local/state/agent-stack/playwright-mcp")
 CONF = os.path.join(HOME, ".config/agent-stack/playwright-retention.env")
 SEAT = re.compile(r"^[A-Za-z0-9._-]+@[A-Za-z0-9._-]+$")
+MIGRATE_MIN_AGE = 3600   # seconds since a top-level file was last written before --migrate moves it
 
 
 def settings():
@@ -39,28 +42,41 @@ def settings():
         keep, client = float(s["KEEP_HOURS"]), float(s["CLIENT_DATA_HOURS"])
     except ValueError:
         sys.exit("agent-playwright-retention: KEEP_HOURS and CLIENT_DATA_HOURS must be numbers")
-    if keep <= 0 or client <= 0:
-        sys.exit("agent-playwright-retention: KEEP_HOURS and CLIENT_DATA_HOURS must be above 0")
+    # nan and inf would silently keep everything (QA PR87)
+    if not (math.isfinite(keep) and math.isfinite(client)) or keep <= 0 or client <= 0:
+        sys.exit("agent-playwright-retention: KEEP_HOURS and CLIENT_DATA_HOURS must be finite numbers above 0")
     return keep, client, set(s["CLIENT_DATA_RIGS"].split())
 
 
-def migrate(dry):
-    """Moves pre-WO83 files (top-level files and the old net/ tree) into unattributed-<date>/."""
-    if not os.path.isdir(BASE):
-        return 0
-    legacy = [n for n in sorted(os.listdir(BASE)) if not (SEAT.match(n) or n == "local" or n.startswith("unattributed-"))]
+def migrate(dry, now):
+    """Moves pre-WO83 top-level files into unattributed-<date>/: only what no MCP touched for MIGRATE_MIN_AGE (a seat on
+    an old MCP may still copy a screenshot it just took), and never the old net/ tree, which seats on an old MCP still
+    write their network/console logs to until they relaunch. Renames only; never into a link."""
+    legacy = []
+    for n in sorted(os.listdir(BASE)):
+        if SEAT.match(n) or n == "local" or n == "net" or n.startswith("unattributed-"):
+            continue
+        try:
+            st = os.lstat(os.path.join(BASE, n))
+        except OSError:
+            continue
+        if now - st.st_mtime >= MIGRATE_MIN_AGE:
+            legacy.append(n)
     if not legacy:
         return 0
-    dest = os.path.join(BASE, "unattributed-" + time.strftime("%Y-%m-%d", time.gmtime()))
+    dest = os.path.join(BASE, "unattributed-" + time.strftime("%Y-%m-%d", time.gmtime(now)))
+    if os.path.lexists(dest) and (os.path.islink(dest) or not os.path.isdir(dest)):
+        sys.exit(f"agent-playwright-retention: {dest.replace(HOME, '~')} is not a plain directory (a link?): refusing to move files into it")
     if not dry:
-        os.makedirs(dest, mode=0o700, exist_ok=True)
-        os.chmod(dest, 0o700)
+        if not os.path.lexists(dest):
+            os.mkdir(dest, 0o700)
+        os.chmod(dest, 0o700)   # dest was just checked to be a plain directory, not a link
     for n in legacy:
         target, k = os.path.join(dest, n), 1
         while os.path.lexists(target):
             target, k = os.path.join(dest, f"{n}.{k}"), k + 1
         if not dry:
-            shutil.move(os.path.join(BASE, n), target)
+            os.rename(os.path.join(BASE, n), target)   # same filesystem; a link moves as a link
     print(f"{'would move' if dry else 'moved'} {len(legacy)} entries into {dest.replace(HOME, '~')}")
     return len(legacy)
 
@@ -107,18 +123,29 @@ def main(argv):
         return 2
     dry = "--dry-run" in argv
     keep, client, rigs = settings()
-    if "--migrate" in argv:   # moves only: the one-off never deletes; the hourly run ages the moved files later
-        if not migrate(dry):
-            print("nothing to migrate")
-        return 0
+    if os.path.islink(BASE):   # never clean (or move) through a link: it would act on another tree (QA PR87)
+        sys.exit(f"agent-playwright-retention: {BASE.replace(HOME, '~')} is a symbolic link: refusing")
     if not os.path.isdir(BASE):
         print("nothing to do: no Playwright MCP dir yet")
         return 0
     now, total, total_bytes = time.time(), 0, 0
+    if "--migrate" in argv:   # moves only: the one-off never deletes; the hourly run ages the moved files later
+        if not migrate(dry, now):
+            print("nothing to migrate")
+        return 0
     for name in sorted(os.listdir(BASE)):
         p = os.path.join(BASE, name)
         if os.path.islink(p) or not os.path.isdir(p):
-            continue   # a stray top-level file waits for --migrate
+            # a top-level file or link: written by an MCP from before the per-seat dirs (until its seat relaunches)
+            try:
+                st = os.lstat(p)
+            except OSError:
+                continue
+            if st.st_mtime < now - keep * 3600:
+                total, total_bytes = total + 1, total_bytes + st.st_size
+                if not dry:
+                    os.unlink(p)
+            continue
         rig = name.split("@", 1)[1] if SEAT.match(name) else None
         hours = client if rig in rigs else keep
         n, size = prune(p, hours, now, dry, {os.path.join(p, "net")})
