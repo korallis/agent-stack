@@ -42,7 +42,7 @@ test("141: the local attachment is opened once, non-blocking, and read through t
 
 test("132: Windows scopes, catalog source observation, project identity and the projectRoot pin (#136 review)", () => {
   const a = added("132-project-scoped-proof.patch");
-  assert.match(a, /const qualified = rawScope === undefined \|\| path\.win32\.isAbsolute\(rawScope\) \? null : QUALIFIED_SCOPE\.exec\(rawScope\);/);
+  assert.match(a, /let qualified = rawScope === undefined \|\| path\.win32\.isAbsolute\(rawScope\) \? null : QUALIFIED_SCOPE\.exec\(rawScope\);/);
   assert.match(a, /const observation = \(c, project\) => project \? \{ state: "unavailable", revision: "unverified" \} : proofSourceObservation\(c\);/);
   assert.match(a, /project: \{ id: p\.id, root: p\.root \}/);
   assert.match(a, /new JudgmentError\("project_changed", .*, 409\)/);
@@ -62,4 +62,20 @@ test("132: a catalog project's own root bounds evidence, policy and scope identi
   assert.match(a, /recordJudgment\(root, \{ \.\.\.input, scope: scope \}, identity\.session, resolveRecordedProvenance\(c, identity\), project\?\.root\)/);
   for (const r of [/readProjectReadiness\(root, undefined, bound\)/, /readMissionReadiness\(dir, undefined, bound\)/, /readSliceReadiness\(dir, undefined, undefined, bound\)/]) assert.match(a, r);
   assert.doesNotMatch(a, /readPolicy = policyOf\b/, "policyOf's third parameter is the manifest reader, never the default ProofPolicyRead");
+});
+
+test("132: scopes readiness agrees with proof for a catalog project; colon paths resolve as written (#136 second review)", () => {
+  const a = added("132-project-scoped-proof.patch");
+  // the scopes readers and their projections take the selected project's root
+  assert.match(a, /export function projectSliceScope\(fs, sliceDir, readPolicy, root\) \{/);
+  assert.match(a, /readiness: readSliceReadiness\(sliceDir, fs, readPolicy, root\),/);
+  assert.match(a, /export function projectMissionScopes\(fs, missionsRoot, mission, root\) \{/);
+  assert.match(a, /const bound = selected\?\.root;/);
+  assert.match(a, /projectSliceScope\(realFs, path\.join\(r\.root, missionName, "slices", dirName\), readPolicy, bound\)/);
+  assert.match(a, /readiness: readMissionReadiness\(dir, readPolicy, bound\) \};/);
+  assert.match(a, /projectSliceScope\(realFs, path\.join\(r\.root, mission, "slices", slice\), undefined, selected\?\.root\)/);
+  // a prefix counts only for a catalogued project with no scope at the literal path
+  assert.match(a, /if \(existsAt\(literalRoot, rawScope\) \|\| !catalogued\(c, qualified\[1\]\)\)\n\s+qualified = null;/);
+  assert.match(a, /const literalRoot = flagged \? flagged\.missionsRoot : project === undefined \? workspaceRoot\(c\) : null;/);
+  assert.match(a, /e\.code === "project_not_found" \|\| e\.code === "invalid_project"\)\)\n\s+return null;/);
 });
