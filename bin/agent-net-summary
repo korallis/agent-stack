@@ -9,10 +9,12 @@ output carries request URLs, headers and console text where runtime tokens appea
 
 Query strings, fragments, user:password@ and ;params are dropped, and a path segment that looks like a token (long
 hex, a JWT, a long mixed letters-and-digits run) is shown as <masked>. Headers, bodies and console messages are never
-printed, only counted; a console log's "Total messages" line is shown. The file's kind is taken from its first line
-(request list, one request's details, console log) and only that kind's record lines are read; any other file prints
-nothing but the count. Exit 1 when a file can't be read.
+printed, only counted; a console log's "Total messages" line is shown. The file's kind comes from its name, which the
+guard enforces when the MCP writes it (requests-…, request-…, console-…), never from its content; only that kind's
+record lines are read. A part-… file (a raw header or body) or any other name prints nothing but the count.
+Exit 1 when a file can't be read.
 """
+import os
 import re
 import sys
 
@@ -45,15 +47,22 @@ def safe_url(url):
     return host + "/".join(segs) if m.group(2) else f"{m.group(1)}:" + "/".join(segs)
 
 
-def summarise(text):
-    """The file's kind comes from its first line; only that kind's own record lines are read, so text inside a console
-    message, a header or a body is never taken for a request, whatever it looks like."""
+def kind_of(path):
+    """The file's kind from its name, which the credential guard enforced when the MCP wrote it: requests-…, request-…,
+    console-… are read; part-… (a raw header or body) and anything else print only the count."""
+    k = os.path.basename(path).split("-", 1)[0]
+    return k if k in ("requests", "request", "console") else None
+
+
+def summarise(text, kind):
+    """Only the record lines of the file's kind (given by its name, never guessed from its content), matched whole: text
+    inside a console message, a header or a body is never taken for a request, whatever it looks like."""
     lines = [l for l in text.splitlines() if l.strip()]
     out, shown = [], 0
     first = lines[0] if lines else ""
-    if TOTALS.match(first):                     # a console log: the totals line only
+    if kind == "console" and TOTALS.match(first):     # the totals line only
         out, shown = [first], 1
-    elif DETAIL_HEAD.match(first):              # one request's details: its first line, and the status in General
+    elif kind == "request" and DETAIL_HEAD.match(first):   # its first line, and the status in General
         m = DETAIL_HEAD.match(first)
         status = None
         for l in lines[1:]:
@@ -65,7 +74,7 @@ def summarise(text):
                 break
         out = [f"1. {m.group(2)} {safe_url(m.group(3))}" + (f" => {status}" if status else "")]
         shown += 1
-    elif LIST_LINE.match(first):                # the request list: numbered lines, numbers increasing, and its note
+    elif kind == "requests":                          # numbered lines, numbers increasing, and the list's note
         last = 0
         for l in lines:
             m = LIST_LINE.match(l)
@@ -96,7 +105,7 @@ def main(argv):
             continue
         if len(argv) > 1:
             print(f"== {f}")
-        for line in summarise(text):
+        for line in summarise(text, kind_of(f)):
             print(line)
     return rc
 

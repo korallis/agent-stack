@@ -370,10 +370,14 @@ Paths are resolved the way the shell will run the command:
 runtime appear (session JWTs, `?token=`, signed URLs, dev-browser tokens); `--secrets` only masks the values listed in
 its file. The same hook, registered for `^mcp__.+__browser_(network_requests|network_request|console_messages)$` in
 both runtimes, allows them only with the tool's own `filename` set to an absolute path in the seat's scratch dir,
-`~/.local/state/agent-stack/playwright-mcp/net/<OPENRIG_SESSION_NAME>/` (made 0700; no symlink on the way). With
+`~/.local/state/agent-stack/playwright-mcp/net/<OPENRIG_SESSION_NAME>/` (made 0700; no symlink on the way), named by
+what the call writes: `requests-…` (the list), `request-…` (one request's details), `part-…` (one `part`: a raw
+header block or body, written as is) or `console-…`. With
 `filename` the MCP writes the file and returns only a link to it. That dir is in the default protected patterns, so
 `cat`, Read, content Grep and copies of it are refused like any credential file, a glob into it included.
-`agent-net-summary <file>` prints one line per request, `<n>. <METHOD> <host><path> => <status>`: query strings,
+`agent-net-summary <file>` takes the file's kind from that name, never from its content (a raw body can look like
+anything), and reads only that kind's own record lines; a `part-…` file or any other name prints only a line count. It
+prints one line per request, `<n>. <METHOD> <host><path> => <status>`: query strings,
 fragments, `user:password@` and `;params` are dropped, token-like path segments (long hex, JWTs, long mixed runs) show
 as `<masked>`, and headers, bodies and console messages are only counted. The MCP runs with
 `--output-dir ~/.local/state/agent-stack/playwright-mcp` (install.sh, both runtimes), because it writes only inside its

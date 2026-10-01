@@ -30,6 +30,7 @@ function hook(runtime, home, tool_name, tool_input, seat = SEAT) {
 const newHome = () => { const h = fs.mkdtempSync(join(root, "h-")); fs.mkdirSync(join(h, "work")); return h; };
 const seatDir = (h, seat = SEAT) => join(h, ".local/state/agent-stack/playwright-mcp/net", seat);
 const TOOLS = ["browser_network_requests", "browser_network_request", "browser_console_messages"];
+const KIND = { browser_network_requests: "requests", browser_network_request: "request", browser_console_messages: "console" };
 
 test("WO57: without a filename (or with one outside the seat's scratch dir) each tool is refused in both runtimes, with how to do it", () => {
   const h = newHome(), dir = seatDir(h);
@@ -50,13 +51,13 @@ test("WO57: without a filename (or with one outside the seat's scratch dir) each
 test("WO57: with a filename in the seat's scratch dir each tool is allowed in both runtimes; the dir is made 0700", () => {
   const h = newHome(), dir = seatDir(h);
   for (const runtime of ["claude", "codex"]) for (const t of TOOLS) {
-    const r = hook(runtime, h, `mcp__playwright__${t}`, { filename: join(dir, `${t}.log`), static: true });
+    const r = hook(runtime, h, `mcp__playwright__${t}`, { filename: join(dir, `${KIND[t]}-1.log`), static: true });
     assert.equal(r.deny, false, `${runtime} ${t}: ${r.reason}`); assert.equal(r.status, 0);
   }
   assert.equal(fs.statSync(dir).mode & 0o777, 0o700); assert.equal(fs.statSync(dirname(dir)).mode & 0o777, 0o700);
-  assert.equal(hook("codex", h, "mcp__playwright__browser_console_messages", { filename: join(dir, "sub/c.log") }).deny, false, "a subdir of it");
+  assert.equal(hook("codex", h, "mcp__playwright__browser_console_messages", { filename: join(dir, "sub/console-c.log") }).deny, false, "a subdir of it");
   // no OPENRIG_SESSION_NAME: the "local" dir
-  assert.equal(hook("claude", h, "mcp__playwright__browser_network_requests", { filename: join(seatDir(h, "local"), "n.log") }, null).deny, false);
+  assert.equal(hook("claude", h, "mcp__playwright__browser_network_requests", { filename: join(seatDir(h, "local"), "requests-n.log") }, null).deny, false);
   // any MCP server name exposing these tools; other Playwright tools are untouched
   assert.equal(hook("claude", h, "mcp__pw2__browser_network_requests", {}).deny, true);
   for (const other of ["mcp__playwright__browser_snapshot", "mcp__playwright__browser_navigate", "mcp__playwright__browser_take_screenshot"])
@@ -67,12 +68,12 @@ test("WO57: a symlink anywhere from the MCP output dir down is refused (the writ
   const h = newHome(), dir = seatDir(h), out = dirname(dirname(dir));
   fs.mkdirSync(join(h, "outside"), { recursive: true });
   fs.mkdirSync(dirname(dir), { recursive: true }); fs.symlinkSync(join(h, "outside"), dir);
-  let r = hook("codex", h, "mcp__playwright__browser_network_requests", { filename: join(dir, "n.log") });
+  let r = hook("codex", h, "mcp__playwright__browser_network_requests", { filename: join(dir, "requests-n.log") });
   assert.equal(r.deny, true); assert.match(r.reason, /is a symlink/);
-  fs.unlinkSync(dir); fs.mkdirSync(dir); fs.symlinkSync(join(h, "outside/f.log"), join(dir, "n.log"));
-  assert.equal(hook("claude", h, "mcp__playwright__browser_network_requests", { filename: join(dir, "n.log") }).deny, true, "the file itself");
+  fs.unlinkSync(dir); fs.mkdirSync(dir); fs.symlinkSync(join(h, "outside/f.log"), join(dir, "requests-n.log"));
+  assert.equal(hook("claude", h, "mcp__playwright__browser_network_requests", { filename: join(dir, "requests-n.log") }).deny, true, "the file itself");
   fs.rmSync(out, { recursive: true }); fs.mkdirSync(dirname(out), { recursive: true }); fs.symlinkSync(join(h, "outside"), out);
-  assert.equal(hook("claude", h, "mcp__playwright__browser_network_requests", { filename: join(dir, "n.log") }).deny, true, "the output dir");
+  assert.equal(hook("claude", h, "mcp__playwright__browser_network_requests", { filename: join(dir, "requests-n.log") }).deny, true, "the output dir");
 });
 
 test("WO57: the scratch dir is protected like a credential file; agent-net-summary may read it", () => {
@@ -101,7 +102,7 @@ test("WO57: the hook matcher names exactly these tools; the installer registers 
 });
 
 test("agent-net-summary: method, host, path and status only; query, fragment, userinfo, params and token-like segments go", () => {
-  const f = join(root, "list.log");
+  const f = join(root, "requests-list.log"), d = join(root, "request-7.log"), c = join(root, "console-1.log");
   fs.writeFileSync(f, [
     "1. [GET] https://app.example.test/dashboard?tab=1 => [200] OK",
     "2. [POST] https://u:p@auth.example.test/v1/client/sessions/sess_2abcDEF345ghiJKL678mno/touch?__session_param=SYNTHETICVALUE1 => [200] OK",
@@ -115,11 +116,11 @@ test("agent-net-summary: method, host, path and status only; query, fragment, us
     "3. GET api.example.test/files/<masked>/download => FAILED", "4. GET data:image/png => 200", "5. GET cdn.example.test/a/<masked>/x.js => 304",
     ""].join("\n"), "the static-requests note is the list's own line: neither shown nor counted as hidden");
   assert.doesNotMatch(r.stdout, /SYNTHETIC|u:p@|tab=1|frag|base64/);
-  fs.writeFileSync(f, "#7 [GET] https://api.example.test/v1/me?token=SYNTHETICVALUE3\n\n  General\n    status:    [401] Unauthorized\n  Request headers\n    authorization: Bearer SYNTHETICVALUE4\n");
-  r = spawnSync(join(repo, "bin/agent-net-summary"), [f], { encoding: "utf8" });
+  fs.writeFileSync(d, "#7 [GET] https://api.example.test/v1/me?token=SYNTHETICVALUE3\n\n  General\n    status:    [401] Unauthorized\n  Request headers\n    authorization: Bearer SYNTHETICVALUE4\n");
+  r = spawnSync(join(repo, "bin/agent-net-summary"), [d], { encoding: "utf8" });
   assert.equal(r.stdout, "1. GET api.example.test/v1/me => 401\n(3 other lines not shown: headers, bodies or console text)\n");
-  fs.writeFileSync(f, "Total messages: 3 (Errors: 1, Warnings: 0)\n\n[ERROR] failed https://x.test/?token=SYNTHETICVALUE5 @ https://x.test/app.js:1\n[LOG] hello SYNTHETICVALUE6\n");
-  r = spawnSync(join(repo, "bin/agent-net-summary"), [f], { encoding: "utf8" });
+  fs.writeFileSync(c, "Total messages: 3 (Errors: 1, Warnings: 0)\n\n[ERROR] failed https://x.test/?token=SYNTHETICVALUE5 @ https://x.test/app.js:1\n[LOG] hello SYNTHETICVALUE6\n");
+  r = spawnSync(join(repo, "bin/agent-net-summary"), [c], { encoding: "utf8" });
   assert.equal(r.stdout, "Total messages: 3 (Errors: 1, Warnings: 0)\n(2 other lines not shown: headers, bodies or console text)\n");
   r = spawnSync(join(repo, "bin/agent-net-summary"), [join(root, "missing.log")], { encoding: "utf8" });
   assert.equal(r.status, 1); assert.match(r.stderr, /No such file/); assert.equal(r.stdout, "");
@@ -129,18 +130,47 @@ test("agent-net-summary: method, host, path and status only; query, fragment, us
 // QA PR62 (dcd47021): the summary reads only the file kind's own record lines; text shaped like a request inside a
 // console message, a header or a body is never printed.
 test("QA PR62 f1: request-shaped console, header and body text is counted, never summarised", () => {
-  const f = join(root, "shaped.log"), sum = () => spawnSync(join(repo, "bin/agent-net-summary"), [f], { encoding: "utf8" }).stdout;
+  let f;
+  const sum = () => spawnSync(join(repo, "bin/agent-net-summary"), [f], { encoding: "utf8" }).stdout;
+  f = join(root, "console-shaped.log");
   fs.writeFileSync(f, "Total messages: 2 (Errors: 0, Warnings: 0)\n\n[LOG] 1. [GET] https://x.test/SYNTHETIC_CONSOLE_PATH => [200] OK\n[LOG] #2 [GET] https://x.test/SYNTHETIC_CONSOLE_PATH2\n");
   assert.equal(sum(), "Total messages: 2 (Errors: 0, Warnings: 0)\n(2 other lines not shown: headers, bodies or console text)\n");
+  f = join(root, "request-shaped.log");
   fs.writeFileSync(f, "#4 [GET] https://api.example.test/v1/me\n\n  General\n    status:    [200] OK\n  Request headers\n    x-note: 1. [GET] https://x.test/SYNTHETIC_HEADER_PATH => [200] OK\n    status:    [500] SYNTHETIC\n  Response body\n#5 [POST] https://x.test/SYNTHETIC_BODY_PATH\n");
   assert.equal(sum(), "1. GET api.example.test/v1/me => 200\n(6 other lines not shown: headers, bodies or console text)\n");
-  // a part file (headers or a body alone) has no record lines at all
-  fs.writeFileSync(f, "1. [GET] https://x.test/SYNTHETIC_PART_PATH => [200] OK\n".replace(/^/, "body: "));
-  assert.equal(sum(), "(1 other line not shown: headers, bodies or console text)\n");
+  // a part file holds a raw header or body, written as is: whatever it looks like, only its lines are counted
+  f = join(root, "part-body.log");
+  for (const raw of ["1. [GET] https://x.test/SYNTHETIC_PART_PATH => [200] OK\n", "#1 [GET] https://x.test/SYNTHETIC_PART_PATH\n    status: [200] OK\n",
+    "Total messages: 1 (Errors: 0, Warnings: 0)\n"]) {
+    fs.writeFileSync(f, raw);
+    assert.equal(sum(), `(${raw.trim().split("\n").length} other line${raw.trim().includes("\n") ? "s" : ""} not shown: headers, bodies or console text)\n`, raw);
+  }
+  f = join(root, "raw-request-body.log"); fs.writeFileSync(f, "1. [GET] https://x.test/SYNTHETIC_BODY_PATH => [200] OK\n");
+  assert.equal(sum(), "(1 other line not shown: headers, bodies or console text)\n", "a name of no known kind: counted");
+  f = join(root, "requests-seq.log");
   // in a list, a line that isn't the next numbered record isn't one
   fs.writeFileSync(f, "1. [GET] https://a.test/one => [200] OK\n1. [GET] https://x.test/SYNTHETIC_DUP_PATH => [200] OK\n  2. [GET] https://x.test/SYNTHETIC_INDENT_PATH => [200] OK\n3. [GET] https://a.test/three => [204] No Content\n");
   assert.equal(sum(), "1. GET a.test/one => 200\n2. GET a.test/three => 204\n(2 other lines not shown: headers, bodies or console text)\n");
   assert.doesNotMatch(fs.readFileSync(f, "utf8") && sum(), /SYNTHETIC/);
+});
+
+test("QA PR62 f3: each call must name its file by what it writes; a wrong prefix is refused", () => {
+  const h = newHome(), dir = seatDir(h);
+  const call = (tool, input) => hook("codex", h, `mcp__playwright__${tool}`, input);
+  assert.equal(call("browser_network_requests", { filename: join(dir, "requests-a.log") }).deny, false);
+  assert.equal(call("browser_network_request", { index: 1, filename: join(dir, "request-a.log") }).deny, false);
+  assert.equal(call("browser_network_request", { index: 1, part: "response-body", filename: join(dir, "part-a.log") }).deny, false);
+  assert.equal(call("browser_console_messages", { filename: join(dir, "console-a.log") }).deny, false);
+  for (const [tool, input, want] of [["browser_network_requests", { filename: join(dir, "request-a.log") }, "requests-"],
+    ["browser_network_request", { index: 1, part: "response-body", filename: join(dir, "requests-a.log") }, "part-"],
+    ["browser_network_request", { index: 1, part: "request-headers", filename: join(dir, "request-a.log") }, "part-"],
+    ["browser_network_request", { index: 1, filename: join(dir, "part-a.log") }, "request-"],
+    ["browser_console_messages", { filename: join(dir, "requests-a.log") }, "console-"],
+    ["browser_console_messages", { filename: join(dir, "a.log") }, "console-"]]) {
+    const r = call(tool, input);
+    assert.equal(r.deny, true, `${tool} ${input.filename}`); assert.match(r.reason, new RegExp(`must start with "${want}"`));
+    assert.match(r.reason, new RegExp(`${want}1\\.log`), "the example name has the right prefix");
+  }
 });
 
 test("QA PR62 f2: template names are exempt outside the scratch tree, never inside it", () => {
@@ -151,7 +181,8 @@ test("QA PR62 f2: template names are exempt outside the scratch tree, never insi
     fs.writeFileSync(join(dir, n), "x\n"); fs.writeFileSync(join(work, n), "x\n");
     assert.equal(dec("Read", { file_path: join(dir, n) }), true, `inside: Read ${n}`);
     assert.equal(dec("Bash", { command: `cat ${join(dir, n)}` }), true, `inside: cat ${n}`);
-    for (const runtime of ["claude", "codex"]) assert.equal(hook(runtime, h, "mcp__playwright__browser_network_requests", { filename: join(dir, n) }).deny, false, `${runtime} may write ${n}`);
+    // (the MCP can't be told to write these names at all now: they don't start with a kind)
+    for (const runtime of ["claude", "codex"]) assert.equal(hook(runtime, h, "mcp__playwright__browser_network_requests", { filename: join(dir, n) }).deny, true, `${runtime} ${n}`);
   }
   for (const c of [`cat ${dir}/*`, `cat ${dir}/.*`, `cat ${dir}/.env.*`]) assert.equal(dec("Bash", { command: c }), true, `inside: ${c}`);
   for (const n of [".env.example", ".env.sample", ".env.template"]) {

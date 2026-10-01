@@ -126,7 +126,8 @@ lead confirms that with each seat.
 - **Playwright network and console listings go to a file, never the transcript.** Runtime tokens (session JWTs,
   `?token=`, signed URLs) aren't covered by `--secrets`. The credential guard allows `browser_network_requests`,
   `browser_network_request` and `browser_console_messages` only with `filename` set to an absolute path in
-  `~/.local/state/agent-stack/playwright-mcp/net/<seat>/`, which it protects like a credential file. Read it with
+  `~/.local/state/agent-stack/playwright-mcp/net/<seat>/` and named by what it writes (`requests-…`, `request-…`,
+  `part-…`, `console-…`); it protects that dir like a credential file. Read it with
   `agent-net-summary <file>` (method, host, path, status; queries and headers dropped, token-like path segments masked).
 - **Credentials never go to a seat's output** (it is the transcript). Seats' `neon`/`vercel` run through
   `seat-bin/credguard`: credential-printing commands need `--output-file <path>` (0600) and use the values by name

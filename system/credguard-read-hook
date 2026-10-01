@@ -633,14 +633,24 @@ function netDir(home, env = process.env) {
   return path.join(home, NET_DIR.slice(2), (env.OPENRIG_SESSION_NAME || "local").replace(/[^A-Za-z0-9._@-]/g, "_"));
 }
 
+// What a call writes, named by the file's prefix, so agent-net-summary knows a file's kind from its origin and never
+// from its content (a raw body can look like anything): the request list, one request's details, one part of a
+// request (headers or a body, raw), console messages.
+function netKind(tool, ti = {}) {
+  if (/__browser_network_requests$/.test(tool)) return "requests";
+  if (/__browser_network_request$/.test(tool)) return ti.part != null ? "part" : "request";
+  return "console";
+}
+
 // A Playwright network/console call: null when its output goes to a file in the seat's scratch dir (an absolute path
-// below it, no `..`, no symlink on the way; the dir is created 0700), else why not.
-function netVerdict(ti, home, env = process.env) {
-  const dir = netDir(home, env), f = ti.filename;
+// below it, named <kind>-…, no symlink on the way; the dir is created 0700), else why not.
+function netVerdict(ti, home, env = process.env, tool = "") {
+  const dir = netDir(home, env), f = ti.filename, kind = netKind(tool, ti);
   if (typeof f !== "string" || !f.trim()) return "it has no filename, so the output would come back as text";
   if (!path.isAbsolute(f)) return "its filename is not an absolute path in your scratch dir";
   const abs = path.resolve(f);
   if (!abs.startsWith(dir + path.sep)) return `its filename is not inside your scratch dir ${dir.replace(home, "~")}`;
+  if (!path.basename(abs).startsWith(`${kind}-`)) return `its file name must start with "${kind}-" (what this call writes)`;
   const top = path.dirname(path.dirname(dir));   // the MCP output dir
   for (let p = abs; p.length >= top.length; p = path.dirname(p)) {
     try { if (fs.lstatSync(p).isSymbolicLink()) return `${p.replace(home, "~")} is a symlink`; } catch { /* not there yet */ }
@@ -650,8 +660,8 @@ function netVerdict(ti, home, env = process.env) {
   return null;
 }
 
-function netDenial(tool, why, home, env = process.env) {
-  const dir = netDir(home, env).replace(home, "~"), short = tool.replace(/^mcp__.+__/, ""), file = `${dir}/${short.replace("browser_", "")}-1.log`;
+function netDenial(tool, why, home, env = process.env, ti = {}) {
+  const dir = netDir(home, env).replace(home, "~"), short = tool.replace(/^mcp__.+__/, ""), file = `${dir}/${netKind(tool, ti)}-1.log`;
   return [
     `agent-stack credential guard: blocked ${short}, because ${why}. Its output (request URLs, headers or console text)`,
     "would enter the transcript and stay there, and tokens minted at runtime (session JWTs, ?token=…, signed URLs) are",
@@ -668,8 +678,8 @@ function decide(input, { home = os.homedir(), pats = patterns(process.env, home)
   const ctx = { cwd: input.cwd || process.cwd(), home, pats };
   const t = input.tool_name, ti = input.tool_input || {};
   if (NET_TOOL.test(t || "")) {
-    const why = netVerdict(ti, home, env);
-    return why ? { deny: true, reason: netDenial(t, why, home, env) } : { deny: false };
+    const why = netVerdict(ti, home, env, t);
+    return why ? { deny: true, reason: netDenial(t, why, home, env, ti) } : { deny: false };
   }
   let v = null;
   if (t === "Bash") v = bashVerdict(ti.command, ctx);
@@ -707,5 +717,5 @@ function main() {
   process.exit(0);
 }
 
-module.exports = { DEFAULT_PATTERNS, NET_DIR, NET_TOOL, netDir, netVerdict, patterns, globRe, protectedPath, lex, parseArgs, bashVerdict, keyNames, decide };
+module.exports = { DEFAULT_PATTERNS, NET_DIR, NET_TOOL, netDir, netKind, netVerdict, patterns, globRe, protectedPath, lex, parseArgs, bashVerdict, keyNames, decide };
 if (require.main === module) main();
