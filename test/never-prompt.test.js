@@ -152,8 +152,8 @@ test("check: a correctly set machine and rig pass; each missing piece FAILs on i
   write(join(bad, "rig.yaml"), "name: r\npods: []\n");
   const r = runCheck(bad, "--spec", join(bad, "rig.yaml"));
   assert.equal(r.status, 1);
-  assert.equal(failed(r.rows).length, 6);
-  assert.match(failed(r.rows).join("|"), /Codex config.*\|Claude.*\|seat shim.*\|Claude: credential read guard.*\|Codex: credential read guard.*\|RigSpec rig.yaml/);
+  assert.equal(failed(r.rows).length, 8);
+  assert.match(failed(r.rows).join("|"), /Codex config.*\|Claude.*\|seat shim.*\|Claude: credential read guard.*\|Claude: Playwright network\/console guard.*\|Codex: credential read guard.*\|Codex: Playwright network\/console guard.*\|RigSpec rig.yaml/);
 });
 
 test("check: live Codex seats of the rig must run with approval never (flag, profile or config)", () => {

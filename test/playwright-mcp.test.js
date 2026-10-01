@@ -17,14 +17,15 @@ const pin = read("system/codex/config.toml").match(/"@playwright\/mcp@([^"]+)"/)
 test("the Codex template pins one @playwright/mcp release with --browser chromium; no @latest, no system browser", () => {
   const t = read("system/codex/config.toml");
   assert.match(pin, /^\d+\.\d+\.\d+$/);
-  assert.match(t, new RegExp(`^args = \\["-y", "@playwright/mcp@${pin.replace(/\./g, "\\.")}", "--headless", "--browser", "chromium", "--secrets", "@HOME@/\\.config/agent-stack/secrets/playwright\\.env"\\]$`, "m"));
+  assert.match(t, new RegExp(`^args = \\["-y", "@playwright/mcp@${pin.replace(/\./g, "\\.")}", "--headless", "--browser", "chromium", "--secrets", "@HOME@/\\.config/agent-stack/secrets/playwright\\.env", "--output-dir", "@HOME@/\\.local/state/agent-stack/playwright-mcp"\\]$`, "m"));
   assert.doesNotMatch(t, /@playwright\/mcp@latest|--executable-path/);
 });
 
 test("install.sh reads that pin, registers Claude's MCP with it, installs via playwright-browsers, never playwright@latest", () => {
   const s = read("install.sh");
   assert.match(s, /PW_MCP=\$\(sed -n .*system\/codex\/config\.toml/);
-  assert.match(s, /pw=\(npx -y "@playwright\/mcp@\$PW_MCP" --headless --browser chromium --secrets "\$SEC\/playwright\.env"\)/);
+  assert.match(s, /pw=\(npx -y "@playwright\/mcp@\$PW_MCP" --headless --browser chromium --secrets "\$SEC\/playwright\.env" --output-dir "\$PWO"\)/);
+  assert.match(s, /PWO="\$HOME\/\.local\/state\/agent-stack\/playwright-mcp"; mkdir -p "\$PWO\/net"; chmod 700 "\$PWO\/net"/);
   assert.match(s, /claude mcp remove --scope user playwright/, "an entry with other args is replaced");
   assert.match(s, /"\$S\/bin\/playwright-browsers" >\/dev\/null \|\| todo/);
   const code = s.split("\n").filter((l) => !/^\s*#/.test(l)).join("\n");
@@ -171,7 +172,7 @@ test("playwright-mcp-config: creates playwright.env 0600 with a template, sets -
   assert.equal(fs.statSync(env).mode & 0o777, 0o600);
   assert.match(fs.readFileSync(env, "utf8"), /typed BY NAME|types a value when an agent sends its NAME/);
   const t = fs.readFileSync(join(h, ".codex/config.toml"), "utf8");
-  assert.ok(t.includes(`args = ["-y", "@playwright/mcp@${pin}", "--headless", "--browser", "chromium", "--secrets", "${env}"]`), t);
+  assert.ok(t.includes(`args = ["-y", "@playwright/mcp@${pin}", "--headless", "--browser", "chromium", "--secrets", "${env}", "--output-dir", "${join(h, ".local/state/agent-stack/playwright-mcp")}"]`), t);
   assert.match(t, /^approval_policy = "never"$/m); assert.match(t, /\[mcp_servers\.jev\]\nargs = \["x"\]/); assert.match(t, /default_tools_approval_mode = "approve"/);
   assert.equal(fs.statSync(join(h, ".codex/config.toml")).mode & 0o777, 0o600);
   assert.ok(fs.readdirSync(join(h, ".codex")).some((f) => f.startsWith("config.toml.bak-")));
