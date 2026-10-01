@@ -43,12 +43,15 @@ has no version numbers; entries are grouped by the day they merged, newest first
 - The lead's and the merge owner's role texts and the CULTURE template use the new Jev helpers.
 
 ### Fixed
-- `agent-seat-handover` keeps parked rows' wakes (WO56). OpenRig stops every watchdog job of the retiring occupant at a
-  seat swap, including the timers of `rig queue block --wake-after`, so after a handover the seat's parked rows had no
-  live wake. The wrapper now records them before the handover and re-arms each one that is still the seat's and lost
-  its wake afterwards (same row, blocker and interval; never a second wake). A repeating wait, a refused re-park or a
-  row it can't read is reported (exit 4), and so is a custom wake message the CLI can't carry over.
-  `--wakes` lists them without changing anything.
+- `rig/template/openrig-shared` is no longer tracked: it was a symlink to an absolute path in the owner's home, which
+  the public tree exposed. `install.sh` creates it as a local link, `openrig-upgrade` refreshes it, and git ignores
+  it. A test now fails on any tracked absolute symlink or real `/home/<name>` path. After pulling this, run
+  `./install.sh` once to recreate the link.
+- The credential read guard resolves paths the way the shell will run the command. It no longer refuses
+  `grep x bin/*`: globs follow bash's dotfile rule, while dotglob, `.*` and `**` are still refused. It follows `cd`,
+  existing symlinks, and copies or links the command makes of a credential file. It decodes `$'…'` escapes, `{a,b}`
+  braces and the command's own variables, closing bypasses such as `cd <secrets dir> && cat x.env` and
+  `ln -s .env n && cat n`.
 - `agent-merge-evidence` no longer makes the merge gate hold on project-rig PRs. The operator's live A/B test showed
   what flipped Jev:
   - The limits line no longer says "merge state: pending this gate …" when the gate's own `jev-merge` is the only

@@ -166,6 +166,10 @@ for d in "$HOME/.claude/skills" "$HOME/.agents/skills"; do
   elif [ $CHECK = 1 ]; then todo "$d: OpenRig core skills"
   else mkdir -p "$d"; for s in "$orsk"/*/; do s=$(basename "$s"); [ -e "$d/$s" ] && [ ! -L "$d/$s" ] && { mkdir -p "$L/backups/skills"; mv "$d/$s" "$L/backups/skills/$(basename "$(dirname "$d")")-$s-$(date +%Y%m%d%H%M%S)"; }; ln -sfn "$orsk/$s" "$d/$s"; done; ok "$d: OpenRig core skills"; fi
 done
+# OpenRig's shared role agent: every template role agent references it as local:../../openrig-shared. A local link,
+# never tracked (its target is under this machine's home); openrig-upgrade refreshes it on every upgrade.
+orsh=$L/openrig/lib/node_modules/@openrig/cli/daemon/specs/agents/shared
+if [ -d "$orsh" ]; then link "$orsh" "$S/rig/template/openrig-shared"; else todo "rig/template/openrig-shared (install OpenRig first)"; fi
 
 step "OpenRig multi-project catalog"
 U=$HOME/Projects/openrig-workspace
