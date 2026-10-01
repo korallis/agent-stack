@@ -43,6 +43,11 @@ has no version numbers; entries are grouped by the day they merged, newest first
 - The lead's and the merge owner's role texts and the CULTURE template use the new Jev helpers.
 
 ### Fixed
+- The credential read guard resolves paths the way the shell will run the command. It no longer refuses
+  `grep x bin/*`: globs follow bash's dotfile rule, while dotglob, `.*` and `**` are still refused. It follows `cd`,
+  existing symlinks, and copies or links the command makes of a credential file. It decodes `$'…'` escapes, `{a,b}`
+  braces and the command's own variables, closing bypasses such as `cd <secrets dir> && cat x.env` and
+  `ln -s .env n && cat n`.
 - `agent-merge-evidence` no longer makes the merge gate hold on project-rig PRs. The operator's live A/B test showed
   what flipped Jev:
   - The limits line no longer says "merge state: pending this gate …" when the gate's own `jev-merge` is the only
