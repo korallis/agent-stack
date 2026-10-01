@@ -24,21 +24,23 @@ function lab() {
   const env = { PATH: `${bin}:/usr/bin:/bin`, USER: "t", AGENT_HEAVY_DIR: join(d, "heavy"), AGENT_HEAVY_BUILD_SLOTS: "1",
     AGENT_HEAVY_BROWSER_SLOTS: "1", AGENT_HEAVY_POLL: "0.1" };
   const order = join(d, "order");
-  const kids = [];
+  const kids = [], names = new Set(["A"]);
   // a job that records its name, then (if asked) holds its slot until released
   const job = (name, hold = false) => ["bash", "-c", `echo ${name} >> ${order}; ${hold ? `while [ ! -f ${d}/release-${name} ]; do sleep 0.05; done` : ""}`];
   const run = (name, { hold = false, args = [], env: extra = {}, seat = name } = {}) => {
     const p = spawn(heavyBin, ["build", ...args, "--", ...job(name, hold)], { env: { ...env, OPENRIG_SESSION_NAME: `${seat}@lab`, ...extra } });
     let err = ""; p.stderr.on("data", (b) => (err += b));
     const done = new Promise((r) => p.on("exit", (code) => r({ code, err })));
-    kids.push(p);
+    kids.push(p); names.add(name);
     return { p, done };
   };
   const tickets = () => (fs.existsSync(join(env.AGENT_HEAVY_DIR, "queue.build")) ? fs.readdirSync(join(env.AGENT_HEAVY_DIR, "queue.build")).filter((f) => f.endsWith(".ticket")).sort() : []);
   const ran = () => (fs.existsSync(order) ? fs.readFileSync(order, "utf8").split("\n").filter(Boolean) : []);
   const release = (name) => fs.writeFileSync(join(d, `release-${name}`), "");
   const status = () => spawnSync(heavyBin, ["status", "build"], { env, encoding: "utf8" });
-  const stop = () => kids.forEach((k) => { try { k.kill("SIGKILL"); } catch {} });
+  // On a failure, release every held job (timeout(1) runs it in its own process group, so killing agent-heavy alone
+  // would leave it holding the test's stderr pipe and the runner) and then kill the waiters.
+  const stop = () => { names.forEach((x) => fs.writeFileSync(join(d, `release-${x}`), "")); kids.forEach((k) => { try { k.kill("SIGKILL"); } catch {} }); };
   return { d, env, run, tickets, ran, release, status, stop };
 }
 const until = async (cond, what, ms = 10000) => {
