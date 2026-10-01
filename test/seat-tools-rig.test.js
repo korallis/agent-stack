@@ -182,6 +182,20 @@ test("D: outside a seat (no OpenRig env) a create to a human still gets its subj
   assert.deepEqual(call.argv, ["queue", "create", "--destination", "owner@external", "--body", "Operator: upgrade done", "--summary", "Operator: upgrade done"]);
 });
 
+test("D: outside a seat a workspace.yaml in the current directory adds no project: tag (QA PR76)", () => {
+  const cwd = join(root, "some-project-dir"); fs.mkdirSync(cwd, { recursive: true });
+  fs.writeFileSync(join(cwd, "workspace.yaml"), "projects:\n  - id: wrong-project\n");
+  for (const dest of ["owner@external", "dev-qa@r"]) {
+    fs.rmSync(log, { force: true });
+    const r = spawnSync("python3", [helper, "queue", "create", "--destination", dest, "--body-file", "-"], {
+      cwd, input: "# Subject\n", encoding: "utf8", env: { PATH: process.env.PATH, HOME: home, TMPDIR: tmpdir, FAKE_LOG: log } });
+    assert.equal(r.status, 0, r.stderr);
+    const call = JSON.parse(fs.readFileSync(log, "utf8").trim());
+    assert.ok(!call.argv.some((x) => x.startsWith("--tags") || x.startsWith("project:")), `${dest}: ${call.argv.join(" ")}`);
+    assert.equal(call.stdin, "# Subject\n");
+  }
+});
+
 test("D: the ~/.local/bin/rig launcher install.sh writes sends create through the helper everywhere, handoffs only in a seat", () => {
   const line = fs.readFileSync(join(dirname(helper), "..", "install.sh"), "utf8").split("\n").find((l) => /^\s*printf '#!\/usr\/bin\/env bash\\n.*seat-tools\/rig/.test(l));
   assert.ok(line, "launcher printf found");

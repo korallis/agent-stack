@@ -39,11 +39,14 @@ if len(args) < 2 or args[0] != "queue" or args[1] not in ("create", "handoff", "
 
 work = os.environ.get("OPENRIG_WORK_ROOT", "")
 project = None
-try:
-    m = re.search(r"^\s*-\s*id:\s*([\w.-]+)", open(os.path.join(work, "workspace.yaml")).read(), re.M)
-    project = m.group(1) if m else None
-except OSError:
-    pass
+# Only a seat's own work root names its project: with OPENRIG_WORK_ROOT unset (an operator shell, since the launcher
+# sends `queue create` here outside seats too) a workspace.yaml in the current directory must not tag the row.
+if work:
+    try:
+        m = re.search(r"^\s*-\s*id:\s*([\w.-]+)", open(os.path.join(work, "workspace.yaml")).read(), re.M)
+        project = m.group(1) if m else None
+    except OSError:
+        pass
 
 
 def opt(name):
