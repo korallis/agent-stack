@@ -53,12 +53,23 @@ tickets() {   # <class> [--clean]
   done; }
 dur() { local t=$1; ((t >= 3600)) && printf '%dh%02dm' $((t / 3600)) $((t % 3600 / 60)) || printf '%dm%02ds' $((t / 60)) $((t % 60)); }
 
-# status: read-only; never takes a lock. A slot's lock is identified by device:inode (so a symlinked runtime dir or any
-# other path to it still matches). It is held when /proc/locks has a FLOCK on that identity, and its holders are the
-# processes whose open file actually carries the lock: /proc/<pid>/fdinfo/<fd> lists it only on the locked open file
-# (the agent-heavy that took the slot and the job that inherited the fd), never on another fd that merely opened the
-# file. (/proc/locks's own pid is only the short-lived `flock` helper.) What can't be observed is reported as unknown,
-# never as free.
+# status: read-only; never takes a lock. A slot's holders are the processes with an open file on the lock (its real
+# path, so a symlinked runtime dir still matches) that actually carries the FLOCK: /proc/<pid>/fdinfo/<fd> lists the
+# lock only on the locked open file (the agent-heavy that took the slot and the job that inherited the fd), never on
+# another fd that merely opened the file. No device numbers are compared: on Btrfs stat's device (the subvolume's) and
+# the lock table's (the filesystem's) differ for the same file (WO82). A lock the table shows (same device:inode, or
+# the same inode on another device number) without a visible holder is "owner unknown"; what can't be observed is
+# reported as unknown, never as free. (/proc/locks's own pid is only the short-lived `flock` helper.)
+# holders <lock> [pid...]: the pids (all, or only those given) whose fd on the lock's real path carries a FLOCK.
+holders() {
+  local lock real f p fd; lock=$1; shift
+  real=$(readlink -f "$lock") || return 0
+  local where=("$PROC"/[0-9]*/fd); [[ $# -gt 0 ]] && where=("${@/#/$PROC/}") && where=("${where[@]/%//fd}")
+  { find "${where[@]}" -maxdepth 1 -lname "$real" 2>/dev/null || true; } | while read -r f; do   # other users' fd dirs are unreadable
+    fd=${f##*/} p=${f%/fd/*}; p=${p##*/}
+    if grep -qsE "^lock:.*[[:space:]]FLOCK[[:space:]]" "$PROC/$p/fdinfo/$fd"; then echo "$p"; fi   # (set -e: never a failing last command)
+  done | sort -un
+}
 if [[ ${1:-} == status ]]; then
   case ${2:-} in "") classes="build browser";; build|browser) classes=$2;; *) echo "usage: agent-heavy status [build|browser]" >&2; exit 2;; esac
   now=$(date +%s)
@@ -72,12 +83,15 @@ if [[ ${1:-} == status ]]; then
       [[ $table == 1 ]] || { echo "$c $i/$n  unknown (cannot read $PROC/locks)"; continue; }
       read -r maj min ino < <(stat -L -c '%Hd %Ld %i' "$lock")
       id=$(printf '%02x:%02x:%s' "$maj" "$min" "$ino")
-      if ! awk -v id="$id" '$2 == "FLOCK" && $6 == id { f = 1 } END { exit !f }' <<<"$locks"; then
-        echo "$c $i/$n  free"; continue
+      pids=$(holders "$lock")
+      if [[ -z $pids ]]; then
+        # no visible holder: free unless the table shows a FLOCK on this file (by device:inode, or by inode alone when the
+        # devices disagree, as on Btrfs)
+        if awk -v id="$id" -v ino="$ino" '$2 == "FLOCK" && ($6 == id || $6 ~ (":" ino "$")) { f = 1 } END { exit !f }' <<<"$locks"; then
+          echo "$c $i/$n  held  owner unknown (lock $id is held but no holder is visible)"
+        else echo "$c $i/$n  free"; fi
+        continue
       fi
-      pids=$(grep -l -E "^lock:.*[[:space:]]FLOCK[[:space:]].*[[:space:]]$id[[:space:]]" "$PROC"/[0-9]*/fdinfo/* 2>/dev/null \
-        | awk -F/ '{print $(NF - 2)}' | sort -un || true)
-      if [[ -z $pids ]]; then echo "$c $i/$n  held  owner unknown (lock $id is held but no holder is visible)"; continue; fi
       hp=$(sed -n 's/^pid=//p' "$holder" 2>/dev/null || true)
       if [[ -n $hp ]] && grep -qx "$hp" <<<"$pids"; then
         get() { sed -n "s/^$1=//p" "$holder"; }
@@ -179,17 +193,16 @@ if [[ $allow_long == 0 ]] && server "$@"; then
 fi
 
 # The nesting markers are only trusted when verified: the named slot's lock must be held by one of this process's own
-# ancestors (the agent-heavy that took it, or the job that inherited its locked fd), seen in /proc/<pid>/fdinfo. A
+# ancestors (the agent-heavy that took it, or the job that inherited its locked fd): an ancestor's fd on the lock that
+# carries the FLOCK in /proc/<pid>/fdinfo (the file, not device numbers: see holders above). A
 # marker that can't be verified (leaked into a long-lived shell, set by hand, or naming a slot someone else holds) is
 # dropped and the run takes a slot normally: it never skips the budget.
 held_by_ancestor() {   # <class.N>
-  local lock=$dir/$1.lock maj min ino id p
+  local lock=$dir/$1.lock p
   [[ -e $lock ]] || return 1
-  read -r maj min ino < <(stat -L -c '%Hd %Ld %i' "$lock") || return 1
-  id=$(printf '%02x:%02x:%s' "$maj" "$min" "$ino")
   p=$PPID
   while [[ -n $p && $p -gt 1 ]]; do
-    grep -qsE "^lock:.*[[:space:]]FLOCK[[:space:]].*[[:space:]]$id[[:space:]]" "$PROC/$p"/fdinfo/* && return 0
+    [[ -n $(holders "$lock" "$p") ]] && return 0
     p=$(sed 's/^.*) //' "$PROC/$p/stat" 2>/dev/null | awk '{print $2}')
   done
   return 1
