@@ -1,0 +1,170 @@
+--- a/daemon/dist/domain/workspace/project-read.js
++++ b/daemon/dist/domain/workspace/project-read.js
+@@ -79,10 +79,7 @@
+     const value = fs.existsSync(manifest) ? yamlObject(manifest) : {};
+     return { catalogPath: catalog, projects: [projectEntry(value.id ?? value.metadata?.id ?? "workspace", workspace)] };
+ }
+-export function selectedProject(c) {
+-    const id = c.req.query("project");
+-    if (id === undefined)
+-        return null;
++function lookupProject(c, id) {
+     if (!/^[A-Za-z0-9][A-Za-z0-9._-]{0,63}$/.test(id))
+         throw new ProjectReadError("invalid_project", "Invalid project ID");
+     const { catalog } = projectCatalogPaths(c);
+@@ -90,14 +87,28 @@
+     const p = selected ? projectEntry(selected.id, selected.root) : listProjects(c).projects.find(p => p.id === id);
+     if (!p)
+         throw new ProjectReadError("project_not_found", `Project ${id} is unavailable`);
+-    if (c.req.query("projectRoot") && c.req.query("projectRoot") !== p.root)
+-        throw new ProjectReadError("project_changed", `Project ${id} root changed; choose it again`);
++    return p;
++}
++function usableProject(p) {
+     if (p.error)
+-        throw new ProjectReadError("project_unavailable", `${id}: ${p.error}`);
++        throw new ProjectReadError("project_unavailable", `${p.id}: ${p.error}`);
+     if (!fs.existsSync(p.missionsRoot))
+-        throw new ProjectReadError("missions_unavailable", `${id}: missions root is unavailable: ${p.missionsRoot}`);
++        throw new ProjectReadError("missions_unavailable", `${p.id}: missions root is unavailable: ${p.missionsRoot}`);
+     return p;
+ }
++/** One catalog project by id, with the same resolution and checks as `?project=` selection. */
++export function projectById(c, id) {
++    return usableProject(lookupProject(c, id));
++}
++export function selectedProject(c) {
++    const id = c.req.query("project");
++    if (id === undefined)
++        return null;
++    const p = lookupProject(c, id);
++    if (c.req.query("projectRoot") && c.req.query("projectRoot") !== p.root)
++        throw new ProjectReadError("project_changed", `Project ${id} root changed; choose it again`);
++    return usableProject(p);
++}
+ export function projectReadResponse(err) {
+     return Response.json({ error: err instanceof ProjectReadError ? err.code : "project_source_unavailable", message: err.message }, { status: 409 });
+ }
+--- a/daemon/dist/routes/proof.js
++++ b/daemon/dist/routes/proof.js
+@@ -3,6 +3,11 @@
+ import * as path from "node:path";
+ import { JudgmentError, evidenceAt, readSliceReadiness, readMissionReadiness, readProjectReadiness, recordJudgment, resolveProofScope } from "../domain/proof/judgments.js";
+ import { requireSenderIdentity, resolveRecordedProvenance } from "./require-sender-identity.js";
++import { projectById } from "../domain/workspace/project-read.js";
++import { ProjectReadError } from "../domain/workspace/project-catalog.js";
++// #132 — `<project-id>:<scope>` names a scope inside one workspace-catalog project. Project ids share the
++// catalog's id grammar, which cannot contain "/", so an ordinary mission/slice path never matches.
++const QUALIFIED_SCOPE = /^([A-Za-z0-9][A-Za-z0-9._-]{0,63}):(.*)$/;
+ export function proofRoutes() {
+     const app = new Hono();
+     app.onError((e, c) => {
+@@ -16,15 +21,45 @@
+             throw new JudgmentError("workspace_unavailable", "Configure the daemon workspace before reading or recording judgments", 503);
+         return value;
+     };
++    /**
++     * The missions root a proof read/judgment resolves against. Unqualified scopes keep the daemon's
++     * selected workspace (`workspace.slices_root`). A project named by `--project`/`project` or by a
++     * `<project-id>:` scope prefix resolves through the workspace catalog entry's root and missions root,
++     * so contained() is then applied per project root.
++     */
++    const target = (c, rawScope, project) => {
++        if (project !== undefined && typeof project !== "string")
++            throw new JudgmentError("judgment_invalid", "Project must be a catalog project id");
++        const qualified = rawScope === undefined ? null : QUALIFIED_SCOPE.exec(rawScope);
++        const id = qualified?.[1] ?? project;
++        if (qualified && project !== undefined && project !== qualified[1])
++            throw new JudgmentError("project_conflict", `Scope names project ${qualified[1]} but --project names ${project}; select one project`);
++        const scope = qualified ? qualified[2] : rawScope;
++        if (id === undefined) {
++            const owner = indexer(c);
++            return { root: owner.slicesRoot, evidenceRoot: path.dirname(owner.slicesRoot), scope, owner };
++        }
++        // Evidence is prepared against the project root (where project.yaml lives), the same root recordJudgment derives,
++        // so prepared references still match at judgment time under a nested authored missions.root.
++        try {
++            const p = projectById(c, id);
++            return { root: p.missionsRoot, evidenceRoot: p.root, scope, owner: null };
++        }
++        catch (e) {
++            if (!(e instanceof ProjectReadError))
++                throw e;
++            throw new JudgmentError(e.code, e.message, e.code === "project_not_found" ? 404 : e.code === "invalid_project" ? 400 : 409);
++        }
++    };
+     app.get("/", c => {
+-        const root = indexer(c).slicesRoot, scope = c.req.query("scope");
++        const { root, evidenceRoot, scope } = target(c, c.req.query("scope"), c.req.query("project"));
+         if (!scope)
+             return c.json({ ...readProjectReadiness(root), sourceObservation: proofSourceObservation(c) });
+         const dir = resolveProofScope(root, scope);
+         if (path.basename(path.dirname(dir)) !== "slices")
+             return c.json({ ...readMissionReadiness(dir), sourceObservation: proofSourceObservation(c) });
+         const refs = c.req.queries("evidence") ?? [];
+-        return c.json({ ...readSliceReadiness(dir), sourceObservation: proofSourceObservation(c), ...(refs.length ? { preparedEvidence: refs.map(ref => evidenceAt(path.dirname(root), dir, ref)) } : {}) });
++        return c.json({ ...readSliceReadiness(dir), sourceObservation: proofSourceObservation(c), ...(refs.length ? { preparedEvidence: refs.map(ref => evidenceAt(evidenceRoot, dir, ref)) } : {}) });
+     });
+     app.post("/judge", async (c) => {
+         const body = await c.req.json().catch(() => null);
+@@ -39,9 +74,10 @@
+         const identity = requireSenderIdentity(c, { verb: "proof judgment", bodyClaim: body.actorSession });
+         if (!identity.ok)
+             return identity.response;
+-        const owner = indexer(c);
+-        const result = recordJudgment(owner.slicesRoot, body, identity.session, resolveRecordedProvenance(c, identity));
+-        owner.invalidate();
++        const { project: _project, ...input } = body;
++        const { root, scope, owner } = target(c, body.scope, body.project);
++        const result = recordJudgment(root, { ...input, scope: scope }, identity.session, resolveRecordedProvenance(c, identity));
++        owner?.invalidate();
+         // The receipt is already durable. A lost notification must not turn a committed write into a claimed rollback.
+         let notification = "unchanged";
+         if (!result.replayed) {
+--- a/dist/commands/proof.js
++++ b/dist/commands/proof.js
+@@ -117,11 +117,14 @@
+             throw new Error(`${data.error ?? r.status}: ${data.message ?? "Read the named source and retry"}`);
+         return data;
+     };
+-    cmd.command("show [scope]").description("Read current attributed proof readiness for a slice, mission or active project; no status files are changed.")
++    const projectHelp = "Workspace-catalog project id; resolves the scope under that project's missions root (same as a <project>:<scope> prefix)";
++    cmd.command("show [scope]").description("Read current attributed proof readiness for a slice, mission or active project; no status files are changed. Prefix the scope with <project>: (or pass --project) to read a catalog project.")
++        .option("--project <id>", projectHelp)
+         .option("--json", "Structured readiness, item revisions and retained judgment references")
+         .action(async (scope, opts) => {
+         try {
+-            const data = await response(await client().get(`/api/proof${scope ? `?scope=${encodeURIComponent(scope)}` : ""}`));
++            const query = new URLSearchParams({ ...(opts.project ? { project: opts.project } : {}), ...(scope ? { scope } : {}) }).toString();
++            const data = await response(await client().get(`/api/proof${query ? `?${query}` : ""}`));
+             console.log(opts.json ? JSON.stringify(data) : JSON.stringify(data, null, 2));
+         }
+         catch (e) {
+@@ -129,7 +132,8 @@
+             process.exitCode = 1;
+         }
+     });
+-    cmd.command("judge <scope-item>").description("Record one attributed item judgment and derive readiness. Use mission/slices/slice#item (index, text or ID). Policy inherits proofPolicy.judges from owning slice, mission or project.")
++    cmd.command("judge <scope-item>").description("Record one attributed item judgment and derive readiness. Use mission/slices/slice#item (index, text or ID), optionally prefixed <project>: for a catalog project. Policy inherits proofPolicy.judges from owning slice, mission or project.")
++        .option("--project <id>", projectHelp)
+         .requiredOption("--verdict <verdict>", "accept | reject | withdraw")
+         .requiredOption("--reason <text>", "The evidence-backed judgment being made")
+         .option("--evidence <ref>", "Existing evidence, relative to slice or workspace missions/; repeat for multiple references", (v, prior) => [...prior, v], [])
+@@ -143,7 +147,7 @@
+         try {
+             const at = address.indexOf("#"), scope = at < 0 ? address : address.slice(0, at), selector = at < 0 ? null : address.slice(at + 1);
+             const refs = [...new Set([...opts.evidence, ...(opts.comparison ? [opts.comparison] : [])])];
+-            const query = new URLSearchParams({ scope });
++            const query = new URLSearchParams({ ...(opts.project ? { project: opts.project } : {}), scope });
+             for (const ref of refs)
+                 query.append("evidence", ref);
+             const c = client(), view = await response(await c.get(`/api/proof?${query}`));
+@@ -158,7 +162,7 @@
+                 ...(refs.length ? { evidence: refs, expectedEvidence: view.preparedEvidence } : {}),
+                 ...(opts.subject ? { subject: { kind: opts.subject.slice(0, subjectAt), ref: opts.subject.slice(subjectAt + 1), ...(opts.comparison ? { comparison: opts.comparison } : {}) } } : {}),
+                 expectedRevision: opts.revision ?? item.revision, expectedPrevious: item.judgment?.id ?? null,
+-                operationId: opts.operationId, replace: opts.replace === true };
++                operationId: opts.operationId, replace: opts.replace === true, ...(opts.project ? { project: opts.project } : {}) };
+             const result = await response(await c.post("/api/proof/judge", body));
+             console.log(opts.json ? JSON.stringify(result) : JSON.stringify(result, null, 2));
+         }

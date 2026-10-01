@@ -1,0 +1,174 @@
+--- a/daemon/dist/adapters/tmux.js
++++ b/daemon/dist/adapters/tmux.js
+@@ -880,6 +880,48 @@
+      *   - `null` when the target is missing OR the value is unparseable
+      *     (consumers treat null as "no signal", distinct from "idle").
+      */
++    /** Patch 139: every session's current-window `#{window_activity}` in ONE tmux call, keyed by session name: the same
++     *  value `readPaneLastActivity(<session name>)` reads (display-message -t <session> resolves to the session's current
++     *  window). Only well-formed timestamps are included, so a missing key means "read it the per-target way". Null when
++     *  tmux can't be read at all. */
++    async readAllSessionWindowActivity() {
++        try {
++            const output = await this.exec(`tmux list-windows -a -F '#{session_name}\t#{window_active}\t#{window_activity}'`);
++            const out = new Map();
++            for (const line of output.split("\n")) {
++                const [session, active, activity] = line.split("\t");
++                if (!session || active !== "1" || !activity || !/^\d+$/.test(activity.trim()))
++                    continue;
++                const n = Number(activity.trim());
++                if (Number.isFinite(n) && n > 0)
++                    out.set(session, n);
++            }
++            return out;
++        }
++        catch {
++            return null;
++        }
++    }
++    /** Patch 139: every pane's pid and current command in ONE tmux call, keyed by pane id (%N): the values
++     *  `getPanePid` / `getPaneCommand` read per pane. Panes without a valid pid are left out (read those per pane).
++     *  Null when tmux can't be read at all. */
++    async readAllPaneProcesses() {
++        try {
++            const output = await this.exec(`tmux list-panes -a -F '#{pane_id}\t#{pane_pid}\t#{pane_current_command}'`);
++            const out = new Map();
++            for (const line of output.split("\n")) {
++                const [id, pidText, ...cmd] = line.split("\t");
++                const pid = parseInt((pidText ?? "").trim(), 10);
++                if (!id || !Number.isFinite(pid) || pid <= 0)
++                    continue;
++                out.set(id, { pid, command: cmd.join("\t").trim() || null });
++            }
++            return out;
++        }
++        catch {
++            return null;
++        }
++    }
+     async readPaneLastActivity(paneId) {
+         try {
+             const output = await this.exec(`tmux display-message -p -t ${shellQuote(paneId)} '#{window_activity}'`);
+--- a/daemon/dist/domain/seat-activity-service.js
++++ b/daemon/dist/domain/seat-activity-service.js
+@@ -35,13 +35,20 @@
+      * activity indicators consult.
+      */
+     async pollSeat(paneId, opts) {
++        return this.observeSeat(paneId, opts, null);
++    }
++    /** pollSeat with the sweep's batched read (patch 139): the seat's timestamp comes from `batch` when it has one, and
++     *  only a seat missing from it is read per target, so a sweep costs one tmux spawn instead of one per seat. */
++    async observeSeat(paneId, opts, batch) {
+         const silenceWindowSeconds = opts?.silenceWindowSeconds ?? this.defaultWindowSeconds;
+-        let lastActivityEpochSeconds = null;
+-        try {
+-            lastActivityEpochSeconds = await this.tmux.readPaneLastActivity(paneId);
+-        }
+-        catch {
+-            lastActivityEpochSeconds = null;
++        let lastActivityEpochSeconds = batch?.get(paneId) ?? null;
++        if (lastActivityEpochSeconds === null) {
++            try {
++                lastActivityEpochSeconds = await this.tmux.readPaneLastActivity(paneId);
++            }
++            catch {
++                lastActivityEpochSeconds = null;
++            }
+         }
+         if (lastActivityEpochSeconds === null)
+             return null;
+@@ -141,10 +148,21 @@
+                 if (!live.has(pane))
+                     this.latestByPaneId.delete(pane);
+             }
++            // Patch 139: one tmux call reads every session's window activity for this tick; a seat missing from it (or no
++            // batch at all) falls back to its own read, exactly as before.
++            let batch = null;
++            if (rows.length > 0 && this.tmux.readAllSessionWindowActivity) {
++                try {
++                    batch = await this.tmux.readAllSessionWindowActivity();
++                }
++                catch {
++                    batch = null;
++                }
++            }
+             // Best-effort: a single seat's failure does not crash the loop.
+             await Promise.all(rows.map(async (r) => {
+                 try {
+-                    await this.pollSeat(r.session_name);
++                    await this.observeSeat(r.session_name, undefined, batch);
+                 }
+                 catch { /* swallow */ }
+             }));
+--- a/daemon/dist/domain/seat-identity-reconciler.js
++++ b/daemon/dist/domain/seat-identity-reconciler.js
+@@ -143,8 +143,16 @@
+         const codexSeats = seats.filter((seat) => seat.runtime === "codex" && seat.tmux_pane && liveSessions.has(seat.session_name));
+         const sample = async () => {
+             let snapshot;
++            // Patch 139: one list-panes per sample (each sample stays a fresh, independent observation), per-pane on a miss.
++            let panesNow;
++            const tmux = {
++                getPanePid: async (target) => {
++                    panesNow ??= this.tmux.readAllPaneProcesses ? this.tmux.readAllPaneProcesses().catch(() => null) : Promise.resolve(null);
++                    return (await panesNow)?.get(target)?.pid ?? this.tmux.getPanePid(target);
++                },
++            };
+             return Promise.all(codexSeats.map((seat) => observeCodexPaneProcess({
+-                target: seat.tmux_pane, tmux: this.tmux, expectedToken: seat.resume_token,
++                target: seat.tmux_pane, tmux, expectedToken: seat.resume_token,
+                 listProcesses: () => snapshot ??= this.listProcesses(),
+             })));
+         };
+@@ -156,9 +164,20 @@
+             return;
+         const codexProofs = new Map(codexSeats.map((seat, index) => [seat.node_id,
+             first[index] && first[index]?.fingerprint === second[index]?.fingerprint ? second[index] : null]));
++        let panes = null;
++        if (this.tmux.readAllPaneProcesses) {
++            try {
++                panes = await this.tmux.readAllPaneProcesses();
++            }
++            catch {
++                panes = null;
++            }
++            if (generation !== this.generation)
++                return;
++        }
+         for (const seat of seats) {
+             try {
+-                const verdict = await this.computeVerdict(seat, liveSessions, observedAt, codexProofs.get(seat.node_id) ?? null);
++                const verdict = await this.computeVerdict(seat, liveSessions, observedAt, codexProofs.get(seat.node_id) ?? null, panes);
+                 if (generation !== this.generation)
+                     return;
+                 this.store.upsert(verdict);
+@@ -183,7 +202,7 @@
+             observedAt,
+         };
+     }
+-    async computeVerdict(seat, liveSessions, observedAt, native) {
++    async computeVerdict(seat, liveSessions, observedAt, native, panes = null) {
+         const base = {
+             nodeId: seat.node_id,
+             sessionName: seat.session_name,
+@@ -210,7 +229,9 @@
+                 evidence: { registeredPane: null, observedPid: null, observedCommand: null, matchedLayer: null },
+             };
+         }
+-        const pid = await this.tmux.getPanePid(seat.tmux_pane);
++        // Patch 139: from the sweep's one batched list-panes when the pane is in it; otherwise read per pane as before.
++        const batched = panes?.get(seat.tmux_pane) ?? null;
++        const pid = batched ? batched.pid : await this.tmux.getPanePid(seat.tmux_pane);
+         if (pid === null) {
+             // The registered pane no longer resolves. Distinguish "the whole tmux
+             // session is gone" from "the pane within a live session is gone".
+@@ -223,7 +244,7 @@
+                 evidence: { registeredPane: seat.tmux_pane, observedPid: null, observedCommand: null, matchedLayer: null },
+             };
+         }
+-        const command = await this.tmux.getPaneCommand(seat.tmux_pane);
++        const command = batched ? batched.command : await this.tmux.getPaneCommand(seat.tmux_pane);
+         if (seat.runtime === "codex") {
+             return {
+                 ...base, verdict: native?.panePid === pid ? "verified" : "mismatch",
