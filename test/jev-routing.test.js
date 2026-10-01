@@ -48,7 +48,7 @@ test("the Jev catalog has intake.seat and seat.stuck", () => {
 
 // ---- merge evidence ------------------------------------------------------------------------------------------------
 const facts = (over = {}) => ({ pr: 42, head: H, base: B, baseRef: "main", headRef: "agent/x", mergeable: "MERGEABLE", mergeState: "CLEAN", isDraft: false,
-  scope: "scope (from the diff): NOT tests-only, 1 non-test path(s): src/a.ts",
+  scope: "scope (from the diff): code change, 1 non-test path(s): src/a.ts",
   change: "Adds login", checks: [{ name: "verify", bucket: "pass" }, { name: "qa-evidence", bucket: "pass" }],
   independentReview: { state: "success", description: "QA PASS", creator: "rev" },
   brb: { file: "/w/proof/brb-a.md", artifact_type: "qa", verdict: "PASS", candidate_sha: H, money_evidence: "Ship: YES, 5 criteria passed" },
@@ -1269,7 +1269,7 @@ process.stdout.write(typeof out === "string" ? out : JSON.stringify(out));
   assert.match(o.review, new RegExp(`bug-review-board verdict from a PR comment by qa-codex-1@shop \\(https://github\\.com/o/r/pull/14#issuecomment-1; the seat is self-declared; no proof file for this head; proof on file for another head: brb-${OLD}\\.md\\): artifact_type=qa verdict=PASS candidate_sha=a{40}`));
   assert.doesNotMatch(o.review, /MISSING: no bug-review-board proof/);
   // 5. change: title plus the body's first section, then the diff's scope line (WO75)
-  assert.equal(o.change, "Recover from inactive locations on publish. If an allowed location becomes inactive, Publish keeps the draft.\nscope (from the diff): NOT tests-only, 1 non-test path(s): src/publish.ts");
+  assert.equal(o.change, "Recover from inactive locations on publish. If an allowed location becomes inactive, Publish keeps the draft.\nscope (from the diff): code change, 1 non-test path(s): src/publish.ts");
   // honest when the review is on another commit, or can't be read
   assert.match(run({ review: { ...fixture.review, commit_id: OLD } }).review, /by owner; submitted on commit cccccccccccc, not this head\)/);
   assert.match(run({ reviewFail: true }).review, /independent review report: https:\/\/github\.com\/o\/r\/pull\/14#pullrequestreview-555 \(linked from the status, a review on this PR, but it could not be read\)/);

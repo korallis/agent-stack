@@ -129,7 +129,10 @@ export function testScope(files) {
   const nonTest = files.filter((f) => !known(f) || !isTestPath(f.path) || !isTestPath(f.oldPath));
   if (!nonTest.length)
     return `scope (from the diff): tests-only, ${files.length} path(s), all tests, fixtures or test helpers: ${files.map((f) => f.path).slice(0, 8).join(", ")}${files.length > 8 ? ", …" : ""}`;
-  return `scope (from the diff): NOT tests-only, ${nonTest.length} non-test path(s): ${nonTest.map((f) => (f.oldPath && f.oldPath !== f.path ? `${f.oldPath} → ${f.path}` : f.path)).slice(0, 8).join(", ")}${nonTest.length > 8 ? ", …" : ""}${files.length > nonTest.length ? ` (plus ${files.length - nonTest.length} test path(s))` : ""}`;
+  // WO79: stated neutrally. An ordinary PR is a code change, not a defect; "NOT tests-only" read as one and pushed
+  // ordinary merges toward HOLD. The decisive negative is the separate contradiction line (tests-only claimed, code
+  // changed), added in buildMergeInput only when the change or review claims tests-only.
+  return `scope (from the diff): code change, ${nonTest.length} non-test path(s): ${nonTest.map((f) => (f.oldPath && f.oldPath !== f.path ? `${f.oldPath} → ${f.path}` : f.path)).slice(0, 8).join(", ")}${nonTest.length > 8 ? ", …" : ""}${files.length > nonTest.length ? ` (plus ${files.length - nonTest.length} test path(s))` : ""}`;
 }
 
 // Pure: why the bug-review-board proof doesn't apply, or null (it is required).
@@ -555,7 +558,14 @@ export function buildMergeInput(f) {
     f.rollback ? `rollback: ${f.rollback}` : `rollback: not stated (proposed default: revert the squash commit on ${f.baseRef})`,
   ].join("\n");
   // Free text from PR comments and statuses goes out to Jev: redact anything credential-shaped (shas are kept).
-  return { pr: f.pr, head: f.head, base: f.base, change: redact([f.change, f.scope].filter(Boolean).join("\n")), review: redact(review), ci, limits: redact(limits) };
+  // WO79: only when the PR or its review CLAIMS tests-only but the diff changes code is the scope a decisive negative.
+  // The claim is structural, never read from prose (QA PR83: titles, descriptions and reviews mention "tests-only" in
+  // every sense): test authors work on a `tests/<feature-id>` branch (rig template, test-author role). A tests/ branch
+  // whose diff changes code is the decisive negative; any other branch is an ordinary change.
+  const contradiction = /^tests\//.test(f.headRef || "") && /^scope \(from the diff\): code change,/.test(f.scope || "")
+    ? `scope check: head branch ${f.headRef} is a tests-first branch, but the diff changes ${f.scope.replace(/^scope \(from the diff\): code change, /, "")}`
+    : null;
+  return { pr: f.pr, head: f.head, base: f.base, change: redact([f.change, f.scope, contradiction].filter(Boolean).join("\n")), review: redact(review), ci, limits: redact(limits) };
 }
 
 function frontmatter(path) {
@@ -789,7 +799,7 @@ export function gateProblems(f) {
   if (!f.brbNA && !(f.brb && f.brb.artifact_type === "qa" && f.brb.verdict === "PASS" && f.brb.candidate_sha === f.head)) p.push("no bug-review-board qa PASS for this head");
   // WO75 (QA PR80): the diff's scope line is what the tests-first exception rests on; a diff this helper couldn't read
   // (or a missing line) fails closed in every band.
-  if (!/^scope \(from the diff\): (NOT )?tests-only/.test(f.scope || "")) p.push(`the diff scope could not be computed (${f.scope || "no scope line"})`);
+  if (!/^scope \(from the diff\): (tests-only|code change),/.test(f.scope || "")) p.push(`the diff scope could not be computed (${f.scope || "no scope line"})`);
   return p;
 }
 
