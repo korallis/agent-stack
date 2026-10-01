@@ -16,6 +16,7 @@ const { seatFromNode, derive, eventLine, isHuman } = await src("model.ts");
 const { Cache, parseHeavy, parseAccounts, parseGates, MIN_INTERVAL } = await src("data.ts");
 const { History } = await src("history.ts");
 const { render, parseArgs } = await src("main.ts");
+const await_grid = await src("views/matrix.ts");
 const fixture = JSON.parse(fs.readFileSync(join(repo, "console/fixtures/demo.json"), "utf8"));
 const scratch = fs.mkdtempSync(join(fs.existsSync("/tmp/claude-1000") ? "/tmp/claude-1000" : "/tmp", "rigconsole-"));
 process.on("exit", () => fs.rmSync(scratch, { recursive: true, force: true }));
@@ -231,6 +232,31 @@ test("views: Mission Control and the Seat Matrix from the fixture, at 176×50 an
   assert.ok(!narrow.includes("SUBSCRIPTION POOL"), "the side panels give way at 120");
   assert.match(render(fixture.raw, hist(), 90, 30, st()).lines().join("\n"), /needs at least 100×30; this terminal is 90×30/);
   assert.match(render(fixture.raw, hist(), 176, 50, st({ help: true })).lines().join("\n"), /HELP[\s\S]*never polls tmux/);
+});
+
+test("QA PR86: at the minimum 100×30 the matrix scrolls rows and seat columns to the selection; the summary never covers a seat", () => {
+  const f = derive(fixture.raw);
+  const { grid } = await_grid;
+  const g = grid({ s: null, t: null, raw: fixture.raw, f, frame: 0, view: 1, rigFocus: 0, seatFocus: [0, 0], note: null });
+  const cols = g.rows[0].cells.length;
+  for (let ri = 0; ri < g.rows.length; ri++) {
+    for (const col of [0, Math.floor(cols / 2), cols - 1]) {
+      const lines = render(fixture.raw, hist(), 100, 30, st({ view: 1, seatFocus: [ri, col] })).lines();
+      const text = lines.join("\n"), seat = g.rows[ri].cells[col];
+      assert.ok(lines.some((l) => l.includes(`▶ ${g.rows[ri].rig}`)), `rig ${g.rows[ri].rig} is on screen when selected`);
+      if (seat) assert.ok(text.includes(`SELECTED ${seat.session}`), `${g.rows[ri].rig} col ${col}: ${seat.session}`);
+      else assert.ok(text.includes("SELECTED  — (an empty slot"), `${g.rows[ri].rig} col ${col}: empty`);
+      // every drawn rig row ends with its own W / I / ? summary, intact, inside the border
+      for (const l of lines.filter((l) => /^ │ (▶ |  )\S/.test(l) && /\d+ \/ +\d+ \/ \d+/.test(l))) assert.match(l, / +\d+ \/ +\d+ \/ \d+ │ $/, l);
+      assert.ok(lines.every((l) => [...l].length === 100));
+      const firstShown = lines.some((l) => new RegExp(`^ │ (▶ |  )${g.rows[0].rig} `).test(l));
+      assert.equal(lines.some((l) => /▲ \d+ more/.test(l)), !firstShown, "rows above out of view ⇔ a ▲ marker");
+    }
+  }
+  const last = render(fixture.raw, hist(), 100, 30, st({ view: 1, seatFocus: [0, cols - 1] })).lines().join("\n");
+  assert.match(last, /◀/, "columns to the left are out of view and marked");
+  const first = render(fixture.raw, hist(), 100, 30, st({ view: 1, seatFocus: [0, 0] })).lines().join("\n");
+  assert.match(first.split("\n").find((l) => /^ │ +\d\d \d\d/.test(l)), /▶ +rows/, "columns to the right are marked"); assert.match(first, /▼ \d+ more/, "rows below are marked");
 });
 
 test("CLI: --once draws one frame from the fixture; strict arguments; the fixture is neutral", () => {

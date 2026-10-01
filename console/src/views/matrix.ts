@@ -65,42 +65,64 @@ export function matrix(c: Ctx, hist: History): void {
   const mh = Math.min(bottom - y, Math.max(18, g.rows.length * 3 + 4));
 
   // ── matrix ──
+  // Viewports on both axes (QA PR86): rows and seat columns that don't fit scroll so the selected seat is always
+  // drawn; ▲▼ / ◀▶ say how many are out of view. The summary column has its own space, never over a seat.
   panel(s, t, mx, y, mw, mh, `SEAT MATRIX · ${f.agents.length} AGENTS`, { right: `${f.count.detached + f.count.stopped} down` });
-  const gx = mx + 15;
-  let cx = gx;
-  for (const p of g.pods) {
-    s.put(cx, y + 1, podLabel(p.pod, p.width * 3 - 1), { fg: t.dim, bold: true });
-    for (let i = 0; i < p.width; i++) s.put(cx + i * 3, y + 2, String(i + 1).padStart(2, "0"), { fg: t.faint });
-    cx += p.width * 3 + 1;
+  const gx = mx + 15, SUMW = 12, sumX = mx + mw - 1 - SUMW, limit = sumX - 3;   // seat cells end before the summary column
+  const cols = g.pods.flatMap((p) => Array.from({ length: p.width }, (_, i) => ({ pod: p.pod, i, width: p.width })));
+  const focusCol = Math.min(Math.max(0, c.seatFocus[1]), Math.max(0, cols.length - 1));
+  // x of each column for a viewport starting at c0, and the columns that fit
+  const place = (c0: number) => {
+    const xs: number[] = []; let x = gx;
+    for (let k = c0; k < cols.length; k++) {
+      if (k > c0 && cols[k].i === 0) x += 1;                          // a gap between pods
+      if (x + 2 > limit) break;
+      xs.push(x); x += 3;
+    }
+    return xs;
+  };
+  let c0 = 0, xs = place(0);
+  while (focusCol >= c0 + xs.length && c0 < cols.length - 1) { c0++; xs = place(c0); }
+  const c1 = c0 + xs.length;
+  for (let k = c0; k < c1; k++) {
+    const col = cols[k], x = xs[k - c0];
+    if (col.i === 0 || k === c0) {
+      const left = col.width - col.i, room = Math.min(left, c1 - k) * 3 - 1;
+      s.put(x, y + 1, podLabel(col.pod, room), { fg: t.dim, bold: true });
+    }
+    s.put(x, y + 2, String(col.i + 1).padStart(2, "0"), { fg: t.faint });
   }
-  const sumX = Math.min(cx + 1, mx + mw - 13);
+  if (c0 > 0) s.put(gx - 2, y + 2, "◀", { fg: t.title });
+  if (c1 < cols.length) s.put(limit + 1, y + 2, "▶", { fg: t.title });
   s.put(sumX, y + 1, "W / I / ?", { fg: t.dim }); s.put(sumX, y + 2, "rows", { fg: t.faint });
+  const room = y + mh - 1 - (y + 3);                                  // lines between the header and the border
+  const step = g.rows.length * 3 <= room ? 3 : 2;                     // a blank line between rigs when there is room
+  const fitRows = Math.max(1, Math.floor(room / step));
+  const focusRow = Math.min(Math.max(0, c.seatFocus[0]), Math.max(0, g.rows.length - 1));
+  const top = focusRow >= fitRows ? focusRow - fitRows + 1 : 0;
+  const r1 = Math.min(g.rows.length, top + fitRows);
+  if (top > 0) s.put(mx + 2, y + 2, `▲ ${top} more`, { fg: t.title });
+  if (r1 < g.rows.length) s.put(mx + 2, y + mh - 1, ` ▼ ${g.rows.length - r1} more `, { fg: t.title });
   let flat: Seat | null = null;
-  g.rows.forEach((row, ri) => {
-    const ry = y + 3 + ri * 3;
-    if (ry + 1 >= y + mh - 1) return;
-    const sel = c.seatFocus[0] === ri;
+  for (let ri = top; ri < r1; ri++) {
+    const row = g.rows[ri], ry = y + 3 + (ri - top) * step;
+    const sel = focusRow === ri;
     s.put(mx + 2, ry, fit((sel ? "▶ " : "  ") + row.rig, 12), { fg: sel ? t.title : t.text, bold: sel });
     if (row.compact) s.put(mx + 4, ry + 1, fit([...new Set(row.cells.filter(Boolean).map((x) => x!.pod))].join(" "), 10), { fg: t.faint });
-    let px = gx, col = 0;
-    for (const p of g.pods) {
-      for (let i = 0; i < p.width; i++, col++) {
-        const seat = row.cells[col];
-        const focused = sel && c.seatFocus[1] === col;
-        if (focused) flat = seat;
-        if (!seat) { s.put(px + i * 3, ry, " ·", { fg: t.faint }); continue; }
-        const live = seat.activity !== "detached" && seat.activity !== "stopped";
-        const label = seat.ctx === null ? "--" : seat.ctx >= 100 ? "99" : String(seat.ctx).padStart(2, " ");
-        s.put(px + i * 3, ry, label, { fg: live ? ((seat.ctx ?? 0) >= 80 ? t.text : t.text) : t.faint, bg: live ? ctxShade(t, seat.ctx) : t.panel, bold: (seat.ctx ?? 0) >= 80, inverse: focused });
-        s.put(px + i * 3, ry + 1, " " + DOT[seat.activity], { fg: dotColor(c, seat.activity), inverse: focused });
-      }
-      px += p.width * 3 + 1;
+    if (sel) flat = row.cells[focusCol] ?? null;
+    for (let k = c0; k < c1; k++) {
+      const seat = row.cells[k], x = xs[k - c0], focused = sel && k === focusCol;
+      if (!seat) { s.put(x, ry, " ·", { fg: t.faint, inverse: focused }); continue; }
+      const live = seat.activity !== "detached" && seat.activity !== "stopped";
+      const label = seat.ctx === null ? "--" : seat.ctx >= 100 ? "99" : String(seat.ctx).padStart(2, " ");
+      s.put(x, ry, label, { fg: live ? t.text : t.faint, bg: live ? ctxShade(t, seat.ctx) : t.panel, bold: (seat.ctx ?? 0) >= 80, inverse: focused });
+      s.put(x, ry + 1, " " + DOT[seat.activity], { fg: dotColor(c, seat.activity), inverse: focused });
     }
     const k = f.byRig[row.rig] ?? { working: 0, idle: 0, stuck: 0, unknown: 0, detached: 0, stopped: 0 };
     s.put(sumX, ry, `${rpad(k.working, 2)} / ${rpad(k.idle, 2)} / ${k.stuck + k.unknown}`, { fg: t.text });
     const rig = f.rigs.find((r) => r.rig.name === row.rig);
-    s.put(sumX, ry + 1, `${rig?.rows ?? 0} rows${rig?.health === "down" ? " · down" : ""}`, { fg: rig?.health === "down" ? t.stuck : t.faint });
-  });
+    s.put(sumX, ry + 1, fit(`${rig?.rows ?? 0} rows${rig?.health === "down" ? " · down" : ""}`, SUMW), { fg: rig?.health === "down" ? t.stuck : t.faint });
+  }
 
   // ── telemetry (left) ──
   if (showLeft) {
