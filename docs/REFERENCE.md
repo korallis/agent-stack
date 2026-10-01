@@ -177,6 +177,11 @@ claude-pool                              # your own Claude Code session through 
 openrig-update --check                   # is OpenRig up to date? (+ are local patches ready for the new version)
 ```
 
+`agent-proxy-status` shows each account's 5-hour and weekly windows as the provider reports them. Codex sends each
+window's length and currently has only a weekly one, so its 5h column is `-`. An account that has used up a window but
+has credits says `in use` under credits: it keeps working and stays eligible. Only an account past its limit (over
+100%, or a used-up Codex window with no credits) is left out of the `eligible` count.
+
 ## Several projects at once
 
 Each project gets its own team, its own worktrees (`~/Projects/<Name>.worktrees/`) and its own OpenRig workspace

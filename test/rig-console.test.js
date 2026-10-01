@@ -373,3 +373,68 @@ test("Home at short heights: the work-in-flight strip never runs into the ticker
   }
   assert.match(render(fixture.raw, hist(), 176, 50, st()).lines().join("\n"), /WORK IN FLIGHT/, "shown where it fits");
 });
+
+// WO85: Codex reports only a weekly window now. Its 5 h column is "—" (no limit), and a week used up while the account
+// runs on credits is "on credits" in the info colour: never red, never "over", never counted out.
+test("WO85: Codex accounts: no 5 h reading, the week, and 'on credits' is never drawn as exhausted", async () => {
+  const { PAD39A: t } = await src("theme.ts");
+  const a = parseAccounts(JSON.stringify([
+    { label: "codex-a", provider: "codex", status: "active", cooldowns: [], short_window_used: null, weekly_used: "100", on_credits: true },
+    { label: "codex-b", provider: "codex", status: "active", cooldowns: [], short_window_used: null, weekly_used: "42", on_credits: false },
+    { label: "codex-c", provider: "codex", status: "active", cooldowns: [], short_window_used: null, weekly_used: "100" }]));
+  assert.deepEqual(a.map((x) => [x.label, x.short, x.weekly, x.onCredits]), [["codex-a", null, 100, true], ["codex-b", null, 42, false], ["codex-c", null, 100, false]]);
+  const raw = { ...fixture.raw, accounts: a }, same = (c, rgb) => c.fg && c.fg.join() === rgb.join();
+  for (const [view, size] of [[4, [176, 50]], [0, [176, 50]], [1, [176, 50]]]) {
+    const scr = render(raw, hist(), ...size, st({ view, pane: 3 })), lines = scr.lines();
+    const y = lines.findIndex((l) => /codex-a\s/.test(l));
+    assert.ok(y >= 0, `view ${view + 1}: codex-a listed`);
+    const row = scr.cells.slice(y * scr.w, (y + 1) * scr.w), xs = [...lines[y].matchAll(/100%/g)].map((m) => m.index);
+    assert.ok(xs.length, `view ${view + 1}: the week reads 100%`);
+    for (const x of xs) assert.ok(!same(row[x], t.stuck), `view ${view + 1}: 100% on credits is not red`);
+    const x0 = lines[y].indexOf("codex-a"), x1 = lines[y].indexOf("│", x0);   // this account's row, within its panel
+    assert.ok(!row.slice(x0, x1 < 0 ? undefined : x1).some((c) => same(c, t.stuck)), `view ${view + 1}: nothing red on the on-credits row`);
+    assert.match(lines[y], /codex-a\s+(cx\s+(5h\s+)?)?[·\s]*—/, `view ${view + 1}: no 5 h reading`);
+    assert.doesNotMatch(lines.join("\n"), /codex-a[^\n]*over/, `view ${view + 1}: never "over"`);
+  }
+  const pool = render(raw, hist(), 176, 50, st({ view: 4 })).lines().join("\n");
+  assert.match(pool, /codex-a[^\n]*100%\s+● on credits/);
+  assert.match(pool, /codex-c[^\n]*100%\s+● active/, "no credits reading: just the number, as reported");
+  // and a real overrun is still red
+  const over = { ...fixture.raw, accounts: parseAccounts(JSON.stringify([{ label: "claude-b", provider: "claude", status: "active", cooldowns: [], short_window_used: "1.01", weekly_used: "0.85" }])) };
+  assert.match(render(over, hist(), 176, 50, st({ view: 4 })).lines().join("\n"), /claude-b[^\n]*101%[^\n]*○ over/);
+});
+
+test("WO85: the Pool shows how many accounts run on credits, prominently (a cost signal); nothing when none do", async () => {
+  const { PAD39A: t } = await src("theme.ts");
+  const acc = (label, onCredits) => ({ label, provider: "codex", status: "active", cooldowns: [], short_window_used: null, weekly_used: onCredits ? "100" : "40", on_credits: onCredits });
+  const raw = { ...fixture.raw, accounts: parseAccounts(JSON.stringify([acc("codex-a", true), acc("codex-b", true), acc("codex-c", false)])) };
+  const scr = render(raw, hist(), 176, 50, st({ view: 4 })), lines = scr.lines();
+  const ty = lines.findIndex((l) => l.includes("SUBSCRIPTION POOL"));
+  assert.match(lines[ty], /SUBSCRIPTION POOL[^\n]*● 2 on credits/, "the count in the panel title");
+  const x = lines[ty].indexOf("● 2 on credits"), cell = scr.cells[ty * scr.w + x];
+  assert.ok(cell.bold && cell.fg.join() === t.info.join(), "bold, in the info colour");
+  assert.match(lines.join("\n"), /● 2 of 3 accounts on credits \(a cost signal\): codex-a, codex-b/);
+  assert.match(render(raw, hist(), 176, 50, st()).lines().join("\n"), /ACCOUNT POOL[^\n]*● 2 on credits/, "Home's account pool too");
+  const none = { ...fixture.raw, accounts: parseAccounts(JSON.stringify([acc("codex-c", false)])) };
+  assert.doesNotMatch(render(none, hist(), 176, 50, st({ view: 4 })).lines().join("\n") + render(none, hist(), 176, 50, st()).lines().join("\n"), /on credits/);
+});
+
+// QA PR96: the console shows the status tool's own over_limit verdict (what dispatch and recovery read), never its own.
+test("WO85: account panels follow over_limit: on credits at 101% is not over; used up with no credits is over", async () => {
+  const { PAD39A: t } = await src("theme.ts");
+  const acc = (label, weekly, onCredits, over) => ({ label, provider: "codex", status: "active", cooldowns: [], short_window_used: null, weekly_used: weekly, on_credits: onCredits, ...(over === undefined ? {} : { over_limit: over }) });
+  const a = parseAccounts(JSON.stringify([acc("credit101", "101", true, false), acc("nocred100", "100", false, true), acc("older101", "101", false), acc("oldcred101", "101", true)]));
+  assert.deepEqual(a.map((x) => [x.label, x.onCredits, x.over]), [["credit101", true, false], ["nocred100", false, true], ["older101", false, true], ["oldcred101", true, false]],
+    "over_limit when the tool gives it; an older tool: above 100% and not on credits");
+  const raw = { ...fixture.raw, accounts: a }, same = (c, rgb) => c.fg && c.fg.join() === rgb.join();
+  for (const view of [4, 0]) {
+    const scr = render(raw, hist(), 176, 50, st({ view })), lines = scr.lines(), y = (l) => lines.findIndex((x) => x.includes(l));
+    assert.match(lines[y("credit101")], /101%\s+● on credits/, `view ${view + 1}: on credits above 100%`);
+    const x0 = lines[y("credit101")].indexOf("credit101"), x1 = lines[y("credit101")].indexOf("│", x0);
+    assert.ok(!scr.cells.slice(y("credit101") * scr.w + x0, y("credit101") * scr.w + x1).some((c) => same(c, t.stuck)), `view ${view + 1}: nothing red`);
+    assert.match(lines[y("nocred100")], /100%\s+○ over/, `view ${view + 1}: used up, no credits: over, not active`);
+  }
+  const m = render(raw, hist(), 176, 50, st({ view: 1 })), ml = m.lines(), my = ml.findIndex((l) => l.includes("nocred100"));
+  const dot = ml[my].lastIndexOf("○");
+  assert.ok(dot > 0 && same(m.cells[my * m.w + dot], t.stuck), "matrix: a hollow red dot for the over account");
+});

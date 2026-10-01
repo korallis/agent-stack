@@ -7,7 +7,7 @@ import { braille, fit, meter, panel, rpad } from "../draw.ts";
 import { podsOf, natural, POD_ORDER, type Seat } from "../model.ts";
 import type { History } from "../history.ts";
 import { ctxShade } from "../theme.ts";
-import { footer, header, kindColor, since, ticker, type Ctx } from "./chrome.ts";
+import { accountState, footer, header, kindColor, quotaColor, since, ticker, type Ctx } from "./chrome.ts";
 import { DOT, dotColor } from "./home.ts";
 
 export interface Grid { pods: { pod: string; width: number }[]; rows: { rig: string; compact: boolean; cells: (Seat | null)[] }[] }
@@ -153,13 +153,14 @@ export function matrix(c: Ctx, hist: History): void {
     panel(s, t, rx, y, rw, mh, "SUBSCRIPTION POOL");
     s.put(rx + 2, y + 1, fit("ACCOUNT", 10) + "  5H   WEEK", { fg: t.faint });
     raw.accounts.slice(0, Math.floor((mh - 3) / 2)).forEach((a, i) => {
-      const ay = y + 2 + i * 2, ok = a.status === "active" && !a.cooling, pct = (v: number | null) => rpad(v === null ? "—" : `${v}%`, 4);
-      const col = (v: number | null) => (v === null ? t.faint : v >= 95 ? t.stuck : v >= 75 ? t.blocked : t.working);
+      const ay = y + 2 + i * 2, [, okc, ok] = accountState(t, a), pct = (v: number | null) => rpad(v === null ? "—" : `${v}%`, 4);
+      const col = (v: number | null) => quotaColor(t, a, v);
       s.put(rx + 2, ay, fit(a.label, 10), { fg: t.text });
       s.put(rx + 13, ay, pct(a.short), { fg: col(a.short) });
       s.put(rx + 18, ay, pct(a.weekly), { fg: col(a.weekly) });
-      s.put(rx + rw - 3, ay, ok ? "●" : "○", { fg: ok ? t.working : t.blocked });
-      meter(s, t, rx + 2, ay + 1, rw - 4, a.short === null ? null : a.short / 100, col(a.short));
+      s.put(rx + rw - 3, ay, ok ? "●" : "○", { fg: okc });
+      const bind = a.short ?? a.weekly;   // the meter: the short window, or the weekly one where there is no short window
+      meter(s, t, rx + 2, ay + 1, rw - 4, bind === null ? null : bind / 100, col(bind));
     });
     if (!raw.accounts.length) s.put(rx + 2, y + 1, "proxy status unavailable", { fg: t.faint });
   }

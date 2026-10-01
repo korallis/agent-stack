@@ -44,3 +44,60 @@ test("--json keeps the raw header values and adds the percents and over_limit", 
   assert.deepEqual([by["claude-a"].short_window_pct, by["claude-b"].short_window_pct, by["codex-a"].short_window_pct, by["claude-c"].short_window_pct].map((v) => v === null ? null : Math.round(v)), [29, 101, 100, null]);
   assert.deepEqual(rows.filter((r) => r.over_limit).map((r) => r.label), ["claude-b"]);
 });
+
+// WO85: Codex now sends each window's length. Primary is the WEEKLY window (10080 minutes) and secondary is a 0-minute,
+// 0% window: there is no 5-hour limit. An account that has used its week carries on on credits. The current shape,
+// anonymised from a live read; the older shape (no Window-Minutes) keeps the old by-position reading.
+test("WO85: Codex windows by their reported length; no 5 h limit; a used-up week on credits is neither over nor ineligible", () => {
+  const cx = (note, sig) => ({ note, provider: "codex", disabled: false, status: "active", unavailable: false, cooldowns: [], success: 1, failed: 0, quota: { observed_at: "t", signals: sig } });
+  const now = (used, credits, extra = {}) => ({ "X-Codex-Active-Limit": "premium", "X-Codex-Plan-Type": "pro", "X-Codex-Primary-Used-Percent": used, "X-Codex-Primary-Window-Minutes": "10080",
+    "X-Codex-Secondary-Used-Percent": "0", "X-Codex-Secondary-Window-Minutes": "0", ...(credits === undefined ? {} : { "X-Codex-Credits-Has-Credits": credits }), "X-Codex-Credits-Unlimited": "False", ...extra });
+  const files = [cx("codex-a", now("100", "True")), cx("codex-b", now("42", "True")), cx("codex-c", now("100", "False")), cx("codex-d", now("100", undefined)),
+    cx("codex-e", { "X-Codex-Primary-Used-Percent": "12", "X-Codex-Primary-Window-Minutes": "300", "X-Codex-Secondary-Used-Percent": "57", "X-Codex-Secondary-Window-Minutes": "10080" }),
+    cx("codex-f", { "X-Codex-Primary-Used-Percent": "57", "X-Codex-Primary-Window-Minutes": "10080", "X-Codex-Secondary-Used-Percent": "12", "X-Codex-Secondary-Window-Minutes": "300" }),
+    cx("codex-g", now("100", "False", { "X-Codex-Credits-Unlimited": "True" }))];
+  const d = fs.mkdtempSync(join(dir, "wo85-"));
+  fs.copyFileSync(join(repo, "proxy/status.py"), join(d, "status.py"));
+  fs.writeFileSync(join(d, "usage_collector.py"), `import json, pathlib\nLOG = pathlib.Path("/nonexistent")\ndef mgmt_key(): return "k"\ndef get(path, key): return {"files": json.loads(${JSON.stringify(JSON.stringify(files))})}\n`);
+  const go = (...a) => spawnSync("python3", [join(d, "status.py"), ...a], { encoding: "utf8" });
+  const by = Object.fromEntries(JSON.parse(go("--json").stdout).map((r) => [r.label, r]));
+  const v = (l) => [by[l].short_window_pct, by[l].weekly_pct, by[l].on_credits, by[l].over_limit];
+  assert.deepEqual(v("codex-a"), [null, 100, true, false], "the current shape: weekly 100% on credits; no 5 h reading; not over");
+  assert.deepEqual([by["codex-a"].short_window_used, by["codex-a"].weekly_used, by["codex-a"].weekly_window_minutes, by["codex-a"].has_credits], [null, "100", 10080, true]);
+  assert.deepEqual(v("codex-b"), [null, 42, false, false]);
+  assert.deepEqual(v("codex-c"), [null, 100, false, true], "a used-up week with credits reported as none is over its limit");
+  assert.deepEqual(v("codex-d"), [null, 100, false, false], "no credits header: not evidence either way");
+  assert.deepEqual(v("codex-e"), [12, 57, false, false], "a real 5 h window (300 minutes) still reads as 5 h");
+  assert.deepEqual(v("codex-f"), [12, 57, false, false], "by length, not position");
+  assert.deepEqual(v("codex-g"), [null, 100, true, false], "unlimited credits");
+  const t = go();
+  assert.equal(t.status, 0, t.stderr);
+  const row = (n) => t.stdout.split("\n").find((l) => l.startsWith(n + " "));
+  assert.match(t.stdout.split("\n")[0], /\s5h\s+weekly\s+credits\s/);
+  assert.match(row("codex-a"), /\s-\s+100%\s+in use\s/, "no 5 h column value, the week, on credits");
+  assert.match(row("codex-b"), /\s-\s+42%\s+yes\s/);
+  assert.match(row("codex-c"), /\s-\s+100% OVER\s+none\s/, "used up with no credits: over");
+  assert.doesNotMatch(row("codex-a"), /OVER/);
+  assert.match(t.stdout, /^eligible: codex 6\/7 \(1 over limit\)$/m, "only the account with no credits left is ineligible");
+});
+
+// QA PR96: on credits is never over, at any reading; over_limit is the one verdict dispatch, recovery and the console read.
+test("WO85: on credits above 100% (and unlimited credits) stays eligible; used up with no credits says OVER", () => {
+  const cx = (note, used, has, unl = "False") => ({ note, provider: "codex", disabled: false, status: "active", unavailable: false, cooldowns: [], success: 1, failed: 0,
+    quota: { observed_at: "t", signals: { "X-Codex-Primary-Used-Percent": used, "X-Codex-Primary-Window-Minutes": "10080", "X-Codex-Secondary-Used-Percent": "0",
+      "X-Codex-Secondary-Window-Minutes": "0", "X-Codex-Credits-Has-Credits": has, "X-Codex-Credits-Unlimited": unl } } });
+  const files = [cx("credit101", "101", "True"), cx("unlim101", "101", "False", "True"), cx("nocred100", "100", "False"),
+    { note: "claude-b", provider: "claude", disabled: false, status: "active", unavailable: false, cooldowns: [], success: 1, failed: 0, quota: { observed_at: "t", signals: { "Anthropic-Ratelimit-Unified-5h-Utilization": "1.01", "Anthropic-Ratelimit-Unified-7d-Utilization": "0.5" } } }];
+  const d = fs.mkdtempSync(join(dir, "wo85b-"));
+  fs.copyFileSync(join(repo, "proxy/status.py"), join(d, "status.py"));
+  fs.writeFileSync(join(d, "usage_collector.py"), `import json, pathlib\nLOG = pathlib.Path("/nonexistent")\ndef mgmt_key(): return "k"\ndef get(path, key): return {"files": json.loads(${JSON.stringify(JSON.stringify(files))})}\n`);
+  const go = (...a) => spawnSync("python3", [join(d, "status.py"), ...a], { encoding: "utf8" });
+  const by = Object.fromEntries(JSON.parse(go("--json").stdout).map((r) => [r.label, r]));
+  assert.deepEqual(["credit101", "unlim101", "nocred100", "claude-b"].map((l) => [l, by[l].on_credits, by[l].over_limit]),
+    [["credit101", true, false], ["unlim101", true, false], ["nocred100", false, true], ["claude-b", false, true]]);
+  const t = go().stdout, row = (n) => t.split("\n").find((l) => l.startsWith(n + " "));
+  assert.match(row("credit101"), /\s101%\s+in use\s/); assert.doesNotMatch(row("credit101"), /OVER/);
+  assert.match(row("nocred100"), /100% OVER\s+none\s/);
+  assert.match(row("claude-b"), /101% OVER\s+50%\s/, "the Anthropic overrun is unchanged");
+  assert.match(t, /^eligible: claude 0\/1 \(1 over limit\), codex 2\/3 \(1 over limit\)\s+!! a provider pool has NO eligible accounts$/m);
+});

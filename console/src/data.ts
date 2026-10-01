@@ -75,7 +75,10 @@ export function parseAccounts(text: string | null): Account[] {
     const a = JSON.parse(text);
     return (Array.isArray(a) ? a : []).map((x: any) => ({ label: String(x.label), provider: String(x.provider ?? ""), status: String(x.status ?? "?"),
       short: quotaPct(x.short_window_used, String(x.provider ?? "")), weekly: quotaPct(x.weekly_used, String(x.provider ?? "")),
-      cooling: x.status !== "active" || (Array.isArray(x.cooldowns) && x.cooldowns.length > 0) }));
+      cooling: x.status !== "active" || (Array.isArray(x.cooldowns) && x.cooldowns.length > 0), onCredits: x.on_credits === true,
+      // the status tool's own verdict, which dispatch and recovery read; an older tool without it: a window above 100%
+      over: typeof x.over_limit === "boolean" ? x.over_limit
+        : x.on_credits !== true && [x.short_window_used, x.weekly_used].some((v) => (quotaPct(v, String(x.provider ?? "")) ?? 0) > 100) }));
   } catch { return []; }
 }
 /** Today's merge-gate decisions from the Jev decision log. Diagnosis calls are excluded, whether the caller is
