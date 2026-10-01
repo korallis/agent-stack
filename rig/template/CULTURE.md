@@ -44,7 +44,9 @@ them as the owner's.
   Prefer the focused run (the files or journeys you touched) over the full suite; run the full suite once, at the end.
   Never wrap a server (`npm start`, `npm run start:*|dev|serve|preview`, `next start|dev`, `vite`): it never finishes and
   would hold a shared slot. agent-heavy refuses it; run it outside and wrap only the tests that use it. Jobs are stopped
-  at a max runtime (45min build, 30min browser; `--max-runtime` to raise it).
+  at a max runtime (45min build, 30min browser; `--max-runtime` to raise it) and killed past a memory ceiling (14G
+  build, 8G browser, 24G for all heavy runs; exit 137). Run test runners with few workers (`node --test
+  --test-concurrency=4`, `jest --maxWorkers=4`); a run killed for memory is rerun focused, not just repeated.
 - Never `pkill -f`/`killall` by a pattern: it also matches other seats' command lines. Stop your own processes by PID
   (`pgrep -f` narrowed by cwd or parent PID, then `kill <pid>`).
 - Never print a credential: connection strings, passwords, API keys and tokens never go to a command's output (it is

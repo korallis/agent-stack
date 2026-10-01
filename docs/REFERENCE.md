@@ -225,7 +225,15 @@ Details are in the `agent-stack` skill. What went wrong before: [docs/incidents/
   then only alerts.
 - **Heavy runs:** every seat runs tsc, eslint, tests, builds and Playwright through `agent-heavy build|browser -- <cmd>`
   (2 slots, capped CPU and RAM, max runtime 45min build / 30min browser; a stop at the cap is logged, `journalctl -t
-  agent-heavy`). It refuses long-lived servers (`npm start`,
+  agent-heavy`). Memory (WO58): each run's scope has a ceiling and no swap (build 14G, browser 8G;
+  `AGENT_HEAVY_<CLASS>_MEM`/`_SWAP`), and every scope sits in `agent-heavy.slice`, whose ceiling holds all heavy runs
+  together to 24G (`AGENT_HEAVY_TOTAL_MEM`; set as a runtime property before each run). A run over either is OOM-killed
+  inside its scope, exits 137 with a "killed: … memory ceiling" message saying how to rerun it focused, and is logged
+  like a stop at the cap; the rest of the host keeps its memory. The job's env carries worker hints (4 unless set,
+  `AGENT_HEAVY_WORKERS`): `PYTEST_XDIST_AUTO_NUM_WORKERS` (pytest `-n auto`), `VITEST_MAX_WORKERS` (Vitest 4+),
+  `VITEST_MAX_THREADS`/`VITEST_MAX_FORKS` (Vitest 3). `node --test` and Jest read no such variable: pass
+  `--test-concurrency=4` / `--maxWorkers=4`. Without a systemd user session it warns and runs the job unconfined, under
+  `timeout` for the max runtime. Every scope is cleared afterwards (`reset-failed`), so failed ones don't pile up. It refuses long-lived servers (`npm start`,
   `start:*`, `dev`, `next start`, `vite`), which run outside it. `agent-heavy status` shows who holds each slot.
   A nested call of the same class (a script that wraps its own runs) runs inline in the parent's slot; a different
   class takes its own slot. The rig template's CULTURE.md makes it binding, and `agent-project-check` WARNs when a
