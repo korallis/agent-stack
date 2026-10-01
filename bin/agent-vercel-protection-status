@@ -1,0 +1,128 @@
+#!/usr/bin/env python3
+"""agent-vercel-protection-status <project> [--scope <team>] [--json]: a Vercel project's deployment protection, as
+yes/no and counts only.
+
+A project's protection-bypass secrets are the KEYS of its `protectionBypass` object, so printing the project JSON, or
+even those keys, prints the secret (2026-10-01). This reads the project (`vercel api /v9/projects/<project>`) in
+memory and prints:
+  - Vercel Authentication, password protection, trusted IPs: on/off;
+  - protection bypass: configured yes/no, how many entries, their scopes counted, and when the newest was created.
+Never a key or a value. Run it instead of `vercel api …/projects/…` whenever the question is "is it set up".
+The real `vercel` is called directly (the seat guard around `vercel` would refuse this endpoint on stdout, rightly).
+Exit 0 when the project was read, 1 when not.
+"""
+import datetime, glob, json, os, re, subprocess, sys
+
+
+def real_vercel():
+    """The real CLI: never the seat guard (seat-bin/credguard), never a version manager's shim."""
+    def ok(p):
+        rp = os.path.realpath(p)
+        return (os.path.isfile(p) and os.access(p, os.X_OK) and "/shims/" not in p and "/shims/" not in rp
+                and os.path.basename(rp) not in ("credguard", "seat-bin-credguard", "mise") and "/seat-bin/" not in rp)
+    for d in os.environ.get("PATH", "").split(os.pathsep):
+        p = os.path.join(d or ".", "vercel")
+        if ok(p):
+            return p
+    found = [p for p in glob.glob(os.path.expanduser("~/.local/share/mise/installs/node/*/bin/vercel")) if ok(p)]
+    return sorted(found)[-1] if found else None
+
+
+def masked(text):
+    """A short, safe line from a failure: long token-like runs are masked."""
+    line = (text or "").strip().splitlines()[0] if (text or "").strip() else ""
+    return re.sub(r"[A-Za-z0-9_\-]{20,}", "<masked>", line)[:160]
+
+
+def when(ms):
+    try:
+        return datetime.datetime.fromtimestamp(int(ms) / 1000, datetime.timezone.utc).strftime("%Y-%m-%d %H:%M UTC")
+    except (TypeError, ValueError, OverflowError, OSError):
+        return None
+
+
+def summary(p):
+    """Booleans and counts from a project object. Reads protectionBypass's VALUES only (scope, createdAt), never keys."""
+    bypass = p.get("protectionBypass") or {}
+    entries = list(bypass.values()) if isinstance(bypass, dict) else []
+    scopes = {}
+    for e in entries:
+        s = e.get("scope", "unknown") if isinstance(e, dict) else "unknown"
+        scopes[s] = scopes.get(s, 0) + 1
+    created = [e.get("createdAt") for e in entries if isinstance(e, dict) and isinstance(e.get("createdAt"), (int, float))]
+    sso = p.get("ssoProtection")
+    return {
+        "project": p.get("name"),
+        "vercel_authentication": bool(sso),
+        "vercel_authentication_scope": sso.get("deploymentType") if isinstance(sso, dict) else None,
+        "password_protection": bool(p.get("passwordProtection")),
+        "trusted_ips": bool(p.get("trustedIps")),
+        "protection_bypass_configured": bool(entries),
+        "protection_bypass_entries": len(entries),
+        "protection_bypass_scopes": scopes,
+        "protection_bypass_newest_created": when(max(created)) if created else None,
+    }
+
+
+def main(argv):
+    if not argv or argv[0] in ("-h", "--help"):
+        print(__doc__.strip())
+        return 0 if argv else 2
+    project, scope, as_json, i = None, None, False, 0
+    while i < len(argv):
+        a = argv[i]
+        if a == "--scope" and i + 1 < len(argv):
+            scope, i = argv[i + 1], i + 2
+            continue
+        if a.startswith("--scope="):
+            scope = a.split("=", 1)[1]
+        elif a == "--json":
+            as_json = True
+        elif not a.startswith("-") and project is None:
+            project = a
+        else:
+            print(f"agent-vercel-protection-status: unknown argument {a!r}", file=sys.stderr)
+            return 2
+        i += 1
+    if not project or not re.fullmatch(r"[A-Za-z0-9._-]+", project):
+        print("agent-vercel-protection-status: give a project name or id (letters, digits, . _ -)", file=sys.stderr)
+        return 2
+    vc = real_vercel()
+    if not vc:
+        print("agent-vercel-protection-status: the real vercel CLI is not on PATH", file=sys.stderr)
+        return 1
+    cmd = [vc, "api", f"/v9/projects/{project}", "--raw"] + (["--scope", scope] if scope else [])
+    try:
+        r = subprocess.run(cmd, capture_output=True, text=True, timeout=90)
+    except (OSError, subprocess.TimeoutExpired) as e:
+        print(f"agent-vercel-protection-status: could not run vercel ({type(e).__name__})", file=sys.stderr)
+        return 1
+    try:
+        p = json.loads(r.stdout) if r.returncode == 0 else None
+    except ValueError:
+        p = None
+    if not isinstance(p, dict) or "error" in p:
+        print(f"agent-vercel-protection-status: could not read project {project} (vercel exit {r.returncode}"
+              f"{': ' + masked(r.stderr) if masked(r.stderr) else ''})", file=sys.stderr)
+        return 1
+    s = summary(p)
+    if as_json:
+        print(json.dumps(s, indent=2))
+        return 0
+    yn = lambda b: "on" if b else "off"
+    print(f"project: {s['project'] or project}")
+    print(f"  Vercel Authentication: {yn(s['vercel_authentication'])}"
+          + (f" ({s['vercel_authentication_scope']})" if s["vercel_authentication_scope"] else ""))
+    print(f"  password protection: {yn(s['password_protection'])}")
+    print(f"  trusted IPs: {yn(s['trusted_ips'])}")
+    if s["protection_bypass_configured"]:
+        scopes = ", ".join(f"{k} {v}" for k, v in sorted(s["protection_bypass_scopes"].items()))
+        print(f"  protection bypass: configured, {s['protection_bypass_entries']} entr{'y' if s['protection_bypass_entries'] == 1 else 'ies'}"
+              f" ({scopes})" + (f"; newest created {s['protection_bypass_newest_created']}" if s["protection_bypass_newest_created"] else ""))
+    else:
+        print("  protection bypass: not configured")
+    return 0
+
+
+if __name__ == "__main__":
+    sys.exit(main(sys.argv[1:]))

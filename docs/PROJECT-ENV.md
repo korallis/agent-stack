@@ -80,6 +80,13 @@ Check hosts by name (for example `sed -n 's/^DATABASE_URL=.*@\([^/]*\)\/.*/\1/p'
   `--output-file` (a plain `> file` too: Claude Code captures a command's stdout in a file of its own), and refuses a
   `--no-secrets` that the installed version doesn't have. After the 2026-09-30 leak
   ([docs/incidents/2026-09-30-neon-cs-leak.md](incidents/2026-09-30-neon-cs-leak.md)).
+- **Vercel deployment protection is checked with `agent-vercel-protection-status <project> [--scope <team>]`**, which
+  prints yes/no and counts only. A project's protection-bypass secrets are the KEYS of its `protectionBypass` object,
+  so the project JSON, or even those keys, is a secret (2026-10-01). In seats, `vercel api` on any `/projects…`
+  endpoint (or a path naming protection-bypass) runs only with `--output-file ~/.local/state/agent-stack/vercel/<seat>/<name>.json`
+  (a protected dir), `--debug` and `api --verbose` are refused, and the read guard refuses any command that names
+  `protectionBypass` and inline `node -e` / `python -c` code that reads a protected file. A bypass value is used by
+  name (`VERCEL_AUTOMATION_BYPASS_SECRET` in an env file, `x-vercel-protection-bypass: $VAR`), never printed.
 - **Credential files are never printed.** A machine-wide PreToolUse hook (the credential read guard, below) refuses
   a command or a read that would print `.env*` (not `.env.example`), `*runtime-url*`, `*.pem`, `prod.env` or the
   secrets directory into the transcript. Load them by name instead: `set -a; . <file>; set +a; <command>`,

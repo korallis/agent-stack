@@ -15,7 +15,12 @@ flag on that command and silently ignored it) printed a production owner connect
    neon:   connection-string/cs (not --psql), roles create/reset-password/get-password/reveal-password, credentials
            create/reveal/rotate, api-keys create, api (raw responses can hold connection URIs), and projects/branches
            create unless --no-secrets; env pull only when --file is not a regular file (e.g. /dev/stdout).
-   vercel: env ls/list with --json, --format json or --decrypt; env pull to a non-regular file (e.g. /dev/stdout, -).
+   vercel: env ls/list with --json, --format json or --decrypt; env pull to a non-regular file (e.g. /dev/stdout, -);
+           api on any /projects endpoint (a project's JSON holds its protection-bypass secrets as the KEYS of
+           `protectionBypass`; its env, domains and protection endpoints sit under it) or any path naming
+           protection-bypass: only with --output-file inside the seat's protected dir
+           ~/.local/state/agent-stack/vercel/<seat>/ (WO62), or stdout /dev/null. `-d/--debug` (and `api --verbose`) are
+           refused outright: they log raw requests and responses.
 2. A `--no-secrets` the installed version doesn't have on that command is refused, never passed on to be ignored:
    support is read from the installed CLI's own `<command> --help`.
 Neon's argv is read the way yargs reads it, erring on the guarded side: booleans last-one-wins as yargs-parser
@@ -116,7 +121,11 @@ def refuse(why):
 # Options that take a value, so their value is never mistaken for a command word.
 # Vercel options that take a value (vercel 60.1.3 --help), so `env pull`'s file argument is found.
 VALUE_OPTS = {"--cwd", "-Q", "--global-config", "-A", "--local-config", "-S", "--scope", "-t", "--token", "--environment",
-              "--git-branch", "--id", "--project", "-F", "--format", "--output-file"}
+              "--git-branch", "--id", "--project", "-F", "--format", "--output-file",
+              # `vercel api` (60.1.3): --field/-F, --raw-field/-f, --header/-H, --method/-X, --input, --generate, --spec-url
+              "--field", "-f", "--raw-field", "-H", "--header", "-X", "--method", "--input", "--generate", "--spec-url"}
+VERCEL_DIR = os.path.join(os.path.expanduser("~"), ".local/state/agent-stack/vercel",
+                          re.sub(r"[^A-Za-z0-9._@-]", "_", os.environ.get("OPENRIG_SESSION_NAME") or "local"))
 
 
 def parse(argv):
@@ -263,6 +272,7 @@ if flag("help", "h") == TRUE or flag("version") == TRUE or not words:
         exec_real(real, args)
 
 guard, why = False, ""
+api_dir = None   # set for `vercel api` on project endpoints: --output-file must be inside it
 if NAME == "neon":
     secrets = flag("secrets")
     if secrets is not None:
@@ -291,7 +301,19 @@ if NAME == "neon":
         if bad:
             refuse(f"env pull would write to {bad}")
 elif NAME == "vercel":
-    pos, _ = parse(args)
+    pos, vopts = parse(args)
+    if "-d" in vopts or "--debug" in vopts:
+        refuse("--debug logs raw requests and responses (bypass tokens included)")
+    a = next((j for j, w in enumerate(pos) if w == "api"), None)
+    if a is not None:
+        endpoint = next((w for w in pos[a + 1:] if w != "list"), "")
+        if "--verbose" in vopts:
+            refuse("api --verbose prints the full request and response")
+        if re.search(r"(^|/)projects(/|\?|$)", endpoint) or re.search(r"protection[-_]?bypass", endpoint, re.I):
+            guard, why = True, (f"`vercel api {endpoint}` returns project data, which holds the protection-bypass secrets (as the "
+                                f"KEYS of protectionBypass); write it with --output-file {VERCEL_DIR}/<name>.json (a protected dir) or "
+                                f"run agent-vercel-protection-status <project> for yes/no and counts")
+            api_dir = VERCEL_DIR
     k = next((j for j, w in enumerate(pos) if w == "env"), None)
     sub = pos[k + 1] if k is not None and k + 1 < len(pos) else ""
     if k is not None and sub in ("ls", "list"):
@@ -307,6 +329,12 @@ elif NAME == "vercel":
 
 if guard:
     out = last_value("--output-file")
+    if out and api_dir:   # project JSON: only into the seat's protected dir, never anywhere else
+        full = os.path.realpath(out)   # as the guard itself opens it (relative to this process, not --cwd)
+        if not full.startswith(api_dir + os.sep):
+            refuse(f"--output-file {out} is not inside {api_dir}/ (project JSON goes only there; that dir is protected)")
+        os.makedirs(api_dir, mode=0o700, exist_ok=True)
+        os.chmod(api_dir, 0o700)
     if out:
         if os.path.islink(out):
             refuse(f"--output-file {out} is a symlink")
