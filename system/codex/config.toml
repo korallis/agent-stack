@@ -1,7 +1,7 @@
 # Managed by agent-stack (backup + rollback: ~/Projects/agent-stack/docs/ROLLBACK.md).
 # Codex -> local CLIProxyAPI pool (4 ChatGPT Pro accounts). Upstream credentials stay in the proxy.
 model_provider = "cliproxyapi"
-model = "gpt-6-astra"
+model = "gpt-6.1-sol"
 model_reasoning_effort = "high"
 # Agents never stop for permission (seats also get -a never from the seat shim). Rollback: docs/ROLLBACK.md.
 approval_policy = "never"

@@ -25,14 +25,15 @@ const evidence = (stdout) => { const o = JSON.parse(stdout); assert.deepEqual(Ob
   return { ...o.input, ...(o.history.length ? { history: o.history } : {}) }; };
 
 // ---- model defaults ------------------------------------------------------------------------------------------------
-test("templates: architects on claude-fable-5-1, Codex implementers on gpt-6-astra, reviewers unchanged", () => {
+// Routing of 2026-10-01 (WO64; test/model-routing.test.js checks every seat): Codex implementers moved to gpt-6.1-sol.
+test("templates: architects on claude-fable-5-1, Codex implementers on gpt-6.1-sol, reviewers on the 2026-10-01 models", () => {
   for (const t of ["core", "small", "build", "full-stack"]) {
     const s = fs.readFileSync(join(repo, `rig/template/${t}.yaml`), "utf8");
     for (const [, body] of s.matchAll(/      - id: [^\n]+\n((?:        [^\n]*\n)+)/g)) {
       const role = body.match(/agents\/([\w-]+)"/)?.[1], model = body.match(/model: "?([^"\n]+)"?/)?.[1], rt = body.match(/runtime: (\S+)/)?.[1];
       if (role === "architect") assert.equal(model, "claude-fable-5-1", `${t} architect`);
-      if (role === "implementer" && rt === "codex") assert.equal(model, "gpt-6-astra", `${t} codex implementer`);
-      if (role === "reviewer") assert.ok(["claude-opus-5-5", "gpt-6-sol", "kimi-k3[1m]"].includes(model), `${t} reviewer ${model}`);
+      if (role === "implementer" && rt === "codex") assert.equal(model, "gpt-6.1-sol", `${t} codex implementer`);
+      if (role === "reviewer") assert.ok(["claude-opus-5-5", "gpt-6.1-sol", "kimi-k3[1m]"].includes(model), `${t} reviewer ${model}`);
     }
   }
 });

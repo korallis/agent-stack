@@ -10,9 +10,9 @@ improves every repo's rig the next time it launches.
 | `CULTURE.md` | shared team rules (copy into each rig folder and append that repo's specifics) |
 | `core.yaml` | 4 seats: Claude lead, Codex implementer, Codex reviewer, Claude merge owner |
 | `team.yaml` | 24 seats: balanced 12 Claude + 12 Codex |
-| `full-stack.yaml` | **Default: the large, fast team, 27 seats.** Pinned per the Jev routing table: 8 GPT-6 Sol implementers + 2 Opus UI implementers + Astra escalation, 3 Sol QA seats, 2 Opus + 2 Sol + 1 Kimi reviewers, Opus lead/architect/merge owner, Sol deputy and recovery, test authors of both families. About 9 implementers busy at once |
-| `small.yaml` | **Small team, 10 seats.** `build.yaml` without impl.codex-2/-3, impl.astra and tests.codex: Opus lead/architect/UI implementer/test author/reviewer/merge owner, one GPT-6 Sol implementer, Sol QA and reviewer, Kimi reviewer. Same culture, gates and watchdogs |
-| `build.yaml` | **Standard team, 14 seats.** Models pinned per the routing table in `CULTURE.md`: Opus 5.5 lead/architect/UI/reviewer/merge owner, GPT-6 Sol implementers/QA/reviewer, GPT-6 Astra escalation seat, Kimi K3 (1M) third-family reviewer, test authors of both families. Max 4 busy implementers |
+| `full-stack.yaml` | **Default: the large, fast team, 27 seats.** Pinned per the Jev routing table: 8 GPT-6.1 Sol implementers + 2 Sonnet 5.5 UI implementers + an escalation seat (GPT-6.1 Sol), 3 Sol QA seats, 2 Opus + 2 Sol + 1 Kimi reviewers, Opus lead, Fable architect, GPT-6.1 Sol merge owner, Sol deputy and recovery, test authors of both families. About 9 implementers busy at once |
+| `small.yaml` | **Small team, 10 seats.** `build.yaml` without impl.codex-2/-3, impl.astra and tests.codex: Opus lead/reviewer/merge owner, Fable architect, Sonnet 5.5 UI implementer and test author, one GPT-6.1 Sol implementer, Sol QA and reviewer, Kimi reviewer. Same culture, gates and watchdogs |
+| `build.yaml` | **Standard team, 14 seats.** Models pinned per the routing table in `CULTURE.md`: Opus 5.5 lead/reviewer/merge owner, Fable 5.1 architect, Sonnet 5.5 UI implementer and test author, GPT-6.1 Sol implementers/QA/reviewer, GPT-6.1 Sol escalation seat, Kimi K3 (1M) third-family reviewer, test authors of both families. Max 4 busy implementers |
 | `fallback-codex.yaml` | Same roles with no Claude accounts: Codex builds and merges, Kimi writes the locked tests and reviews |
 | `daily-summary.watchdog.yaml` | Wakes the lead once a day to write `docs/summary/<date>.md` and notify the owner |
 | `merge-sweep.watchdog.yaml` | wakes the merge owner every 15 minutes |
@@ -67,5 +67,5 @@ Run as many projects at once as your quotas allow. Each project has its own work
 3. For each feature, the test author of the *other* model family writes locked Playwright journeys (a person using the app, desktop and phone). CI rejects any implementation PR that touches them.
 4. The lead routes the feature to an implementer with Jev; the implementer builds with Superpowers until the journeys pass.
 5. The QA seat uses the running app by hand in a real browser and attaches screenshots; a reviewer of the other family reviews with the plan and criteria; risky changes get a Kimi review and your OK.
-6. The merge owner also runs a held-out journey suite the implementers never see, then merges through live Jev. Two red CI runs escalate the feature to the Astra seat.
+6. The merge owner also runs a held-out journey suite the implementers never see, then merges through live Jev. Two red CI runs send the feature to a fresh seat on the same model (the operator may set GPT-6 Astra case by case).
 7. Daily summary notification; final report when every feature `passes`.

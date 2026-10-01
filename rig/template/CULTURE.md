@@ -152,14 +152,14 @@ Six skills from agent-stack are installed for every seat. Each has a fixed momen
 | Work | Seat model |
 |---|---|
 | Lead / orchestration (holds the whole backlog; 1M context) | Opus 5.5 `[1m]` |
-| Deputy, merge owner, recovery | GPT-6 Sol (Codex) |
-| Plan decomposition, acceptance criteria, architecture | Opus 5.5 |
-| Volume implementation, unit tests, lint/renames/docs | GPT-6 Sol (Codex) |
-| Frontend/UI and large migrations | Opus 5.5 |
-| Escalation after two red CI runs on a feature | GPT-6 Astra (Codex), escalations only |
-| Locked acceptance tests | the family that is NOT implementing the feature (Opus 5.5 or GPT-6 Sol) |
-| User-level QA | GPT-6 Sol (Codex) |
-| Review of Codex PRs / of Claude PRs | Opus 5.5 / GPT-6 Sol |
+| Deputy, merge owner, recovery | GPT-6.1 Sol (Codex) |
+| Plan decomposition, acceptance criteria, architecture | Fable 5.1 (`team.yaml` keeps Opus 5.5) |
+| Volume implementation, unit tests, lint/renames/docs | GPT-6.1 Sol (Codex) |
+| Frontend/UI and large migrations | Sonnet 5.5 |
+| Escalation after two red CI runs on a feature | a fresh seat on the same model (GPT-6.1 Sol); the operator may set GPT-6 Astra case by case |
+| Locked acceptance tests | the family that is NOT implementing the feature (Sonnet 5.5 or GPT-6.1 Sol) |
+| User-level QA | GPT-6.1 Sol (Codex) |
+| Review of Codex PRs / of Claude PRs | Opus 5.5 / GPT-6.1 Sol |
 | Third review on risky changes, long-context reading | Kimi K3 (1M) |
 Fable 5.1 is the Claude fallback when Opus 5.5 is rate-limited. The lead routes with Jev `intake.specialist`
 over seats that have capacity; code decides anything exact (capacity, retry counts, protected paths, CI status).
@@ -174,7 +174,8 @@ over seats that have capacity; code decides anything exact (capacity, retry coun
 ## Reviews and escalation
 - Reviewers receive the plan, the feature's acceptance criteria and the diff. They post findings only and never push
   code to someone else's branch; the author applies fixes.
-- A feature whose CI goes red twice on the same implementer is escalated by the lead to the Astra seat with both failure logs.
+- A feature whose CI goes red twice on the same implementer goes to a fresh seat on the same model (GPT-6.1 Sol), with
+  both failure logs; the operator may set GPT-6 Astra for it case by case.
 - Risky-tier changes (auth, database migrations, infrastructure, CI/workflows, dependency manifests) also get the Kimi
   third-family review and are held for the owner's glance before merge.
 

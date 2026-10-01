@@ -19,14 +19,16 @@ several projects, operating a fleet, upgrades, and how the pieces fit. Workflow 
    the builder fixes them. Risky changes (logins, payments, data deletion, database changes) also get a third review
    and wait for your OK.
 7. **The merge owner merges it** only when CI, the locked tests, a hidden set of extra tests, QA, review and Jev all
-   agree. Two failed attempts send the feature to the strongest model (GPT-6 Astra).
+   agree. Two failed attempts send the feature to a fresh seat on the same model (GPT-6.1 Sol); the operator may
+   set GPT-6 Astra for it case by case.
 8. **You get a daily summary**, and a final report when every feature is done.
 
 ## Who does what (the full-stack team, 27 seats)
 
 Every seat is pinned to the model that published benchmarks and Jev picked for its job. Most of the work runs on
-GPT-6 Sol; Claude Opus 5.5 is used where it is strongest: orchestrating the team (its 1M-token context holds the
-whole backlog), planning, user interfaces, big migrations and reviewing Codex's work.
+GPT-6.1 Sol; Claude Opus 5.5 orchestrates the team (its 1M-token context holds the whole backlog) and reviews Codex's
+work, Claude Fable 5.1 plans and architects, and Claude Sonnet 5.5 builds user interfaces and big migrations and writes
+locked tests.
 
 Every slice, feature, fix and wave starts research -> plan -> implement: `## Research` and `## Plan` go in the slice's
 PROGRESS.md before the first code commit (the rig CULTURE's "Research, plan, implement" section).
@@ -34,17 +36,17 @@ PROGRESS.md before the first code commit (the rig CULTURE's "Research, plan, imp
 | Seat | How many | Model | What it does |
 |---|---|---|---|
 | Lead | 1 | Claude Opus 5.5 (1M context) | The orchestrator: keeps the whole backlog in mind, asks for your approval, hands out work, tracks progress, writes the daily summary |
-| Deputy | 1 | GPT-6 Sol | Helps the lead dispatch, chase and keep notes |
-| Architect | 1 | Claude Opus 5.5 | Turns your plan into features with acceptance criteria a person can check |
-| Test authors | 3 | 2 × Opus 5.5, 1 × GPT-6 Sol | Write the locked browser tests before a feature is built (always the other family from its builder) |
-| Builders | 8 | GPT-6 Sol | Build features, unit tests and routine changes |
-| UI builders | 2 | Claude Opus 5.5 | Build screens and interfaces, and large database or code migrations |
-| Escalation builder | 1 | GPT-6 Astra | Takes over any feature that failed twice; kept free for that because its quota is small |
-| QA testers | 3 | GPT-6 Sol | Use each feature by hand like a real person and record screenshots |
-| Reviewers | 4 | 2 × Opus 5.5, 2 × GPT-6 Sol | Opus reviews GPT's work and GPT reviews Claude's: different models catch different bugs |
+| Deputy | 1 | GPT-6.1 Sol | Helps the lead dispatch, chase and keep notes |
+| Architect | 1 | Claude Fable 5.1 | Turns your plan into features with acceptance criteria a person can check |
+| Test authors | 3 | 2 × Sonnet 5.5, 1 × GPT-6.1 Sol | Write the locked browser tests before a feature is built (always the other family from its builder) |
+| Builders | 8 | GPT-6.1 Sol | Build features, unit tests and routine changes |
+| UI builders | 2 | Claude Sonnet 5.5 | Build screens and interfaces, and large database or code migrations |
+| Escalation builder | 1 | GPT-6.1 Sol | A fresh seat for any feature that failed twice (the operator may set GPT-6 Astra case by case) |
+| QA testers | 3 | GPT-6.1 Sol | Use each feature by hand like a real person and record screenshots |
+| Reviewers | 4 | 2 × Opus 5.5, 2 × GPT-6.1 Sol | Opus reviews GPT's work and GPT reviews Claude's: different models catch different bugs |
 | Third reviewer | 1 | Kimi K3 (1M context) | Extra review of risky changes; reads very large amounts of code at once |
-| Merge owner | 1 | GPT-6 Sol | The only seat that merges; checks every gate first |
-| Recovery | 1 | GPT-6 Sol | Unsticks stalled seats, broken builds and merge conflicts |
+| Merge owner | 1 | GPT-6.1 Sol | The only seat that merges; checks every gate first |
+| Recovery | 1 | GPT-6.1 Sol | Unsticks stalled seats, broken builds and merge conflicts |
 
 Claude Fable 5.1 stands in for Opus 5.5 when Opus is rate-limited. Smaller projects can use `build.yaml`
 (14 seats), and `fallback-codex.yaml` keeps working with no Claude account at all.
@@ -424,16 +426,21 @@ See `docs/ROLLBACK.md` and `docs/VALIDATION.md`.
 
 ### Who runs what
 
-Every team template (`rig/template/*.yaml`) and every onboarding uses these defaults. Jev compared the candidates for
-each role on 2026-09-30 (request ids below).
+Every team template (`rig/template/*.yaml`) and every onboarding uses these defaults. Jev decided them per role on
+2026-10-01 with `intake.specialist` (caller `operator:model-routing-2026-10-01`, every role in the act band), in two
+runs: the first named the roles below; the second covered the Codex test author (0.69), Codex architect incl.
+`arch.astra` (0.64) and the Codex lead of `fallback-codex.yaml` (0.60). The 2026-09-30 comparisons (request ids)
+are kept where a role didn't change.
 
 | Seats | Model | Why |
 |---|---|---|
-| Lead | `claude-opus-5-5` (`[1m]` in full-stack) | unchanged |
+| Lead | `claude-opus-5-5` (`[1m]` in full-stack) | unchanged (2026-10-01) |
 | Architect | `claude-fable-5-1` | Jev 0.62 against Opus 0.33 for planning and architecture (request `ba1a44dc`). Fable bills to the account's usage credits, outside the subscription pool. |
-| Codex implementers | `gpt-6-astra` | Jev 0.50 against `gpt-6-sol` 0.36 for implementation (request `a2fa9eef`) |
-| Claude UI implementers, test authors, QA | unchanged | |
-| Reviewers | `claude-opus-5-5`, `gpt-6-sol`, `kimi-k3[1m]` | Jev saw no clear winner (request `67b40988`); the three families stay |
+| Every Codex seat (implementers incl. the escalation seat, reviewers, QA, merge owner, recovery, deputies, test authors, architects, the fallback lead) | `gpt-6.1-sol` | 2026-10-01 (both runs); before: `gpt-6-astra` / `gpt-6-sol`. The operator may set `gpt-6-astra` for an escalation case by case |
+| Claude UI implementers and test authors | `claude-sonnet-5-5` | 2026-10-01; before: `claude-opus-5-5` |
+| Claude reviewers | `claude-opus-5-5` | unchanged (2026-10-01) |
+| Kimi reviewers / test author | `kimi-k3[1m]`, `kimi-k3-256k` | unchanged (2026-10-01) |
+| Claude's default Sonnet (`ANTHROPIC_DEFAULT_SONNET_MODEL`, proxy settings and env.sh) | `claude-sonnet-5-5` | follows the routing |
 
 **Fable's one-time consent.** An account may need a one-time consent before Fable can bill usage credits. The seat
 start-up context tells a Fable seat to stop and tell the lead instead of carrying on silently, and
