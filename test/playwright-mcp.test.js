@@ -17,15 +17,19 @@ const pin = read("system/codex/config.toml").match(/"@playwright\/mcp@([^"]+)"/)
 test("the Codex template pins one @playwright/mcp release with --browser chromium; no @latest, no system browser", () => {
   const t = read("system/codex/config.toml");
   assert.match(pin, /^\d+\.\d+\.\d+$/);
-  assert.match(t, new RegExp(`^args = \\["-y", "@playwright/mcp@${pin.replace(/\./g, "\\.")}", "--headless", "--browser", "chromium", "--secrets", "@HOME@/\\.config/agent-stack/secrets/playwright\\.env", "--output-dir", "@HOME@/\\.local/state/agent-stack/playwright-mcp"\\]$`, "m"));
+  // WO83: agent-playwright-mcp adds --output-dir per seat, so the template has none
+  assert.match(t, /^command = "@HOME@\/\.local\/bin\/agent-playwright-mcp"$/m);
+  assert.match(t, new RegExp(`^args = \\["-y", "@playwright/mcp@${pin.replace(/\./g, "\\.")}", "--headless", "--browser", "chromium", "--secrets", "@HOME@/\\.config/agent-stack/secrets/playwright\\.env"\\]$`, "m"));
+  assert.doesNotMatch(t.split("\n").find((l) => l.startsWith("args = [\"-y\", \"@playwright")), /--output-dir/);
   assert.doesNotMatch(t, /@playwright\/mcp@latest|--executable-path/);
 });
 
 test("install.sh reads that pin, registers Claude's MCP with it, installs via playwright-browsers, never playwright@latest", () => {
   const s = read("install.sh");
   assert.match(s, /PW_MCP=\$\(sed -n .*system\/codex\/config\.toml/);
-  assert.match(s, /pw=\(npx -y "@playwright\/mcp@\$PW_MCP" --headless --browser chromium --secrets "\$SEC\/playwright\.env" --output-dir "\$PWO"\)/);
-  assert.match(s, /PWO="\$HOME\/\.local\/state\/agent-stack\/playwright-mcp"; mkdir -p "\$PWO\/net"; chmod 700 "\$PWO\/net"/);
+  assert.match(s, /pw=\("\$B\/agent-playwright-mcp" -y "@playwright\/mcp@\$PW_MCP" --headless --browser chromium --secrets "\$SEC\/playwright\.env"\)/);
+  assert.match(s, /PWO="\$HOME\/\.local\/state\/agent-stack\/playwright-mcp"; mkdir -p "\$PWO"; chmod 700 "\$PWO"/);
+  assert.match(s, /grep -qF -- "Command: \$\{pw\[0\]\}"/, "a registration with another command is replaced too");
   assert.match(s, /claude mcp remove --scope user playwright/, "an entry with other args is replaced");
   assert.match(s, /"\$S\/bin\/playwright-browsers" >\/dev\/null \|\| todo/);
   const code = s.split("\n").filter((l) => !/^\s*#/.test(l)).join("\n");
@@ -177,14 +181,14 @@ test("playwright-mcp-config: creates playwright.env 0600 with a template, sets -
   const h = codexHome(`["-y", "@playwright/mcp@${pin}", "--headless", "--browser", "chromium"]`);
   const chk = pmc(h, "--check");
   assert.equal(chk.status, 1);
-  assert.match(chk.stdout, /WARN: .*playwright\.env missing/); assert.match(chk.stdout, /WARN: Codex Playwright MCP args are/);
+  assert.match(chk.stdout, /WARN: .*playwright\.env missing/); assert.match(chk.stdout, /WARN: Codex Playwright MCP is "npx"/);
   const r = pmc(h);
   assert.equal(r.status, 0, r.stderr);
   const env = join(h, ".config/agent-stack/secrets/playwright.env");
   assert.equal(fs.statSync(env).mode & 0o777, 0o600);
   assert.match(fs.readFileSync(env, "utf8"), /typed BY NAME|types a value when an agent sends its NAME/);
   const t = fs.readFileSync(join(h, ".codex/config.toml"), "utf8");
-  assert.ok(t.includes(`args = ["-y", "@playwright/mcp@${pin}", "--headless", "--browser", "chromium", "--secrets", "${env}", "--output-dir", "${join(h, ".local/state/agent-stack/playwright-mcp")}"]`), t);
+  assert.ok(t.includes(`command = "${join(h, ".local/bin/agent-playwright-mcp")}"\nargs = ["-y", "@playwright/mcp@${pin}", "--headless", "--browser", "chromium", "--secrets", "${env}"]`), t);
   assert.match(t, /^approval_policy = "never"$/m); assert.match(t, /\[mcp_servers\.jev\]\nargs = \["x"\]/); assert.match(t, /default_tools_approval_mode = "approve"/);
   assert.equal(fs.statSync(join(h, ".codex/config.toml")).mode & 0o777, 0o600);
   assert.ok(fs.readdirSync(join(h, ".codex")).some((f) => f.startsWith("config.toml.bak-")));

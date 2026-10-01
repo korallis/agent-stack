@@ -1,0 +1,74 @@
+#!/usr/bin/env python3
+"""agent-playwright-mcp <npx args...>: start the Playwright MCP with ONE output dir per seat (WO83).
+
+Both runtimes register this as their Playwright MCP command (Codex: system/codex/config.toml; Claude Code: install.sh's
+`claude mcp add`), with the pinned `npx -y @playwright/mcp@<pin> ...` arguments after it. It adds
+`--output-dir ~/.local/state/agent-stack/playwright-mcp/<seat>/` (any --output-dir it is given is replaced), made 0700
+with its net/ subdir, and execs npx. Snapshots, screenshots, PDFs and console/network logs of one seat therefore never
+mix with another seat's or another project's, and the retention timer (agent-playwright-retention) can age them by
+the seat's rig.
+
+The seat is OPENRIG_SESSION_NAME. A runtime may start MCP servers with a trimmed environment (Codex passes only a few
+variables), so when it is absent here it is read from the nearest ancestor process that has it (/proc/<pid>/environ:
+the seat's own codex or claude). No seat (the operator's own shell, a human): "local". The name is reduced to
+[A-Za-z0-9._@-], as the credential guard does for the net/ dir it allows (system/credguard-read-hook netDir).
+"""
+import os, re, sys
+
+PROC = os.environ.get("AGENT_PLAYWRIGHT_MCP_PROC", "/proc")   # tests only
+
+
+def from_ancestors(pid):
+    seen = set()
+    while pid > 1 and pid not in seen:
+        seen.add(pid)
+        try:
+            env = open(f"{PROC}/{pid}/environ", "rb").read().split(b"\0")
+            for kv in env:
+                if kv.startswith(b"OPENRIG_SESSION_NAME="):
+                    v = kv.split(b"=", 1)[1].decode("utf-8", "replace")
+                    if v:
+                        return v
+            pid = int(open(f"{PROC}/{pid}/stat").read().rsplit(")", 1)[1].split()[1])
+        except (OSError, ValueError, IndexError):
+            return None
+    return None
+
+
+def seat():
+    s = os.environ.get("OPENRIG_SESSION_NAME") or from_ancestors(os.getppid()) or "local"
+    return re.sub(r"[^A-Za-z0-9._@-]", "_", s)
+
+
+def main(argv):
+    if argv[:1] in (["-h"], ["--help"]):
+        print(__doc__.strip())
+        return 0
+    base = os.path.join(os.path.expanduser("~"), ".local/state/agent-stack/playwright-mcp")
+    out = os.path.join(base, seat())
+    os.makedirs(os.path.join(out, "net"), mode=0o700, exist_ok=True)
+    for d in (base, out, os.path.join(out, "net")):
+        try:
+            os.chmod(d, 0o700)
+        except OSError:
+            pass
+    args, i = [], 0
+    while i < len(argv):
+        a = argv[i]
+        if a == "--output-dir":
+            i += 2
+            continue
+        if a.startswith("--output-dir="):
+            i += 1
+            continue
+        args.append(a)
+        i += 1
+    cmd = ["npx", *args, "--output-dir", out]
+    if os.environ.get("AGENT_PLAYWRIGHT_MCP_DRY"):   # tests: print what would run
+        print(" ".join(cmd))
+        return 0
+    os.execvp("npx", cmd)
+
+
+if __name__ == "__main__":
+    sys.exit(main(sys.argv[1:]))

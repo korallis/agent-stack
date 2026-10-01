@@ -1,0 +1,7 @@
+[Unit]
+Description=Age out Playwright MCP artifacts every hour (48 h; client-data rigs sooner)
+[Timer]
+OnBootSec=15min
+OnUnitActiveSec=1h
+[Install]
+WantedBy=timers.target

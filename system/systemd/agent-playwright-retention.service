@@ -1,0 +1,6 @@
+[Unit]
+Description=Delete Playwright MCP snapshots, logs and captures past their retention (agent-playwright-retention)
+[Service]
+Type=oneshot
+Environment=PATH=%h/.local/bin:/usr/local/bin:/usr/bin:/bin
+ExecStart=%h/.local/bin/agent-playwright-retention
