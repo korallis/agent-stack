@@ -12,7 +12,7 @@ import { realpathSync } from "node:fs";
 import { pathToFileURL } from "node:url";
 import { join } from "node:path";
 import { decide } from "../jev/lib/engine.js";
-import { rig, seats, pickSeat, odb, lexicalTop, recordQuality, normQ } from "./lib.js";
+import { rig, seats, pickSeat, odb, lexicalTop, recordQuality, normQ, accountEligible } from "./lib.js";
 
 const args = process.argv.slice(2);
 const flag = (n, d) => { const i = args.indexOf(n); return i >= 0 ? args[i + 1] : d; };
@@ -63,13 +63,13 @@ export const RULES = [
 
 // Pool facts come from the proxy, never from a model: which families have zero eligible accounts,
 // and when the soonest cooldown/quota window resets.
-function poolCheck() {
+export function poolCheck() {
   try {
     const rows = JSON.parse(execFileSync("agent-proxy-status", ["--json"], { encoding: "utf8", timeout: 20_000 }));
     const out = {};
     for (const fam of ["claude", "codex"]) {
       const rs = rows.filter((r) => r.provider === fam);
-      const ok = rs.filter((r) => !r.disabled && !r.unavailable && r.status === "active");
+      const ok = rs.filter(accountEligible);
       const resets = rs.flatMap((r) => (r.cooldowns || []).map((c) => c.until || c.next_retry_after)).filter(Boolean).sort();
       out[fam] = { eligible: ok.length, total: rs.length, soonest_reset: resets[0] || null };
     }

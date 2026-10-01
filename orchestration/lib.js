@@ -51,13 +51,17 @@ export function seats(rigName) {
   return (Array.isArray(nodes) ? nodes : nodes.nodes || []).filter((n) => n.runtime !== "terminal").map(seatInfo);
 }
 
+// One account can take work: enabled, available, active, and not past its quota limit (agent-proxy-status's over_limit:
+// a window strictly above 100%, read by provider; WO84). Absent over_limit (an older status tool) counts as not over.
+export const accountEligible = (r) => !r.disabled && !r.unavailable && r.status === "active" && r.over_limit !== true;
+
 // Account availability from the proxy (never estimated by a model).
 export function eligibleFamilies() {
   try {
     const rows = JSON.parse(execFileSync("agent-proxy-status", ["--json"], { encoding: "utf8", timeout: 20_000 }));
     const fam = { claude: 0, codex: 0 };
     // every provider seen starts at 0 (a family whose accounts are all down is unavailable, not unknown: kimi too)
-    for (const r of rows) { fam[r.provider] ??= 0; if (!r.disabled && !r.unavailable && r.status === "active") fam[r.provider] += 1; }
+    for (const r of rows) { fam[r.provider] ??= 0; if (accountEligible(r)) fam[r.provider] += 1; }
     return fam;
   } catch {
     return { claude: null, codex: null }; // unknown ≠ zero: do not block dispatch on a status-tool failure

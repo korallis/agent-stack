@@ -1478,6 +1478,23 @@ test("eligibleFamilies: a provider whose accounts are all down counts 0 (unavail
   try { process.env.PATH = `${d}:${old}`; assert.deepEqual(eligibleFamilies(), { claude: 1, codex: 1, kimi: 0 }); } finally { process.env.PATH = old; }
 });
 
+test("WO84: an account past its quota limit (over_limit, strictly > 100%) is not eligible for dispatch or recovery; 100% and a missing field are", async () => {
+  const { eligibleFamilies, accountEligible } = await import("../orchestration/lib.js");
+  const { poolCheck } = await import("../orchestration/recover.js");
+  const d = fs.mkdtempSync(join(root, "aps-")), old = process.env.PATH;
+  fs.writeFileSync(join(d, "agent-proxy-status"), `#!/bin/sh\necho '${JSON.stringify([
+    { label: "claude-a", provider: "claude", status: "active", over_limit: false }, { label: "claude-b", provider: "claude", status: "active", over_limit: true },
+    { label: "codex-a", provider: "codex", status: "active", short_window_pct: 100, over_limit: false }, { label: "codex-b", provider: "codex", status: "active" }])}'\n`, { mode: 0o755 });
+  try {
+    process.env.PATH = `${d}:${old}`;
+    assert.deepEqual(eligibleFamilies(), { claude: 1, codex: 2 });
+    const pool = poolCheck();
+    assert.deepEqual([pool.claude.eligible, pool.claude.total, pool.codex.eligible], [1, 2, 2]);
+  } finally { process.env.PATH = old; }
+  assert.equal(accountEligible({ status: "active", over_limit: true }), false);
+  assert.equal(accountEligible({ status: "active" }), true, "an older status tool without the field");
+});
+
 // ---- WO63: the "locked-test author: <seat>" form, anywhere, and the family from the seat's name ---------------------
 test("lockedTestsAuthor (WO63): 'locked-test author: <seat>' anywhere; family as written, from the rig's seat, or from its name", async () => {
   const { lockedTestsAuthor, familyFromName } = await import("../orchestration/pickseat.js");
