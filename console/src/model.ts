@@ -23,12 +23,14 @@ export interface Raw {
   // phase 3: the queue's recent transitions as they came (a seat's history), and the one seat's terminal tail
   history?: { id: number; ts: string; actor: string; change: string; summary: string | null; rig: string | null; qitemId: string }[];
   tail?: { session: string; content: string | null; at: number; state: string; error: string | null } | null;
-  tails?: Record<string, string>;   // the neutral fixture's terminal tails (a live console reads one at a time instead)
+  tails?: Record<string, string>;
+  stuckMinutes?: number;   // phase 4: the quiet time before a seat with unmoved open work counts as stuck   // the neutral fixture's terminal tails (a live console reads one at a time instead)
   refreshMs: number; sources: Record<string, string>;
 }
 
 // ── normalising the daemon's node rows ──────────────────────────────────────────────────────────────────────────────
-// Phase-1 "stuck": a running seat whose activity the daemon reports as stalled or unknown, or that waits for input.
+// The daemon's own signal: a running seat whose activity it reports as stalled or unknown, or that waits for input. The
+// console's verdict ("stuck" or not) is derived from it plus age and queue movement: stuckVerdict / classify below.
 export function seatFromNode(n: Record<string, any>): Seat {
   const display = n.activityState?.display ?? null, raw = n.agentActivity?.state ?? null, life = n.lifecycleState ?? n.sessionStatus ?? "unknown";
   const needs = (n.activityState?.needsInput?.count ?? 0) > 0;
@@ -106,7 +108,8 @@ export interface Fleet {
   seats: Seat[]; agents: Seat[];
   count: Record<Activity, number>;
   byRig: Record<string, Record<Activity, number>>;
-  stuck: Seat[];
+  stuck: Seat[];      // derived (classify): conservative, each with its reason
+  unknown: Seat[];    // the daemon's signal without the rest: why each is not stuck
   queue: { pending: number; inProgress: number; blocked: number; onRow: number; onPr: number; onOwner: number; onOther: number };
   owner: QRow[];
   gate: { merge: number; hold: number; uncertain: number; act: number; total: number; partial: boolean };
@@ -156,7 +159,7 @@ export function derive(raw: Raw): Fleet {
       rows: raw.queue.filter((r) => r.destination.endsWith(`@${rig.name}`)).length, health };
   });
   return {
-    seats, agents, count, byRig, stuck: agents.filter((s) => s.activity === "stuck" || s.activity === "unknown"),
+    seats, agents, count, byRig, stuck: agents.filter((s) => s.activity === "stuck"), unknown: agents.filter((s) => s.activity === "unknown"),
     queue: q, owner: [...raw.attention].sort((a, b) => a.created.localeCompare(b.created)), gate, stages,
     ctxHigh: agents.filter((s) => (s.ctx ?? 0) >= 80).sort((a, b) => (b.ctx ?? 0) - (a.ctx ?? 0)), rigs,
   };
@@ -252,4 +255,52 @@ export function journey(raw: Raw, key: string, now = raw.at): { slice: Slice | n
   });
   const perStage = RIVER.map((_, i) => steps.filter((s) => s.stage === i).reduce((a, s) => ({ worked: a.worked + s.worked, waited: a.waited + s.waited }), { worked: 0, waited: 0 }));
   return { slice, steps, perStage };
+}
+
+// ── phase 4: derived signals ─────────────────────────────────────────────────────────────────────────────────────────
+// "Stuck" is derived conservatively, never from one signal: the daemon reports the seat's activity as unknown,
+// stalled or waiting for input, its last activity is at least N minutes old, AND none of its open rows (pending or in
+// progress) and none of its own queue transitions moved for N minutes. Anything short of that is "unknown", with why
+// it is not (yet) stuck. Every verdict carries its reason and ages; there is no bare label.
+export const STUCK_MINUTES = 15;
+const span = (ms: number) => { const m = Math.round(ms / 60_000); return m < 60 ? `${m}m` : `${Math.floor(m / 60)}h${String(m % 60).padStart(2, "0")}m`; };
+export function stuckVerdict(raw: Raw, seat: Seat, minutes = raw.stuckMinutes ?? STUCK_MINUTES): { activity: Activity; why: string | null; stuck: boolean } {
+  if (seat.activity !== "stuck" && seat.activity !== "unknown") return { activity: seat.activity, why: seat.why, stuck: false };
+  const N = minutes * 60_000, now = raw.at, base = seat.why ?? (seat.activity === "stuck" ? "stalled" : "activity unknown");
+  const quiet = seat.lastActivityAt ? now - Date.parse(seat.lastActivityAt) : null;
+  if (quiet === null || !Number.isFinite(quiet)) return { activity: "unknown", why: `${base} · last activity not reported`, stuck: false };
+  if (quiet < N) return { activity: "unknown", why: `${base} for ${span(quiet)} (stuck after ${minutes}m)`, stuck: false };
+  const open = raw.queue.filter((r) => r.destination === seat.session && (r.state === "in-progress" || r.state === "pending"));
+  if (!open.length) return { activity: "unknown", why: `${base} for ${span(quiet)} · holds no open work`, stuck: false };
+  const moves = [...open.map((r) => Date.parse(r.updated)), ...(raw.history ?? []).filter((h) => h.actor === seat.session).map((h) => Date.parse(h.ts))].filter(Number.isFinite);
+  const moved = moves.length ? now - Math.max(...moves) : Infinity;
+  if (moved < N) return { activity: "unknown", why: `${base} for ${span(quiet)} · its queue moved ${span(moved)} ago`, stuck: false };
+  return { activity: "stuck", why: `${base} for ${span(quiet)} · no queue movement on ${open.length} open row${open.length > 1 ? "s" : ""} for ${Number.isFinite(moved) ? span(moved) : `over ${span(quiet)}`}`, stuck: true };
+}
+/** The fleet with every seat's activity replaced by its derived verdict (pure: the input is not changed). */
+export function classify(raw: Raw): Raw {
+  return { ...raw, rigs: raw.rigs.map((r) => ({ ...r, seats: r.seats.map((s) => { const v = stuckVerdict(raw, s); return v.activity === s.activity && v.why === s.why ? s : { ...s, activity: v.activity, why: v.why }; }) })) };
+}
+
+/** Per stage of the River: how long its open rows have been in their current state (now − the row's last transition),
+ *  and how much of that is waiting (pending or blocked) rather than worked (in progress). From the queue alone. */
+/** The stuck reason in fewer cells, for narrow tiles and a crowded footer: "stalled 42m · 1 row unmoved 38m". */
+export const brief = (why: string) => why.replace(/ for (\d+[smhd])/g, " $1").replace(/no queue movement on (\d+) open (rows?) (\d+[smhd])/, "$1 $2 unmoved $3");
+export function stageTimes(raw: Raw): { median: number | null; worked: number; waited: number; rows: number }[] {
+  const bySession = new Map(raw.rigs.flatMap((r) => r.seats).map((s) => [s.session, s]));
+  return RIVER.map((_, i) => {
+    const rows = raw.queue.filter((r) => stageOfPod(bySession.get(r.destination)?.pod ?? r.destination.split("@")[0].split("-")[0]) === i);
+    const ages = rows.map((r) => Math.max(0, raw.at - Date.parse(r.updated))).filter(Number.isFinite).sort((a, b) => a - b);
+    const worked = rows.filter((r) => r.state === "in-progress").reduce((n, r) => n + Math.max(0, raw.at - Date.parse(r.updated)), 0);
+    const waited = rows.filter((r) => r.state !== "in-progress").reduce((n, r) => n + Math.max(0, raw.at - Date.parse(r.updated)), 0);
+    return { median: ages.length ? (ages[(ages.length - 1) >> 1] + ages[ages.length >> 1]) / 2 : null, worked, waited, rows: rows.length };
+  });
+}
+/** A slice's time at its current stage (its longest-sitting row there), and the longest any of those rows has been
+ *  worked (in progress) and waited (pending or blocked) in its current state: never more than the time at the stage. */
+export function sliceStageTime(raw: Raw, s: Slice): { since: number; worked: number; waited: number } {
+  const bySession = new Map(raw.rigs.flatMap((r) => r.seats).map((x) => [x.session, x]));
+  const here = s.rows.filter((r) => stageOfPod(bySession.get(r.destination)?.pod ?? r.destination.split("@")[0].split("-")[0]) === s.stage);
+  const age = (r: QRow) => Math.max(0, raw.at - Date.parse(r.updated));
+  return { since: Math.max(0, ...here.map(age)), worked: Math.max(0, ...here.filter((r) => r.state === "in-progress").map(age)), waited: Math.max(0, ...here.filter((r) => r.state !== "in-progress").map(age)) };
 }

@@ -32,8 +32,11 @@ export function timeline(c: Ctx): Item[] {
   });
   const now = new Date(raw.at).toISOString();
   for (const s of f.ctxHigh.slice(0, 4)) items.push({ at: now, icon: "▶", color: t.blocked, label: "Context", rig: s.rig, text: `${s.session} · ${s.ctx}% used · hand over before the next slice`, seat: s.session });
-  for (const s of f.stuck.slice(0, 4)) items.push({ at: now, icon: "▲", color: t.stuck, label: s.activity === "unknown" ? "Unknown" : "Stuck", rig: s.rig, text: `${s.session} · ${s.why ?? s.activity} · last activity ${since(raw, s.lastActivityAt)} ago`, seat: s.session });
-  return items.sort((a, b) => b.at.localeCompare(a.at));
+  for (const s of f.stuck.slice(0, 6)) items.push({ at: now, icon: "▲", color: t.stuck, label: "Stuck", rig: s.rig, text: `${s.session} · ${s.why}`, seat: s.session });
+  for (const s of f.unknown.slice(0, 3)) items.push({ at: now, icon: "?", color: t.blocked, label: "Quiet", rig: s.rig, text: `${s.session} · ${s.why} · not stuck`, seat: s.session });
+  // the verdicts lead, whatever the events' clocks say: a stuck seat is never below the fold
+  const lead = (x: Item) => (x.label === "Stuck" ? 0 : x.label === "Quiet" ? 1 : 2);
+  return items.sort((a, b) => lead(a) - lead(b) || b.at.localeCompare(a.at));
 }
 
 export const FOCUS_PANES = ["decisions", "timeline", "progress"];
@@ -58,7 +61,7 @@ export function focus(c: Ctx): void {
   const live = f.agents.filter((x) => x.activity !== "detached" && x.activity !== "stopped").length;
   s.put(s.w - 30, y, `${live} reporting / ${f.agents.length} seats`, { fg: t.faint });
   const cols: [number, string, RGB, string][] = [[f.count.working, "working", t.working, Object.entries(f.byRig).filter(([, k]) => k.working).map(([r, k]) => `${r} ${k.working}`).join(" · ")],
-    [f.count.idle, "idle", t.idle, ""], [f.stuck.length, "stuck", f.stuck.length ? t.stuck : t.dim, f.stuck.length ? f.stuck.map((x) => x.session).slice(0, 2).join(" · ") : "every running seat reports activity"],
+    [f.count.idle, "idle", t.idle, ""], [f.stuck.length, "stuck", f.stuck.length ? t.stuck : t.dim, f.stuck.length ? f.stuck.map((x) => x.session).slice(0, 2).join(" · ") : f.unknown.length ? `${f.unknown.length} quiet, not stuck (see the timeline)` : "every running seat reports activity"],
     [f.queue.blocked, "blocked rows", t.violet, `queue: ${f.queue.pending} pending · ${f.queue.inProgress} in progress · ${f.queue.blocked} blocked`]];
   const cw = Math.floor((s.w - 4) / 4);
   cols.forEach(([v, label, col, sub], i) => {
@@ -67,8 +70,9 @@ export function focus(c: Ctx): void {
     s.put(px + 2, y + 2, label, { fg: t.text });
     s.put(x, y + 3, fit(sub, cw - 2), { fg: t.dim });
   });
-  const unknown = f.agents.filter((x) => x.activity === "unknown").length;
+  const unknown = f.unknown.length;
   if (unknown) s.put(2 + 3 * cw + Math.min(cw - 18, 20), y + 2, `● ${unknown} unknown seat${unknown > 1 ? "s" : ""}`, { fg: t.blocked });
+  if (f.stuck.length) s.put(2, y + 4, fit(`▲ ${f.stuck[0].session} stuck: ${f.stuck[0].why}${f.stuck.length > 1 ? ` · +${f.stuck.length - 1} more in the timeline` : ""}`, s.w - 4), { fg: t.stuck });
   y += 5;
   s.put(1, y, "─".repeat(s.w - 2), { fg: t.border });
   y += 1;
