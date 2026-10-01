@@ -1492,6 +1492,14 @@ test("lockedTestsAuthor (WO63): 'locked-test author: <seat>' anywhere; family as
   assert.equal(unk.family, null); assert.match(unk.reason, /SPEC\.md names the locked tests' author \("tests-a1"\) but no family can be read from it/);
   assert.equal(lockedTestsAuthor([{ name: "SPEC.md", text: "Implementing family: GPT-6 Sol" }]).family, null, "the implementing family is not the author");
   assert.deepEqual(["tests-claude-1", "impl-codex-2@shop", "review-kimi", "kimi2-x", "tests-a1", ""].map(familyFromName), ["claude", "codex", "kimi", "kimi", null, null]);
+  // QA PR70: a family written for another field on the same line is never the author's (both forms, every separator)
+  for (const sep of [" · ", "; ", " | ", ", ", " "]) for (const head of ["Locked tests: tests-claude", "locked-test author: tests-claude"]) {
+    const text = `${head}${sep}Implementing family: (codex)`;
+    const x = lockedTestsAuthor([{ name: "SPEC.md", text }]);
+    assert.equal(x.family, "claude", text); assert.doesNotMatch(x.source, /Implementing/, text);
+  }
+  assert.equal(lockedTestsAuthor([{ name: "SPEC.md", text: "Locked tests: tests-claude (codex) · Implementing family: (claude)" }]).family, "codex",
+    "a family written in the author's own field still wins");
 });
 
 test("agent-dispatch pick-seat (WO63): a SPEC 'locked-test author' note excludes that family", () => {

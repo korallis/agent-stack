@@ -23,7 +23,10 @@ export function seatCandidates(all, role, families = {}, excludeFamily = null) {
 // "tests-claude-1@<rig>"), else the seat name's own family part (tests-claude-* -> claude, *-codex-* -> codex,
 // *kimi* -> kimi). texts: [{ name, text }] in the order to look. Returns { family, seat, source } or
 // { family: null, reason }: never a guess beyond those.
-const AUTHOR_LINE = [/^[ \t]*(?:[-*][ \t]*)?Locked tests:[ \t]*([^\n]+)/im, /\blocked[- ]tests?[- ]author[ \t]*:[ \t]*([^\n·;|]+)/i];
+const AUTHOR_LINE = [/^[ \t]*(?:[-*][ \t]*)?Locked tests:[ \t]*([^\n]+)/im, /\blocked[- ]tests?[- ]author[ \t]*:[ \t]*([^\n]+)/i];
+// The author's own field: up to a separator (· ; |) or the next "Label:" (e.g. "Implementing family:"), so a family
+// written for something else on the same line is never read as the author's (QA PR70).
+const authorField = (rest) => rest.split(/\s*[·;|]\s*|,?\s+(?=[A-Za-z][\w -]{0,30}:(?!\/\/))/)[0].trim();   // a URL's "https:" is no label
 export const familyFromName = (name) => {
   const parts = String(name || "").split("@")[0].toLowerCase().split(/[-_.]/);
   return ["claude", "codex", "kimi"].find((f) => parts.includes(f) || parts.some((p) => p.startsWith(f))) || null;
@@ -33,7 +36,7 @@ export function lockedTestsAuthor(texts, seats = []) {
     for (const re of AUTHOR_LINE) {
       const m = String(text || "").match(re);
       if (!m) continue;
-      const line = m[1].trim(), quoted = `${name}: "${re === AUTHOR_LINE[0] ? `Locked tests: ${line}` : m[0].trim()}"`;
+      const line = authorField(m[1]), quoted = `${name}: "${re === AUTHOR_LINE[0] ? "Locked tests" : m[0].slice(0, m[0].indexOf(":")).trim()}: ${line}"`;
       const fam = line.match(/\((claude|codex|kimi)\)/i);
       const seat = (line.match(/^[\w.-]+(?:@[\w.-]+)?/) || [])[0] || null;
       if (fam) return { family: fam[1].toLowerCase(), seat, source: quoted };
