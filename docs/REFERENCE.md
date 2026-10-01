@@ -213,6 +213,13 @@ with `agent-login` and the pool uses it straight away.
   - `:` commands (k9s): `home` `matrix` `river` `focus` `pool`, `seat <name>`, `rig <name>`, `slice <id>`,
     `theme <name>`, `help`, `q`; Tab completes. `Tab` moves between a view's panes and `e` expands the focused one.
   - Themes: Pad 39A (default), Catppuccin, Tokyo Night, Nord (`--theme`, `:theme`, `RIG_CONSOLE_THEME`).
+  - **Stuck** is derived, conservatively: the daemon reports the seat's activity unknown, stalled or waiting for input,
+    its last activity is at least N minutes old (`--stuck-minutes`, `:stuck`, `RIG_CONSOLE_STUCK_MINUTES`; default 15),
+    AND none of its open rows (pending or in progress) and none of its own queue transitions moved for N minutes.
+    Every verdict shows its reason and ages ("stalled for 42m · no queue movement on 1 open row for 38m"); a quiet seat
+    that misses a condition is "quiet, not stuck", with why (no open work, its queue moved, not quiet long enough).
+  - Stage times on the River: per stage, the median time its open rows have sat in their current state and the share
+    waiting; the selected slice's time at its stage, worked vs waited. From the queue rows (no extra reads).
   - Keys: `←→` / `hjkl` move, `⏎` drills from a rig card into the matrix, `?` help, `q` quits.
   - It reads the daemon API and its event stream, the Jev decision log, `agent-proxy-status` and `agent-heavy status`
     through ONE cache. The cache refreshes every 5 s, never under 2 s, and backs off to 60 s when the daemon is slow.

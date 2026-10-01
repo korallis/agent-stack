@@ -4,7 +4,7 @@
 // it was worked and how long it waited, and what it waits on now.
 import type { RGB } from "../term.ts";
 import { ago, fit, panel, rpad } from "../draw.ts";
-import { RIVER, doneToday, isHuman, journey, natural, podsOf, slices, type Slice, type SliceState } from "../model.ts";
+import { RIVER, doneToday, isHuman, journey, natural, podsOf, sliceStageTime, slices, stageTimes, type Slice, type SliceState } from "../model.ts";
 import { footer, header, since, ticker, type Ctx } from "./chrome.ts";
 
 export function chipColor(c: Ctx, st: SliceState): { fg: RGB; bg: RGB } {
@@ -48,7 +48,15 @@ export function river(c: Ctx): void {
     if (i < RIVER.length - 1) s.put(x + cw - 2, y, "→", { fg: t.faint });
   });
   s.put(colX(RIVER.length), y, "DONE today", { fg: t.merged, bold: true });
-  y += 2;
+  // phase 4: how long open rows have sat in their current state at each stage (median), and the share waiting
+  const times = stageTimes(raw);
+  times.forEach((tm, i) => {
+    if (tm.median === null) return;
+    const share = tm.worked + tm.waited ? Math.round((tm.waited / (tm.worked + tm.waited)) * 100) : 0;
+    s.put(colX(i), y + 2, fit(`⧗${ago(tm.median)} ${share}%w`, cw - 2), { fg: share >= 70 ? t.blocked : t.faint });
+  });
+  s.put(colX(RIVER.length), y + 2, fit("⧗ median · %w waiting", DW), { fg: t.faint });
+  y += 3;
   const bottom = s.h - 6;
   const [fl, fc] = c.riverFocus ?? [0, 0];
   let sel: Slice | null = null;
@@ -133,7 +141,8 @@ export function river(c: Ctx): void {
   if (cur) {
     let sx = s.put(2, s.h - 5, "SELECTED ", { fg: t.dim });
     sx = s.put(sx, s.h - 5, `${cur.id} ${cur.label}`, { fg: t.text, bold: true });
-    s.put(sx + 2, s.h - 5, fit(`${cur.rig}${cur.mission ? ` · ${cur.mission}` : ""} · at ${RIVER[cur.stage].label} · ${cur.rows.length} open rows · ${cur.state === "owner" ? "waiting on the owner" : cur.state} · open ${since(raw, cur.since)} · ${cur.prs.join(" ") || "no PR yet"}`, s.w - sx - 4), { fg: t.dim });
+    const tm = sliceStageTime(raw, cur);
+    s.put(sx + 2, s.h - 5, fit(`${cur.rig}${cur.mission ? ` · ${cur.mission}` : ""} · at ${RIVER[cur.stage].label} for ${ago(tm.since)} (in progress ${tm.worked ? ago(tm.worked) : "—"} / waiting ${tm.waited ? ago(tm.waited) : "—"}) · ${cur.rows.length} open rows · ${cur.state === "owner" ? "waiting on the owner" : cur.state} · open ${since(raw, cur.since)} · ${cur.prs.join(" ") || "no PR yet"}`, s.w - sx - 4), { fg: t.dim });
   }
   ticker(c, s.h - 3);
   footer(c, [["←→", "along the river"], ["↑↓", "rig lane"], ["⏎", "slice journey"], ["1-5", "views"], ["esc", "home"], ["?", "help"], ["q", "quit"]],
