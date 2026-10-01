@@ -169,7 +169,12 @@ export function journeyView(c: Ctx, key: string): void {
     s.put(x, y + 1, fit(ps.worked + ps.waited ? `${dur(ps.worked)} / ${dur(ps.waited)}` : "—", rw - 1), { fg: t.dim });
   });
   const W = j.steps.reduce((n, x) => n + x.worked, 0), Wt = j.steps.reduce((n, x) => n + x.waited, 0);
-  s.put(2, y + 2, fit(`worked / waited per stage · total worked ${dur(W)} · waited ${dur(Wt)}${W + Wt ? ` (${Math.round((Wt / (W + Wt)) * 100)}% waiting)` : ""}${j.steps.some((x) => !x.known) ? (j.steps.length > 20 ? " · history read for the newest 20 rows (… = not read)" : " · some rows' history still loading") : ""}`, s.w - 4), { fg: t.dim });
+  const note = j.steps.some((x) => !x.known) ? (j.steps.length > 20 ? "history: newest 20 rows (… = not read)" : "history still loading (…)") : "";
+  const sum = `worked / waited per stage · total worked ${dur(W)} · waited ${dur(Wt)}${W + Wt ? ` (${Math.round((Wt / (W + Wt)) * 100)}% waiting)` : ""}`;
+  // the history note never gets cut: beside the totals when they fit, else on its own line (QA PR90)
+  const together = note && [...sum].length + 3 + note.length <= s.w - 4;
+  s.put(2, y + 2, fit(together ? `${sum} · ${note}` : sum, s.w - 4), { fg: t.dim });
+  if (note && !together) { s.put(2, y + 3, fit(note, s.w - 4), { fg: t.blocked }); y += 1; }
   y += 4;
   const bottom = s.h - 4, wide = s.w >= 140;
   const open = j.steps.filter((x) => x.open).map((x) => x.row);

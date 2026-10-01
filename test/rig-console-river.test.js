@@ -162,3 +162,11 @@ test("QA PR90: the journey at the minimum 100 columns names who it waits on, kee
     for (const l of rows) { assert.match(l, /\b(done|blocked|in-progress|pending)\b/, l); assert.match(l, /│ $/, `${w}: the row ends at the panel border: ${l}`); }
   }
 });
+
+test("QA PR90: the history note is never clipped: beside the totals when they fit, else on its own line", () => {
+  // 25 rows on one slice, history read for none of them: the note shows whole at 100 and 176 columns
+  const rows = Array.from({ length: 25 }, (_, i) => ({ id: `h${i}`, state: "in-progress", priority: "routine", source: "x@alpha", destination: "impl-codex-1@alpha", blockedOn: null,
+    tags: ["project:alpha", "slice:f-200-many"], created: `2026-10-01T09:${String(i).padStart(2, "0")}:00Z`, updated: "2026-10-01T10:00:00Z", summary: null }));
+  const r = { ...fixture.raw, queue: rows, attention: [], transitions: {} };
+  for (const [w, h] of [[100, 30], [176, 50]]) assert.match(render(r, hist(), w, h, st({ journey: "alpha/f-200-many" })).lines().join("\n"), /history: newest 20 rows \(… = not read\)/, `${w}`);
+});
