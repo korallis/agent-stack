@@ -4,16 +4,16 @@ import type { RGB } from "../term.ts";
 import { braille, fit, panel, rpad } from "../draw.ts";
 import { gradient } from "../theme.ts";
 import type { History } from "../history.ts";
-import { footer, header, ticker, type Ctx } from "./chrome.ts";
+import { accountState, footer, header, ticker, type Ctx } from "./chrome.ts";
 
 export const POOL_PANES = ["working", "queue", "gate", "accounts", "system"];
 
 /** A meter filled with the theme's value gradient, cell by cell (btop). */
-function gmeter(c: Ctx, x: number, y: number, w: number, frac: number | null): void {
+function gmeter(c: Ctx, x: number, y: number, w: number, frac: number | null, flat?: RGB): void {
   const { s, t } = c;
   if (frac === null) { s.put(x, y, "·".repeat(w), { fg: t.faint }); return; }
   const f = Math.max(0, Math.min(w, Math.round(Math.min(1, frac) * w)));
-  for (let i = 0; i < w; i++) s.put(x + i, y, i < f ? "█" : "░", { fg: i < f ? gradient(t, i / Math.max(1, w - 1)) : t.faint });
+  for (let i = 0; i < w; i++) s.put(x + i, y, i < f ? "█" : "░", { fg: i < f ? flat ?? gradient(t, i / Math.max(1, w - 1)) : t.faint });
 }
 
 export function poolView(c: Ctx, hist: History): void {
@@ -58,14 +58,16 @@ export function poolPane(c: Ctx, hist: History, pane: string, x: number, y: numb
     const mw = Math.max(6, Math.floor((w - 48) / 2));
     s.put(x + 2, y + 1, fit("ACCOUNT    PROV  5 H" + " ".repeat(mw + 2) + "WEEK", w - 4), { fg: t.faint });
     raw.accounts.slice(0, h - 3).forEach((a, i) => {
-      const yy = y + 2 + i, over = (a.short ?? 0) > 100 || (a.weekly ?? 0) > 100, ok = a.status === "active" && !a.cooling && !over;
+      const yy = y + 2 + i, [word, wc] = accountState(t, a);
+      // a window used up while the account runs on credits is drawn flat in the info colour: used, not exhausted
+      const flat = (v: number | null) => (a.onCredits && (v ?? 0) >= 100 ? t.info : undefined);
       s.put(x + 2, yy, fit(a.label, 10), { fg: t.text });
       s.put(x + 13, yy, fit(a.provider === "claude" ? "cl" : a.provider === "codex" ? "cx" : "km", 4), { fg: t.dim });
-      gmeter(c, x + 19, yy, mw, a.short === null ? null : a.short / 100);
-      s.put(x + 20 + mw, yy, rpad(a.short === null ? "—" : `${a.short}%`, 5), { fg: (a.short ?? 0) > 100 ? t.stuck : t.text });
-      gmeter(c, x + 27 + mw, yy, mw, a.weekly === null ? null : a.weekly / 100);
-      s.put(x + 28 + 2 * mw, yy, rpad(a.weekly === null ? "—" : `${a.weekly}%`, 5), { fg: t.text });
-      s.put(x + 35 + 2 * mw, yy, fit(over ? "○ over" : ok ? "● active" : "○ cooling", w - 37 - 2 * mw), { fg: over ? t.stuck : ok ? t.working : t.blocked });
+      gmeter(c, x + 19, yy, mw, a.short === null ? null : a.short / 100, flat(a.short));
+      s.put(x + 20 + mw, yy, rpad(a.short === null ? "—" : `${a.short}%`, 5), { fg: (a.short ?? 0) > 100 ? t.stuck : a.short === null ? t.faint : t.text });
+      gmeter(c, x + 27 + mw, yy, mw, a.weekly === null ? null : a.weekly / 100, flat(a.weekly));
+      s.put(x + 28 + 2 * mw, yy, rpad(a.weekly === null ? "—" : `${a.weekly}%`, 5), { fg: (a.weekly ?? 0) > 100 ? t.stuck : a.weekly === null ? t.faint : t.text });
+      s.put(x + 35 + 2 * mw, yy, fit(word, w - 37 - 2 * mw), { fg: wc });
     });
     if (!raw.accounts.length) s.put(x + 2, y + 2, "proxy status unavailable", { fg: t.faint });
     return;

@@ -373,3 +373,33 @@ test("Home at short heights: the work-in-flight strip never runs into the ticker
   }
   assert.match(render(fixture.raw, hist(), 176, 50, st()).lines().join("\n"), /WORK IN FLIGHT/, "shown where it fits");
 });
+
+// WO85: Codex reports only a weekly window now. Its 5 h column is "—" (no limit), and a week used up while the account
+// runs on credits is "on credits" in the info colour: never red, never "over", never counted out.
+test("WO85: Codex accounts: no 5 h reading, the week, and 'on credits' is never drawn as exhausted", async () => {
+  const { PAD39A: t } = await src("theme.ts");
+  const a = parseAccounts(JSON.stringify([
+    { label: "codex-a", provider: "codex", status: "active", cooldowns: [], short_window_used: null, weekly_used: "100", on_credits: true },
+    { label: "codex-b", provider: "codex", status: "active", cooldowns: [], short_window_used: null, weekly_used: "42", on_credits: false },
+    { label: "codex-c", provider: "codex", status: "active", cooldowns: [], short_window_used: null, weekly_used: "100" }]));
+  assert.deepEqual(a.map((x) => [x.label, x.short, x.weekly, x.onCredits]), [["codex-a", null, 100, true], ["codex-b", null, 42, false], ["codex-c", null, 100, false]]);
+  const raw = { ...fixture.raw, accounts: a }, same = (c, rgb) => c.fg && c.fg.join() === rgb.join();
+  for (const [view, size] of [[4, [176, 50]], [0, [176, 50]], [1, [176, 50]]]) {
+    const scr = render(raw, hist(), ...size, st({ view, pane: 3 })), lines = scr.lines();
+    const y = lines.findIndex((l) => /codex-a\s/.test(l));
+    assert.ok(y >= 0, `view ${view + 1}: codex-a listed`);
+    const row = scr.cells.slice(y * scr.w, (y + 1) * scr.w), xs = [...lines[y].matchAll(/100%/g)].map((m) => m.index);
+    assert.ok(xs.length, `view ${view + 1}: the week reads 100%`);
+    for (const x of xs) assert.ok(!same(row[x], t.stuck), `view ${view + 1}: 100% on credits is not red`);
+    const x0 = lines[y].indexOf("codex-a"), x1 = lines[y].indexOf("│", x0);   // this account's row, within its panel
+    assert.ok(!row.slice(x0, x1 < 0 ? undefined : x1).some((c) => same(c, t.stuck)), `view ${view + 1}: nothing red on the on-credits row`);
+    assert.match(lines[y], /codex-a\s+(cx\s+(5h\s+)?)?[·\s]*—/, `view ${view + 1}: no 5 h reading`);
+    assert.doesNotMatch(lines.join("\n"), /codex-a[^\n]*over/, `view ${view + 1}: never "over"`);
+  }
+  const pool = render(raw, hist(), 176, 50, st({ view: 4 })).lines().join("\n");
+  assert.match(pool, /codex-a[^\n]*100%\s+● on credits/);
+  assert.match(pool, /codex-c[^\n]*100%\s+● active/, "no credits reading: just the number, as reported");
+  // and a real overrun is still red
+  const over = { ...fixture.raw, accounts: parseAccounts(JSON.stringify([{ label: "claude-b", provider: "claude", status: "active", cooldowns: [], short_window_used: "1.01", weekly_used: "0.85" }])) };
+  assert.match(render(over, hist(), 176, 50, st({ view: 4 })).lines().join("\n"), /claude-b[^\n]*101%[^\n]*○ over/);
+});

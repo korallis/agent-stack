@@ -5,7 +5,7 @@ import type { RGB } from "../term.ts";
 import { bigNumber, bigWidth, braille, fit, meter, panel, rpad, sparkline } from "../draw.ts";
 import { brief, podsOf, natural, type Activity, type Seat } from "../model.ts";
 import type { History } from "../history.ts";
-import { footer, header, kindColor, since, ticker, type Ctx } from "./chrome.ts";
+import { accountState, footer, header, kindColor, quotaColor, since, ticker, type Ctx } from "./chrome.ts";
 
 export const DOT: Record<Activity, string> = { working: "●", idle: "○", stuck: "◆", unknown: "?", detached: "·", stopped: "·" };
 export function dotColor(c: Ctx, a: Activity): RGB {
@@ -164,13 +164,14 @@ export function home(c: Ctx, hist: History): void {
         s.put(3, yy, fit(a.label, 10), { fg: t.text });
         s.put(14, yy, a.provider === "claude" ? "cl" : a.provider === "codex" ? "cx" : a.provider === "kimi" ? "km" : fit(a.provider, 2), { fg: t.dim });
         s.put(17, yy, "5h", { fg: t.faint });
-        const col = (v: number | null) => (v === null ? t.faint : v >= 95 ? t.stuck : v >= 75 ? t.blocked : t.working);
+        const col = (v: number | null) => quotaColor(t, a, v);
         meter(s, t, 20, yy, mw, a.short === null ? null : a.short / 100, col(a.short));
         s.put(21 + mw, yy, rpad(a.short === null ? "—" : `${a.short}%`, 4), { fg: col(a.short) });
         s.put(27 + mw, yy, "wk", { fg: t.faint });
         meter(s, t, 30 + mw, yy, mw, a.weekly === null ? null : a.weekly / 100, col(a.weekly));
         s.put(31 + 2 * mw, yy, rpad(a.weekly === null ? "—" : `${a.weekly}%`, 4), { fg: col(a.weekly) });
-        s.put(37 + 2 * mw, yy, fit(a.status === "active" && !a.cooling ? "● active" : a.cooling ? "○ cooling" : `○ ${a.status}`, lw - 38 - 2 * mw), { fg: a.status === "active" && !a.cooling ? t.working : t.blocked });
+        const [word, wc] = accountState(t, a);
+        s.put(37 + 2 * mw, yy, fit(word, lw - 38 - 2 * mw), { fg: wc });
       });
       ly += accH;
     }

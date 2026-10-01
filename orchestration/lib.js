@@ -52,7 +52,8 @@ export function seats(rigName) {
 }
 
 // One account can take work: enabled, available, active, and not past its quota limit (agent-proxy-status's over_limit:
-// a window strictly above 100%, read by provider; WO84). Absent over_limit (an older status tool) counts as not over.
+// a window strictly above 100%, read by provider (WO84), or a used-up Codex window with no credits left; an account on
+// credits is not over (WO85)). Absent over_limit (an older status tool) counts as not over.
 export const accountEligible = (r) => !r.disabled && !r.unavailable && r.status === "active" && r.over_limit !== true;
 
 // Account availability from the proxy (never estimated by a model).

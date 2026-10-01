@@ -91,9 +91,10 @@ const attention = [
 ];
 const gates = [];
 for (let i = 0; i < 36; i++) gates.push({ ts: iso(60_000 * (8 + i * 22)), decision: i % 7 === 3 ? "hold" : "merge", band: i % 9 === 4 ? "uncertain" : i % 5 === 1 ? "review" : "act" });
-const accounts = [["claude-a", "claude", 55, 60, "active"], ["claude-b", "claude", 42, 51, "active"], ["claude-c", "claude", 71, 48, "active"], ["codex-a", "codex", 100, 74, "cooling"],
-  ["codex-b", "codex", 63, 58, "active"], ["codex-c", "codex", 88, 66, "active"], ["codex-d", "codex", 31, 40, "active"], ["kimi-a", "kimi", 12, 9, "active"]]
-  .map(([label, provider, short, weekly, status]) => ({ label, provider, status, short, weekly, cooling: status !== "active" }));
+// Codex reports only a weekly window (no 5 h limit since 2026-10); codex-a has used its week and runs on credits
+const accounts = [["claude-a", "claude", 55, 60, "active"], ["claude-b", "claude", 42, 51, "active"], ["claude-c", "claude", 71, 48, "active"], ["codex-a", "codex", null, 100, "active", true],
+  ["codex-b", "codex", null, 58, "active"], ["codex-c", "codex", null, 66, "cooling"], ["codex-d", "codex", null, 40, "active"], ["kimi-a", "kimi", 12, 9, "active"]]
+  .map(([label, provider, short, weekly, status, onCredits = false]) => ({ label, provider, status, short, weekly, cooling: status !== "active", onCredits }));
 const KINDS = [["DONE", "integ-codex · F-052 tenant export merged"], ["BLOCKED", "impl-codex-6 · F-057 export audit trail waits on PR #412"], ["QUEUED", "qa-codex-2 → impl-codex-4 (urgent) · F-055 fix round"],
   ["CLAIMED", "review-claude-1 took 7e1c09a2 · cross-family review #415"], ["HANDOFF", "tests-claude-1 → coord-lead-claude · F-058 tests locked"], ["PROOF", "judgment recorded · m4/slices/f-055"],
   ["UP", "impl-codex-3@gamma launched"], ["DONE", "qa-codex-1 · bug board: 0 open findings"]];
