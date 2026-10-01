@@ -1388,3 +1388,90 @@ test("agent-dispatch pick-seat end to end: --role impl and --role qa find their 
     assert.equal(r.status, 1, bad); assert.equal(r.stdout, "", bad); assert.match(r.stderr, new RegExp(`unknown role \\\\"${bad}\\\\": use one of lead`), bad);
   }
 });
+
+// ---- WO61: an implementer is never the locked tests' family ----------------------------------------------------------
+test("lockedTestsAuthor: the slice's 'Locked tests:' line gives the family, from its (family) or the seat's; else unknown, no guess", async () => {
+  const { lockedTestsAuthor } = await import("../orchestration/pickseat.js");
+  const seatsList = [{ seat: "tests-claude@shop", family: "claude" }, { seat: "tests-kimi@shop", family: "kimi" }];
+  assert.deepEqual(lockedTestsAuthor([{ name: "PROGRESS.md", text: "# Progress\n- Locked tests: tests-codex@shop (codex) https://x/pull/7\n" }]),
+    { family: "codex", seat: "tests-codex@shop", source: 'PROGRESS.md: "Locked tests: tests-codex@shop (codex) https://x/pull/7"' });
+  assert.equal(lockedTestsAuthor([{ name: "PROGRESS.md", text: "Locked tests: tests-claude@shop, PR #9" }], seatsList).family, "claude", "from the rig's seat");
+  assert.equal(lockedTestsAuthor([{ name: "PROGRESS.md", text: "" }, { name: "SPEC.md", text: "Locked tests: tests-kimi@shop" }], seatsList).family, "kimi", "SPEC.md when PROGRESS.md has none");
+  const unknownSeat = lockedTestsAuthor([{ name: "PROGRESS.md", text: "Locked tests: someone@elsewhere" }], seatsList);
+  assert.equal(unknownSeat.family, null); assert.match(unknownSeat.reason, /someone@elsewhere is not a seat of this rig: pass --exclude-family/);
+  const none = lockedTestsAuthor([{ name: "PROGRESS.md", text: "no such line" }, { name: "SPEC.md", text: "" }]);
+  assert.equal(none.family, null); assert.match(none.reason, /no "Locked tests: <seat> \(<family>\)" line in PROGRESS\.md or SPEC\.md/);
+  assert.equal(lockedTestsAuthor([{ name: "P", text: "The locked tests: we will see" }]).family, null, "only a line that starts with it counts");
+});
+
+test("seatInfo: a kimi member is the kimi family whatever its runtime", async () => {
+  const { seatInfo } = await import("../orchestration/lib.js");
+  const n = (logicalId, runtime) => ({ canonicalSessionName: "x@shop", logicalId, runtime, lifecycleState: "running", sessionStatus: "running" });
+  assert.deepEqual([n("tests.kimi", "claude-code"), n("review.kimi", "claude-code"), n("impl.codex-1", "codex"), n("impl.claude-1", "claude-code")].map((x) => seatInfo(x).family),
+    ["kimi", "kimi", "codex", "claude"]);
+});
+
+test("agent-dispatch pick-seat: --exclude-family and the slice's locked-tests author filter implementers in code, and say so", () => {
+  const n = (logicalId, runtime) => ({ canonicalSessionName: `${logicalId.replace(".", "-")}@shop`, logicalId, runtime, lifecycleState: "running", sessionStatus: "running",
+    agentActivity: { state: "idle" }, assignedWorkCount: 0, pendingWorkCount: 0 });
+  const nodes = [n("impl.claude-1", "claude-code"), n("impl.codex-1", "codex"), n("impl.codex-2", "codex"), n("tests.claude", "claude-code"), n("qa.codex-1", "codex")];
+  fs.writeFileSync(join(bin, "rig"), `#!/bin/sh\ncase "$*" in "ps --nodes --rig shop --json") echo '${JSON.stringify(nodes)}' ;; esac\n`, { mode: 0o755 });
+  const work = join(root, "wo61-work"), slice = join(work, "missions/m1/slices/s1"); fs.mkdirSync(slice, { recursive: true });
+  const pick = (...args) => spawnSync(process.execPath, [join(repo, "orchestration/dispatch.js"), "pick-seat", "--rig", "shop", "--task", "04-export: CSV", ...args],
+    { encoding: "utf8", env: { PATH: `${bin}:${process.env.PATH}`, AGENT_STACK_STATE: process.env.AGENT_STACK_STATE, OPENRIG_WORK_ROOT: work,
+      AGENT_JEV_STUB: stub({ "intake.seat": { decided_by: "jev", band: "act", result: { seat: "impl-codex-1@shop" } } }) } });
+  let r = pick("--role", "impl");
+  assert.equal(r.status, 0, r.stderr); assert.deepEqual(JSON.parse(r.stdout).candidates, ["impl-claude-1@shop", "impl-codex-1@shop", "impl-codex-2@shop"], "no exclusion asked for");
+  // explicit
+  r = pick("--role", "impl", "--exclude-family", "claude");
+  let o = JSON.parse(r.stdout);
+  assert.deepEqual(o.candidates, ["impl-codex-1@shop", "impl-codex-2@shop"]); assert.equal(o.exclude_family, "claude");
+  assert.match(o.because, /locked tests are by the claude family \(--exclude-family\); the implementer must be the other family/);
+  // from the slice: (family) in PROGRESS.md
+  fs.writeFileSync(join(slice, "PROGRESS.md"), "# s1\n- Locked tests: tests-claude@shop (claude) https://github.com/o/r/pull/12\n");
+  o = JSON.parse(pick("--role", "implementer", "--mission", "m1", "--slice", "s1").stdout);
+  assert.deepEqual(o.candidates, ["impl-codex-1@shop", "impl-codex-2@shop"]); assert.equal(o.exclude_family, "claude");
+  assert.match(o.because, /PROGRESS\.md: "Locked tests: tests-claude@shop \(claude\)/);
+  // from the slice: a seat only, its family read from the rig
+  fs.writeFileSync(join(slice, "PROGRESS.md"), "Locked tests: tests-claude@shop, PR 12\n");
+  assert.equal(JSON.parse(pick("--role", "implementer", "--mission", "m1", "--slice", "s1").stdout).exclude_family, "claude");
+  // unknown author: nothing excluded, and it says so (never a guess)
+  fs.writeFileSync(join(slice, "PROGRESS.md"), "# s1\nno author recorded\n");
+  o = JSON.parse(pick("--role", "implementer", "--mission", "m1", "--slice", "s1").stdout);
+  assert.equal(o.exclude_family, null); assert.match(o.author_note, /locked tests' author unknown, nothing excluded: no "Locked tests: <seat> \(<family>\)" line/);
+  assert.equal(o.candidates.length, 3);
+  // the explicit flag wins over the slice; other roles are never filtered from the slice
+  fs.writeFileSync(join(slice, "PROGRESS.md"), "Locked tests: tests-claude@shop (claude)\n");
+  assert.equal(JSON.parse(pick("--role", "impl", "--mission", "m1", "--slice", "s1", "--exclude-family", "codex").stdout).exclude_family, "codex");
+  o = JSON.parse(pick("--role", "qa", "--mission", "m1", "--slice", "s1").stdout);
+  assert.equal(o.exclude_family, undefined); assert.deepEqual(o.candidates, ["qa-codex-1@shop"]);
+  // every implementer is that family: none free, saying why
+  o = JSON.parse(pick("--role", "impl", "--exclude-family", "codex").stdout);
+  assert.deepEqual(o.candidates, ["impl-claude-1@shop"]);
+  r = pick("--role", "impl", "--exclude-family", "kimi"); assert.equal(JSON.parse(r.stdout).candidates.length, 3);
+  fs.writeFileSync(join(bin, "rig"), `#!/bin/sh\ncase "$*" in "ps --nodes --rig shop --json") echo '${JSON.stringify(nodes.filter((x) => x.runtime === "codex" && x.logicalId.startsWith("impl")))}' ;; esac\n`, { mode: 0o755 });
+  o = JSON.parse(pick("--role", "impl", "--exclude-family", "codex").stdout);
+  assert.equal(o.action, "none free"); assert.match(o.note, /no running implementer seat outside the codex family/); assert.equal(o.exclude_family, "codex");
+  // a bad family is an error
+  r = pick("--role", "impl", "--exclude-family", "gpt");
+  assert.equal(r.status, 1); assert.match(r.stderr, /--exclude-family \\"gpt\\": use one of claude, codex, kimi/);
+  // QA PR69 f1: present but valueless is an error, never "no filter" (trailing, followed by an option, empty, = form)
+  for (const bad of [["--exclude-family"], ["--exclude-family", "--mission"], ["--exclude-family="], ["--exclude-family", ""]]) {
+    r = pick("--role", "impl", ...bad);
+    assert.equal(r.status, 1, bad.join(" ")); assert.equal(r.stdout, "", bad.join(" ")); assert.match(r.stderr, /--exclude-family needs a family: one of claude, codex, kimi/, bad.join(" "));
+  }
+  assert.equal(JSON.parse(pick("--role", "impl", "--exclude-family=claude").stdout).exclude_family, "claude", "the = form");
+  // QA PR69 f2: none free AND an unknown author: both reasons are kept
+  fs.writeFileSync(join(slice, "PROGRESS.md"), "no author line\n");
+  fs.writeFileSync(join(bin, "rig"), `#!/bin/sh\ncase "$*" in "ps --nodes --rig shop --json") echo '[]' ;; esac\n`, { mode: 0o755 });
+  o = JSON.parse(pick("--role", "implementer", "--mission", "m1", "--slice", "s1").stdout);
+  assert.equal(o.action, "none free"); assert.match(o.note, /no running implementer seat/); assert.match(o.author_note, /locked tests' author unknown/);
+});
+
+test("eligibleFamilies: a provider whose accounts are all down counts 0 (unavailable), not unknown; kimi included", async () => {
+  const { eligibleFamilies } = await import("../orchestration/lib.js");
+  const d = fs.mkdtempSync(join(root, "aps-")), old = process.env.PATH;
+  fs.writeFileSync(join(d, "agent-proxy-status"), `#!/bin/sh\necho '${JSON.stringify([{ provider: "claude", status: "active" }, { provider: "codex", status: "active" },
+    { provider: "codex", status: "active", unavailable: true }, { provider: "kimi", status: "active", disabled: true }])}'\n`, { mode: 0o755 });
+  try { process.env.PATH = `${d}:${old}`; assert.deepEqual(eligibleFamilies(), { claude: 1, codex: 1, kimi: 0 }); } finally { process.env.PATH = old; }
+});

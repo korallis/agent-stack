@@ -7,17 +7,18 @@
 //   agent-dispatch triage-update --text "..."
 //   agent-dispatch record --seat S --outcome completed|returned|failed      (quality ledger)
 //   agent-dispatch pick-seat --rig R --role ROLE --task "one line" [--evidence "..."]   (Jev picks the seat; see pickseat.js)
+//     [--exclude-family claude|codex|kimi | --mission M --slice S [--work-root W]]   implementer: never the locked tests' family
 //     ROLE: implementer|reviewer|qa|architect|integrator|test-author|recovery|lead|deputy, or a pod name (impl, review, …)
 //
 // Jev supplies bounded judgments (type, gaps, role, duplicates, reviews, tests). Code supplies
 // capacity, account availability, dependencies and the final seat. Without --apply nothing changes.
-import { readFileSync, writeFileSync, mkdtempSync, readdirSync, statSync } from "node:fs";
+import { readFileSync, writeFileSync, mkdtempSync, readdirSync, statSync, existsSync } from "node:fs";
 import { execFileSync } from "node:child_process";
 import { join } from "node:path";
 import { tmpdir } from "node:os";
 import { decide, decideBatch } from "../jev/lib/engine.js";
 import { rig, seats, pickSeat, eligibleFamilies, queueItems, lexicalTop, recordQuality, odb, normQ, normalizeRole } from "./lib.js";
-import { seatCandidates, nextStep } from "./pickseat.js";
+import { seatCandidates, nextStep, lockedTestsAuthor, FAMILIES } from "./pickseat.js";
 import { decideOrStub } from "./jevcall.js";
 
 const args = process.argv.slice(2);
@@ -172,20 +173,43 @@ async function triage() {
   out({ kind: r.result.kind, ...brief(r), route: { routine_progress: "log only", actionable_blocker: "lead resolves or reassigns", needs_user: "surface to the user" }[r.result.kind] });
 }
 
+// Which family an implementer must NOT be: --exclude-family, else (implementer, with --mission and --slice) the locked
+// tests' author from the slice files. { family, source } or { family: null, reason }; null when nothing applies.
+function excludedFamily(role, all) {
+  // Present is one question, its value another: a trailing or valueless --exclude-family is an error, never "no filter".
+  const at = args.findIndex((a) => a === "--exclude-family" || a.startsWith("--exclude-family="));
+  if (at >= 0) {
+    const given = args[at].includes("=") ? args[at].slice(args[at].indexOf("=") + 1) : args[at + 1];
+    if (given == null || given.trim() === "" || given.startsWith("-"))
+      throw new Error(`--exclude-family needs a family: one of ${FAMILIES.join(", ")}`);
+    const f = given.trim().toLowerCase();
+    if (!FAMILIES.includes(f)) throw new Error(`--exclude-family "${given}": use one of ${FAMILIES.join(", ")}`);
+    return { family: f, source: "--exclude-family" };
+  }
+  const mission = flag("--mission"), slice = flag("--slice");
+  if (role !== "implementer" || !mission || !slice) return null;
+  const dir = join(flag("--work-root") || process.env.OPENRIG_WORK_ROOT || ".", "missions", mission, "slices", slice);
+  const texts = ["PROGRESS.md", "SPEC.md"].map((n) => ({ name: join(dir, n), text: existsSync(join(dir, n)) ? readFileSync(join(dir, n), "utf8") : "" }));
+  return lockedTestsAuthor(texts, all);
+}
+
 async function pickSeatCmd() {
   const rigName = flag("--rig"), task = flag("--task");
   if (!rigName || !flag("--role") || !task) throw new Error("--rig, --role and --task are required");
   const role = normalizeRole(flag("--role"));   // impl -> implementer, qa -> qa, …; an unknown role fails loudly
-  const candidates = seatCandidates(seats(rigName), role, eligibleFamilies());
-  if (!candidates.length) return out({ action: "none free", note: `no running ${role} seat without open work in ${rigName}: queue it to the least-loaded ${role} seat or wait` });
+  const all = seats(rigName), ex = excludedFamily(role, all);
+  const exclusion = ex && (ex.family ? { exclude_family: ex.family, because: `the locked tests are by the ${ex.family} family (${ex.source}); the implementer must be the other family` }
+    : { exclude_family: null, author_note: `locked tests' author unknown, nothing excluded: ${ex.reason}` });
+  const candidates = seatCandidates(all, role, eligibleFamilies(), ex?.family || null);
+  if (!candidates.length) return out({ action: "none free", ...exclusion, note: `no running ${role} seat${ex?.family ? ` outside the ${ex.family} family` : ""} without open work in ${rigName}: queue it to the least-loaded such seat or wait` });
   const rec = await decideOrStub("intake.seat", { task, role, ...(flag("--evidence") ? { evidence: flag("--evidence") } : {}), candidates }, { caller });
-  out({ ...brief(rec), candidates: candidates.map((c) => c.id), next: nextStep(rec, candidates, task) });
+  out({ ...brief(rec), ...exclusion, candidates: candidates.map((c) => c.id), next: nextStep(rec, candidates, task) });
 }
 
 const cmds = { intake, "pick-seat": pickSeatCmd, "review-plan": reviewPlan, "triage-update": triage,
   record: async () => { recordQuality(flag("--seat"), flag("--outcome")); out({ ok: true }); } };
 try {
-  if (!cmds[args[0]]) { console.log(readFileSync(new URL(import.meta.url), "utf8").split("\n").slice(1, 13).join("\n").replace(/^\/\/ ?/gm, "")); process.exit(args[0] ? 2 : 0); }
+  if (!cmds[args[0]]) { console.log(readFileSync(new URL(import.meta.url), "utf8").split("\n").slice(1, 14).join("\n").replace(/^\/\/ ?/gm, "")); process.exit(args[0] ? 2 : 0); }
   await cmds[args[0]]();
 } catch (e) {
   console.error(JSON.stringify({ error: e.message }));

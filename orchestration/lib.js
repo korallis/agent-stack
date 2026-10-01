@@ -38,7 +38,9 @@ export function seatInfo(node) {
   const [pod, member] = node.logicalId.split(".");
   let role = Object.hasOwn(POD_ROLE, pod) ? POD_ROLE[pod] : undefined;
   if (pod === "coord") role = member.startsWith("lead") ? "lead" : "deputy";
-  const family = node.runtime === "codex" ? "codex" : "claude";
+  // Kimi seats run on the Claude Code runtime with a Kimi model (rig/template/fallback-codex.yaml: tests.kimi, review.kimi):
+  // their member id says so. A family is the model's, not the runtime's.
+  const family = /^kimi/.test(member || "") ? "kimi" : node.runtime === "codex" ? "codex" : "claude";
   return { seat: node.canonicalSessionName, pod, member, role, family, runtime: node.runtime,
     running: node.lifecycleState === "running" && node.sessionStatus === "running",
     idle: node.agentActivity?.state === "idle", assigned: node.assignedWorkCount ?? 0, pending: node.pendingWorkCount ?? 0 };
@@ -54,7 +56,8 @@ export function eligibleFamilies() {
   try {
     const rows = JSON.parse(execFileSync("agent-proxy-status", ["--json"], { encoding: "utf8", timeout: 20_000 }));
     const fam = { claude: 0, codex: 0 };
-    for (const r of rows) if (!r.disabled && !r.unavailable && r.status === "active") fam[r.provider] = (fam[r.provider] || 0) + 1;
+    // every provider seen starts at 0 (a family whose accounts are all down is unavailable, not unknown: kimi too)
+    for (const r of rows) { fam[r.provider] ??= 0; if (!r.disabled && !r.unavailable && r.status === "active") fam[r.provider] += 1; }
     return fam;
   } catch {
     return { claude: null, codex: null }; // unknown ≠ zero: do not block dispatch on a status-tool failure
