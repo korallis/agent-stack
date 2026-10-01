@@ -66,3 +66,24 @@ test("the queue list has no --full; bodies come per row: wave-map rows, and the 
   assert.ok(!recentFetched.includes("qitem-r100") && recentFetched.includes("qitem-r000") && recentFetched.includes("qitem-r099"), "the newest are sampled");
   assert.match(find("queue rows carry mission:/slice: tags")[0].detail, /^210\/210$/);
 });
+
+test("QA PR81: a sampled body that can't be read WARNs, even when every body that was read carries worktree_path=", async () => {
+  const one = [{ qitemId: "qitem-good", destinationSession: "impl-a@t", sourceSession: "lead@t", tsCreated: iso(60e3), tags: ["project:P", "mission:m1"], body: "" },
+    ...Array.from({ length: 99 }, (_, i) => ({ qitemId: `qitem-gone-${i}`, destinationSession: "impl-a@t", sourceSession: "lead@t", tsCreated: iso((i + 2) * 60e3), tags: ["project:P", "mission:m1"], body: "" }))];
+  fs.writeFileSync(join(home, "rows.json"), JSON.stringify(one));
+  const server = http.createServer((req, res) => {
+    if (req.url === "/api/queue/qitem-good") { res.writeHead(200, { "content-type": "application/json" }); res.end(JSON.stringify({ body: "x\nworktree_path=/w/impl-a\n" })); }
+    else { res.writeHead(404); res.end("{}"); }
+  });
+  await new Promise((r) => server.listen(0, "127.0.0.1", r));
+  const out = await new Promise((resolve) => {
+    let so = "";
+    const p = spawn("python3", [join(repo, "bin/agent-project-check"), W, "--json"], { env: { PATH: `${bin}:${process.env.PATH}`, HOME: home, OPENRIG_URL: `http://127.0.0.1:${server.address().port}`, AGENT_OWNER_ADDRESS: "owner@external" } });
+    p.stdout.on("data", (d) => (so += d)); p.on("close", () => resolve(so));
+  });
+  server.close();
+  const wtp = JSON.parse(out).find((x) => x.check.startsWith("queue rows carry worktree_path="));
+  assert.equal(wtp.level, "WARN");
+  assert.equal(wtp.detail, "1/1; 99 body(ies) could not be read");
+  fs.writeFileSync(join(home, "rows.json"), JSON.stringify(rows));
+});

@@ -486,7 +486,8 @@ if recent:
     rep("OK" if len(tagged) == len(recent) else "WARN", f"queue rows since {since[:16]}Z carry project:<id>", pct(tagged))
     rep("OK" if len(scoped) >= 0.8 * len(recent) else "WARN", "queue rows carry mission:/slice: tags", pct(scoped))
     judged = len(wtp_sample) - len(wtp_unread)
-    rep("OK" if judged and len(wtp) >= 0.8 * judged else "WARN", "queue rows carry worktree_path= (EC-3)",
+    # Any unread body is lost coverage: WARN, never an OK computed over what happened to be readable (QA PR81).
+    rep("OK" if judged and not wtp_unread and len(wtp) >= 0.8 * judged else "WARN", "queue rows carry worktree_path= (EC-3)",
         f"{len(wtp)}/{judged}" + (f" of the newest {len(wtp_sample)} of {len(recent)}" if len(recent) > len(wtp_sample) else "")
         + (f"; {len(wtp_unread)} body(ies) could not be read" if wtp_unread else ""))
 
