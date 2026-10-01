@@ -115,6 +115,7 @@ if [ $CHECK = 0 ] || mise where "node@$NODE_FOR_JEV" >/dev/null 2>&1; then
   launcher agent-dispatch "$NODE_FOR_JEV" "$S/orchestration/dispatch.js"
   launcher agent-merge-evidence "$NODE_FOR_JEV" "$S/orchestration/merge-evidence.js"
   launcher agent-stuck-check "$NODE_FOR_JEV" "$S/orchestration/stuck.js"
+  launcher rig-console "$NODE_FOR_JEV" "$S/console/src/main.ts"
 fi
 if [ -d "$S/jev/node_modules" ]; then ok "jev dependencies"; elif [ $CHECK = 1 ]; then todo "jev npm ci"; else
   (cd "$S/jev" && PATH="$(mise where "node@$NODE_FOR_JEV")/bin:$PATH" npm ci --silent) && ok "jev dependencies installed"; fi
