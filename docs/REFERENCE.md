@@ -338,9 +338,33 @@ The deny message says how to use the values by name. `agent-never-prompt-check` 
 FAILs when the guard is missing from either runtime, or when Codex would skip it: `[features] hooks = true` unset, or
 no `trusted_hash` equal to the hash of the guard as written (it recomputes it, the way Codex does).
 
+Paths are resolved the way the shell will run the command:
+- A glob is expanded against the real directory when it can be read, with bash's rule: a name starting with `.` is
+  matched only by a pattern starting with `.`, or with `shopt -s dotglob` / `bash -O dotglob`. So `grep x bin/*`
+  passes, while `cat app/.*` and `shopt -s dotglob; cat app/*` are refused. `**`, a glob in a directory part, or an
+  unreadable directory are judged against sample names, dotfiles included.
+- Bracket classes (`.[e]nv`, `[!x]`, `[[:alpha:]]`) match the way bash matches them.
+- Every directory the command may be in counts: each `cd`/`pushd`/`env -C` target is added and none is dropped, so a
+  subshell's `cd`, `popd` or `cd -` can't hide one. The cost: `cd` into a secrets directory and back out, then a read
+  of an ordinary file by the same bare name, is refused too; run it as its own command.
+- An existing symlink is followed to what it names.
+- A name the command gave a protected file (`cp`, `ln`, `mv`, `dd of=`, `tee < file`, `cp -t DIR`, a copied
+  directory and everything under it) is protected for the rest of the command, globs over it included.
+- `$'…'` escapes (`\x`, `\u`, `\U`, octal), simple `{a,b}` braces, and variables the command sets are expanded:
+  `F=…`, a prefix `F=… cmd` or `env F=… cmd`, `export`, `declare`, `local`, `readonly`, `read … <<< …` (escapes
+  decoded first unless `-r`, then `-d`/`-n`/`-N`, then split into fields by `IFS`; `-a` too) and `for f in …`; `${F}` and `${F[i]}` too (any element of an
+  array counts as any index), while other `${F…}` forms count as unresolved. An assignment that may not reach the shell (in a `( … )` subshell, a pipeline, `&`, an
+  `if`/loop body, or after `&&`/`||`, a `{ … }` group there included) only adds a value. A prefix `F=… cmd` (or `env F=…
+  cmd`) holds for that command's environment only: its own words and redirections use the old value, a shell it starts
+  (`bash -c`, `env -S`, `eval`) the new one (in `bash -c "…"` the parent first expands its unquoted and
+  double-quoted `$F` with the old value), and its redirections, `cd`, copies and `shopt` still count. `shopt -u dotglob` counts
+  only where it surely applies.
+- Backstop: if the command names a protected path anywhere, a print whose operand still holds a value the guard can't
+  resolve (a variable it didn't see set, a substitution) is refused.
+
 Limits (honest): it stops accidental printing by a seat, not a determined one. A script that reads and prints a
-file itself (`node -e`, `python -c`, a project script) isn't parsed, and neither is a variable holding a path. A
-broken hook allows the call rather than stopping every seat. `export $(grep -v '^#' .env | xargs)` is refused
+file itself (`node -e`, `python -c`, a project script) isn't parsed. A path held by a variable from outside the
+command, or built by a substitution in a command that names no protected path, isn't known either. A broken hook allows the call rather than stopping every seat. `export $(grep -v '^#' .env | xargs)` is refused
 (conservatively); use `set -a; . .env; set +a` instead.
 
 ### Known limits (honest)
