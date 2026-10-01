@@ -135,6 +135,9 @@ lead confirms that with each seat.
 - **Credentials never go to a seat's output** (it is the transcript). Seats' `neon`/`vercel` run through
   `seat-bin/credguard`: credential-printing commands need `--output-file <path>` (0600) and use the values by name
   (docs/PROJECT-ENV.md). `agent-credguard-check` shows which running seats are guarded (Claude seats: after a relaunch).
+- **Vercel protection bypass is a secret, keys included.** Ask `agent-vercel-protection-status <project>` (yes/no and
+  counts). `vercel api …/projects…` runs only with `--output-file ~/.local/state/agent-stack/vercel/<seat>/x.json`;
+  anything naming `protectionBypass` is refused, and so is inline `node -e`/`python -c` code that reads a protected file.
 - **Rebuild handovers read only the seat's declared chain**: `<topology.root>/rigs/<rig>/seats/<member>/RECAP.md`,
   then LEARNED.md, the compaction restore packet and superseded recaps. A packet in shared-docs is never read.
   - The seat publishes its packet with `agent-seat-recap write <packet> [--learned <lessons>]` (OpenRig's

@@ -23,12 +23,22 @@ const fs = require("node:fs"), path = require("node:path"), os = require("node:o
 
 // Under the Playwright MCP's --output-dir (install.sh), so the MCP may write there; one dir per seat.
 const NET_DIR = "~/.local/state/agent-stack/playwright-mcp/net";
-const DEFAULT_PATTERNS = ["**/.env", "**/.env.*", "**/*runtime-url*", "**/*.pem", "~/.config/agent-stack/secrets/**", "**/prod.env", `${NET_DIR}/**`];
+// Raw Vercel project JSON (WO62): `vercel api …/projects…` writes only here, through the seat's vercel guard.
+const VERCEL_DIR = "~/.local/state/agent-stack/vercel";
+const DEFAULT_PATTERNS = ["**/.env", "**/.env.*", "**/*runtime-url*", "**/*.pem", "~/.config/agent-stack/secrets/**", "**/prod.env", `${NET_DIR}/**`,
+  `${VERCEL_DIR}/**`];
+// A Vercel project's protection-bypass secrets are the KEYS of its `protectionBypass` object: printing even the keys
+// prints the secret (2026-10-01). Any command that names the field is refused, whatever it does with it.
+const BYPASS = /protection_?bypass/i;
+// Interpreters whose inline code (-e/-c/…) is read for paths: `node -e "…readFileSync('.env')…"` reads a file as surely as cat.
+const INTERP = /^(node|nodejs|bun|deno|python[0-9.]*|ruby|perl|php)$/;
 const NET_TOOL = /^mcp__.+__browser_(network_requests|network_request|console_messages)$/;
 // Templates that hold no values.
 const EXEMPT = /(^|\/)\.env\.(example|sample|template)$/;
-// Not inside the Playwright scratch tree: every file there is raw MCP output, whatever its name.
-const exempt = (abs, home) => EXEMPT.test(abs) && !abs.startsWith(path.join(home, NET_DIR.slice(2)) + "/");
+// Not inside a raw-output tree (Playwright network/console logs, Vercel project JSON): every file there is raw tool
+// output, whatever its name, so a template name gives it no pass.
+const RAW_DIRS = [NET_DIR, VERCEL_DIR];
+const exempt = (abs, home) => EXEMPT.test(abs) && !RAW_DIRS.some((d) => abs.startsWith(path.join(home, d.slice(2)) + "/"));
 
 function patterns(env = process.env, home = os.homedir()) {
   const file = env.AGENT_CREDGUARD_READ_PATHS || path.join(home, ".config/agent-stack/credguard-read-paths");
@@ -547,6 +557,16 @@ function bashVerdict(command, ctx, depth = 0) {
         for (const c of w && w.mask ? parentExpand(cmd, w.mask, ctx) : [cmd]) { const r = bashVerdict(c, childCtx(dg ? { dotglob: true } : {}), depth + 1); if (r) return r; }
       }
     }
+    if (INTERP.test(verb)) {   // inline code: every string literal and path-like word in it is a path it may read
+      const flagged = args.findIndex((a, j) => /^(-e|-c|-p|-r|--eval|--print|-pe|-ne|-le)$/.test(a) || (verb === "deno" && j === 0 && a === "eval"));
+      const glued = args.find((a) => /^-[ecpr]./.test(a) && !/^-[ecpr]$/.test(a));
+      const code = flagged >= 0 ? args[flagged + 1] : glued ? glued.slice(2) : null;
+      if (code) {
+        const words = [...code.matchAll(/(["'`])((?:\\.|(?!\1).)*)\1/g)].map((m) => m[2])
+          .concat(code.split(/[\s()[\]{},;+]+/).filter((w) => /[/.~]/.test(w)));
+        for (const w of words) { const h = protectedPath(w.replace(/^["'`]|["'`]$/g, ""), ctx); if (h) return { why: `inline ${verb} code reads it`, hit: h }; }
+      }
+    }
     if (verb === "eval" && depth < 3) {   // eval's words: the old values; the text it runs: the prefix values too
       const c2 = childCtx();
       if (ctx.childEnv) for (const [n, v] of ctx.childEnv) c2.vars.set(n, [...new Set([...(ctx.vars.get(n) || []), ...v])]);
@@ -674,6 +694,17 @@ function netDenial(tool, why, home, env = process.env, ti = {}) {
   ].join("\n");
 }
 
+function bypassDenial() {
+  return [
+    "agent-stack credential guard: blocked, because this names a Vercel project's protectionBypass. Its secrets are the",
+    "KEYS of that object, so printing it, its keys or anything derived from them prints the secret into the transcript.",
+    "To see whether deployment protection and a bypass are set up, without any secret:",
+    "  agent-vercel-protection-status <project> [--scope <team>]      (yes/no and counts only)",
+    "Raw project JSON goes only to a file: vercel api /v9/projects/<p> --output-file ~/.local/state/agent-stack/vercel/<seat>/<name>.json",
+    "(a protected dir: don't open it). A bypass value is used by NAME (e.g. VERCEL_AUTOMATION_BYPASS_SECRET in an env file), never printed.",
+  ].join("\n");
+}
+
 function decide(input, { home = os.homedir(), pats = patterns(process.env, home), env = process.env } = {}) {
   const ctx = { cwd: input.cwd || process.cwd(), home, pats };
   const t = input.tool_name, ti = input.tool_input || {};
@@ -682,6 +713,10 @@ function decide(input, { home = os.homedir(), pats = patterns(process.env, home)
     return why ? { deny: true, reason: netDenial(t, why, home, env, ti) } : { deny: false };
   }
   let v = null;
+  if (t === "Bash" && BYPASS.test(String(ti.command || "")))
+    return { deny: true, reason: bypassDenial() };
+  if (t === "Grep" && BYPASS.test(String(ti.pattern || "")) && (ti.output_mode || "files_with_matches") === "content")
+    return { deny: true, reason: bypassDenial() };
   if (t === "Bash") v = bashVerdict(ti.command, ctx);
   else if (t === "Read") { const h = protectedPath(ti.file_path, ctx); if (h) v = { why: "reading it shows its contents", hit: h }; }
   else if (t === "Grep" && (ti.output_mode || "files_with_matches") === "content") {
@@ -717,5 +752,5 @@ function main() {
   process.exit(0);
 }
 
-module.exports = { DEFAULT_PATTERNS, NET_DIR, NET_TOOL, netDir, netKind, netVerdict, patterns, globRe, protectedPath, lex, parseArgs, bashVerdict, keyNames, decide };
+module.exports = { DEFAULT_PATTERNS, VERCEL_DIR, BYPASS, NET_DIR, NET_TOOL, netDir, netKind, netVerdict, patterns, globRe, protectedPath, lex, parseArgs, bashVerdict, keyNames, decide };
 if (require.main === module) main();

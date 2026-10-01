@@ -374,6 +374,14 @@ Paths are resolved the way the shell will run the command:
 - Backstop: if the command names a protected path anywhere, a print whose operand still holds a value the guard can't
   resolve (a variable it didn't see set, a substitution) is refused.
 
+**Vercel protection bypass (WO62).** A project's protection-bypass secrets are the KEYS of its `protectionBypass`
+object. The read guard refuses any Bash command or content Grep that names `protectionBypass`/`protection_bypass` (any
+case), and `~/.local/state/agent-stack/vercel/**` (where the seat guard lets `vercel api …/projects…` write) is a
+protected path. Inline interpreter code (`node -e`, `python -c`, `ruby -e`, `perl -e`, `bun`, `deno eval`, `php -r`)
+is read too: a string literal or path-like word in it that names a protected file refuses the command, as `cat` would.
+`agent-vercel-protection-status <project>` gives the yes/no answer. Code fed to an interpreter on stdin (a heredoc, a
+script file) is still not parsed.
+
 **Playwright network and console listings (WO57).** `browser_network_requests`, `browser_network_request` and
 `browser_console_messages` (Playwright MCP 0.0.80) return request URLs, headers or console text, where tokens minted at
 runtime appear (session JWTs, `?token=`, signed URLs, dev-browser tokens); `--secrets` only masks the values listed in
