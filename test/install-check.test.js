@@ -169,4 +169,16 @@ console.log("Chrome for Testing 153.0.0.1 (playwright chromium v1243)\\n  Instal
   assert.equal((log.match(/^launch HOME=/gm) || []).length, 2, "headless shell and chromium both launched");
   assert.doesNotMatch(log, new RegExp(`HOME=${h}\\b`), "never the caller's HOME");
   assert.deepEqual(snapshot(h), before, "nothing under HOME changed");
+  // QA PR66: the builds are where Playwright looks for them: PLAYWRIGHT_BROWSERS_PATH, else $XDG_CACHE_HOME/ms-playwright
+  const xdg = join(h, "xdg-cache"), explicit = join(root, "pw-builds");
+  for (const [extra, want] of [[{ XDG_CACHE_HOME: xdg }, `${xdg}/ms-playwright`], [{ XDG_CACHE_HOME: xdg, PLAYWRIGHT_BROWSERS_PATH: explicit }, explicit]]) {
+    fs.rmSync(seen, { force: true });
+    r = run("bin/playwright-browsers", ["--check"], h, extra);
+    assert.equal(r.status, 0, r.stdout + r.stderr);
+    assert.match(fs.readFileSync(seen, "utf8"), new RegExp(`^cli HOME=\\S+ BROWSERS=${want}$`, "m"), JSON.stringify(extra));
+  }
+  // npm's cache dir moved (npm_config_cache): the release is looked for there
+  const moved = join(root, "npm-cache"); fs.mkdirSync(moved); fs.renameSync(join(h, ".npm/_npx"), join(moved, "_npx"));
+  r = run("bin/playwright-browsers", ["--check"], h); assert.equal(r.status, 1, "not under ~/.npm any more");
+  r = run("bin/playwright-browsers", ["--check"], h, { npm_config_cache: moved }); assert.equal(r.status, 0, r.stdout + r.stderr);
 });

@@ -27,12 +27,14 @@ else
   # what Playwright or Chromium writes at a launch (profiles, ~/.pki, font caches) goes to a throwaway HOME, with the
   # real browser builds named explicitly. Not in the npx cache yet = not ready (an install run fetches it).
   nm=""
-  for f in "$HOME"/.npm/_npx/*/node_modules/@playwright/mcp/package.json; do
+  for f in "${npm_config_cache:-$HOME/.npm}"/_npx/*/node_modules/@playwright/mcp/package.json; do   # npm's cache dir
     [ -f "$f" ] && [ "$(grep -o '"version" *: *"[^"]*"' "$f" | head -1 | sed 's/.*"\([^"]*\)"$/\1/')" = "$pin" ] && [ -e "${f%/@playwright/mcp/package.json}/.bin/playwright" ] \
       && { nm=${f%/@playwright/mcp/package.json}; break; }
   done
   [ -n "$nm" ] || { say "@playwright/mcp@$pin is not in the npx cache yet (not fetched; ./install.sh --apply fetches it): not ready"; exit 1; }
-  browsers=${PLAYWRIGHT_BROWSERS_PATH:-$HOME/.cache/ms-playwright}
+  # Where Playwright keeps the builds, resolved as it does (on Linux: PLAYWRIGHT_BROWSERS_PATH, else
+  # ${XDG_CACHE_HOME:-~/.cache}/ms-playwright), BEFORE HOME and the XDG dirs are pointed at the scratch dir.
+  browsers=${PLAYWRIGHT_BROWSERS_PATH:-${XDG_CACHE_HOME:-$HOME/.cache}/ms-playwright}
   scratch=$(mktemp -d); trap 'rm -rf "$neutral" "$scratch"' EXIT
   pw() { (cd "$neutral" && env HOME="$scratch" XDG_CACHE_HOME="$scratch/.cache" XDG_CONFIG_HOME="$scratch/.config" \
     XDG_DATA_HOME="$scratch/.local/share" PLAYWRIGHT_BROWSERS_PATH="$browsers" PATH="$nm/.bin:$PATH" "$@"); }
