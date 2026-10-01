@@ -144,6 +144,46 @@
      const active = missions.filter(m => ["active", "release-candidate"].includes(m.historicalStatus ?? ""));
      return { revision: hash(active), state: active.length && active.every(m => m.state === "ready") ? "ready" : active.some(m => m.state === "unknown") ? "unknown" : "not-ready", missions, basis: "Active mission readiness; distinct outcome judgment and publication remain separate" };
  }
+--- a/daemon/dist/domain/scope/scope-view-projection.js
++++ b/daemon/dist/domain/scope/scope-view-projection.js
+@@ -145,7 +145,9 @@
+         return null;
+     return createHash("sha256").update(bytes).digest("hex").slice(0, 8);
+ }
+-export function projectSliceScope(fs, sliceDir, readPolicy) {
++/** `root`: a selected catalog project's root. It bounds the readiness (policy search and scope identity) exactly as
++ *  `rig proof` does for that project, so the scopes view and proof agree; without it the nearest project.yaml is used. */
++export function projectSliceScope(fs, sliceDir, readPolicy, root) {
+     const readmePath = NODE_FILE_PRECEDENCE
+         .map((n) => path.join(sliceDir, n))
+         .find((p) => fs.exists(p));
+@@ -175,7 +177,7 @@
+     const heading = /^# (.+)$/m.exec(content);
+     const progressPath = path.join(sliceDir, "PROGRESS.md");
+     return {
+-        readiness: readSliceReadiness(sliceDir, fs, readPolicy),
++        readiness: readSliceReadiness(sliceDir, fs, readPolicy, root),
+         dirName: path.basename(sliceDir),
+         id: fmValue(fm, "id"),
+         displayName: heading ? heading[1].trim() : path.basename(sliceDir),
+@@ -199,7 +201,7 @@
+             fm.includes("IMPLEMENTATION-PRD"),
+     };
+ }
+-export function projectMissionScopes(fs, missionsRoot, mission) {
++export function projectMissionScopes(fs, missionsRoot, mission, root) {
+     const missionDir = path.join(missionsRoot, mission);
+     const slicesDir = path.join(missionDir, "slices");
+     if (!fs.exists(missionDir))
+@@ -210,7 +212,7 @@
+             const sliceDir = path.join(slicesDir, entry);
+             if (!fs.isDirectory(sliceDir))
+                 continue;
+-            const detail = projectSliceScope(fs, sliceDir);
++            const detail = projectSliceScope(fs, sliceDir, undefined, root);
+             if (!detail)
+                 continue;
+             const { intent: _i, miniRequirements: _m, proofContract: _p, progressPath: _pp, specShaShort: _s, prdExists: _pe, ...summary } = detail;
 --- a/daemon/dist/domain/workspace/project-read.js
 +++ b/daemon/dist/domain/workspace/project-read.js
 @@ -79,10 +79,7 @@
@@ -193,19 +233,21 @@
  }
 --- a/daemon/dist/routes/proof.js
 +++ b/daemon/dist/routes/proof.js
-@@ -3,6 +3,11 @@
+@@ -3,6 +3,13 @@
  import * as path from "node:path";
  import { JudgmentError, evidenceAt, readSliceReadiness, readMissionReadiness, readProjectReadiness, recordJudgment, resolveProofScope } from "../domain/proof/judgments.js";
  import { requireSenderIdentity, resolveRecordedProvenance } from "./require-sender-identity.js";
 +import { projectById } from "../domain/workspace/project-read.js";
 +import { ProjectReadError } from "../domain/workspace/project-catalog.js";
 +// #132 — `<project-id>:<scope>` names a scope inside one workspace-catalog project. Project ids share the
-+// catalog's id grammar, which cannot contain "/", so an ordinary mission/slice path never matches.
++// catalog's id grammar, which cannot contain "/", so an ordinary mission/slice path never matches. Nor is a scope that
++// already exists as written: a mission folder may contain a colon (`alpha:trial/slices/01-t001`), and such paths keep
++// resolving as they always have. The prefix qualifies only when it names a catalogued project.
 +const QUALIFIED_SCOPE = /^([A-Za-z0-9][A-Za-z0-9._-]{0,63}):(.*)$/;
  export function proofRoutes() {
      const app = new Hono();
      app.onError((e, c) => {
-@@ -16,15 +21,57 @@
+@@ -16,15 +23,91 @@
              throw new JudgmentError("workspace_unavailable", "Configure the daemon workspace before reading or recording judgments", 503);
          return value;
      };
@@ -215,13 +257,47 @@
 +     * `<project-id>:` scope prefix resolves through the workspace catalog entry's root and missions root,
 +     * so contained() is then applied per project root.
 +     */
++    /** Whether `scope` names an existing directory, as written, under `root` (never outside it). */
++    const existsAt = (root, scope) => {
++        if (!root)
++            return false;
++        try {
++            resolveProofScope(root, scope);
++            return true;
++        }
++        catch {
++            return false;
++        }
++    };
++    /** A catalog project by id, or null when the catalog has no such project (other catalog failures still throw). */
++    const catalogued = (c, id) => {
++        try {
++            return projectById(c, id);
++        }
++        catch (e) {
++            if (e instanceof ProjectReadError && (e.code === "project_not_found" || e.code === "invalid_project"))
++                return null;
++            throw e;
++        }
++    };
++    const workspaceRoot = (c) => {
++        const value = c.get("sliceIndexer");
++        return value?.isReady() ? value.slicesRoot : null;
++    };
 +    const target = (c, rawScope, project, expectedRoot) => {
 +        if (project !== undefined && typeof project !== "string")
 +            throw new JudgmentError("judgment_invalid", "Project must be a catalog project id");
 +        if (expectedRoot !== undefined && typeof expectedRoot !== "string")
 +            throw new JudgmentError("judgment_invalid", "projectRoot must be the root a prepared read returned");
 +        // A Windows absolute path (`C:\\…`, `C:/…`) is never project-qualified, even though `C` fits the id grammar.
-+        const qualified = rawScope === undefined || path.win32.isAbsolute(rawScope) ? null : QUALIFIED_SCOPE.exec(rawScope);
++        let qualified = rawScope === undefined || path.win32.isAbsolute(rawScope) ? null : QUALIFIED_SCOPE.exec(rawScope);
++        if (qualified) {
++            // The literal path wins where it exists: under the named project (--project) or else the selected workspace.
++            const flagged = project !== undefined ? catalogued(c, project) : null;
++            const literalRoot = flagged ? flagged.missionsRoot : project === undefined ? workspaceRoot(c) : null;
++            if (existsAt(literalRoot, rawScope) || !catalogued(c, qualified[1]))
++                qualified = null;
++        }
 +        const id = qualified?.[1] ?? project;
 +        if (qualified && project !== undefined && project !== qualified[1])
 +            throw new JudgmentError("project_conflict", `Scope names project ${qualified[1]} but --project names ${project}; select one project`);
@@ -267,7 +343,7 @@
      });
      app.post("/judge", async (c) => {
          const body = await c.req.json().catch(() => null);
-@@ -39,9 +86,10 @@
+@@ -39,9 +122,10 @@
          const identity = requireSenderIdentity(c, { verb: "proof judgment", bodyClaim: body.actorSession });
          if (!identity.ok)
              return identity.response;
@@ -281,6 +357,44 @@
          // The receipt is already durable. A lost notification must not turn a committed write into a claimed rollback.
          let notification = "unchanged";
          if (!result.replayed) {
+--- a/daemon/dist/routes/scopes.js
++++ b/daemon/dist/routes/scopes.js
+@@ -69,6 +69,8 @@
+             projectMission(selected, mission);
+         const wantDetail = c.req.query("detail") === "1";
+         const readPolicy = createProofPolicyRead();
++        // A selected catalog project's own root bounds readiness, as in `rig proof` (never an ancestor's project.yaml).
++        const bound = selected?.root;
+         const detailFor = (missionName, dirName) => {
+             let sourcePath;
+             try {
+@@ -76,7 +78,7 @@
+                     sourcePath = workSource(selected.root, path.join(r.root, missionName, "slices", dirName), false);
+                 if (selected)
+                     workSource(selected.root, path.join(r.root, missionName, "slices", dirName));
+-                const d = projectSliceScope(realFs, path.join(r.root, missionName, "slices", dirName), readPolicy);
++                const d = projectSliceScope(realFs, path.join(r.root, missionName, "slices", dirName), readPolicy, bound);
+                 if (!d)
+                     return null;
+                 // The TUI one-read hydrate: narrative CONTENT rides inline for the `n` DISPLAY —
+@@ -97,7 +99,7 @@
+             const slices = realFs.listDir(path.join(dir, "slices"))
+                 .filter(s => realFs.isDirectory(path.join(dir, "slices", s)))
+                 .map(s => detailFor(name, s)).filter((s) => s !== null);
+-            return { mission: name, slices: wantDetail ? slices : slices.map(({ intent, miniRequirements, proofContract, progressPath, specShaShort, prdExists, narrative, ...summary }) => summary), readiness: readMissionReadiness(dir, readPolicy) };
++            return { mission: name, slices: wantDetail ? slices : slices.map(({ intent, miniRequirements, proofContract, progressPath, specShaShort, prdExists, narrative, ...summary }) => summary), readiness: readMissionReadiness(dir, readPolicy, bound) };
+         };
+         if (mission) {
+             if (!realFs.isDirectory(path.join(r.root, mission)))
+@@ -135,7 +137,7 @@
+             return c.json({ error: "missing_params", hint: "?mission=&slice=" }, 400);
+         if (selected && slice)
+             workSource(selected.root, path.join(r.root, mission, "slices", slice));
+-        const detail = projectSliceScope(realFs, path.join(r.root, mission, "slices", slice));
++        const detail = projectSliceScope(realFs, path.join(r.root, mission, "slices", slice), undefined, selected?.root);
+         return detail ? c.json(detail) : c.json({ error: "slice_not_found", mission, slice }, 404);
+     });
+     app.get("/narrative", (c) => {
 --- a/dist/commands/proof.js
 +++ b/dist/commands/proof.js
 @@ -117,11 +117,14 @@
