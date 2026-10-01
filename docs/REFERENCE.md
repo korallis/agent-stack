@@ -201,6 +201,18 @@ with `agent-login` and the pool uses it straight away.
     stages marked, slices done today per rig, what waits longest. `⏎` on a chip opens its journey: every row, who had
     it, worked vs waited time per row and per stage (from the row transitions), and what it waits on now (`[ ]` next
     slice, `esc` back). It reads done rows (every 5 min) and transitions (that slice's newest 20 rows) only while open.
+  - `4` Focus: what needs the owner (each decision with its lettered options; answered in Slack, never from the
+    console), the fleet pulse, a live timeline of outcomes and what is true now (context pressure, stuck seats), and
+    each rig's progress today.
+  - `5` Pool & System: 24 h braille graphs coloured along the value axis, the subscription pool, system health.
+  - A seat's drill-in (`⏎` on a matrix cell or a timeline item, or `:seat <name>`): its open work and slice stages,
+    context gauge (tokens when known; a warning past 80%), its recent queue history, and its live terminal tail, read
+    only while the drill-in is open from the transcript file the daemon's own capture writes
+    (`$OPENRIG_TRANSCRIPTS_PATH`, else `~/.openrig/transcripts/<rig>/<seat>.log`): a file read, so it can never start a
+    capture (the daemon's tail route can) and costs the daemon nothing; it needs the daemon's host.
+  - `:` commands (k9s): `home` `matrix` `river` `focus` `pool`, `seat <name>`, `rig <name>`, `slice <id>`,
+    `theme <name>`, `help`, `q`; Tab completes. `Tab` moves between a view's panes and `e` expands the focused one.
+  - Themes: Pad 39A (default), Catppuccin, Tokyo Night, Nord (`--theme`, `:theme`, `RIG_CONSOLE_THEME`).
   - Keys: `←→` / `hjkl` move, `⏎` drills from a rig card into the matrix, `?` help, `q` quits.
   - It reads the daemon API and its event stream, the Jev decision log, `agent-proxy-status` and `agent-heavy status`
     through ONE cache. The cache refreshes every 5 s, never under 2 s, and backs off to 60 s when the daemon is slow.

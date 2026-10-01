@@ -5,6 +5,26 @@
 //     without ?full / ?refresh, which never capture a tmux pane;
 //   - the River (phase 2) only while it is open: done rows every 5 min (a 400-row read costs the daemon ~0.14 s); a slice's row transitions only for the journey
 //     on screen (its newest 20 rows, each re-read only when the row changed);
+//   - the seat drill-in (phase 3) only while it is open: that one seat's terminal tail, read from the transcript file
+//     the daemon's own capture writes ($OPENRIG_TRANSCRIPTS_PATH or ~/.openrig/transcripts/<rig>/<seat>.log), every
+//     tick. A file read is read-only by construction: the daemon's tail route can START a capture, so it is never
+//     called (QA PR92). The tail needs the daemon's host.
+export const TAIL_BYTES = 256 * 1024, TAIL_LINES = 150;
+/** The daemon's own transcript clean-up (transcript-store stripAnsi), so the tail reads like `rig transcript`. */
+export function stripAnsi(text: string): string {
+  return text
+    .replace(/\x1b\[(\d*)C/g, (_, n) => " ".repeat(Math.max(1, Number(n || "1"))))
+    .replace(/\x1b\[(\d*)G/g, (_, n) => " ".repeat(Math.max(1, Number(n || "1"))))
+    .replace(/\x1b\][^\x07\x1b]*(?:\x07|\x1b\\)/g, "")
+    .replace(/\x1b\[[0-?]*[ -/]*[@-~]/g, "")
+    .replace(/\x1b[@-_]/g, "")
+    .replace(/\r/g, "\n")
+    .replace(/\u00a0/g, " ")
+    .replace(/[^\n]\x08/g, "")
+    .replace(/[\x00-\x08\x0b\x0c\x0e-\x1f\x7f]/g, "")
+    .replace(/[ \t]+\n/g, "\n")
+    .replace(/\n{3,}/g, "\n\n");
+}
 //   - local sources (gate log, account pool, heavy slots, host) on their own slower clocks;
 //   - the ticker: the queue's recent transitions (a bounded read, with the queue tier) and queue creations from the
 //     live-only /api/queue/sse, whose events also pull the next queue read forward (never sooner than 2 s after the
@@ -20,6 +40,7 @@ export interface Options {
   url: string; interval: number; procDir?: string; jevLog?: string | null; timeoutMs?: number;
   run?: (cmd: string, args: string[], timeoutMs: number) => Promise<string | null>; now?: () => number; events?: boolean;
   gateDayMax?: number;   // tests only
+  transcripts?: string;  // the daemon's transcript root ($OPENRIG_TRANSCRIPTS_PATH, else $OPENRIG_HOME/transcripts)
 }
 export const MIN_INTERVAL = 2000, MAX_INTERVAL = 60_000, RIGS_EVERY = 60_000, QUEUE_EVERY = 30_000, DONE_EVERY = 300_000, JOURNEY_ROWS = 20;
 /** The most of the gate log read for one UTC day; past it the count is shown as partial (a lower bound). */
@@ -96,11 +117,13 @@ export class Cache {
   private dirty = { rigs: false, queue: false };
   private river = false;
   private journeyKey: string | null = null;
+  private seatTail: string | null = null;
   private doneAt = -Infinity;
   private trSeen = new Map<string, string>();   // qitem id -> its updated time when its transitions were read
   requests = 0;
   constructor(o: Options) {
-    this.opt = { procDir: "/proc", jevLog: null, timeoutMs: 4000, events: true, gateDayMax: GATE_DAY_MAX, ...o, interval: Math.max(MIN_INTERVAL, o.interval) } as Cache["opt"];
+    this.opt = { procDir: "/proc", jevLog: null, timeoutMs: 4000, events: true, gateDayMax: GATE_DAY_MAX,
+      transcripts: process.env.OPENRIG_TRANSCRIPTS_PATH || path.join(process.env.OPENRIG_HOME || path.join(os.homedir(), ".openrig"), "transcripts"), ...o, interval: Math.max(MIN_INTERVAL, o.interval) } as Cache["opt"];
     this.interval = this.opt.interval;
     this.raw = {
       at: this.now(), host: { id: os.hostname(), cores: os.cpus().length, load: [0, 0, 0], memUsedGB: 0, memTotalGB: 0 },
@@ -174,6 +197,10 @@ export class Cache {
       this.raw.queue = queue.map(qrowFromItem); this.raw.attention = attention.map(qrowFromItem); this.queueAt = this.now();
       const tr: any[] = await this.get("/api/queue/recent-transitions?scope=instance&limit=40");
       for (const x of Array.isArray(tr) ? tr : []) { const l = transitionLine(x); if (l) this.addTicker(`t${x.transitionId}`, l); }
+      const hist = new Map((this.raw.history ?? []).map((h) => [h.id, h]));
+      for (const x of Array.isArray(tr) ? tr : []) if (typeof x.transitionId === "number")
+        hist.set(x.transitionId, { id: x.transitionId, ts: x.ts, actor: x.actorSession ?? "", change: x.change ?? "", summary: x.summary ?? null, rig: x.rig ?? null, qitemId: x.qitemId ?? "" });
+      this.raw.history = [...hist.values()].sort((a, b) => b.ts.localeCompare(a.ts)).slice(0, 400);
     }
     this.raw.rigs = rigs;
     if (this.river && this.now() - this.doneAt >= DONE_EVERY) {
@@ -181,6 +208,7 @@ export class Cache {
       this.raw.done = done.map(qrowFromItem); this.doneAt = this.now();
     }
     if (this.journeyKey) await this.readJourney(this.journeyKey);
+    if (this.seatTail) this.readTail(this.seatTail);
     this.raw.daemon = { ok: hz.status === "ok", latencyMs: latency, version: hz.semver ?? null, cpuPct: this.daemonCpu(Number(hz.pid)),
       loopUtil: typeof hz.eventLoop?.utilization === "number" ? hz.eventLoop.utilization : null, error: null };
     this.raw.sources.daemon = "ok";
@@ -244,8 +272,39 @@ export class Cache {
       } finally { fs.closeSync(fd); }
     } catch { this.raw.sources.gates = "unavailable"; }
   }
-  /** What the screen shows decides what the River tier reads: the done list while the River is open, transitions for
-   *  the one journey open. Opening either pulls the next read forward. */
+  /** What the screen shows decides what the River tier reads: the done list while the River or Focus (its progress) is
+   *  open, transitions for the one journey open. Opening either pulls the next read forward. */
+  /** The one seat whose terminal tail is read (the drill-in on screen), or null. */
+  setSeat(session: string | null) {
+    const pull = session !== null && session !== this.seatTail;
+    this.seatTail = session;
+    if (session === null) this.raw.tail = null;
+    if (pull) this.soon();
+  }
+  /** The seat's tail from the transcript file the daemon writes (<root>/<rig>/<seat>.log), read-only: no route that could
+   *  start a capture is ever called (QA PR92), no tmux, no daemon work. Needs the daemon's host (a local daemon). */
+  private readTail(session: string) {
+    const seat = this.raw.rigs.flatMap((r) => r.seats).find((s) => s.session === session);
+    const say = (error: string, state = "unavailable") => { this.raw.tail = { session, content: null, at: this.now(), state, error }; };
+    if (!seat) return say("no tail: not a seat this daemon runs");
+    if (!/^[A-Za-z0-9._-]+@[A-Za-z0-9._-]+$/.test(session) || !/^[A-Za-z0-9._-]+$/.test(seat.rig) || seat.rig.startsWith(".")) return say("no tail: an unexpected seat name");
+    const file = path.join(this.opt.transcripts, seat.rig, `${session}.log`);
+    try {
+      const st = fs.statSync(file);
+      const len = Math.min(st.size, TAIL_BYTES), fd = fs.openSync(file, "r");
+      try {
+        const buf = Buffer.alloc(len); fs.readSync(fd, buf, 0, len, st.size - len);
+        const lines = stripAnsi(buf.toString("utf8")).split("\n");
+        if (st.size > len) lines.shift();   // a partial first line
+        this.raw.tail = { session, content: lines.slice(-TAIL_LINES).join("\n"), at: st.mtimeMs, state: seat.ingest?.state ?? "file", error: null };
+      } finally { fs.closeSync(fd); }
+    } catch (e) {
+      const why = (e as NodeJS.ErrnoException).code === "ENOENT"
+        ? `no transcript file for this seat${seat.ingest ? ` (the daemon's capture is ${seat.ingest.state}${seat.ingest.reason ? `: ${seat.ingest.reason}` : ""})` : ""}`
+        : `the transcript file can't be read (${(e as NodeJS.ErrnoException).code ?? "error"})`;
+      say(`no tail: ${why}. The console only reads what the daemon captured; it never starts a capture.`);
+    }
+  }
   setView(river: boolean, journeyKey: string | null) {
     const pull = (river && !this.river) || (journeyKey !== null && journeyKey !== this.journeyKey);
     this.river = river; this.journeyKey = journeyKey;

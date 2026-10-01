@@ -222,6 +222,6 @@ export function matrix(c: Ctx, hist: History): void {
   s.put(2, bottom + 2, "EXCEPTIONS ", { fg: exc.length ? t.blocked : t.dim, bold: true });
   s.put(13, bottom + 2, fit(exc.join("  ·  ") || "none", s.w - 16), { fg: exc.length ? t.text : t.dim });
   ticker(c, s.h - 3);
-  footer(c, [["hjkl/←↑↓→", "move"], ["⏎", "focus rig"], ["1-2", "views"], ["esc", "home"], ["r", "refresh"], ["?", "help"], ["q", "quit"]],
+  footer(c, [["hjkl/←↑↓→", "move"], ["⏎", "open seat"], ["1-5", "views"], ["esc", "home"], ["r", "refresh"], ["?", "help"], ["q", "quit"]],
     `[seat matrix] ${g.rows.length} rigs · ${f.agents.length} seats · read-only`);
 }

@@ -6,8 +6,11 @@ import type { Fleet, Raw } from "../model.ts";
 import { ago, fit } from "../draw.ts";
 
 export interface Ctx { s: Screen; t: Theme; raw: Raw; f: Fleet; frame: number; view: number; rigFocus: number; seatFocus: [number, number]; note: string | null;
-  riverFocus?: [number, number]; journey?: string | null }
-export const VIEWS = ["Mission Control", "Seat Matrix", "River"];
+  riverFocus?: [number, number]; journey?: string | null;
+  // phase 3: the focused pane (Tab), 'e' expanded, the selection in it, the ':' command being typed
+  pane?: number; expand?: boolean; select?: number; cmd?: string | null; clampSelect?: (n: number) => void }
+export const VIEWS = ["Mission Control", "Seat Matrix", "River", "Focus", "Pool & System"];
+export const COMMANDS = ["home", "matrix", "river", "focus", "pool", "seat <name>", "rig <name>", "slice <id>", "theme pad39a|catppuccin|tokyo-night|nord", "help", "q"];
 const SPIN = "⣾⣽⣻⢿⡿⣟⣯⣷";
 
 export function header(c: Ctx, crumb: string): void {
@@ -38,7 +41,7 @@ export function header(c: Ctx, crumb: string): void {
     tx = s.put(tx, 1, ` ${i + 1} ${v} `, on ? { fg: t.bg, bg: t.working, bold: true } : { fg: t.dim });
     tx += 1;
   });
-  s.put(tx + 1, 1, "4 Focus · 5 Constellation: later phases", { fg: t.faint });
+  s.put(s.w - 22, 1, fit(`theme ${t.name}`, 20).padStart(20), { fg: t.faint });
 }
 
 export function ticker(c: Ctx, y: number): void {
@@ -61,6 +64,16 @@ export function kindColor(t: Theme, kind: string) {
 
 export function footer(c: Ctx, keys: [string, string][], status: string): void {
   const { s, t, f } = c;
+  if (c.cmd !== null && c.cmd !== undefined) {   // k9s-style command bar in place of the key hints
+    s.fill(0, s.h - 2, s.w, 1, " ", { bg: t.panel });
+    let x = s.put(1, s.h - 2, " : ", { fg: t.bg, bg: t.title, bold: true });
+    x = s.put(x, s.h - 2, c.cmd, { fg: t.text, bg: t.panel, bold: true });
+    s.put(x, s.h - 2, "█", { fg: t.title, bg: t.panel });
+    const word = c.cmd.split(" ")[0];
+    const hints = COMMANDS.filter((k) => k.startsWith(word)).join("  ");
+    s.put(Math.max(x + 3, 40), s.h - 2, fit(hints || "unknown command", s.w - Math.max(x + 3, 40) - 2), { fg: hints ? t.dim : t.stuck, bg: t.panel });
+    keys = [];
+  }
   let x = 1;
   for (const [k, what] of keys) {
     if (x + k.length + what.length + 4 > s.w) break;
