@@ -9,7 +9,7 @@
 //     channel (or into --thread-ts) with the comment "openrig-slack-upload-check".
 // Channel and env file come from $OPENRIG_HOME/slack-connector.json (pointers only) unless given. The bot token is
 // read BY NAME (env SLACK_BOT_TOKEN / OPENRIG_SLACK_BOT_TOKEN, else the env file's SLACK_BOT_TOKEN line) and never
-// printed; a failure prints Slack's error code only. Exit 0 when every step is ok (or the dry run resolved), else 1.
+// printed; a failed step prints only Slack's error code, an HTTP status or a fixed category, never free text. Exit 0 when every step is ok (or the dry run resolved), else 1.
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
@@ -21,7 +21,17 @@ const MAX_BYTES = 50 * 1024 * 1024;
 const PNG = Buffer.from("iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mNkYPhfDwAChwGA60e6kgAAAABJRU5ErkJggg==", "base64");
 const say = (s) => process.stdout.write(`${s}\n`);
 const fail = (s, code = 1) => { process.stderr.write(`openrig-slack-upload-check: ${s}\n`); process.exit(code); };
-const safeCode = (e) => (/^[A-Za-z0-9_ .:-]{1,80}$/.test(String(e ?? "")) ? String(e) : "unknown error");
+// What a failed step may print: Slack's own error code (snake_case, e.g. invalid_arguments, not_authed), an HTTP
+// status, or a fixed category. Never free text (a transport exception or a response can echo anything, the token
+// included), and never a code that matches the token.
+function failureLabel(e, token) {
+  const s = String(e ?? "");
+  if (/^(web-api|upload) transport: /.test(s)) return "transport error (no response)";
+  const http = s.match(/^(?:http|upload) (\d{3})$/);
+  if (http) return `HTTP ${http[1]}`;
+  if (/^[a-z][a-z0-9_]{1,59}$/.test(s) && !(token && (s.includes(token) || token.includes(s)))) return s;
+  return "unrecognised error";
+}
 
 const args = process.argv.slice(2);
 const opt = { live: false };
@@ -101,13 +111,13 @@ try {
   const bytes = new Uint8Array(fs.readFileSync(file));
   const name = path.basename(file);
   const up = await api.getUploadURLExternal(token, name, bytes.length);
-  if (!(up.ok && up.uploadUrl && up.fileId)) stop(`files.getUploadURLExternal FAILED: ${safeCode(up.error)}${patched ? "" : " (patch 141 is not applied)"}`);
+  if (!(up.ok && up.uploadUrl && up.fileId)) stop(`files.getUploadURLExternal FAILED: ${failureLabel(up.error, token)}${patched ? "" : " (patch 141 is not applied)"}`);
   say("files.getUploadURLExternal: ok");
   const put = await api.uploadBytesExternal(up.uploadUrl, bytes);
-  if (!put.ok) stop(`byte upload FAILED: ${safeCode(put.error)}`);
+  if (!put.ok) stop(`byte upload FAILED: ${failureLabel(put.error, token)}`);
   say(`byte upload: ok (${bytes.length} bytes)`);
   const done = await api.completeUploadExternal(token, { files: [{ id: up.fileId, title: name }], channelId: channel, threadTs: opt.threadTs, initialComment: "openrig-slack-upload-check" });
-  if (!done.ok) stop(`files.completeUploadExternal FAILED: ${safeCode(done.error)}`);
+  if (!done.ok) stop(`files.completeUploadExternal FAILED: ${failureLabel(done.error, token)}`);
   say(`files.completeUploadExternal: ok (file ${up.fileId} shared to ${channel})`);
 } catch (e) {
   process.stderr.write(`openrig-slack-upload-check: ${e instanceof StepFailed ? e.message : `error (${e?.name ?? "unknown"})`}\n`);

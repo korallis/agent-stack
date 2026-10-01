@@ -64,7 +64,22 @@ export function slackStub(calls = []) {
 const stubPath = join(tmp, "slack-stub.mjs");
 fs.writeFileSync(stubPath, STUB);
 const preloadPath = join(tmp, "slack-stub-preload.mjs");
-fs.writeFileSync(preloadPath, `import { slackStub } from ${JSON.stringify(pathToFileURL(stubPath).href)};\nglobalThis.fetch = slackStub();\n`);
+// SLACK_STUB_MODE makes a step fail in ways that could leak: a transport exception or an error field that echoes the
+// bearer token, free diagnostic text, an HTTP 500.
+fs.writeFileSync(preloadPath, `import { slackStub } from ${JSON.stringify(pathToFileURL(stubPath).href)};
+const base = slackStub(), mode = process.env.SLACK_STUB_MODE;
+const bearer = (init) => String(init?.headers?.authorization ?? "").replace(/^Bearer /, "");
+const err = (error) => new Response(JSON.stringify({ ok: false, error }), { status: 200, headers: { "content-type": "application/json" } });
+globalThis.fetch = async (url, init) => {
+  const getUrl = String(url).endsWith("files.getUploadURLExternal"), complete = String(url).endsWith("files.completeUploadExternal");
+  if (mode === "echo-transport" && getUrl) throw new Error("connect failed for " + bearer(init));
+  if (mode === "echo-error" && getUrl) return err(bearer(init));
+  if (mode === "text-error" && complete) return err("upstream diagnostic text: see " + bearer(init));
+  if (mode === "http-500" && getUrl) return new Response("<html>oops</html>", { status: 500 });
+  if (mode === "upload-transport" && String(url).includes("/upload/")) throw new Error("socket hang up " + (init?.headers?.authorization ?? ""));
+  return base(url, init);
+};
+`);
 const { slackStub } = await import(pathToFileURL(stubPath).href);
 
 test("pristine 0.6.3 sends files.getUploadURLExternal as JSON and Slack refuses it (the live failure)", async () => {
@@ -219,6 +234,31 @@ test("live check --live against pristine 0.6.3 fails at getUploadURLExternal wit
   assert.equal(r.status, 1);
   assert.match(r.stderr, /files\.getUploadURLExternal FAILED: invalid_arguments \(patch 141 is not applied\)/);
   assert.doesNotMatch(r.stdout + r.stderr, /SECRETVALUE/);
+});
+
+test("live check: a failed step prints only a Slack code, an HTTP status or a fixed category, never echoed text or the token", () => {
+  const cases = [
+    ["echo-transport", "xoxb-test-SECRETVALUE", /files\.getUploadURLExternal FAILED: transport error \(no response\)$/m],
+    ["echo-error", "xoxb-test-SECRETVALUE", /files\.getUploadURLExternal FAILED: unrecognised error$/m],
+    // a token shaped like a Slack code is still never printed
+    ["echo-error", "zz_secretvalue_zz", /files\.getUploadURLExternal FAILED: unrecognised error$/m],
+    ["text-error", "xoxb-test-SECRETVALUE", /files\.completeUploadExternal FAILED: unrecognised error$/m],
+    ["http-500", "xoxb-test-SECRETVALUE", /files\.getUploadURLExternal FAILED: HTTP 500$/m],
+    ["upload-transport", "xoxb-test-SECRETVALUE", /byte upload FAILED: transport error \(no response\)$/m],
+  ];
+  for (const [mode, token, want] of cases) {
+    const { home } = checkHome(`h-${mode}-${token.length}`, { token });
+    const r = runCheck(["--pkg", patched, "--live"], { home, preload: true, env: { SLACK_STUB_MODE: mode } });
+    assert.equal(r.status, 1, `${mode}: ${r.stdout}${r.stderr}`);
+    assert.match(r.stderr, want, mode);
+    assert.doesNotMatch(r.stdout + r.stderr, /SECRETVALUE|secretvalue|diagnostic|connect failed|socket hang up|oops/, mode);
+    const scratch = join(home, ".cache/local-tmp", os.userInfo().username);
+    assert.deepEqual(fs.existsSync(scratch) ? fs.readdirSync(scratch) : [], [], `${mode}: scratch removed`);
+  }
+  // Slack's own codes still come through, e.g. not_authed on the complete step
+  const { home } = checkHome("h-code");
+  const r = runCheck(["--pkg", pristine, "--live"], { home, preload: true });
+  assert.match(r.stderr, /FAILED: invalid_arguments \(patch 141 is not applied\)/);
 });
 
 test("live check refuses a group/world-readable env file, a relative or non-attachment --file, and unknown arguments", () => {
