@@ -52,7 +52,7 @@
  export function proofCommand() {
      const cmd = new Command("proof").description("Capture evidence (add), record an attributed item judgment (judge), and read derived readiness (show). Capture, policy acceptance, higher outcome judgment and publication are separate.");
      cmd.addHelpText("after", `
-@@ -437,12 +477,15 @@
+@@ -439,12 +479,15 @@
              }
              fs.mkdirSync(proofDir, { recursive: true });
              const frontmatter = YAML.stringify(header).trimEnd();

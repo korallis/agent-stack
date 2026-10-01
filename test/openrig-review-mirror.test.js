@@ -39,3 +39,13 @@ test("141: the local attachment is opened once, non-blocking, and read through t
   assert.match(a, /fs\.closeSync\(fd\)/);
   assert.doesNotMatch(a, /fs\.statSync\(refPath\)|fs\.readFileSync\(refPath\)/);
 });
+
+test("132: Windows scopes, catalog source observation, project identity and the projectRoot pin (#136 review)", () => {
+  const a = added("132-project-scoped-proof.patch");
+  assert.match(a, /const qualified = rawScope === undefined \|\| path\.win32\.isAbsolute\(rawScope\) \? null : QUALIFIED_SCOPE\.exec\(rawScope\);/);
+  assert.match(a, /const observation = \(c, project\) => project \? \{ state: "unavailable", revision: "unverified" \} : proofSourceObservation\(c\);/);
+  assert.match(a, /project: \{ id: p\.id, root: p\.root \}/);
+  assert.match(a, /new JudgmentError\("project_changed", .*, 409\)/);
+  assert.match(a, /target\(c, body\.scope, body\.project, body\.projectRoot\)/);
+  assert.match(a, /\.\.\.\(view\.project\?\.root \? \{ projectRoot: view\.project\.root \} : \{\}\)/, "the CLI pins the prepared root");
+});

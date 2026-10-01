@@ -59,7 +59,7 @@
  export function proofRoutes() {
      const app = new Hono();
      app.onError((e, c) => {
-@@ -16,15 +21,45 @@
+@@ -16,15 +21,55 @@
              throw new JudgmentError("workspace_unavailable", "Configure the daemon workspace before reading or recording judgments", 503);
          return value;
      };
@@ -69,53 +69,65 @@
 +     * `<project-id>:` scope prefix resolves through the workspace catalog entry's root and missions root,
 +     * so contained() is then applied per project root.
 +     */
-+    const target = (c, rawScope, project) => {
++    const target = (c, rawScope, project, expectedRoot) => {
 +        if (project !== undefined && typeof project !== "string")
 +            throw new JudgmentError("judgment_invalid", "Project must be a catalog project id");
-+        const qualified = rawScope === undefined ? null : QUALIFIED_SCOPE.exec(rawScope);
++        if (expectedRoot !== undefined && typeof expectedRoot !== "string")
++            throw new JudgmentError("judgment_invalid", "projectRoot must be the root a prepared read returned");
++        // A Windows absolute path (`C:\\…`, `C:/…`) is never project-qualified, even though `C` fits the id grammar.
++        const qualified = rawScope === undefined || path.win32.isAbsolute(rawScope) ? null : QUALIFIED_SCOPE.exec(rawScope);
 +        const id = qualified?.[1] ?? project;
 +        if (qualified && project !== undefined && project !== qualified[1])
 +            throw new JudgmentError("project_conflict", `Scope names project ${qualified[1]} but --project names ${project}; select one project`);
 +        const scope = qualified ? qualified[2] : rawScope;
 +        if (id === undefined) {
 +            const owner = indexer(c);
-+            return { root: owner.slicesRoot, evidenceRoot: path.dirname(owner.slicesRoot), scope, owner };
++            return { root: owner.slicesRoot, evidenceRoot: path.dirname(owner.slicesRoot), scope, owner, project: null };
 +        }
 +        // Evidence is prepared against the project root (where project.yaml lives), the same root recordJudgment derives,
 +        // so prepared references still match at judgment time under a nested authored missions.root.
++        let p;
 +        try {
-+            const p = projectById(c, id);
-+            return { root: p.missionsRoot, evidenceRoot: p.root, scope, owner: null };
++            p = projectById(c, id);
 +        }
 +        catch (e) {
 +            if (!(e instanceof ProjectReadError))
 +                throw e;
 +            throw new JudgmentError(e.code, e.message, e.code === "project_not_found" ? 404 : e.code === "invalid_project" ? 400 : 409);
 +        }
++        // A judgment carries the root its prepared read resolved: if the catalog now maps the id elsewhere, refuse.
++        if (typeof expectedRoot === "string" && expectedRoot !== p.root)
++            throw new JudgmentError("project_changed", `Project ${id} now resolves to ${p.root}, not the ${expectedRoot} the prepared read used; read the proof again`, 409);
++        return { root: p.missionsRoot, evidenceRoot: p.root, scope, owner: null, project: { id: p.id, root: p.root } };
 +    };
++    // Catalog-project reads have no source watcher (it observes the selected workspace only): report unverified.
++    const observation = (c, project) => project ? { state: "unavailable", revision: "unverified" } : proofSourceObservation(c);
      app.get("/", c => {
 -        const root = indexer(c).slicesRoot, scope = c.req.query("scope");
-+        const { root, evidenceRoot, scope } = target(c, c.req.query("scope"), c.req.query("project"));
++        const { root, evidenceRoot, scope, project } = target(c, c.req.query("scope"), c.req.query("project"), c.req.query("projectRoot"));
++        const common = { sourceObservation: observation(c, project), ...(project ? { project } : {}) };
          if (!scope)
-             return c.json({ ...readProjectReadiness(root), sourceObservation: proofSourceObservation(c) });
+-            return c.json({ ...readProjectReadiness(root), sourceObservation: proofSourceObservation(c) });
++            return c.json({ ...readProjectReadiness(root), ...common });
          const dir = resolveProofScope(root, scope);
          if (path.basename(path.dirname(dir)) !== "slices")
-             return c.json({ ...readMissionReadiness(dir), sourceObservation: proofSourceObservation(c) });
+-            return c.json({ ...readMissionReadiness(dir), sourceObservation: proofSourceObservation(c) });
++            return c.json({ ...readMissionReadiness(dir), ...common });
          const refs = c.req.queries("evidence") ?? [];
 -        return c.json({ ...readSliceReadiness(dir), sourceObservation: proofSourceObservation(c), ...(refs.length ? { preparedEvidence: refs.map(ref => evidenceAt(path.dirname(root), dir, ref)) } : {}) });
-+        return c.json({ ...readSliceReadiness(dir), sourceObservation: proofSourceObservation(c), ...(refs.length ? { preparedEvidence: refs.map(ref => evidenceAt(evidenceRoot, dir, ref)) } : {}) });
++        return c.json({ ...readSliceReadiness(dir), ...common, ...(refs.length ? { preparedEvidence: refs.map(ref => evidenceAt(evidenceRoot, dir, ref)) } : {}) });
      });
      app.post("/judge", async (c) => {
          const body = await c.req.json().catch(() => null);
-@@ -39,9 +74,10 @@
+@@ -39,9 +84,10 @@
          const identity = requireSenderIdentity(c, { verb: "proof judgment", bodyClaim: body.actorSession });
          if (!identity.ok)
              return identity.response;
 -        const owner = indexer(c);
 -        const result = recordJudgment(owner.slicesRoot, body, identity.session, resolveRecordedProvenance(c, identity));
 -        owner.invalidate();
-+        const { project: _project, ...input } = body;
-+        const { root, scope, owner } = target(c, body.scope, body.project);
++        const { project: _project, projectRoot: _projectRoot, ...input } = body;
++        const { root, scope, owner } = target(c, body.scope, body.project, body.projectRoot);
 +        const result = recordJudgment(root, { ...input, scope: scope }, identity.session, resolveRecordedProvenance(c, identity));
 +        owner?.invalidate();
          // The receipt is already durable. A lost notification must not turn a committed write into a claimed rollback.
@@ -159,12 +171,14 @@
              for (const ref of refs)
                  query.append("evidence", ref);
              const c = client(), view = await response(await c.get(`/api/proof?${query}`));
-@@ -158,7 +162,7 @@
+@@ -158,7 +162,9 @@
                  ...(refs.length ? { evidence: refs, expectedEvidence: view.preparedEvidence } : {}),
                  ...(opts.subject ? { subject: { kind: opts.subject.slice(0, subjectAt), ref: opts.subject.slice(subjectAt + 1), ...(opts.comparison ? { comparison: opts.comparison } : {}) } } : {}),
                  expectedRevision: opts.revision ?? item.revision, expectedPrevious: item.judgment?.id ?? null,
 -                operationId: opts.operationId, replace: opts.replace === true };
-+                operationId: opts.operationId, replace: opts.replace === true, ...(opts.project ? { project: opts.project } : {}) };
++                operationId: opts.operationId, replace: opts.replace === true, ...(opts.project ? { project: opts.project } : {}),
++                    // Pin the project root the prepared read resolved; the daemon refuses (409 project_changed) if it moved.
++                    ...(view.project?.root ? { projectRoot: view.project.root } : {}) };
              const result = await response(await c.post("/api/proof/judge", body));
              console.log(opts.json ? JSON.stringify(result) : JSON.stringify(result, null, 2));
          }
