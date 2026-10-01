@@ -12,7 +12,7 @@ const repo = join(dirname(fileURLToPath(import.meta.url)), "..");
 const require = createRequire(import.meta.url);
 const hookFile = join(repo, "system/credguard-read-hook"), installFile = join(repo, "system/credguard-read-install");
 const g = require(hookFile), inst = require(installFile);
-const root = fs.mkdtempSync("/tmp/claude-1000/credread-");
+const root = fs.mkdtempSync(join((await import("node:os")).tmpdir(), "credread-"));
 process.on("exit", () => fs.rmSync(root, { recursive: true, force: true }));
 const home = "/home/seat", cwd = "/work/app";
 const decide = (tool_name, tool_input, pats = g.DEFAULT_PATTERNS) => g.decide({ tool_name, tool_input, cwd }, { home, pats });

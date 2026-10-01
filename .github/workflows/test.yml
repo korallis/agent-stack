@@ -1,0 +1,39 @@
+# The test suite on every pull request and on main: the exact-head check the merge gate reads.
+# No secrets and no billed services: Jev is stubbed in the tests (AGENT_JEV_STUB), gh/rig/tmux are stubs, and every
+# test runs in a throwaway HOME. Tests that need the owner's machine (install.sh's prerequisites, OpenRig, rig, codex)
+# skip with their reason.
+name: test
+
+on:
+  pull_request:
+  push:
+    branches: [main]
+
+permissions:
+  contents: read
+
+concurrency:
+  group: test-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  test:
+    name: test
+    runs-on: ubuntu-24.04
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 24.x
+          cache: npm
+          cache-dependency-path: jev/package-lock.json
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - name: Install dependencies
+        run: |
+          npm ci --prefix jev --no-audit --no-fund
+          python -m pip install --quiet pyyaml
+      - name: Test
+        run: node --test 'test/*.test.js'
