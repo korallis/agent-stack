@@ -107,7 +107,7 @@ export function render(raw: Raw, hist: History, w: number, h: number, st: ViewSt
   return s;
 }
 
-function loadFixture(file: string): { raw: Raw; history: Sample[] } {
+export function loadFixture(file: string): { raw: Raw; history: Sample[] } {
   const d = JSON.parse(fs.readFileSync(file, "utf8"));
   return { raw: d.raw as Raw, history: Array.isArray(d.history) ? d.history : [] };
 }

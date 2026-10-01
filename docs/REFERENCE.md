@@ -168,7 +168,7 @@ rig ps                                   # which teams are running
 rig ps --nodes --rig <rig>               # what each seat in a team is doing
 rig send <seat>@<rig> "message"          # talk to a seat, e.g. the lead
 rig queue list -a -A                     # who owns which task
-agent-project-check <Project>            # is a project wired correctly (waves, slices, tags, skills)?
+agent-project-check <Project>            # is a project wired correctly (waves, slices, tags, skills, queue)?
 agent-refresh-guidance <Project> --apply # after editing a rig's CULTURE.md: update running seats' instructions
 agent-project-repair <Project> --apply   # fix anything agent-project-check flags
 rig down <rig> --snapshot                # stop a team (resume later with: rig up <rig>)
@@ -176,6 +176,11 @@ agent-proxy-status                       # how the subscription pool is doing
 claude-pool                              # your own Claude Code session through the pool (incl. Kimi models)
 openrig-update --check                   # is OpenRig up to date? (+ are local patches ready for the new version)
 ```
+
+`agent-project-check` reads the newest 20,000 queue rows without bodies (one `rig queue list --limit 20000` call, 180 s
+timeout) and fetches a body only where a check needs it: each wave-map row in that list, and a sample of the newest 100
+rows for the `worktree_path=` check. A queue past 20,000 rows is checked on its newest 20,000, so an older wave-map row
+outside them isn't seen (WO77).
 
 `agent-proxy-status` shows each account's 5-hour and weekly windows as the provider reports them. Codex sends each
 window's length and currently has only a weekly one, so its 5h column is `-`. An account that has used up a window but
@@ -205,7 +210,8 @@ with `agent-login` and the pool uses it straight away.
     one of its rows waits on (QUEUE, SPEC, TESTS, BUILD, REVIEW, QA, MERGE, DEPLOY by the destination's pod), pooled
     stages marked, slices done today per rig, what waits longest. `⏎` on a chip opens its journey: every row, who had
     it, worked vs waited time per row and per stage (from the row transitions), and what it waits on now (`[ ]` next
-    slice, `esc` back). It reads done rows (every 5 min) and transitions (that slice's newest 20 rows) only while open.
+    slice, `esc` back). It reads done rows every 5 min while the River or Focus is open, and a slice's transitions (its
+    newest 20 rows) only while its journey is open.
   - `4` Focus: what needs the owner (each decision with its lettered options; answered in Slack, never from the
     console), the fleet pulse, a live timeline of outcomes and what is true now (context pressure, stuck seats), and
     each rig's progress today.
@@ -225,12 +231,17 @@ with `agent-login` and the pool uses it straight away.
     that misses a condition is "quiet, not stuck", with why (no open work, its queue moved, not quiet long enough).
   - Stage times on the River: per stage, the median time its open rows have sat in their current state and the share
     waiting; the selected slice's time at its stage, worked vs waited. From the queue rows (no extra reads).
-  - Keys: `←→` / `hjkl` move, `⏎` drills from a rig card into the matrix, `?` help, `q` quits.
+  - Keys: `1`-`5` views, `←→↑↓` / `hjkl` move, `⏎` opens (a rig's seats, a seat, a slice's journey), `Tab` next pane,
+    `e` expand, `:` commands, `[ ]` previous/next slice in a journey, `j`/`k` select or scroll, `esc` back, `r`
+    refresh, `?` help, `q` quits. The README has the full table and a gallery.
   - It reads the daemon API and its event stream, the Jev decision log, `agent-proxy-status` and `agent-heavy status`
     through ONE cache. The cache refreshes every 5 s, never under 2 s, and backs off to 60 s when the daemon is slow.
     It never polls tmux and changes nothing.
   - Its 24 h history lives in `$AGENT_STACK_STATE/rig-console/history.json`.
-  - `rig-console --once --fixture console/fixtures/demo.json` draws the neutral demo.
+  - `rig-console --fixture docs/fixtures/demo-fleet.json` runs on the neutral demo fleet (no daemon); add `--once
+    --size 176x50 --view river` for one frame. `node console/docs/make-assets.mjs` redraws the README's images and
+    animated demo from it (headless Chromium and ImageMagick; `--check` renders the frames without them and
+    checks the README against them, as the tests do).
 - **Relaunch a seat only when it is idle.** Codex: `C-u`, `/quit`, Enter. Claude: `/exit`. Then
   `rig launch <rigId> <pod.member>` (the rig ID, not its name). Check that it resumed its own conversation (Codex
   `resume <thread>`, Claude `--resume <session-id>` on its command line).
@@ -558,6 +569,12 @@ the lead or a person. Send Jev evidence, not conclusions.
     comment for another head never carries;
   - `change`: `--change "<1–3 lines>"`, else the PR title plus the body's first section (up to its first heading, at
     most 600 characters);
+  - the scope, read from the diff and stated neutrally (WO79): `scope (from the diff): code change, N non-test
+    path(s): …` for an ordinary PR, or `tests-only, …`. A separate `scope check:` line appears only for the real
+    negative: a test author's `tests/<feature-id>` branch whose diff changes code. `review.merge_gate` v4 applies the
+    tests-first exception only when a PR relies on it (its evidence mentions a failing, would-fail or expected-to-fail
+    test, or pending feature work); an ordinary PR (required CI green, QA PASS for this head) needs none, however its
+    description is worded;
   - the target branch, the deploy effect, and the rollback (a rollback nobody stated is labelled as a proposed
     default).
 
