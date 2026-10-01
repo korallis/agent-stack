@@ -451,7 +451,10 @@ the lead or a person. Send Jev evidence, not conclusions.
     commit it was submitted on ("submitted on this head" or "on commit <sha>, not this head").
     Reviewers set that link to their review comment. Without a link the report is MISSING; the latest comment naming
     the head is passed on only as UNVERIFIED, never as the review;
-  - QA's `proof/brb-<head>.md`, and the latest blast-radius comment with its link and whether it names the head. If
+  - QA's `proof/brb-<head>.md`, and the blast radius with its link and whether it names the head. A blast radius is a
+    "Blast radius" section at any heading level, a bold lead-in or a plain "Blast radius: …" paragraph, in a note's own
+    lines. The selected review's own section is preferred, then the newest note naming this head, then the newest
+    note, labelled "does NOT name this head". Its excerpt has its own 900-character budget, redacted before it's cut. If
     no proof file exists for this head, which happens after a branch refresh leaves `brb-<old head>.md`, a QA seat's
     PR comment can carry the verdict. Its first line names a `qa-` seat, and it declares `Head: <this head>` and
     `Verdict: SHIP|PASS`. It is shown as a self-declared seat, with any proof file on record for another head. A QA
