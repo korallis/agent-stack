@@ -80,6 +80,13 @@ project-workspace.md) and the `mission-slice-sop` skill. Verify each point on di
    - `TMPDIR` and temp scratch go on disk outside any git repo: each job's own `mktemp -d` directory under the seat root
      `$HOME/.cache/<rig>-tmp/<seat>`, removed by that job's trap (never the shared root); never `/tmp` (a RAM disk
      here) and never inside a worktree (tests take a dir under a repo for a checkout); example in CULTURE.md;
+   - visual proof for the owner: ONE file per owner update row, `--evidence-ref <absolute path>` (.png/.jpg/.gif/.webp,
+     .mp4/.webm/.mov or .pdf, at most 50 MiB), uploaded into that message's Slack thread. For a witness pass, a
+     finished user-visible feature or a fix for a bug the owner reported, not every step; the lead sends it, QA and the
+     witness hand it the path. Saved under `$HOME/.cache/<rig>-tmp/<seat>/proof/` (not a job's temp dir: the daemon
+     reads it when it posts, after the "posted" receipt, so "posted" never means the file can go; proof files age out
+     after 7 days), never `/tmp` or a repo; demo or fictional data only, never secrets, tokens or real
+     client data on screen;
    - judge proof as `rig proof judge <project-id>:<mission>/slices/<slice>`;
    - merge = cross-family review + live Jev act band + merge pinned to head.
 10. Done needs an agent witness: a fresh agent uses the deployed feature through the real UI and records
@@ -151,6 +158,13 @@ lead confirms that with each seat.
     re-parks each row that is still blocked, still the seat's, and has no live wake (same blocker, same interval),
     printing each one. It never adds a second wake to a row that still has one; a row it can't read is listed. `agent-seat-handover <seat> --wakes` lists them and changes
     nothing.
+- **Slack attachments** need the app's bot scopes `files:write` (proof seats send) and `files:read` (files the owner
+  sends, e.g. a screenshot in a reply); `rig slack manifest` has both, an older app adds them and is reinstalled.
+  `rig slack verify` checks only its required scopes, which by default leave both out, so set them once:
+  `rig slack setup --required-scopes chat:write,channels:history,channels:read,files:read,files:write`. Then
+  `openrig-slack-upload-check` (dry: patch 141 in, channel, token present) and `openrig-slack-upload-check --live`
+  (a 1x1 PNG into the channel; `--file <abs .mp4>` for video). A failure prints only Slack's code, an HTTP status or
+  a fixed category. A row's text without its file means the daemon logged "attachment missing": read its log line.
 - **`rig ps` ATTN `user_prompt_submit`** on a seat that is working is not a stuck seat: it is mid-turn. Check its pane
   before acting.
 - Never stop or restart `openrig.service` or `openrig-tmux.service` while rigs run. Restart the daemon with
