@@ -277,7 +277,9 @@ test("units: seats' tmux server has its own guarded unit with openrig.service's 
 
 test("no script or doc stops or restarts openrig.service", () => {
   const files = spawnSync("git", ["ls-files", "bin", "system", "docs", "skills", "rig", "README.md", "install.sh"], { cwd: repo, encoding: "utf8" }).stdout.split("\n").filter(Boolean);
-  const hits = files.filter(f => fs.statSync(join(repo, f)).isFile() && /systemctl --user (stop|restart) openrig(-tmux)?\.service/.test(fs.readFileSync(join(repo, f), "utf8")));
+  // lstat: a tracked symlink (rig/template/openrig-shared points into the local OpenRig install) is not followed; it may
+  // dangle where OpenRig isn't installed, and what it points to isn't this repo's text.
+  const hits = files.filter(f => fs.lstatSync(join(repo, f)).isFile() && /systemctl --user (stop|restart) openrig(-tmux)?\.service/.test(fs.readFileSync(join(repo, f), "utf8")));
   assert.deepEqual(hits, []);
 });
 
