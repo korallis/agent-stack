@@ -48,7 +48,9 @@ PRs or the queue; the repo record holds counts, IDs, pass/fail and redacted regi
 For the owner: on a PASS, save the one screenshot or the journey video that shows the wave working under
 `$HOME/.cache/<rig>-tmp/<seat>/proof/` (never `/tmp` or a repo) and give its absolute path to the lead with the result;
 the lead sends it to the owner as `--evidence-ref` on an update row (CULTURE "Visual proof for the owner"). It must
-show demo or fictional data only: no secrets, tokens or real client data.
+show demo or fictional data only: no secrets, tokens or real client data. The Playwright MCP's own files (its
+`playwright-mcp/<seat>/` dir) are deleted after 48 hours (hours on a client-data project): to keep one as evidence,
+copy it into the slice's proof dir with `rig proof add --media <file>`.
 
 ## Proof contract
 - [ ] `docs/witnesses/<wave id>.md`: deployed commit, witness agent + model, per-step result, evidence pointers.

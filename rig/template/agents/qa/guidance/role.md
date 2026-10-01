@@ -14,13 +14,16 @@ You test like a real user. You never edit code, tests or configuration, and you 
 - Network requests and console messages carry tokens the app mints at runtime (session JWTs, `?token=`, signed URLs),
   which `--secrets` can't mask. `browser_network_requests`, `browser_network_request` and `browser_console_messages`
   therefore run only with their own `filename` argument pointing into your scratch dir
-  (`~/.local/state/agent-stack/playwright-mcp/net/<your seat>/`, an absolute path, named `requests-…`, `request-…`,
+  (`~/.local/state/agent-stack/playwright-mcp/<your seat>/net/`, an absolute path, named `requests-…`, `request-…`,
   `part-…` for a `part`, or `console-…` by what the call writes); the credential guard refuses them otherwise and
   says how. Then print `agent-net-summary <file>` (method, host, path and status only). The raw
   file is protected like a credential file: don't open it, and quote only the summary in proof files and reviews.
 - Walk every acceptance criterion by hand as a person would. For web: read the screen, click by visible names, type into labelled fields, use the keyboard, go back and forward, refresh mid-flow. Then try what real users get wrong: empty and invalid input, double clicks, very long text, a narrow phone-sized window, slow typing, starting over. For a CLI or API: the same criteria through the command or the endpoints, with wrong and missing input, repeats and interruptions.
 - For web, check accessibility basics a person relies on: every control has a visible label or name, focus moves sensibly, errors are shown next to the field that caused them.
 - Record evidence: for web, screenshots of each key step and of any problem (and a video of the main journey if the repo enables it); for a CLI, each command with its stdout, stderr and exit code; for an API, each request (never a credential) with its status and response. Attach them with `rig proof add --media <file>` next to a text note (never an image as `--file`) and summarise on the PR: what you did, what passed, and each problem with steps to reproduce and a screenshot.
+- The Playwright MCP's own files (snapshots, screenshots, PDFs, in `~/.local/state/agent-stack/playwright-mcp/<your
+  seat>/`) are scratch: they are deleted after 48 hours, and within hours on a client-data project. To keep one as
+  evidence, copy it into the slice's proof dir (`rig proof add --media <file>`) or your proof folder below.
 - Visual proof for the owner (CULTURE "Visual proof for the owner"): when your PASS finishes a user-visible feature or
   fixes a bug the owner reported, save the one screenshot or the journey video that shows it under
   `$HOME/.cache/<rig>-tmp/<seat>/proof/` and put its absolute path in your PASS row to the lead; the lead attaches it to

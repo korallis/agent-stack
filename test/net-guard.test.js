@@ -28,7 +28,8 @@ function hook(runtime, home, tool_name, tool_input, seat = SEAT) {
   return { deny: out?.permissionDecision === "deny", reason: out?.permissionDecisionReason || "", status: r.status };
 }
 const newHome = () => { const h = fs.mkdtempSync(join(root, "h-")); fs.mkdirSync(join(h, "work")); return h; };
-const seatDir = (h, seat = SEAT) => join(h, ".local/state/agent-stack/playwright-mcp/net", seat);
+// WO83: each seat's MCP output dir is playwright-mcp/<seat>/, and its network/console scratch dir is net/ inside it
+const seatDir = (h, seat = SEAT) => join(h, ".local/state/agent-stack/playwright-mcp", seat, "net");
 const TOOLS = ["browser_network_requests", "browser_network_request", "browser_console_messages"];
 const KIND = { browser_network_requests: "requests", browser_network_request: "request", browser_console_messages: "console" };
 
@@ -42,8 +43,8 @@ test("WO57: without a filename (or with one outside the seat's scratch dir) each
       const r = hook(runtime, h, name, input);
       assert.equal(r.deny, true, `${runtime} ${t} ${JSON.stringify(input)}`);
       assert.match(r.reason, new RegExp(`blocked ${t}`));
-      assert.match(r.reason, /filename: ".*\/playwright-mcp\/net\/qa-one@shop\//);
-      assert.match(r.reason, /agent-net-summary ~\/\.local\/state\/agent-stack\/playwright-mcp\/net\/qa-one@shop\//);
+      assert.match(r.reason, /filename: ".*\/playwright-mcp\/qa-one@shop\/net\//);
+      assert.match(r.reason, /agent-net-summary ~\/\.local\/state\/agent-stack\/playwright-mcp\/qa-one@shop\/net\//);
     }
   }
 });
@@ -64,6 +65,18 @@ test("WO57: with a filename in the seat's scratch dir each tool is allowed in bo
     assert.equal(hook("claude", h, other, {}).deny, false, other);
 });
 
+test("WO83: a seat on an MCP from before the per-seat dirs keeps working: the old net/<seat>/ dir is still allowed, and the denial names it", () => {
+  const h = newHome(), legacy = join(h, ".local/state/agent-stack/playwright-mcp/net", SEAT);
+  for (const rt of ["claude", "codex"]) {
+    const ok = hook(rt, h, "mcp__playwright__browser_network_requests", { filename: join(legacy, "requests-old.log") });
+    assert.equal(ok.deny, false, rt);
+  }
+  assert.equal(fs.statSync(legacy).mode & 0o777, 0o700, "made 0700 like the new one");
+  const r = hook("claude", h, "mcp__playwright__browser_console_messages", {});
+  assert.equal(r.deny, true); assert.match(r.reason, /File access denied[\s\S]*playwright-mcp\/net\/qa-one@shop\/console-1\.log/);
+  assert.equal(hook("claude", h, "mcp__playwright__browser_network_requests", { filename: join(h, ".local/state/agent-stack/playwright-mcp/net/someone@else/requests-1.log") }).deny, true, "another seat's old dir is still refused");
+});
+
 test("WO57: a symlink anywhere from the MCP output dir down is refused (the write would land elsewhere)", () => {
   const h = newHome(), dir = seatDir(h), out = dirname(dirname(dir));
   fs.mkdirSync(join(h, "outside"), { recursive: true });
@@ -80,11 +93,12 @@ test("WO57: the scratch dir is protected like a credential file; agent-net-summa
   const h = newHome(), f = join(seatDir(h), "n.log"), work = join(h, "work");
   fs.mkdirSync(seatDir(h), { recursive: true }); fs.writeFileSync(f, "1. [GET] https://a.test/x?token=SYNTHETIC => [200] OK\n");
   const dec = (tool_name, tool_input) => g.decide({ tool_name, tool_input, cwd: work }, { home: h, pats: g.DEFAULT_PATTERNS }).deny;
-  for (const c of [`cat ${f}`, `head -5 ${f}`, `grep token ${f}`, `cat ~/.local/state/agent-stack/playwright-mcp/net/*/n.log`, `cp ${f} copy.log; cat copy.log`])
+  for (const c of [`cat ${f}`, `head -5 ${f}`, `grep token ${f}`, `cat ~/.local/state/agent-stack/playwright-mcp/*/net/n.log`, `cat ~/.local/state/agent-stack/playwright-mcp/net/qa-one@shop/old.log`,
+    `cat ~/.local/state/agent-stack/playwright-mcp/unattributed-2026-10-01/net/qa-one@shop/old.log`, `cp ${f} copy.log; cat copy.log`])
     assert.equal(dec("Bash", { command: c }), true, c);
   assert.equal(dec("Read", { file_path: f }), true);
   assert.equal(dec("Grep", { path: seatDir(h), pattern: "token", output_mode: "content" }), true);
-  for (const c of [`agent-net-summary ${f}`, "agent-net-summary ~/.local/state/agent-stack/playwright-mcp/net/qa-one@shop/n.log", `ls ${seatDir(h)}`])
+  for (const c of [`agent-net-summary ${f}`, "agent-net-summary ~/.local/state/agent-stack/playwright-mcp/qa-one@shop/net/n.log", `ls ${seatDir(h)}`])
     assert.equal(dec("Bash", { command: c }), false, c);
 });
 

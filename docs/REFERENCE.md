@@ -285,6 +285,23 @@ Details are in the `agent-stack` skill. What went wrong before: [docs/incidents/
   input, so no env or credential value is ever inlined in `browser_run_code`/`browser_evaluate` either. Without it, a filled
   password shows in the snapshot. `install.sh` sets it up (`system/playwright-mcp-config`); seats get it when their MCP
   restarts.
+- **Playwright MCP files, one dir per seat (WO83).** Both runtimes start the MCP through `agent-playwright-mcp`,
+  which gives it `--output-dir ~/.local/state/agent-stack/playwright-mcp/<seat>/` (0700, with `net/` for network and
+  console logs).
+  - The seat is `OPENRIG_SESSION_NAME`, read from the nearest ancestor process when the runtime trims the MCP's
+    environment (Codex does). Without one (the operator's shell, a human) it is `local`.
+  - Page snapshots hold what the page showed, client data included. `agent-playwright-retention` (hourly timer)
+    deletes them after `KEEP_HOURS` (48), and in a client-data rig's seat dirs after `CLIENT_DATA_HOURS` (6). Set
+    `CLIENT_DATA_RIGS="rig1 rig2"` in `~/.config/agent-stack/playwright-retention.env`; `--dry-run` shows what would
+    go.
+  - Seats keep evidence by copying it into the slice's proof dir.
+  - `install.sh --apply` moves (never deletes, never into a link) the shared dir's top-level files untouched for an
+    hour into `unattributed-<date>/`.
+  - Seats pick the new MCP command up when they relaunch (the normal idle-gated way; no mass relaunch). Until then
+    their old MCP keeps working: the guard also allows its old network/console dir `playwright-mcp/net/<seat>/` (the
+    denial names it), and that tree is not moved.
+  - The hourly run ages the moved files, the old tree and any stray top-level file like the rest. A symlinked MCP dir
+    or destination is refused.
 - **Seats never depend on the daemon unit.** Every seat lives in the tmux server of `openrig-tmux.service`, not in
   `openrig.service`. tmux ties each pane to the unit its server runs in, which is how `systemctl stop openrig.service`
   once stopped every seat. Restart the daemon with `openrig-daemon-cycle` (the health check does too), never with
@@ -423,7 +440,7 @@ script file) is still not parsed.
 runtime appear (session JWTs, `?token=`, signed URLs, dev-browser tokens); `--secrets` only masks the values listed in
 its file. The same hook, registered for `^mcp__.+__browser_(network_requests|network_request|console_messages)$` in
 both runtimes, allows them only with the tool's own `filename` set to an absolute path in the seat's scratch dir,
-`~/.local/state/agent-stack/playwright-mcp/net/<OPENRIG_SESSION_NAME>/` (made 0700; no symlink on the way), named by
+`~/.local/state/agent-stack/playwright-mcp/<OPENRIG_SESSION_NAME>/net/` (made 0700; no symlink on the way), named by
 what the call writes: `requests-…` (the list), `request-…` (one request's details), `part-…` (one `part`: a raw
 header block or body, written as is) or `console-…`. With
 `filename` the MCP writes the file and returns only a link to it. That dir is in the default protected patterns, so
@@ -433,8 +450,8 @@ anything), and reads only that kind's own record lines; a `part-…` file or any
 prints one line per request, `<n>. <METHOD> <host><path> => <status>`: query strings,
 fragments, `user:password@` and `;params` are dropped, token-like path segments (long hex, JWTs, long mixed runs) show
 as `<masked>`, and headers, bodies and console messages are only counted. The MCP runs with
-`--output-dir ~/.local/state/agent-stack/playwright-mcp` (install.sh, both runtimes), because it writes only inside its
-output dir or the workspace; until a seat's MCP has that flag, the call fails with the MCP's "File access denied",
+`--output-dir ~/.local/state/agent-stack/playwright-mcp/<seat>/` (agent-playwright-mcp, both runtimes), because it writes
+only inside its output dir or the workspace; until a seat's MCP has that flag, the call fails with the MCP's "File access denied",
 which leaks nothing. Seats pick up the new MCP args at their next launch; the hook entries load as above.
 
 Limits (honest): it stops accidental printing by a seat, not a determined one. A script that reads and prints a

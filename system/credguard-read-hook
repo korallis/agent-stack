@@ -16,16 +16,19 @@
 // Playwright MCP (WO57): browser_network_requests, browser_network_request and browser_console_messages print request
 // URLs, headers and console text, where tokens minted at runtime (session JWTs, ?token=, signed URLs) appear; the
 // MCP's --secrets only masks the values in its secrets file. They are allowed only with the tool's own `filename`
-// pointing into the seat's scratch dir (NET_DIR/<seat>/), which is protected like a credential file; the seat reads
+// pointing into the seat's scratch dir (PW_DIR/<seat>/net/), which is protected like a credential file; the seat reads
 // it through agent-net-summary (method, host, path, status).
 "use strict";
 const fs = require("node:fs"), path = require("node:path"), os = require("node:os");
 
-// Under the Playwright MCP's --output-dir (install.sh), so the MCP may write there; one dir per seat.
-const NET_DIR = "~/.local/state/agent-stack/playwright-mcp/net";
+// The Playwright MCP's output dirs, one per seat (agent-playwright-mcp, WO83); a seat's network/console scratch dir is
+// its net/ subdir, inside the MCP's own output dir so the MCP may write there. Every net/ tree below PW_DIR is raw
+// output: the seats' own, the shared one from before WO83 and those moved into unattributed-<date>/.
+const PW_DIR = "~/.local/state/agent-stack/playwright-mcp";
+const NET_DIR = `${PW_DIR}/**/net`;
 // Raw Vercel project JSON (WO62): `vercel api …/projects…` writes only here, through the seat's vercel guard.
 const VERCEL_DIR = "~/.local/state/agent-stack/vercel";
-const DEFAULT_PATTERNS = ["**/.env", "**/.env.*", "**/*runtime-url*", "**/*.pem", "~/.config/agent-stack/secrets/**", "**/prod.env", `${NET_DIR}/**`,
+const DEFAULT_PATTERNS = ["**/.env", "**/.env.*", "**/*runtime-url*", "**/*.pem", "~/.config/agent-stack/secrets/**", "**/prod.env", NET_DIR, `${NET_DIR}/**`,
   `${VERCEL_DIR}/**`];
 // A Vercel project's protection-bypass secrets are the KEYS of its `protectionBypass` object: printing even the keys
 // prints the secret (2026-10-01). Any command that names the field is refused, whatever it does with it.
@@ -38,7 +41,7 @@ const EXEMPT = /(^|\/)\.env\.(example|sample|template)$/;
 // Not inside a raw-output tree (Playwright network/console logs, Vercel project JSON): every file there is raw tool
 // output, whatever its name, so a template name gives it no pass.
 const RAW_DIRS = [NET_DIR, VERCEL_DIR];
-const exempt = (abs, home) => EXEMPT.test(abs) && !RAW_DIRS.some((d) => abs.startsWith(path.join(home, d.slice(2)) + "/"));
+const exempt = (abs, home) => EXEMPT.test(abs) && !RAW_DIRS.some((d) => globRe(`${d}/**`, home).test(abs));
 
 function patterns(env = process.env, home = os.homedir()) {
   const file = env.AGENT_CREDGUARD_READ_PATHS || path.join(home, ".config/agent-stack/credguard-read-paths");
@@ -174,6 +177,18 @@ function globHit(abs, ctx) {
     const probe = fixed.slice(0, cut).join("/") + "/credguard-probe";
     const p = ctx.pats.find((x) => globRe(x, ctx.home).test(probe));
     if (p) return { path: abs, pattern: p };
+    // A wildcard before the protected part (`playwright-mcp/*/net/x`, WO83): fill each wildcard directory with a
+    // neutral name and with "net" (what a raw tree is called), and test the paths that gives (at most 16).
+    const wild = fixed.map((seg, i) => (i < fixed.length - 1 && /[*?[]/.test(seg) ? i : -1)).filter((i) => i >= 0).slice(0, 4);
+    for (let mask = 0; mask < 1 << wild.length; mask++) {
+      const segs = [...fixed];
+      wild.forEach((i, k) => { segs[i] = mask & (1 << k) ? "net" : "credguard-probe"; });
+      const base = segs.pop();
+      const tail = /[*?[]/.test(base) ? "credguard-probe" : base;
+      const cand = [...segs, tail].join("/");
+      const q = !exempt(cand, ctx.home) && ctx.pats.find((x) => globRe(x, ctx.home).test(cand));
+      if (q) return { path: abs, pattern: q };
+    }
   }
   for (const smp of SAMPLES) {
     if (!okName(smp)) continue;
@@ -648,9 +663,16 @@ function keyNames(text) {
 }
 
 // Pure: the decision for one hook input. { deny: false } or { deny: true, reason }.
-// The seat's scratch dir for Playwright network/console output: NET_DIR/<seat> (OPENRIG_SESSION_NAME, else "local").
+// The seat's scratch dir for Playwright network/console output: PW_DIR/<seat>/net (OPENRIG_SESSION_NAME, else "local",
+// reduced as agent-playwright-mcp reduces it for the seat's output dir: [A-Za-z0-9._@-], no leading dot).
+const seatName = (env) => (env.OPENRIG_SESSION_NAME || "local").replace(/[^A-Za-z0-9._@-]/g, "_").replace(/^\./, "_");
 function netDir(home, env = process.env) {
-  return path.join(home, NET_DIR.slice(2), (env.OPENRIG_SESSION_NAME || "local").replace(/[^A-Za-z0-9._@-]/g, "_"));
+  return path.join(home, PW_DIR.slice(2), seatName(env), "net");
+}
+// The same dir under an MCP started before the per-seat dirs (one shared --output-dir): PW_DIR/net/<seat>. Allowed until
+// the seat relaunches, so its browser tooling keeps working; retention ages it (WO83).
+function legacyNetDir(home, env = process.env) {
+  return path.join(home, PW_DIR.slice(2), "net", seatName(env));
 }
 
 // What a call writes, named by the file's prefix, so agent-net-summary knows a file's kind from its origin and never
@@ -665,13 +687,14 @@ function netKind(tool, ti = {}) {
 // A Playwright network/console call: null when its output goes to a file in the seat's scratch dir (an absolute path
 // below it, named <kind>-…, no symlink on the way; the dir is created 0700), else why not.
 function netVerdict(ti, home, env = process.env, tool = "") {
-  const dir = netDir(home, env), f = ti.filename, kind = netKind(tool, ti);
+  const f = ti.filename, kind = netKind(tool, ti);
   if (typeof f !== "string" || !f.trim()) return "it has no filename, so the output would come back as text";
   if (!path.isAbsolute(f)) return "its filename is not an absolute path in your scratch dir";
   const abs = path.resolve(f);
-  if (!abs.startsWith(dir + path.sep)) return `its filename is not inside your scratch dir ${dir.replace(home, "~")}`;
+  const dir = [netDir(home, env), legacyNetDir(home, env)].find((d) => abs.startsWith(d + path.sep));
+  if (!dir) return `its filename is not inside your scratch dir ${netDir(home, env).replace(home, "~")}`;
   if (!path.basename(abs).startsWith(`${kind}-`)) return `its file name must start with "${kind}-" (what this call writes)`;
-  const top = path.dirname(path.dirname(dir));   // the MCP output dir
+  const top = path.join(home, PW_DIR.slice(2));   // above the MCP output dir (the seat's, or the shared one before WO83)
   for (let p = abs; p.length >= top.length; p = path.dirname(p)) {
     try { if (fs.lstatSync(p).isSymbolicLink()) return `${p.replace(home, "~")} is a symlink`; } catch { /* not there yet */ }
     if (p === top) break;
@@ -688,6 +711,8 @@ function netDenial(tool, why, home, env = process.env, ti = {}) {
     "not masked by --secrets.",
     `Send it to a file in your scratch dir with the tool's own filename argument (an absolute path):`,
     `  ${short}({ …, filename: "${file.replace("~", home)}" })`,
+    `(If the browser tool answers "File access denied", its MCP started before the per-seat dirs; until you relaunch, use`,
+    `  ${legacyNetDir(home, env).replace(home, "~")}/${netKind(tool, ti)}-1.log instead.)`,
     `then print a summary that keeps method, host, path and status only (no query strings, no headers):`,
     `  agent-net-summary ${file}`,
     `The scratch dir is protected like a credential file: don't open the raw file.`,
@@ -752,5 +777,5 @@ function main() {
   process.exit(0);
 }
 
-module.exports = { DEFAULT_PATTERNS, VERCEL_DIR, BYPASS, NET_DIR, NET_TOOL, netDir, netKind, netVerdict, patterns, globRe, protectedPath, lex, parseArgs, bashVerdict, keyNames, decide };
+module.exports = { DEFAULT_PATTERNS, VERCEL_DIR, BYPASS, PW_DIR, NET_DIR, NET_TOOL, netDir, legacyNetDir, netKind, netVerdict, patterns, globRe, protectedPath, lex, parseArgs, bashVerdict, keyNames, decide };
 if (require.main === module) main();

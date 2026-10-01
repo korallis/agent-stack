@@ -106,7 +106,7 @@ place "$S/system/seat-bin-credguard" "$L/seat-bin/credguard" 755
 for f in neon neonctl vercel vc; do link "$L/seat-bin/credguard" "$L/seat-bin/$f"; done
 dirs "$L/seat-tools"; place "$S/system/seat-tools-rig" "$L/seat-tools/rig" 755   # queue writes get the project tag + EC-3 worktree_path
 link "$L/bin/agent-login" "$B/agent-login"
-for f in claude-pool agent-heavy openrig-ensure playwright-browsers agent-claude-trust openrig-upgrade openrig-update agent-project-new agent-project-onboard agent-owner-address agent-project-check agent-net-summary agent-vercel-protection-status openrig-slack-upload-check agent-never-prompt-check agent-credguard-check agent-skills-check agent-seat-recap agent-seat-handover agent-human-inbox-tidy openrig-daemon-cycle openrig-tmux-adopt agent-queue-backfill agent-refresh-guidance agent-project-repair agent-waves-sync; do link "$S/bin/$f" "$B/$f"; done
+for f in claude-pool agent-heavy openrig-ensure playwright-browsers agent-claude-trust openrig-upgrade openrig-update agent-project-new agent-project-onboard agent-owner-address agent-project-check agent-net-summary agent-vercel-protection-status openrig-slack-upload-check agent-never-prompt-check agent-credguard-check agent-skills-check agent-seat-recap agent-seat-handover agent-human-inbox-tidy openrig-daemon-cycle openrig-tmux-adopt agent-queue-backfill agent-refresh-guidance agent-project-repair agent-waves-sync agent-playwright-mcp agent-playwright-retention; do link "$S/bin/$f" "$B/$f"; done
 link "$S/proxy/status.py" "$B/agent-proxy-status"
 if [ $CHECK = 0 ] || mise where "node@$NODE_FOR_JEV" >/dev/null 2>&1; then
   launcher jev-mcp "$NODE_FOR_JEV" "$S/jev/bin/jev-mcp.js"
@@ -168,7 +168,7 @@ if [ $CHECK = 0 ]; then
   # Seats' tmux server gets its own unit first (skips itself if a server already runs; bin/openrig-tmux-adopt moves that one).
   systemctl --user enable --now openrig-tmux.service >/dev/null 2>&1 || todo "openrig-tmux.service"
   systemctl --user enable --now openrig.service >/dev/null 2>&1 || true
-  for t in cliproxyapi-health cliproxy-usage openrig-health cliproxy-authwatch cliproxy-quotawatch openrig-update agent-repos-sync agent-human-inbox-tidy agent-stuck-check playwright-browsers; do systemctl --user enable --now "$t.timer" >/dev/null 2>&1 || todo "$t.timer"; done
+  for t in cliproxyapi-health cliproxy-usage openrig-health cliproxy-authwatch cliproxy-quotawatch openrig-update agent-repos-sync agent-human-inbox-tidy agent-stuck-check agent-playwright-retention playwright-browsers; do systemctl --user enable --now "$t.timer" >/dev/null 2>&1 || todo "$t.timer"; done
 fi
 "$S/bin/openrig-ensure" --check | sed 's/^/   /' || true   # WARN installed != pin; FAIL when local patches aren't all applied
 # Transcript capture defaults: every 15s, 400 lines. The shipped 2s/1000 lines across ~90 seats starved the daemon.
@@ -228,12 +228,15 @@ if [ $CHECK = 0 ]; then
   claude mcp get jev >/dev/null 2>&1 || claude mcp add --scope user jev -- "$B/jev-mcp" >/dev/null
   # Playwright MCP: the pinned release with Playwright's own Chrome for Testing (see system/codex/config.toml). An
   # existing user-scope entry with other args (the old @latest + --executable-path) is replaced.
-  # --output-dir: outside every repo; its net/ subdir (0700) holds the network/console logs the credential guard
-  # protects (WO57: they carry runtime tokens; seats read them through agent-net-summary).
-  PWO="$HOME/.local/state/agent-stack/playwright-mcp"; mkdir -p "$PWO/net"; chmod 700 "$PWO/net"
-  pw=(npx -y "@playwright/mcp@$PW_MCP" --headless --browser chromium --secrets "$SEC/playwright.env" --output-dir "$PWO")
-  "$S/system/playwright-mcp-config" | sed 's/^/   /'   # secrets file (0600) + the Codex MCP args with --secrets
-  if ! claude mcp get playwright 2>/dev/null | grep -qF -- "Args: ${pw[*]:1}"; then
+  # agent-playwright-mcp (WO83) runs these npx args with --output-dir ~/.local/state/agent-stack/playwright-mcp/<seat>/
+  # (0700): one dir per seat, outside every repo; its net/ subdir holds the network/console logs the credential guard
+  # protects (WO57: they carry runtime tokens; seats read them through agent-net-summary). Files from before (one shared
+  # dir) move, never deleted, into unattributed-<date>/; agent-playwright-retention.timer ages everything out hourly.
+  PWO="$HOME/.local/state/agent-stack/playwright-mcp"; mkdir -p "$PWO"; chmod 700 "$PWO"
+  "$B/agent-playwright-retention" --migrate | sed 's/^/   /' || todo "agent-playwright-retention --migrate"
+  pw=("$B/agent-playwright-mcp" -y "@playwright/mcp@$PW_MCP" --headless --browser chromium --secrets "$SEC/playwright.env")
+  "$S/system/playwright-mcp-config" | sed 's/^/   /'   # secrets file (0600) + the Codex MCP command and args
+  if ! claude mcp get playwright 2>/dev/null | grep -qF -- "Command: ${pw[0]}" || ! claude mcp get playwright 2>/dev/null | grep -qF -- "Args: ${pw[*]:1}"; then
     claude mcp remove --scope user playwright >/dev/null 2>&1 || true
     claude mcp add --scope user playwright -- "${pw[@]}" >/dev/null || todo "claude mcp playwright"
   fi
@@ -251,8 +254,8 @@ fi
 asks() { [ $CHECK = 0 ] || [ -e "$1" ]; }
 if asks "$HOME/.claude.json"; then
 claude plugin list 2>/dev/null | grep -q superpowers && ok "Superpowers (Claude Code)" || todo "Superpowers (Claude Code)"
-claude mcp get playwright 2>/dev/null | grep -qF -- "Args: -y @playwright/mcp@$PW_MCP --headless --browser chromium --secrets $SEC/playwright.env --output-dir $HOME/.local/state/agent-stack/playwright-mcp" \
-  && ok "Playwright MCP (Claude Code): @playwright/mcp@$PW_MCP, Chrome for Testing, --secrets, --output-dir" || todo "WARN: Playwright MCP (Claude Code) not on @playwright/mcp@$PW_MCP --browser chromium --secrets $SEC/playwright.env --output-dir ~/.local/state/agent-stack/playwright-mcp"
+{ claude mcp get playwright 2>/dev/null | grep -qF -- "Command: $B/agent-playwright-mcp" && claude mcp get playwright 2>/dev/null | grep -qF -- "Args: -y @playwright/mcp@$PW_MCP --headless --browser chromium --secrets $SEC/playwright.env"; } \
+  && ok "Playwright MCP (Claude Code): agent-playwright-mcp (a dir per seat), @playwright/mcp@$PW_MCP, Chrome for Testing, --secrets" || todo "WARN: Playwright MCP (Claude Code) not on $B/agent-playwright-mcp -y @playwright/mcp@$PW_MCP --headless --browser chromium --secrets $SEC/playwright.env"
 else todo "Claude Code has not run in this HOME yet (no ~/.claude.json): its plugins and MCP servers can't be checked without it writing that"; fi
 "$S/system/playwright-mcp-config" --check | sed 's/^/   /' || true   # secrets file 0600 + Codex args with --secrets
 "$S/bin/playwright-browsers" --check >/dev/null && ok "Playwright MCP browser installed" || todo "Playwright MCP browser: run playwright-browsers"

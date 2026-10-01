@@ -2,7 +2,7 @@
 """agent-net-summary <file>...: a Playwright MCP network or console log, reduced to what is safe to print.
 
 The credential guard lets browser_network_requests, browser_network_request and browser_console_messages run only
-with `filename` in the seat's scratch dir (~/.local/state/agent-stack/playwright-mcp/net/<seat>/), because their raw
+with `filename` in the seat's scratch dir (~/.local/state/agent-stack/playwright-mcp/<seat>/net/), because their raw
 output carries request URLs, headers and console text where runtime tokens appear. This prints, per request:
 
     <n>. <METHOD> <host><path> => <status>

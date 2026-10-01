@@ -50,7 +50,8 @@ them as the owner's.
   - How: in a Playwright script, `await page.screenshot({ path: dir + "/home.png", fullPage: true })`; for video,
     `browser.newContext({ recordVideo: { dir, size: { width: 1280, height: 720 } } })`, then `await context.close()`
     and pass `await page.video().path()` (a .webm). The Playwright MCP's `browser_take_screenshot` saves under
-    `~/.local/state/agent-stack/playwright-mcp/`.
+    `~/.local/state/agent-stack/playwright-mcp/<your seat>/`, which is scratch: deleted after 48 hours (sooner on a
+    client-data project), so copy what you keep into the slice's proof dir or the proof folder below.
   - Where: `$HOME/.cache/<rig>-tmp/<seat>/proof/` (the seat root of the `TMPDIR` rule below), outside every repo and
     never in `/tmp`. Not inside a job's own temp dir: its trap removes it, and the daemon reads the file only when it
     posts, after your command has returned. "Posted" (or the row closing itself) confirms the TEXT only: the daemon
