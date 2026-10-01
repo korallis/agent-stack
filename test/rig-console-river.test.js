@@ -13,7 +13,7 @@ const src = (f) => import(join(repo, "console/src", f));
 const { slices, sliceId, doneToday, journey, RIVER } = await src("model.ts");
 const { Cache } = await src("data.ts");
 const { History } = await src("history.ts");
-const { render, parseArgs } = await src("main.ts");
+const { render, parseArgs, initialReads } = await src("main.ts");
 const fixture = JSON.parse(fs.readFileSync(join(repo, "console/fixtures/demo.json"), "utf8"));
 const hist = () => { const h = new History(null); h.samples = fixture.history; return h; };
 const st = (o = {}) => ({ view: 2, rigFocus: 0, seatFocus: [0, 0], help: false, frame: 0, note: null, riverFocus: [0, 0], journey: null, ...o });
@@ -121,4 +121,44 @@ test("CLI: --view river and --slice <project>/<slice> (strict)", () => {
   assert.equal(bad.status, 2); assert.match(bad.stderr, /--slice is <project>\/<slice>/);
   const r = spawnSync(process.execPath, [join(repo, "console/src/main.ts"), "--once", "--fixture", join(repo, "console/fixtures/demo.json"), "--size", "176x50", "--color", "0", "--slice", J], { encoding: "utf8" });
   assert.equal(r.status, 0, r.stderr); assert.match(r.stdout, /JOURNEY · F-055/);
+});
+
+test("QA PR90: started on the River or a journey, the first read already loads its data (no key needed)", async () => {
+  const d = await stub();
+  try {
+    for (const [st0, want] of [[{ view: 2, journey: null }, /state=done/], [{ view: 2, journey: "alpha/f-001-a" }, /\/api\/queue\/a1\/transitions$/]]) {
+      d.seen.length = 0;
+      const c = new Cache({ url: d.url, interval: 60_000, events: false, run: async () => null });
+      initialReads(c, st0);
+      await c.tick(); if (st0.journey) await c.tick();
+      c.stop();
+      assert.ok(d.seen.some((u) => want.test(u)), `${JSON.stringify(st0)}: ${d.seen.join(" ")}`);
+    }
+  } finally { d.close(); }
+});
+
+test("QA PR90: in a crowded stage the focused chip is always drawn and named, past the display cap", () => {
+  const rows = Array.from({ length: 9 }, (_, i) => ({ id: `c${i}`, state: "in-progress", priority: "routine", source: "x@alpha", destination: "impl-codex-1@alpha", blockedOn: null,
+    tags: ["project:alpha", `slice:f-1${String(i).padStart(2, "0")}-crowd`], created: `2026-10-01T0${i}:00:00Z`, updated: "2026-10-01T10:00:00Z", summary: null }));
+  const r = { ...fixture.raw, queue: rows, attention: [] };
+  const ids = rows.map((x) => `F-1${x.id.slice(1).padStart(2, "0")}`);
+  const alpha = fixture.raw.rigs.findIndex((x) => x.name === "alpha");
+  for (let k = 0; k < rows.length; k++) {
+    const scr = render(r, hist(), 100, 30, st({ riverFocus: [alpha, k] }));
+    const text = scr.lines().join("\n");
+    assert.match(text, new RegExp(`SELECTED ${ids[k]}`), `chip ${k}: named`);
+    const inv = scr.cells.filter((c2) => c2.inverse).map((c2) => c2.ch).join("");
+    assert.ok(inv.includes(ids[k]), `chip ${k}: drawn highlighted (${inv})`);
+  }
+});
+
+test("QA PR90: the journey at the minimum 100 columns names who it waits on, keeps states whole and bars inside", () => {
+  for (const [w, h] of [[100, 30], [120, 40]]) {
+    const lines = render(fixture.raw, hist(), w, h, st({ journey: J })).lines(), text = lines.join("\n");
+    assert.match(text, /WAITING ON[\s\S]*j0550005 blocked on human@kernel/, `${w}`);
+    assert.ok(lines.every((l) => [...l].length === w), `${w}: widths`);
+    const rows = lines.filter((l) => /^ │ \d\d-\d\d \d\d:\d\d /.test(l));
+    assert.ok(rows.length >= 4, `${w}: rows`);
+    for (const l of rows) { assert.match(l, /\b(done|blocked|in-progress|pending)\b/, l); assert.match(l, /│ $/, `${w}: the row ends at the panel border: ${l}`); }
+  }
 });

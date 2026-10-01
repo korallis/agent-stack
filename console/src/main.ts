@@ -89,6 +89,12 @@ function loadFixture(file: string): { raw: Raw; history: Sample[] } {
   return { raw: d.raw as Raw, history: Array.isArray(d.history) ? d.history : [] };
 }
 
+/** What the first screen shows decides the first reads (QA PR90: a River or journey opened from the command line read
+ *  nothing until a key was pressed). */
+export function initialReads(cache: Cache, st: ViewState) {
+  cache.setView(st.view === 2, st.journey ?? null);
+}
+
 async function main() {
   const args = parseArgs(process.argv.slice(2), process.env);
   const depth: Depth = args.depth ?? detectDepth(process.env);
@@ -133,6 +139,7 @@ async function main() {
   process.stdin.setRawMode(true); process.stdin.resume(); process.stdin.setEncoding("utf8");
   if (cache) {
     cache.onChange(() => { const r = cache!.raw; hist.add(sampleOf(derive(r), r.at)); schedule(); });
+    initialReads(cache, st);
     cache.start();
   }
   setInterval(() => { st.frame++; schedule(); }, 1000);

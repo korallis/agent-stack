@@ -68,6 +68,7 @@ export function river(c: Ctx): void {
   for (let li = start; li < Math.min(visible, start + shown); li++) {
     const l = L[li], h = heights[li], focusedLane = li === fl;
     const k = f.byRig[l.rig] ?? { working: 0, idle: 0, stuck: 0, unknown: 0, detached: 0, stopped: 0 };
+    if (focusedLane) sel = l.slices[fc] ?? null;
     s.put(1, y, focusedLane ? "▶" : " ", { fg: t.title });
     s.put(2, y, fit(l.rig, LW - 3), { fg: focusedLane ? t.title : t.text, bold: true });
     s.put(2, y + 1, fit(`▸${k.working} ·${k.idle}${k.stuck + k.unknown ? ` ?${k.stuck + k.unknown}` : ""}`, LW - 3), { fg: t.dim });
@@ -75,13 +76,18 @@ export function river(c: Ctx): void {
     RIVER.forEach((st, i) => {
       const here = l.slices.filter((x) => x.stage === i), x0 = colX(i);
       s.put(x0, y, "·".repeat(cw - 2), { fg: t.faint });
-      here.slice(0, fit1 * (h - 1)).forEach((sl, j) => {
-        const idx = l.slices.indexOf(sl), focused = focusedLane && idx === fc;
-        if (focused) sel = sl;
+      // a crowded stage shows a window of its chips that always contains the focused one (QA PR90)
+      const cap = fit1 * (h - 1), fi = focusedLane ? here.findIndex((x) => l.slices.indexOf(x) === fc) : -1;
+      const from = fi >= cap ? fi - cap + 1 : 0;
+      here.slice(from, from + cap).forEach((sl, j) => {
+        const focused = focusedLane && l.slices.indexOf(sl) === fc;
         const col = chipColor(c, sl.state), x = x0 + (j % fit1) * 8, yy = y + Math.floor(j / fit1);
         s.put(x, yy, ` ${fit(sl.id, 6)}`, { fg: col.fg, bg: col.bg, bold: sl.state !== "pending", inverse: focused });
       });
-      if (here.length > fit1 * (h - 1)) s.put(x0 + cw - 4, y + h - 2, `+${here.length - fit1 * (h - 1)}`, { fg: t.dim });
+      // more chips than fit: ▲ above / ▼ below the window, one cell right after the last chip (never over one)
+      const mx2 = x0 + Math.min(fit1 * 8, cw - 2);
+      if (from > 0) s.put(mx2, y, "▲", { fg: t.title });
+      if (here.length > from + cap) s.put(mx2, y + h - 2, "▼", { fg: t.title });
       // who works this stage in this rig: ● working, ○ idle
       const seats = c.raw.rigs.find((r) => r.name === l.rig)?.seats.filter((x) => x.kind === "agent" && st.pods.includes(x.pod)) ?? [];
       if (seats.length) s.put(x0, y + h - 1, fit(`●${seats.filter((x) => x.activity === "working").length} ○${seats.filter((x) => x.activity === "idle").length}`, cw - 2), { fg: t.faint });
@@ -165,12 +171,24 @@ export function journeyView(c: Ctx, key: string): void {
   const W = j.steps.reduce((n, x) => n + x.worked, 0), Wt = j.steps.reduce((n, x) => n + x.waited, 0);
   s.put(2, y + 2, fit(`worked / waited per stage · total worked ${dur(W)} · waited ${dur(Wt)}${W + Wt ? ` (${Math.round((Wt / (W + Wt)) * 100)}% waiting)` : ""}${j.steps.some((x) => !x.known) ? (j.steps.length > 20 ? " · history read for the newest 20 rows (… = not read)" : " · some rows' history still loading") : ""}`, s.w - 4), { fg: t.dim });
   y += 4;
-  const bottom = s.h - 4, lw = Math.max(80, Math.floor(s.w * 0.62)), rx = 1 + lw + 1, rwid = s.w - rx - 1;
-  panel(s, t, 1, y, lw, bottom - y, `JOURNEY · ${sl?.id ?? tag}`, { right: `${j.steps.length} rows` });
-  s.put(3, y + 1, fit("WHEN          STAGE    WHO                       STATE        WORKED   WAITED", lw - 4), { fg: t.dim });
-  const maxT = Math.max(1, ...j.steps.map((x) => x.worked + x.waited)), bw = Math.max(6, lw - 86);
+  const bottom = s.h - 4, wide = s.w >= 140;
+  const open = j.steps.filter((x) => x.open).map((x) => x.row);
+  const waits = open.filter((r) => r.state === "blocked" || isHuman(r.destination));
+  const waitLine = (r: (typeof open)[number]) => `${r.id.slice(-8)} ${isHuman(r.destination) ? `the owner (${r.destination})` : `${r.state} on ${r.blockedOn ?? "?"}`}`;
+  const lw = wide ? Math.floor(s.w * 0.62) : s.w - 2, rx = 1 + lw + 1, rwid = s.w - rx - 1;
+  let jy = y;
+  if (!wide) {   // narrow (QA PR90): who it waits on, full width, above the journey
+    const wh2 = Math.min(5, Math.max(3, waits.length + 2));
+    panel(s, t, 1, y, s.w - 2, wh2, "WAITING ON", { color: sl?.state === "owner" ? t.owner : t.border, right: `${open.length} open row${open.length === 1 ? "" : "s"}` });
+    if (!waits.length) s.put(3, y + 1, open.length ? "nothing: its open rows are queued or in progress" : "nothing: no open row", { fg: t.dim });
+    waits.slice(0, wh2 - 2).forEach((r, i) => s.put(3, y + 1 + i, fit(waitLine(r), s.w - 6), { fg: isHuman(r.destination) || isHuman(r.blockedOn) ? t.owner : t.blocked }));
+    jy = y + wh2;
+  }
+  panel(s, t, 1, jy, lw, bottom - jy, `JOURNEY · ${sl?.id ?? tag}`, { right: `${j.steps.length} rows` });
+  s.put(3, jy + 1, fit("WHEN          STAGE    WHO                       STATE        WORKED   WAITED", lw - 4), { fg: t.dim });
+  const maxT = Math.max(1, ...j.steps.map((x) => x.worked + x.waited)), bw = lw - 86;   // the bar fits inside the panel or isn't drawn
   const bySession = new Map(raw.rigs.flatMap((r) => r.seats).map((x) => [x.session, x]));
-  let ry = y + 2;
+  let ry = jy + 2;
   for (const st of j.steps) {
     if (ry + 1 >= bottom - 1) { s.put(3, ry, `… ${j.steps.length - j.steps.indexOf(st)} more rows`, { fg: t.faint }); break; }
     const r = st.row, who = r.destination.split("@")[0], seat = bySession.get(r.destination);
@@ -181,28 +199,27 @@ export function journeyView(c: Ctx, key: string): void {
     s.put(52, ry, fit(r.state, 12), { fg: stc });
     s.put(65, ry, rpad(st.known ? dur(st.worked) : "…", 7), { fg: t.working });
     s.put(74, ry, rpad(st.known ? dur(st.waited) : "…", 7), { fg: t.blocked });
-    if (st.known) {
-      const a = Math.round((st.worked / maxT) * bw), b = Math.round((st.waited / maxT) * bw);
-      s.put(83, ry, "█".repeat(a), { fg: t.working }); s.put(83 + a, ry, "░".repeat(Math.min(b, bw - a)), { fg: t.blocked });
+    if (st.known && bw >= 4) {
+      const a = Math.min(bw, Math.round((st.worked / maxT) * bw)), b = Math.min(bw - a, Math.round((st.waited / maxT) * bw));
+      s.put(83, ry, "█".repeat(a), { fg: t.working }); s.put(83 + a, ry, "░".repeat(b), { fg: t.blocked });
     }
     s.put(19, ry + 1, fit(`${r.summary ?? r.tags.filter((x) => !/^(project|slice|mission):/.test(x)).join(" ")}${r.blockedOn ? ` · blocked on ${r.blockedOn}` : ""}`, lw - 22), { fg: t.dim });
     ry += 2;
   }
-  if (!j.steps.length) s.put(3, y + 2, "No rows carry this slice's tag.", { fg: t.faint });
-  // right: what it waits on now, and its open rows
-  const open = j.steps.filter((x) => x.open).map((x) => x.row);
-  const wh = Math.min(8, Math.max(4, open.filter((r) => r.state === "blocked" || isHuman(r.destination)).length + 3));
-  panel(s, t, rx, y, rwid, wh, "WAITING ON", { color: sl?.state === "owner" ? t.owner : t.border });
-  const waits = open.filter((r) => r.state === "blocked" || isHuman(r.destination));
-  if (!waits.length) s.put(rx + 2, y + 1, open.length ? "nothing: its open rows are queued or in progress" : "nothing: no open row", { fg: t.dim });
-  waits.slice(0, wh - 2).forEach((r, i) => s.put(rx + 2, y + 1 + i, fit(`${r.id.slice(-8)} ${isHuman(r.destination) ? `the owner (${r.destination})` : `${r.blockedOn ?? "?"}`}`, rwid - 4), { fg: isHuman(r.destination) || isHuman(r.blockedOn) ? t.owner : t.blocked }));
-  const qy = y + wh;
-  panel(s, t, rx, qy, rwid, bottom - qy, "QUEUE ROWS", { right: `${open.length} open` });
-  open.slice(0, bottom - qy - 2).forEach((r, i) => {
-    s.put(rx + 2, qy + 1 + i, fit(r.id.slice(-8), 9), { fg: t.dim });
-    s.put(rx + 12, qy + 1 + i, fit(r.state, 11), { fg: r.state === "in-progress" ? t.working : r.state === "blocked" ? t.blocked : t.info });
-    s.put(rx + 24, qy + 1 + i, fit(`${r.destination.split("@")[0]}${r.priority !== "routine" ? ` · ${r.priority}` : ""}`, rwid - 26), { fg: t.text });
-  });
+  if (!j.steps.length) s.put(3, jy + 2, "No rows carry this slice's tag.", { fg: t.faint });
+  if (wide) {   // right: what it waits on now, and its open rows
+    const wh = Math.min(8, Math.max(4, waits.length + 3));
+    panel(s, t, rx, y, rwid, wh, "WAITING ON", { color: sl?.state === "owner" ? t.owner : t.border });
+    if (!waits.length) s.put(rx + 2, y + 1, open.length ? "nothing: its open rows are queued or in progress" : "nothing: no open row", { fg: t.dim });
+    waits.slice(0, wh - 2).forEach((r, i) => s.put(rx + 2, y + 1 + i, fit(waitLine(r), rwid - 4), { fg: isHuman(r.destination) || isHuman(r.blockedOn) ? t.owner : t.blocked }));
+    const qy = y + wh;
+    panel(s, t, rx, qy, rwid, bottom - qy, "QUEUE ROWS", { right: `${open.length} open` });
+    open.slice(0, bottom - qy - 2).forEach((r, i) => {
+      s.put(rx + 2, qy + 1 + i, fit(r.id.slice(-8), 9), { fg: t.dim });
+      s.put(rx + 12, qy + 1 + i, fit(r.state, 11), { fg: r.state === "in-progress" ? t.working : r.state === "blocked" ? t.blocked : t.info });
+      s.put(rx + 24, qy + 1 + i, fit(`${r.destination.split("@")[0]}${r.priority !== "routine" ? ` · ${r.priority}` : ""}`, rwid - 26), { fg: t.text });
+    });
+  }
   footer(c, [["esc", "back to the river"], ["[ ]", "prev / next slice"], ["1-3", "views"], ["?", "help"], ["q", "quit"]],
     `[journey] ${sl?.id ?? tag} · ${j.steps.length} rows · read-only · transitions read for this slice only`);
 }
