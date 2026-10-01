@@ -269,7 +269,7 @@ elif [ -e "$S/config/owner.env" ]; then
   if [ "${own#* }" = "(AGENT_OWNER_ADDRESS)" ]; then ok "owner address: $addr (AGENT_OWNER_ADDRESS overrides config/owner.env: ${fileown%% *})"
   else ok "owner address: $own"; fi
 elif [ "${own#* }" = "(default)" ]; then todo "owner address: none registered yet; register yourself (rig gateway human add) or put OWNER_ADDRESS=<you>@external in $S/config/owner.env"
-elif [ $CHECK = 1 ]; then todo "owner address: $own, not recorded in config/owner.env yet (install.sh records it)"
+elif [ $CHECK = 1 ]; then todo "owner address: $own, not recorded in config/owner.env yet (./install.sh --apply records it)"
 else printf '# The owner'"'"'s human address, the one seats message (agent-owner-address). Per machine; not tracked.\nOWNER_ADDRESS=%s\n' "$addr" > "$S/config/owner.env"
   ok "owner address: $addr recorded in config/owner.env"; fi
 

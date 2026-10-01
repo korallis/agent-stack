@@ -116,3 +116,22 @@ test("WO59: install.sh, openrig-ensure, openrig-upgrade and openrig-daemon-cycle
   const ok = run("install.sh", ["--check"], h, { OPENRIG_HOME: join(h, ".openrig") });
   assert.doesNotMatch(ok.stderr, /refusing/); assert.equal(ok.status, 0, ok.stderr.slice(-800));
 });
+
+// WO59 follow-up: with --apply required, every instruction to run the installer must say which mode. A bare
+// "run install.sh" (or "./install.sh") hint would now be refused, or prompt, when someone follows it.
+test("WO59: every instruction to run install.sh says --apply, --check or --help", () => {
+  const files = spawnSync("git", ["ls-files", "-z"], { cwd: repo, encoding: "utf8" }).stdout.split("\0").filter(Boolean)
+    .filter((f) => !/^(CHANGELOG\.md|docs\/incidents\/|test\/)/.test(f));   // history and test data, as written
+  const RUN = /\b(run|re-run|rerun)\s+`?(?:\.\/|~\/Projects\/agent-stack\/)?install\.sh`?(?!`?\s+--(apply|check|help))/i;
+  const BARE = /\.\/install\.sh(?!`?\s+--(apply|check|help))/;
+  const bad = [];
+  for (const f of files) {
+    let text; try { text = fs.readFileSync(join(repo, f), "utf8"); } catch { continue; }
+    if (text.includes("\0")) continue;   // binary
+    text.split("\n").forEach((line, i) => {
+      if (RUN.test(line)) bad.push(`${f}:${i + 1}: ${line.trim()}`);
+      else if (BARE.test(line) && !(f === "install.sh" && /^#\s+\.\/install\.sh\s+asks first/.test(line))) bad.push(`${f}:${i + 1}: ${line.trim()}`);
+    });
+  }
+  assert.deepEqual(bad, [], "say ./install.sh --apply (or --check / --help)");
+});

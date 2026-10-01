@@ -172,7 +172,7 @@ test("agent-project-check WARNs on a CULTURE without Workflow skills and on skil
     let r = rows();
     assert.equal(find(r, "CULTURE.md has the Workflow skills section").level, "WARN");
     assert.equal(find(r, "seats can see the workflow skills").level, "WARN");
-    assert.match(find(r, "seats can see the workflow skills").detail, /run install\.sh/);
+    assert.match(find(r, "seats can see the workflow skills").detail, /run \.\/install\.sh --apply/);
     fs.writeFileSync(join(specDir, "CULTURE.md"), fs.readFileSync(join(repo, "rig/template/CULTURE.md"), "utf8"));
     for (const d of dirs) for (const n of WORKFLOW) { fs.mkdirSync(join(d, n), { recursive: true }); fs.writeFileSync(join(d, n, "SKILL.md"), "x"); }
     r = rows();

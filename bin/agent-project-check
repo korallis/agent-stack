@@ -154,7 +154,7 @@ if specs:
     unseen = [f"{d}/{n}" for n in WORKFLOW for d in ("~/.claude/skills", "~/.agents/skills")
               if not os.path.isfile(os.path.join(os.path.expanduser(d), n, "SKILL.md"))]
     rep("OK" if not unseen else "WARN", "seats can see the workflow skills (Claude and Codex skill dirs)",
-        f"missing: {', '.join(unseen[:4])}{' …' if len(unseen) > 4 else ''}; run install.sh" if unseen else "")
+        f"missing: {', '.join(unseen[:4])}{' …' if len(unseen) > 4 else ''}; run ./install.sh --apply" if unseen else "")
     ps = sh("rig", "ps", "--json")
     running = bool(rig) and (f'"{rig}"' in ps or re.search(rf"^{re.escape(rig)}\s", sh("rig", "ps"), re.M) is not None)
     rep("OK" if running else "WARN", f"rig {rig} is running")
@@ -513,7 +513,7 @@ rep("OK" if "OpenRig MANAGED BLOCK" in hook else "FAIL", "repo pre-commit hook r
 # ---- 5. machine: seat skills + seat tools -------------------------------------------------------------
 for d in (f"{HOME}/.claude/skills", f"{HOME}/.agents/skills"):
     have = all(os.path.exists(f"{d}/{s}/SKILL.md") for s in ("mission-slice-sop", "queue-handoff", "openrig-project-setup"))
-    rep("OK" if have else "FAIL", f"{d}: mission-slice-sop, queue-handoff, openrig-project-setup (run install.sh)")
+    rep("OK" if have else "FAIL", f"{d}: mission-slice-sop, queue-handoff, openrig-project-setup (run ./install.sh --apply)")
 rep("OK" if os.access(f"{HOME}/.local/share/agent-stack/seat-tools/rig", os.X_OK) else "FAIL",
     "seat-tools/rig installed (adds project tag + worktree_path)")
 rep("OK" if "seat-tools" in (read(f"{HOME}/.config/agent-stack/env.sh") or "") else "FAIL",
@@ -605,7 +605,7 @@ bad_files = [f"{f} ({'missing' if not os.path.exists(f) else oct(os.stat(f).st_m
              if not os.path.exists(f) or os.stat(f).st_mode & 0o777 != 0o600]
 rep("OK" if pw and not nosec and not bad_files else "WARN", "Playwright MCP redacts test credentials (--secrets <0600 dotenv>)",
     "; ".join(filter(None, [("no --secrets: " + "; ".join(nosec)) if nosec else "", ("secrets file: " + ", ".join(bad_files)) if bad_files else "",
-                            "no Playwright MCP configured" if not pw else ""])) + " (run install.sh; system/playwright-mcp-config)"
+                            "no Playwright MCP configured" if not pw else ""])) + " (run ./install.sh --apply; system/playwright-mcp-config)"
     if (nosec or bad_files or not pw) else "")
 
 if "--json" in sys.argv:

@@ -70,7 +70,7 @@ def loop_risk(path):
     if not guard_ok:
         return ""
     if not LOOP_SAFE:
-        return "the installed guard predates the shim fix and can loop behind a mise shim: run install.sh"
+        return "the installed guard predates the shim fix and can loop behind a mise shim: run ./install.sh --apply"
     if path not in _resolved:
         bad = []
         for t in ("neon", "vercel"):
@@ -115,7 +115,7 @@ for pid in sorted((p for p in os.listdir(PROC) if p.isdigit()), key=int):
         ok = guard_ok and has_functions and env_sh_mtime is not None and t0 is not None and t0 > env_sh_mtime
         why = ("launched after env.sh got the guard functions" if ok else
                "guard not installed" if not guard_ok else
-               "env.sh has no guard functions (run install.sh)" if not has_functions else
+               "env.sh has no guard functions (run ./install.sh --apply)" if not has_functions else
                "launched before env.sh got the guard functions: relaunch at idle")
     risk = loop_risk(env.get("PATH", ""))
     if risk:

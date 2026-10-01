@@ -45,5 +45,5 @@ for name in ("CLAUDE.md", "AGENTS.md"):
     os.replace(tmp, path)
     print(f"ok   {path}: onboarding pointer {'updated' if a != -1 else 'added'}")
 if not found:
-    print(f"--   no kernel workspace instruction file in {WS} yet (the kernel writes it at first boot); re-run install.sh after")
+    print(f"--   no kernel workspace instruction file in {WS} yet (the kernel writes it at first boot); re-run ./install.sh --apply after")
 sys.exit(1 if bad else 0)
