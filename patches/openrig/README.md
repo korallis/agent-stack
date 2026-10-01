@@ -28,12 +28,14 @@ without offset or fuzz), plus the part of 137 that upstream lacks, as a new patc
 | `138-seat-lookup-prefer-live-rig` | **dropped** | Upstream 3b1b335d (#181): seat refs for launch, stop, model and handover resolve unarchived rigs only (seat-lifecycle-service, seat-status-service) |
 | `139-batch-seat-tmux-reads` | kept, rebased | Not upstream. One hunk rebased onto #169's generation-checked sweep (the batched `list-panes -a` read, with a generation check after it like the other awaits) |
 | `140-delivery-outcome-resolved-close` | kept as is | Not in v0.6.3 |
+| `141-slack-upload-encoding-and-video` | **kept, new** (WO67) | 0.6.3 sends `files.getUploadURLExternal` as a JSON body; Slack answers `invalid_arguments` (its reference lists JSON, but the method reads form fields only), so a local `--evidence-ref` screenshot never reached the thread. Now both upload calls are form-encoded, as Slack's own client sends them (`files` as a JSON string); local attachments are images, `.mp4`/`.webm`/`.mov` and `.pdf` up to 50 MiB (stat before read); the byte upload's timeout grows with the size; an allowed file that is too big or unreadable logs `ATTACHMENT skipped … (text delivered; attachment missing)`. Tests run it on the vendored pristine 0.6.3 files (`test/fixtures/openrig-0.6.3-slack`); `openrig-slack-upload-check --live` is the live check |
 
 Proven in a throwaway HOME under `env -i` (no seat `OPENRIG_*`, `TMUX_TMPDIR` isolated): `openrig-upgrade --no-restart
 0.6.3` installed and applied all seven; `openrig-apply-patches --check` reports all 7 applied; the daemon started on
 another port with `--no-kernel`, `/healthz` ok, `rig ps` answered; spot checks found each patched behaviour (132's
 `--project`, 136's 5000/25000/15000 ms with one single-flight, 139's batched reads in use, 135/133/140's code). With 137-proof-replace-keeps-sources, `rig proof add --replace` over a symlink and over a
-hardlink to a PNG left the PNG's bytes as they were, and `--file proof/self.md --name self.md --replace` was refused.
+hardlink to a PNG left the PNG's bytes as they were, and `--file proof/self.md --name self.md --replace` was refused. With 141 (WO67) the same throwaway install applied all eight and `--check` reports all 8 applied;
+`openrig-slack-upload-check` on it reports 141 applied, and the patched Slack subsystem loads.
 
 ## The 0.6.1 set
 

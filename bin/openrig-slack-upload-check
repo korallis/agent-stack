@@ -1,0 +1,117 @@
+#!/usr/bin/env node
+// openrig-slack-upload-check [--live] [--file <abs path>] [--channel <id>] [--env-file <path>] [--thread-ts <ts>] [--pkg <dir>]
+//
+// Checks that the INSTALLED OpenRig daemon can upload a proof attachment to Slack (WO67, patch 141), using the
+// package's own slack-api.js: files.getUploadURLExternal -> bytes -> files.completeUploadExternal.
+//   - Without --live it calls nothing: it prints the package version, whether patch 141 is in, the channel and env
+//     file it would use, and whether SLACK_BOT_TOKEN is present (yes/no).
+//   - With --live it uploads --file (default: a generated 1x1 PNG in the scratch dir, removed afterwards) into the
+//     channel (or into --thread-ts) with the comment "openrig-slack-upload-check".
+// Channel and env file come from $OPENRIG_HOME/slack-connector.json (pointers only) unless given. The bot token is
+// read BY NAME (env SLACK_BOT_TOKEN / OPENRIG_SLACK_BOT_TOKEN, else the env file's SLACK_BOT_TOKEN line) and never
+// printed; a failure prints Slack's error code only. Exit 0 when every step is ok (or the dry run resolved), else 1.
+import fs from "node:fs";
+import os from "node:os";
+import path from "node:path";
+import { pathToFileURL } from "node:url";
+
+const ALLOWED = new Set([".png", ".jpg", ".jpeg", ".gif", ".webp", ".mp4", ".webm", ".mov", ".pdf"]);
+const MAX_BYTES = 50 * 1024 * 1024;
+// A valid 1x1 transparent PNG.
+const PNG = Buffer.from("iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mNkYPhfDwAChwGA60e6kgAAAABJRU5ErkJggg==", "base64");
+const say = (s) => process.stdout.write(`${s}\n`);
+const fail = (s, code = 1) => { process.stderr.write(`openrig-slack-upload-check: ${s}\n`); process.exit(code); };
+const safeCode = (e) => (/^[A-Za-z0-9_ .:-]{1,80}$/.test(String(e ?? "")) ? String(e) : "unknown error");
+
+const args = process.argv.slice(2);
+const opt = { live: false };
+for (let i = 0; i < args.length; i++) {
+  const a = args[i];
+  const val = () => (i + 1 < args.length ? args[++i] : fail(`${a} needs a value`, 2));
+  if (a === "--live") opt.live = true;
+  else if (a === "--file") opt.file = val();
+  else if (a === "--channel") opt.channel = val();
+  else if (a === "--env-file") opt.envFile = val();
+  else if (a === "--thread-ts") opt.threadTs = val();
+  else if (a === "--pkg") opt.pkg = val();
+  else if (a === "-h" || a === "--help") {
+    say(fs.readFileSync(new URL(import.meta.url), "utf8").split("\n").filter((l) => l.startsWith("//")).map((l) => l.slice(3)).join("\n"));
+    process.exit(0);
+  } else fail(`unknown argument ${JSON.stringify(a)}`, 2);
+}
+
+const home = os.homedir();
+const pkg = opt.pkg ?? path.join(home, ".local/share/agent-stack/openrig/lib/node_modules/@openrig/cli");
+const apiPath = path.join(pkg, "daemon/dist/domain/gateway/slack/slack-api.js");
+if (!fs.existsSync(apiPath)) fail(`no OpenRig Slack client at ${apiPath} (give --pkg <@openrig/cli dir>)`);
+let version = "unknown";
+try { version = JSON.parse(fs.readFileSync(path.join(pkg, "package.json"), "utf8")).version; } catch { /* keep unknown */ }
+const patched = fs.readFileSync(apiPath, "utf8").includes('"files.getUploadURLExternal", token, { filename, length }, fetchImpl, timeoutMs, "form-post"');
+
+const openrigHome = process.env.OPENRIG_HOME || path.join(home, ".openrig");
+let cfg = {};
+try { cfg = JSON.parse(fs.readFileSync(path.join(openrigHome, "slack-connector.json"), "utf8")); } catch { /* none */ }
+const channel = opt.channel ?? cfg.channel ?? null;
+const envFile = opt.envFile ?? cfg.secretsEnvFile ?? null;
+
+function readToken() {
+  for (const k of ["SLACK_BOT_TOKEN", "OPENRIG_SLACK_BOT_TOKEN"]) if (process.env[k]) return { token: process.env[k], from: `env ${k}` };
+  if (!envFile) return { token: null, from: "no env file configured" };
+  let st;
+  try { st = fs.statSync(envFile); } catch { return { token: null, from: `env file ${envFile} missing` }; }
+  if (st.mode & 0o077) fail(`env file ${envFile} is mode ${(st.mode & 0o777).toString(8)}; it must be 0600`);
+  const line = fs.readFileSync(envFile, "utf8").split("\n").map((l) => l.trim()).find((l) => /^SLACK_BOT_TOKEN\s*=/.test(l));
+  const token = line ? line.slice(line.indexOf("=") + 1).trim().replace(/^"|"$/g, "") : "";
+  return { token: token || null, from: `env file ${envFile}` };
+}
+const { token, from } = readToken();
+
+say(`package: @openrig/cli ${version} at ${pkg}`);
+say(`patch 141 (form-encoded upload calls): ${patched ? "applied" : "NOT applied"}`);
+say(`channel: ${channel ?? "(none)"}${opt.threadTs ? `, thread ${opt.threadTs}` : ""}`);
+say(`bot token SLACK_BOT_TOKEN: ${token ? "present" : "absent"} (${from})`);
+if (!channel) fail("no channel: set it in slack-connector.json or pass --channel");
+if (!token) fail("no bot token");
+
+let file = opt.file;
+let scratch = null;
+if (file) {
+  if (!path.isAbsolute(file)) fail("--file must be an absolute path");
+  if (!ALLOWED.has(path.extname(file).toLowerCase())) fail(`--file must be one of ${[...ALLOWED].join(" ")}`);
+  const st = fs.statSync(file, { throwIfNoEntry: false });
+  if (!st?.isFile()) fail(`--file ${file} is not a readable file`);
+  if (st.size > MAX_BYTES) fail(`--file is ${st.size} bytes, over the ${MAX_BYTES}-byte cap`);
+}
+say(`file: ${file ?? "(a generated 1x1 PNG)"}`);
+if (!opt.live) { say("dry run: nothing sent (add --live to upload)"); process.exit(0); }
+
+if (!file) {
+  // Scratch on disk, outside any repo (never /tmp).
+  const s = process.env.OPENRIG_SESSION_NAME || `${os.userInfo().username}@local`;
+  const dir = path.join(home, ".cache", `${s.split("@").slice(1).join("@") || "local"}-tmp`, s.split("@")[0]);
+  fs.mkdirSync(dir, { recursive: true });
+  scratch = fs.mkdtempSync(path.join(dir, "slack-upload-check."));
+  file = path.join(scratch, "openrig-slack-upload-check.png");
+  fs.writeFileSync(file, PNG);
+}
+class StepFailed extends Error {}
+const stop = (s) => { throw new StepFailed(s); };
+try {
+  const api = await import(pathToFileURL(apiPath).href);
+  const bytes = new Uint8Array(fs.readFileSync(file));
+  const name = path.basename(file);
+  const up = await api.getUploadURLExternal(token, name, bytes.length);
+  if (!(up.ok && up.uploadUrl && up.fileId)) stop(`files.getUploadURLExternal FAILED: ${safeCode(up.error)}${patched ? "" : " (patch 141 is not applied)"}`);
+  say("files.getUploadURLExternal: ok");
+  const put = await api.uploadBytesExternal(up.uploadUrl, bytes);
+  if (!put.ok) stop(`byte upload FAILED: ${safeCode(put.error)}`);
+  say(`byte upload: ok (${bytes.length} bytes)`);
+  const done = await api.completeUploadExternal(token, { files: [{ id: up.fileId, title: name }], channelId: channel, threadTs: opt.threadTs, initialComment: "openrig-slack-upload-check" });
+  if (!done.ok) stop(`files.completeUploadExternal FAILED: ${safeCode(done.error)}`);
+  say(`files.completeUploadExternal: ok (file ${up.fileId} shared to ${channel})`);
+} catch (e) {
+  process.stderr.write(`openrig-slack-upload-check: ${e instanceof StepFailed ? e.message : `error (${e?.name ?? "unknown"})`}\n`);
+  process.exitCode = 1;
+} finally {
+  if (scratch) fs.rmSync(scratch, { recursive: true, force: true });
+}

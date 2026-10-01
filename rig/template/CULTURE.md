@@ -38,6 +38,15 @@ them as the owner's.
   automatically once Slack has posted it (`agent-human-inbox-tidy`, every 5 minutes); don't reopen it. A row without
   `--human-intent` counts as a decision and stays open. Decision requests use `--human-intent decision` and
   stay pending until answered: the owner's Slack reply closes a pending row, and parking or claiming it breaks that.
+- Visual proof for the owner rides on that update row: add `--evidence-ref <absolute path to a .png/.jpg/.gif/.webp,
+  .mp4/.webm/.mov or .pdf>` (at most 50 MiB) and the daemon posts the text, then uploads the file into its Slack thread.
+  If the upload fails the text still lands and the daemon logs "attachment missing"; say what the file shows in the
+  row's text either way. Make the file outside every repo and never in `/tmp`: in your scratch dir (the `TMPDIR` rule
+  below), or the Playwright MCP's own output dir (`browser_take_screenshot` saves under
+  `~/.local/state/agent-stack/playwright-mcp/`). In a Playwright script: `await page.screenshot({ path: dir + "/home.png",
+  fullPage: true })`; video: `browser.newContext({ recordVideo: { dir, size: { width: 1280, height: 720 } } })`, then
+  `await context.close()` and pass `await page.video().path()` (a .webm). Only test accounts and synthetic data on
+  screen: no secrets, tokens, real customer or client data, or other projects' windows.
 - Heavy runs share the machine: wrap every tsc, eslint, vitest/jest, `npm test`, `next build`, Playwright run and full
   test suite in `agent-heavy build -- <cmd>` (`agent-heavy browser -- <cmd>` for Playwright and other browser tests). It
   holds a shared slot (2 at once, capped CPU and RAM) so a burst of seats can't starve the host or the OpenRig daemon.
