@@ -3,7 +3,7 @@
 // columns, graceful at 120: tiles and cards share the width, cards wrap to a second row, lower panels shrink.
 import type { RGB } from "../term.ts";
 import { bigNumber, bigWidth, braille, fit, meter, panel, rpad, sparkline } from "../draw.ts";
-import { podsOf, natural, type Activity, type Seat } from "../model.ts";
+import { brief, podsOf, natural, type Activity, type Seat } from "../model.ts";
 import type { History } from "../history.ts";
 import { footer, header, kindColor, since, ticker, type Ctx } from "./chrome.ts";
 
@@ -36,7 +36,7 @@ export function home(c: Ctx, hist: History): void {
     { title: "STUCK", value: f.stuck.length, color: f.stuck.length ? t.stuck : t.faint,
       // derived, conservative (phase 4): each with its reason; quiet seats that aren't stuck are counted apart
       // one stuck seat: its full reason, wrapped; several: the seats, and Focus has each reason
-      lines: f.stuck.length === 1 ? [[f.stuck[0].session, t.stuck] as [string, RGB], ...wrap(f.stuck[0].why ?? "", lw0(1)).slice(0, 4).map((l) => [l, t.dim] as [string, RGB])]
+      lines: f.stuck.length === 1 ? [[f.stuck[0].session, t.stuck] as [string, RGB], ...wrap(big ? f.stuck[0].why ?? "" : brief(f.stuck[0].why ?? ""), lw0(1)).slice(0, 4).map((l) => [l, t.dim] as [string, RGB])]
         : f.stuck.length ? f.stuck.slice(0, 4).map((x) => [x.session, t.stuck] as [string, RGB]).concat([[f.stuck.length > 4 ? `+${f.stuck.length - 4} more · reasons: Focus` : "reasons: Focus (4)", t.dim]])
         : [["none stuck", t.dim], [f.unknown.length ? `${f.unknown.length} quiet, not stuck` : "every running seat", t.dim], [f.unknown.length ? "(Focus says why)" : "reports activity", t.dim]], spark: hist.series("stuck", 24, now) },
     { title: "BLOCKED", value: f.queue.blocked, color: f.queue.blocked ? t.blocked : t.faint,
@@ -100,14 +100,16 @@ export function home(c: Ctx, hist: History): void {
     if (cw < 27) {
       let nx = s.put(x + 2, cy + 5, `${k.working}●`, { fg: k.working ? t.working : t.dim });
       nx = s.put(nx + 1, cy + 5, `${k.idle}○`, { fg: t.idle });
-      if (k.stuck + k.unknown) nx = s.put(nx + 1, cy + 5, `${k.stuck + k.unknown}◆`, { fg: t.stuck });
+      if (k.stuck) nx = s.put(nx + 1, cy + 5, `${k.stuck}◆`, { fg: t.stuck });
+      if (k.unknown) nx = s.put(nx + 1, cy + 5, `${k.unknown}?`, { fg: t.blocked });
       if (k.detached + k.stopped) s.put(nx + 1, cy + 5, `${k.detached + k.stopped}·`, { fg: t.faint });
       s.put(x + 2, cy + 6, fit(`ctx ${r.ctxMax ?? "—"}% · ${r.rows}r`, w - 4), { fg: (r.ctxMax ?? 0) >= 80 ? t.stuck : t.dim });
       return;
     }
     let sx = s.put(x + 2, cy + 5, `${k.working} wrk`, { fg: k.working ? t.working : t.dim });
     sx = s.put(sx + 2, cy + 5, `${k.idle} idle`, { fg: t.idle });
-    if (k.stuck + k.unknown) sx = s.put(sx + 2, cy + 5, `${k.stuck + k.unknown} stuck`, { fg: t.stuck });
+    if (k.stuck) sx = s.put(sx + 2, cy + 5, `${k.stuck} stuck`, { fg: t.stuck });
+    if (k.unknown) sx = s.put(sx + 2, cy + 5, `${k.unknown} quiet`, { fg: t.blocked });
     if (k.detached + k.stopped) s.put(sx + 2, cy + 5, `${k.detached + k.stopped} down`, { fg: t.faint });
     s.put(x + 2, cy + 6, fit(`ctx ${r.ctxAvg ?? "—"}%/${r.ctxMax ?? "—"}%  ${r.rows} rows`, w - 4), { fg: (r.ctxMax ?? 0) >= 80 ? t.stuck : t.dim });
   });

@@ -79,7 +79,7 @@ export function river(c: Ctx): void {
     if (focusedLane) sel = l.slices[fc] ?? null;
     s.put(1, y, focusedLane ? "▶" : " ", { fg: t.title });
     s.put(2, y, fit(l.rig, LW - 3), { fg: focusedLane ? t.title : t.text, bold: true });
-    s.put(2, y + 1, fit(`▸${k.working} ·${k.idle}${k.stuck + k.unknown ? ` ?${k.stuck + k.unknown}` : ""}`, LW - 3), { fg: t.dim });
+    s.put(2, y + 1, fit(`▸${k.working} ·${k.idle}${k.stuck ? ` ◆${k.stuck}` : ""}${k.unknown ? ` ?${k.unknown}` : ""}`, LW - 3), { fg: t.dim });
     const fit1 = Math.max(1, Math.floor((cw - 1) / 8));
     RIVER.forEach((st, i) => {
       const here = l.slices.filter((x) => x.stage === i), x0 = colX(i);

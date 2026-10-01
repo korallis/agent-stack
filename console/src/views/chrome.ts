@@ -2,7 +2,7 @@
 // numbered views (lazygit), the live ticker and the footer of keys for the focused view (k9s).
 import type { Screen } from "../term.ts";
 import type { Theme } from "../theme.ts";
-import type { Fleet, Raw } from "../model.ts";
+import { brief, type Fleet, type Raw } from "../model.ts";
 import { ago, fit } from "../draw.ts";
 
 export interface Ctx { s: Screen; t: Theme; raw: Raw; f: Fleet; frame: number; view: number; rigFocus: number; seatFocus: [number, number]; note: string | null;
@@ -80,11 +80,12 @@ export function footer(c: Ctx, keys: [string, string][], status: string): void {
     x = s.put(x, s.h - 2, ` ${k} `, { fg: t.text, bg: t.border, bold: true });
     x = s.put(x + 1, s.h - 2, what, { fg: t.dim }) + 2;
   }
-  const warn: string[] = [];
-  if (f.owner.length) warn.push(`▲ ${f.owner.length} owner decision${f.owner.length > 1 ? "s" : ""} waiting`);
-  if (f.stuck.length) warn.push(`${f.stuck.length} seat${f.stuck.length > 1 ? "s" : ""} stuck`);
-  if (f.ctxHigh.length) warn.push(`${f.ctxHigh.length} ctx ≥ 80%`);
-  const w = warn.join(" · ");
+  // the warnings, most important first; when they don't fit, the stuck reason shortens, then the ctx count goes
+  const owner = f.owner.length ? `▲ ${f.owner.length} owner decision${f.owner.length > 1 ? "s" : ""} waiting` : null;
+  const stuck = (why: string) => f.stuck.length ? `${f.stuck[0].session} stuck: ${why}${f.stuck.length > 1 ? ` · +${f.stuck.length - 1} more stuck (Focus)` : ""}` : null;
+  const ctx = f.ctxHigh.length ? `${f.ctxHigh.length} ctx ≥ 80%` : null, room = s.w - 12;
+  const w = [[owner, stuck(f.stuck[0]?.why ?? ""), ctx], [owner, stuck(brief(f.stuck[0]?.why ?? "")), ctx], [owner, stuck(brief(f.stuck[0]?.why ?? ""))]]
+    .map((xs) => xs.filter(Boolean).join(" · ")).find((x) => [...x].length <= room) ?? fit([owner, stuck(brief(f.stuck[0]?.why ?? ""))].filter(Boolean).join(" · "), room);
   s.put(1, s.h - 1, fit(status, Math.max(0, s.w - [...w].length - 5)), { fg: t.dim });
   if (w) s.put(s.w - [...w].length - 2, s.h - 1, w, { fg: f.owner.length ? t.owner : t.blocked });
   if (c.note) s.put(Math.max(1, Math.floor(s.w / 2) - 20), s.h - 1, ` ${c.note} `, { fg: t.bg, bg: t.title });

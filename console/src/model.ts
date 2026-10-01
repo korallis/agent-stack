@@ -284,6 +284,8 @@ export function classify(raw: Raw): Raw {
 
 /** Per stage of the River: how long its open rows have been in their current state (now − the row's last transition),
  *  and how much of that is waiting (pending or blocked) rather than worked (in progress). From the queue alone. */
+/** The stuck reason in fewer cells, for narrow tiles and a crowded footer: "stalled 42m · 1 row unmoved 38m". */
+export const brief = (why: string) => why.replace(/ for (\d+[smhd])/g, " $1").replace(/no queue movement on (\d+) open (rows?) (\d+[smhd])/, "$1 $2 unmoved $3");
 export function stageTimes(raw: Raw): { median: number | null; worked: number; waited: number; rows: number }[] {
   const bySession = new Map(raw.rigs.flatMap((r) => r.seats).map((s) => [s.session, s]));
   return RIVER.map((_, i) => {
@@ -291,7 +293,7 @@ export function stageTimes(raw: Raw): { median: number | null; worked: number; w
     const ages = rows.map((r) => Math.max(0, raw.at - Date.parse(r.updated))).filter(Number.isFinite).sort((a, b) => a - b);
     const worked = rows.filter((r) => r.state === "in-progress").reduce((n, r) => n + Math.max(0, raw.at - Date.parse(r.updated)), 0);
     const waited = rows.filter((r) => r.state !== "in-progress").reduce((n, r) => n + Math.max(0, raw.at - Date.parse(r.updated)), 0);
-    return { median: ages.length ? ages[Math.floor(ages.length / 2)] : null, worked, waited, rows: rows.length };
+    return { median: ages.length ? (ages[(ages.length - 1) >> 1] + ages[ages.length >> 1]) / 2 : null, worked, waited, rows: rows.length };
   });
 }
 /** A slice's time at its current stage (its longest-sitting row there), and the longest any of those rows has been

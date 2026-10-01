@@ -65,7 +65,7 @@ export interface ViewState {
 }
 export function render(raw: Raw, hist: History, w: number, h: number, st: ViewState): Screen {
   const t = THEMES[st.theme ?? "pad39a"] ?? PAD39A, s = new Screen(w, h, t.bg);
-  raw = classify({ ...raw, stuckMinutes: st.stuckMinutes ?? raw.stuckMinutes });   // phase 4: derived stuck verdicts, with reasons
+  raw = classified(raw, st);   // phase 4: derived stuck verdicts, with reasons
   if (w < MIN_W || h < MIN_H) {
     s.put(2, 1, `rig-console needs at least ${MIN_W}×${MIN_H}; this terminal is ${w}×${h}.`, { fg: t.blocked });
     s.put(2, 2, "Widen the window (best at 176×50). q quits.", { fg: t.dim });
@@ -121,7 +121,10 @@ export function initialReads(cache: Cache, st: ViewState) {
 /** The views that show done slices (the River's DONE column, Focus's progress) read the done list (QA PR92). */
 export const wantsDone = (st: ViewState) => !st.seat && (st.view === 2 || st.view === 3);
 
-const ctxOf = (st: ViewState, raw0: Raw): Ctx => { const raw = classify({ ...raw0, stuckMinutes: st.stuckMinutes ?? raw0.stuckMinutes }); return { s: new Screen(1, 1), t: PAD39A, raw, f: derive(raw), frame: 0, view: st.view, rigFocus: st.rigFocus, seatFocus: st.seatFocus,
+/** The stuck verdicts at the view's threshold: frames, commands and history samples all classify the same way. */
+const classified = (raw: Raw, st: ViewState): Raw => classify({ ...raw, stuckMinutes: st.stuckMinutes ?? raw.stuckMinutes });
+export const sampleFor = (raw: Raw, st: ViewState): Sample => sampleOf(derive(classified(raw, st)), raw.at);
+const ctxOf = (st: ViewState, raw0: Raw): Ctx => { const raw = classified(raw0, st); return { s: new Screen(1, 1), t: PAD39A, raw, f: derive(raw), frame: 0, view: st.view, rigFocus: st.rigFocus, seatFocus: st.seatFocus,
   note: null, riverFocus: st.riverFocus, journey: st.journey, pane: st.pane, select: st.select } as Ctx; };
 const panesOf = (st: ViewState) => (st.seat ? SEAT_PANES : st.view === 3 ? FOCUS_PANES : st.view === 4 ? POOL_PANES : []);
 
@@ -254,7 +257,7 @@ async function main() {
       initialReads(cache, st);
       await cache.tick();
       if (st.journey) { cache.setView(true, st.journey); await cache.tick(); }   // its rows are known after the first read
-      cache.stop(); raw = cache.raw; hist.add(sampleOf(derive(raw), raw.at)); }
+      cache.stop(); raw = cache.raw; hist.add(sampleFor(raw, st)); }
     const [w, h] = size();
     process.stdout.write(dump(render(raw, hist, w, h, st), depth));
     return;
@@ -276,7 +279,7 @@ async function main() {
   process.stdout.on("resize", () => { prev = null; schedule(); });
   process.stdin.setRawMode(true); process.stdin.resume(); process.stdin.setEncoding("utf8");
   if (cache) {
-    cache.onChange(() => { const r = cache!.raw; hist.add(sampleOf(derive(r), r.at)); schedule(); });
+    cache.onChange(() => { hist.add(sampleFor(cache!.raw, st)); schedule(); });
     initialReads(cache, st);
     cache.start();
   }

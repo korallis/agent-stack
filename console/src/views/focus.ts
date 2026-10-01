@@ -34,7 +34,9 @@ export function timeline(c: Ctx): Item[] {
   for (const s of f.ctxHigh.slice(0, 4)) items.push({ at: now, icon: "▶", color: t.blocked, label: "Context", rig: s.rig, text: `${s.session} · ${s.ctx}% used · hand over before the next slice`, seat: s.session });
   for (const s of f.stuck.slice(0, 6)) items.push({ at: now, icon: "▲", color: t.stuck, label: "Stuck", rig: s.rig, text: `${s.session} · ${s.why}`, seat: s.session });
   for (const s of f.unknown.slice(0, 3)) items.push({ at: now, icon: "?", color: t.blocked, label: "Quiet", rig: s.rig, text: `${s.session} · ${s.why} · not stuck`, seat: s.session });
-  return items.sort((a, b) => b.at.localeCompare(a.at));
+  // the verdicts lead, whatever the events' clocks say: a stuck seat is never below the fold
+  const lead = (x: Item) => (x.label === "Stuck" ? 0 : x.label === "Quiet" ? 1 : 2);
+  return items.sort((a, b) => lead(a) - lead(b) || b.at.localeCompare(a.at));
 }
 
 export const FOCUS_PANES = ["decisions", "timeline", "progress"];
@@ -70,6 +72,7 @@ export function focus(c: Ctx): void {
   });
   const unknown = f.unknown.length;
   if (unknown) s.put(2 + 3 * cw + Math.min(cw - 18, 20), y + 2, `● ${unknown} unknown seat${unknown > 1 ? "s" : ""}`, { fg: t.blocked });
+  if (f.stuck.length) s.put(2, y + 4, fit(`▲ ${f.stuck[0].session} stuck: ${f.stuck[0].why}${f.stuck.length > 1 ? ` · +${f.stuck.length - 1} more in the timeline` : ""}`, s.w - 4), { fg: t.stuck });
   y += 5;
   s.put(1, y, "─".repeat(s.w - 2), { fg: t.border });
   y += 1;

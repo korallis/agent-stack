@@ -95,7 +95,7 @@ export function matrix(c: Ctx, hist: History): void {
   }
   if (c0 > 0) s.put(gx - 2, y + 2, "◀", { fg: t.title });
   if (c1 < cols.length) s.put(limit + 1, y + 2, "▶", { fg: t.title });
-  s.put(sumX, y + 1, "W / I / ?", { fg: t.dim }); s.put(sumX, y + 2, "rows", { fg: t.faint });
+  s.put(sumX, y + 1, " W/ I/ ◆  ?", { fg: t.dim }); s.put(sumX, y + 2, "rows", { fg: t.faint });
   const room = y + mh - 1 - (y + 3);                                  // lines between the header and the border
   const step = g.rows.length * 3 <= room ? 3 : 2;                     // a blank line between rigs when there is room
   const fitRows = Math.max(1, Math.floor(room / step));
@@ -120,7 +120,7 @@ export function matrix(c: Ctx, hist: History): void {
       s.put(x, ry + 1, " " + DOT[seat.activity], { fg: dotColor(c, seat.activity), inverse: focused });
     }
     const k = f.byRig[row.rig] ?? { working: 0, idle: 0, stuck: 0, unknown: 0, detached: 0, stopped: 0 };
-    s.put(sumX, ry, `${rpad(k.working, 2)} / ${rpad(k.idle, 2)} / ${k.stuck + k.unknown}`, { fg: t.text });
+    s.put(sumX, ry, fit(`${rpad(k.working, 2)}/${rpad(k.idle, 2)}/${rpad(k.stuck, 2)}◆${k.unknown ? ` ${k.unknown}?` : ""}`, SUMW), { fg: t.text });
     const rig = f.rigs.find((r) => r.rig.name === row.rig);
     s.put(sumX, ry + 1, fit(`${rig?.rows ?? 0} rows${rig?.health === "down" ? " · down" : ""}`, SUMW), { fg: rig?.health === "down" ? t.stuck : t.faint });
   }
