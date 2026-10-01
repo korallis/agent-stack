@@ -135,3 +135,42 @@ test("SemVer, not sort -V: a prerelease is older than its release (0.6.1-rc.1 ov
   assert.equal(r.status, 1);
   assert.match(r.stderr, /0\.6\.1-rc\.1 is OLDER than the installed 0\.6\.1/);
 });
+
+// WO68: `openrig-upgrade 0.6.3 --no-restart` restarted the live daemon (the option loop stopped at the version, so a
+// flag after it was ignored). Options now count in any position, and the parsing is strict, like install.sh.
+test("--no-restart AFTER the version is honoured: installs, patches and pins, never cycles the daemon", () => {
+  const r = run(["0.6.1", "--no-restart"], "0.6.1");
+  assert.equal(r.status, 0, r.stderr);
+  assert.equal(r.pinned, "0.6.1");
+  assert.match(r.calls, /^patches /m);
+  assert.doesNotMatch(r.calls, /cycle|systemctl/);
+  assert.match(r.stdout, /daemon NOT restarted/);
+});
+
+test("--allow-downgrade after the version is honoured too", () => {
+  const r = run(["0.6.0", "--allow-downgrade", "--no-restart"], "0.6.0", {}, "0.6.1");
+  assert.equal(r.status, 0, r.stderr);
+  assert.equal(r.pinned, "0.6.0"); assert.doesNotMatch(r.calls, /cycle/);
+});
+
+test("strict parsing: an unknown option, a second version or an empty argument exits 2 before anything runs", () => {
+  for (const [args, why] of [[["0.6.1", "--no-restrat"], /unknown option '--no-restrat'/], [["--norestart", "0.6.1"], /unknown option '--norestart'/],
+    [["-n", "0.6.1"], /unknown option '-n'/], [["0.6.1", "0.6.2"], /more than one version given \('0\.6\.1', '0\.6\.2'\)/],
+    [["", "--no-restart"], /'' is not a version or dist-tag/], [["0.6.1;rm"], /is not a version or dist-tag/]]) {
+    const r = run(args, "0.6.1", {}, "0.6.0");
+    assert.equal(r.status, 2, `${JSON.stringify(args)}: ${r.stderr}`);
+    assert.match(r.stderr, why); assert.match(r.stderr, /Nothing was done\.\n/); assert.match(r.stderr, /usage: openrig-upgrade/);
+    assert.equal(r.calls, "", `${JSON.stringify(args)} ran: ${r.calls}`);
+    assert.equal(r.pinned, "0.6.0");
+  }
+});
+
+test("-h / --help print the usage and do nothing, wherever they appear", () => {
+  for (const args of [["--help"], ["-h"], ["0.6.1", "--help"], ["--no-restart", "-h", "0.6.1"]]) {
+    const r = run(args, "0.6.1", {}, "0.6.0");
+    assert.equal(r.status, 0, r.stderr);
+    assert.match(r.stdout, /^Upgrade \(or reinstall\) OpenRig/); assert.match(r.stdout, /--no-restart {7}install, patch and pin only/);
+    assert.match(r.stdout, /options go before or after it/);
+    assert.equal(r.calls, ""); assert.equal(r.pinned, "0.6.0");
+  }
+});
