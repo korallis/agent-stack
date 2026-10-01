@@ -115,7 +115,8 @@ export function home(c: Ctx, hist: History): void {
   });
   y += Math.max(1, Math.ceil(rigs.length / per)) * 8 + 1;
 
-  // ── work in flight by stage ──
+  // ── work in flight by stage (five rows; skipped when they would run into the ticker and the key hints) ──
+  if (y + 5 <= s.h - 3) {
   s.put(2, y, "WORK IN FLIGHT", { fg: t.title, bold: true });
   s.put(17, y, "· active queue rows by the role they wait on · left → right", { fg: t.dim });
   const sw = Math.floor((s.w - 4) / f.stages.length);
@@ -138,6 +139,7 @@ export function home(c: Ctx, hist: History): void {
   qx = s.put(qx, y + 4, `${f.gate.hold} hold ▲  `, { fg: f.gate.hold ? t.blocked : t.dim });
   s.put(qx, y + 4, `${f.gate.uncertain} uncertain`, { fg: t.violet });
   y += 6; }
+  }
 
   // ── lower panels: decisions, accounts, system | events ──
   const bottom = s.h - 4, avail = bottom - y;
