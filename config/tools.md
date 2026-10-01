@@ -42,7 +42,7 @@ servers marked "latest" track upstream, the rest are pinned in `config/versions.
 
 | Helper | Where | What it does |
 |---|---|---|
-| `seat-tools/rig` | seats (via the `rig` launcher) | Every `rig queue create/handoff` gets the `project:<id>` tag and the `worktree_path=` line OpenRig's project views join on |
+| `seat-tools/rig` | seats (via the `rig` launcher; outside a seat, `queue create` only) | Every `rig queue create/handoff` gets the `project:<id>` tag and the `worktree_path=` line OpenRig's project views join on; a row to a human (`*@external`) without `--summary` gets one from the body's first line, so Slack never shows "(no summary)" |
 | `pre-commit` git hook | each project repo (installed by agent-project-new) | Refuses commits containing OpenRig seat instruction blocks (`system/git-hooks/pre-commit`) |
 
 ## Background services (systemd user units)

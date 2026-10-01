@@ -72,6 +72,8 @@ project-workspace.md) and the `mission-slice-sop` skill. Verify each point on di
    operator relay of <ref>)`): check it before asking the owner, and add every new decision there. Only the owner's
    own decisions go there; operator and lead rules, and interpretations, go under "Operator and lead rules".
 9. Operating rules (template CULTURE.md, "Operating rules"):
+   - every row to a human (`*@external`) gets a short `--summary`, the Slack message's bold title; without one,
+     `seat-tools/rig` takes the body's first line (markdown stripped, at most 80 characters) rather than "(no summary)";
    - send owner FYIs with `--human-intent update`: they are closed automatically once posted (`agent-human-inbox-tidy`,
      every 5 min), so don't reopen them. A row without `--human-intent` counts as a decision and is not auto-closed;
    - decision requests use `--human-intent decision` and stay pending: the owner's Slack reply closes them, and parking or

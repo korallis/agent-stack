@@ -119,4 +119,106 @@ test("other commands pass straight through with their exit code", () => {
   assert.deepEqual(r.call.argv, ["queue", "claim", "q1"]);
 });
 
+// WO70: OpenRig posts a row's summary as the Slack message's bold subject ("(no summary)" without one).
+const flag = (call, name) => { const i = call.argv.indexOf(name); return i < 0 ? null : call.argv[i + 1]; };
+
+test("D: a row to a human without --summary gets the body's first line, markdown stripped", () => {
+  const r = run(["queue", "create", "--destination", "owner@external", "--body", "\n## Ready: **login** works on [staging](https://x.example)\nmore detail"]);
+  assert.equal(flag(r.call, "--summary"), "Ready: login works on staging");
+  assert.match(r.stderr, /a row to owner@external needs a subject; --summary "Ready: login works on staging"/);
+  assert.equal(flag(r.call, "--body"), "\n## Ready: **login** works on [staging](https://x.example)\nmore detail", "body untouched");
+});
+
+test("D: skips markdown-only lines, keeps snake_case and code text, caps at 80 characters", () => {
+  const cases = [
+    ["---\n```\n- [x] `files_write` *now* on _staging_\n", "files_write now on staging"],
+    ["> 1. Decision needed: merge PR #12?", "Decision needed: merge PR #12?"],
+    ["   \n\n" + "word ".repeat(30), "word ".repeat(16).slice(0, 79).trimEnd() + "…"],
+  ];
+  for (const [body, want] of cases) {
+    const got = flag(run(["queue", "create", "--destination", "owner@external", "--body", body]).call, "--summary");
+    assert.equal(got, want); assert.ok(got.length <= 80);
+  }
+});
+
+test("D: an explicit --summary is never changed; a seat destination gets none added", () => {
+  for (const s of [["--summary", "Mine"], ["--summary=Mine"]]) {
+    const r = run(["queue", "create", "--destination", "owner@external", ...s, "--body", "# Other"]);
+    assert.ok(r.call.argv.includes("Mine") || r.call.argv.includes("--summary=Mine"), r.call.argv.join(" "));
+    assert.equal(r.call.argv.filter((a) => a.startsWith("--summary")).length, 1);
+  }
+  const seat = run(["queue", "create", "--destination", "dev-qa@r", "--body", "# Title"]);
+  assert.equal(flag(seat.call, "--summary"), null);
+});
+
+test("D: a stdin or file body gives the subject and is passed on unchanged", () => {
+  const piped = run(["queue", "create", "--destination", "owner@external", "--body-file", "-"], { input: "Proof: checkout works\n\nsteps\n" });
+  assert.equal(flag(piped.call, "--summary"), "Proof: checkout works");
+  assert.equal(piped.call.stdin, "Proof: checkout works\n\nsteps\n");
+  const f = join(root, "body.md"); fs.writeFileSync(f, "\n**Wave 2 witnessed**\n");
+  const fromFile = run(["queue", "create", "--destination", "owner@external", "--body-file", f]);
+  assert.equal(flag(fromFile.call, "--summary"), "Wave 2 witnessed"); assert.equal(flag(fromFile.call, "--body-file"), f);
+});
+
+test("D: a handoff to a human keeps the source row's summary, else derives one from its body", () => {
+  const kept = run(["queue", "handoff", "q1", "--to", "owner@external"], { source: { qitemId: "q1", tags: [], summary: "Original subject", body: "# Other" } });
+  assert.equal(flag(kept.call, "--summary"), "Original subject");
+  const derived = run(["queue", "handoff", "q1", "--to", "owner@external"], { source: { qitemId: "q1", tags: [], body: "Please approve the plan\nx" } });
+  assert.equal(flag(derived.call, "--summary"), "Please approve the plan");
+});
+
+test("D: no body and no summary: nothing invented, the gap is said", () => {
+  const r = run(["queue", "create", "--destination", "owner@external"]);
+  assert.equal(flag(r.call, "--summary"), null);
+  assert.match(r.stderr, /has no --summary and no body line to take one from; Slack will show "\(no summary\)"/);
+});
+
+test("D: outside a seat (no OpenRig env) a create to a human still gets its subject, and nothing seat-specific", () => {
+  fs.rmSync(log, { force: true });
+  const r = spawnSync("python3", [helper, "queue", "create", "--destination", "owner@external", "--body", "Operator: upgrade done"], {
+    cwd: root, encoding: "utf8", env: { PATH: process.env.PATH, HOME: home, TMPDIR: tmpdir, FAKE_LOG: log } });
+  assert.equal(r.status, 0, r.stderr);
+  const call = JSON.parse(fs.readFileSync(log, "utf8").trim());
+  assert.deepEqual(call.argv, ["queue", "create", "--destination", "owner@external", "--body", "Operator: upgrade done", "--summary", "Operator: upgrade done"]);
+});
+
+test("D: outside a seat a workspace.yaml in the current directory adds no project: tag (QA PR76)", () => {
+  const cwd = join(root, "some-project-dir"); fs.mkdirSync(cwd, { recursive: true });
+  fs.writeFileSync(join(cwd, "workspace.yaml"), "projects:\n  - id: wrong-project\n");
+  for (const dest of ["owner@external", "dev-qa@r"]) {
+    fs.rmSync(log, { force: true });
+    const r = spawnSync("python3", [helper, "queue", "create", "--destination", dest, "--body-file", "-"], {
+      cwd, input: "# Subject\n", encoding: "utf8", env: { PATH: process.env.PATH, HOME: home, TMPDIR: tmpdir, FAKE_LOG: log } });
+    assert.equal(r.status, 0, r.stderr);
+    const call = JSON.parse(fs.readFileSync(log, "utf8").trim());
+    assert.ok(!call.argv.some((x) => x.startsWith("--tags") || x.startsWith("project:")), `${dest}: ${call.argv.join(" ")}`);
+    assert.equal(call.stdin, "# Subject\n");
+  }
+});
+
+test("D: the ~/.local/bin/rig launcher install.sh writes sends create through the helper everywhere, handoffs only in a seat", () => {
+  const line = fs.readFileSync(join(dirname(helper), "..", "install.sh"), "utf8").split("\n").find((l) => /^\s*printf '#!\/usr\/bin\/env bash\\n.*seat-tools\/rig/.test(l));
+  assert.ok(line, "launcher printf found");
+  const L = join(root, "launch"), B = join(L, "bin");
+  fs.mkdirSync(join(L, "seat-tools"), { recursive: true }); fs.mkdirSync(join(L, "openrig/bin"), { recursive: true }); fs.mkdirSync(B, { recursive: true });
+  fs.writeFileSync(join(L, "seat-tools/rig"), "#!/bin/sh\necho helper \"$@\"\n", { mode: 0o755 });
+  fs.writeFileSync(join(L, "openrig/bin/rig"), "#!/bin/sh\necho real \"$@\"\n", { mode: 0o755 });
+  const w = spawnSync("bash", ["-c", `L=${L}; B=${B}; node22=/nonexistent; ${line.trim()}`], { encoding: "utf8" });
+  assert.equal(w.status, 0, w.stderr);
+  const launch = (env, ...a) => spawnSync(join(B, "rig"), a, { encoding: "utf8", env: { PATH: process.env.PATH, ...env } }).stdout.trim();
+  assert.equal(launch({}, "queue", "create", "--destination", "x@external"), "helper queue create --destination x@external");
+  assert.equal(launch({}, "queue", "handoff", "q1"), "real queue handoff q1");
+  assert.equal(launch({ OPENRIG_NODE_ID: "n1" }, "queue", "handoff", "q1"), "helper queue handoff q1");
+  assert.equal(launch({ OPENRIG_NODE_ID: "n1" }, "queue", "show", "q1"), "real queue show q1");
+  assert.equal(launch({ AGENT_STACK_RIG_HELPER: "1" }, "queue", "create"), "real queue create", "the helper's own call never loops");
+});
+
+test("D: CULTURE, the agent-stack skill and the kernel operator's guidance say: always give a human row a short subject", () => {
+  const repo = join(dirname(helper), "..");
+  const flat = (p) => fs.readFileSync(join(repo, p), "utf8").replace(/\s+/g, " ");
+  assert.match(flat("rig/template/CULTURE.md"), /Every row to a human \(the owner, any `\*@external`\) gets a short subject: `--summary/);
+  assert.match(flat("skills/agent-stack/SKILL.md"), /every row to a human \(`\*@external`\) gets a short `--summary`/);
+  assert.match(flat("system/operator-guidance"), /Give every row to a human \(`\*@external`\) a short subject: `--summary/);
+});
+
 process.on("exit", () => fs.rmSync(root, { recursive: true, force: true }));

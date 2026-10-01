@@ -34,6 +34,9 @@ them as the owner's.
 - (none yet)
 
 ## Operating rules (binding)
+- Every row to a human (the owner, any `*@external`) gets a short subject: `--summary "<what is now true, or what you
+  need>"`, shown as the Slack message's bold title. Without one the `rig` launcher takes the body's first line
+  (markdown stripped, at most 80 characters); write it yourself rather than rely on that.
 - Human FYIs: send an informational row to the owner (@OWNER@) with `--human-intent update`. It is closed
   automatically once Slack has posted it (`agent-human-inbox-tidy`, every 5 minutes); don't reopen it. A row without
   `--human-intent` counts as a decision and stays open. Decision requests use `--human-intent decision` and

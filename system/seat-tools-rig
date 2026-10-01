@@ -11,10 +11,14 @@ For `rig queue create | handoff | handoff-and-complete` this adds what OpenRig's
     the source row's candidate. Otherwise HEAD is used only when run inside the seat's own worktree
     (~/Projects/<P>.worktrees/<member>) whose branch names the row's slice (when one is known). Otherwise it's
     skipped with a note, never guessed;
+  - a row to a human (`*@external`) without --summary gets one: the body's first line with text, markdown stripped,
+    at most 80 characters (OpenRig posts the summary as the Slack message's bold subject, "(no summary)" without
+    one). A handoff keeps the source row's summary. An explicit --summary is never changed;
   - EC-3: the body line `worktree_path=<path>` when the destination seat has a worktree
     (~/Projects/<P>.worktrees/<member>). A handoff that keeps the source body gets that body re-sent
     with the destination's line, so the baton always names where the new owner works.
-Anything already present is left alone. Every other command passes through untouched.
+Anything already present is left alone. Every other command passes through untouched. Outside a seat the ~/.local/bin/rig
+launcher sends `queue create` here too (only the human-row summary can apply there: the rest needs a seat's env).
 A rewritten body is piped to rig on stdin (--body-file -), so nothing is left behind in /tmp.
 """
 import json, os, re, subprocess, sys
@@ -35,11 +39,14 @@ if len(args) < 2 or args[0] != "queue" or args[1] not in ("create", "handoff", "
 
 work = os.environ.get("OPENRIG_WORK_ROOT", "")
 project = None
-try:
-    m = re.search(r"^\s*-\s*id:\s*([\w.-]+)", open(os.path.join(work, "workspace.yaml")).read(), re.M)
-    project = m.group(1) if m else None
-except OSError:
-    pass
+# Only a seat's own work root names its project: with OPENRIG_WORK_ROOT unset (an operator shell, since the launcher
+# sends `queue create` here outside seats too) a workspace.yaml in the current directory must not tag the row.
+if work:
+    try:
+        m = re.search(r"^\s*-\s*id:\s*([\w.-]+)", open(os.path.join(work, "workspace.yaml")).read(), re.M)
+        project = m.group(1) if m else None
+    except OSError:
+        pass
 
 
 def opt(name):
@@ -101,6 +108,52 @@ def positional():
     return None
 
 
+_body = {"read": False, "text": None, "stdin": False}
+
+
+def given_body():
+    """The body this call gives (--body / --body-file, either may be '-' for stdin), read once; None if none."""
+    if not _body["read"]:
+        _body["read"] = True
+        _, body = opt("--body")
+        _, bfile = opt("--body-file")
+        if body is not None:
+            _body["stdin"] = body == "-"
+            _body["text"] = sys.stdin.read() if _body["stdin"] else body
+        elif bfile is not None:
+            _body["stdin"] = bfile == "-"
+            _body["text"] = sys.stdin.read() if _body["stdin"] else open(bfile).read()
+    return _body["text"]
+
+
+def resend_body(text):
+    """Send `text` as the body on stdin (--body-file -), replacing any --body / --body-file."""
+    for flag in ("--body", "--body-file"):
+        i, _ = opt(flag)
+        if i is not None:
+            del args[i:i + (2 if args[i] == flag else 1)]
+    args.extend(["--body-file", "-"])
+    return text
+
+
+def subject_from(text):
+    """A short subject from a body: its first line with text once markdown is stripped, at most 80 characters."""
+    for line in (text or "").splitlines():
+        s = line.strip()
+        if not s or re.match(r"^(worktree_path=|```|~~~|<!--|([-*_=]\s*){3,}$)", s):
+            continue
+        s = re.sub(r"^(#{1,6}\s+|>\s*|[-*+]\s+(\[[ xX]\]\s+)?|\d+[.)]\s+)+", "", s)
+        s = re.sub(r"!?\[([^\]]*)\]\([^)]*\)", r"\1", s)           # [text](url), ![alt](src)
+        s = re.sub(r"(\*\*|__|~~)(.+?)\1", r"\2", s)                  # **bold**, __bold__, ~~strike~~
+        s = re.sub(r"(?<![\w*])\*(?!\s)(.+?)(?<!\s)\*(?![\w*])", r"\1", s)  # *em*
+        s = re.sub(r"(?<!\w)_(?!\s)(.+?)(?<!\s)_(?!\w)", r"\1", s)      # _em_ (snake_case stays)
+        s = re.sub(r"<[^>]+>", "", s.replace("`", ""))
+        s = re.sub(r"\s+", " ", s).strip()
+        if s:
+            return s if len(s) <= 80 else s[:79].rstrip() + "\u2026"
+    return None
+
+
 def names_slice(branch, slice_id):
     """The branch names the slice as a whole token: feat/01-t001-login names 01-t001, feat/01-t0010 does not."""
     return re.search(rf"(?<![A-Za-z0-9]){re.escape(slice_id)}(?![A-Za-z0-9])", branch) is not None
@@ -158,29 +211,30 @@ try:
     if not leave_tags and (added or (handoff and source_tags and tl != [t for t in (given or "").split(",") if t])):
         set_opt("--tags", ",".join(tl + added))
 
-    # EC-3 worktree_path for the destination seat
     _, dest = opt("--to" if handoff else "--destination")
+
+    # a human row's Slack subject: never "(no summary)"
+    if dest and dest.endswith("@external") and opt("--summary")[1] is None:
+        subject = ((source or {}).get("summary") or "").strip() or subject_from(given_body() if given_body() is not None else (source or {}).get("body"))
+        if subject:
+            set_opt("--summary", subject)
+            note(f"a row to {dest} needs a subject; --summary {json.dumps(subject, ensure_ascii=False)}")
+        else:
+            note(f"a row to {dest} has no --summary and no body line to take one from; Slack will show \"(no summary)\"")
+
+    # EC-3 worktree_path for the destination seat
     wt = worktree_of(dest.split("@")[0]) if dest else None
     if wt:
         line = f"worktree_path={wt}"
-        bi, body = opt("--body")
-        fi, bfile = opt("--body-file")
-        text = None
-        if body is not None:
-            text = sys.stdin.read() if body == "-" else body
-        elif bfile is not None:
-            text = sys.stdin.read() if bfile == "-" else open(bfile).read()
-        elif source is not None:
+        text = given_body()
+        if text is None and source is not None:
             text = source.get("body")
         if text is not None:  # always re-materialise: a pipe/stdin body can only be read once
             if not re.search(r"^worktree_path=", text, re.M):
                 text = text.rstrip("\n") + "\n\n" + line + "\n"
-            for flag in ("--body", "--body-file"):
-                i, _ = opt(flag)
-                if i is not None:
-                    del args[i:i + (2 if args[i] == flag else 1)]
-            args.extend(["--body-file", "-"])
-            stdin_body = text
+            stdin_body = resend_body(text)
+    if stdin_body is None and _body["stdin"]:  # stdin was read for the subject: pass it on unchanged
+        stdin_body = resend_body(_body["text"])
 except Exception as e:  # never block a queue write because of the helper
     print(f"(seat rig helper skipped: {e})", file=sys.stderr)
 

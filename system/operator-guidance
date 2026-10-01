@@ -18,6 +18,11 @@ BLOCK = f"""{START}
 When the owner asks to onboard, add or set up a project (a repo, a plan, docs or a list of GitHub issues), follow the
 `project-onboarding` skill: ~/.claude/skills/project-onboarding/SKILL.md (Codex: ~/.agents/skills/project-onboarding/).
 Its helper runs the mechanical steps from an answers file, as a dry run first: `agent-project-onboard <answers.env>`.
+
+## Rows to the owner (agent-stack)
+Give every row to a human (`*@external`) a short subject: `--summary "<what is now true or what you need>"`. Slack shows
+it as the message's bold title. Without one, the `rig` launcher takes the body's first line (markdown stripped, at most
+80 characters), and with no body Slack shows "(no summary)".
 {END}
 """
 backups = os.path.expanduser("~/.local/share/agent-stack/backups/operator-guidance")
