@@ -50,7 +50,9 @@ them as the owner's.
     `~/.local/state/agent-stack/playwright-mcp/`.
   - Where: `$HOME/.cache/<rig>-tmp/<seat>/proof/` (the seat root of the `TMPDIR` rule below), outside every repo and
     never in `/tmp`. Not inside a job's own temp dir: its trap removes it, and the daemon reads the file only when it
-    posts, after your command has returned. Leave it until the row shows posted (`rig queue show <id>`).
+    posts, after your command has returned. "Posted" (or the row closing itself) confirms the TEXT only: the daemon
+    reads and uploads the file after that receipt. So never delete a proof file because its row posted; keep them,
+    and age them out: `find "$HOME/.cache/<rig>-tmp/<seat>/proof" -type f -mtime +7 -delete`.
   - Never on screen: secrets, tokens, passwords or keys, real client or customer data, other projects' windows. Use
     demo or fictional data and test accounts only; crop or redo a capture that shows anything else.
 - Heavy runs share the machine: wrap every tsc, eslint, vitest/jest, `npm test`, `next build`, Playwright run and full

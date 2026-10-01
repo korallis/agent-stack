@@ -84,7 +84,8 @@ project-workspace.md) and the `mission-slice-sop` skill. Verify each point on di
      .mp4/.webm/.mov or .pdf, at most 50 MiB), uploaded into that message's Slack thread. For a witness pass, a
      finished user-visible feature or a fix for a bug the owner reported, not every step; the lead sends it, QA and the
      witness hand it the path. Saved under `$HOME/.cache/<rig>-tmp/<seat>/proof/` (not a job's temp dir: the daemon
-     reads it when it posts), never `/tmp` or a repo; demo or fictional data only, never secrets, tokens or real
+     reads it when it posts, after the "posted" receipt, so "posted" never means the file can go; proof files age out
+     after 7 days), never `/tmp` or a repo; demo or fictional data only, never secrets, tokens or real
      client data on screen;
    - judge proof as `rig proof judge <project-id>:<mission>/slices/<slice>`;
    - merge = cross-family review + live Jev act band + merge pinned to head.

@@ -20,6 +20,14 @@ test("CULTURE teaches one file per owner update row: when, how, where (outliving
   assert.match(c, /`\$HOME\/\.cache\/<rig>-tmp\/<seat>\/proof\/`/);
   assert.match(c, /Not inside a job's own temp dir: its trap removes it, and the daemon reads the file only when it posts/);
   assert.match(c, /never in `\/tmp`/);
+  // QA PR75: the "posted" receipt is written before the daemon reads the file, so it is not a cleanup signal.
+  assert.match(c, /"Posted" \(or the row closing itself\) confirms the TEXT only: the daemon reads and uploads the file after that receipt/);
+  assert.match(c, /never delete a proof file because its row posted/);
+  assert.match(c, /find "\$HOME\/\.cache\/<rig>-tmp\/<seat>\/proof" -type f -mtime \+7 -delete/);
+  for (const f of ["rig/template/CULTURE.md", "skills/agent-stack/SKILL.md", "rig/template/agents/qa/guidance/role.md",
+    "rig/template/agents/lead/guidance/role.md", "rig/template/witness-slice/SPEC.md", "docs/REFERENCE.md"]) {
+    assert.doesNotMatch(flat(f), /(until|once|after) (the|its) row (shows |is )?(posted|closed)/i, `${f}: posted is not a cleanup signal`);
+  }
   assert.match(c, /Never on screen: secrets, tokens, passwords or keys, real client or customer data/);
   assert.match(c, /demo or fictional data and test accounts only/);
 });
