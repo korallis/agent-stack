@@ -5,8 +5,9 @@ import type { Theme } from "../theme.ts";
 import type { Fleet, Raw } from "../model.ts";
 import { ago, fit } from "../draw.ts";
 
-export interface Ctx { s: Screen; t: Theme; raw: Raw; f: Fleet; frame: number; view: number; rigFocus: number; seatFocus: [number, number]; note: string | null }
-export const VIEWS = ["Mission Control", "Seat Matrix"];
+export interface Ctx { s: Screen; t: Theme; raw: Raw; f: Fleet; frame: number; view: number; rigFocus: number; seatFocus: [number, number]; note: string | null;
+  riverFocus?: [number, number]; journey?: string | null }
+export const VIEWS = ["Mission Control", "Seat Matrix", "River"];
 const SPIN = "⣾⣽⣻⢿⡿⣟⣯⣷";
 
 export function header(c: Ctx, crumb: string): void {
@@ -37,7 +38,7 @@ export function header(c: Ctx, crumb: string): void {
     tx = s.put(tx, 1, ` ${i + 1} ${v} `, on ? { fg: t.bg, bg: t.working, bold: true } : { fg: t.dim });
     tx += 1;
   });
-  s.put(tx + 1, 1, "3 River · 4 Focus · 5 Constellation: later phases", { fg: t.faint });
+  s.put(tx + 1, 1, "4 Focus · 5 Constellation: later phases", { fg: t.faint });
 }
 
 export function ticker(c: Ctx, y: number): void {

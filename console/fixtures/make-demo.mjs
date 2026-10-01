@@ -40,15 +40,42 @@ Object.assign(rigs[1].seats.find((x) => x.pod === "ops"), { ctx: 84, activity: "
 Object.assign(g.find((x) => x.pod === "impl" && x.name === "codex-7"), { ctx: 81 });
 
 const agentSessions = rigs.filter((r) => r.name !== "omega" && r.name !== "kernel").flatMap((r) => r.seats.map((s) => s.session));
-const FEATURES = ["F-052 tenant export", "F-055 backup & restore drill", "F-056 restore from snapshot", "F-057 export audit trail", "F-058 lifecycle events",
+const FEATURES = ["F-052 tenant export", "F-062 purge scheduler v2", "F-056 restore from snapshot", "F-057 export audit trail", "F-058 lifecycle events",
   "F-031 billing webhook retry", "F-061 retention policy UI", "F-064 data residency report", "W2-WIT wave 2 end-to-end proof"];
+const tagFor = (f) => f.toLowerCase().replace(/&/g, "and").replace(/[^a-z0-9]+/g, "-").replace(/-$/, "");
 const queue = [];
 for (let i = 0; i < 100; i++) {
   const dest = pick(agentSessions), state = i < 18 ? "pending" : i < 59 ? "in-progress" : "blocked";
   const kind = rnd();
   queue.push({ id: `qitem-20261001${String(100000 + i * 37).slice(-6)}-${(0x10000000 + i * 7919).toString(16).slice(-8)}`, state, priority: rnd() < 0.15 ? "urgent" : "routine",
     source: pick(agentSessions), destination: dest, blockedOn: state !== "blocked" ? null : kind < 0.5 ? `pr:${400 + Math.floor(rnd() * 30)}` : kind < 0.85 ? `qitem-20261001${String(100000 + i).slice(-6)}-0000abcd` : "human@kernel",
-    tags: [`project:${dest.split("@")[1]}`, `slice:${pick(FEATURES).split(" ")[0].toLowerCase()}`], created: iso(60_000 * (5 + Math.floor(rnd() * 300))), updated: iso(60_000 * Math.floor(rnd() * 30)), summary: null });
+    tags: [`project:${dest.split("@")[1]}`, `mission:m4-data-lifecycle`, `slice:${tagFor(pick(FEATURES))}`], created: iso(60_000 * (5 + Math.floor(rnd() * 300))), updated: iso(60_000 * Math.floor(rnd() * 30)), summary: null });
+}
+// one slice's whole journey (gamma, F-055): spec → tests → build → review → QA → merge held for the owner
+const J = "slice:f-055-backup-and-restore-drill", jtags = ["project:gamma", "mission:m4-data-lifecycle", J, "pr:412"];
+const jrows = [
+  ["arch-claude@gamma", "done", 3000, 2900, "spec locked: 14 acceptance outcomes"], ["tests-codex@gamma", "done", 2880, 2770, "11 locked tests, red by design"],
+  ["impl-codex-4@gamma", "done", 2700, 2350, "PR #412: 11/11 locked tests green"], ["review-claude-1@gamma", "done", 2300, 2180, "cross-family review: 2 findings fixed"],
+  ["qa-codex-1@gamma", "done", 2150, 1990, "bug review board: ship YES"], ["integ-codex@gamma", "blocked", 1960, 30, "merge held: Jev HOLD 58%, owner asked"],
+];
+const transitions = {};
+jrows.forEach(([dest, state, startMin, endMin, summary], i) => {
+  const id = `qitem-20260929${String(140000 + i * 1111).slice(-6)}-j055${String(i).padStart(4, "0")}`;
+  const row = { id, state, priority: i === 5 ? "urgent" : "routine", source: i ? jrows[i - 1][0] : "coord-lead-claude@gamma", destination: dest, blockedOn: state === "blocked" ? "human@kernel" : null,
+    tags: jtags, created: iso(startMin * 60_000), updated: iso(endMin * 60_000), summary };
+  (state === "done" ? (globalThis.jdone ??= []) : queue).push(row);
+  const claim = startMin - Math.round((startMin - endMin) * 0.3);
+  transitions[id] = [{ id: 1000 + i * 10, ts: iso(startMin * 60_000), state: "pending", note: "created", actor: row.source },
+    { id: 1001 + i * 10, ts: iso(claim * 60_000), state: "in-progress", note: "claimed", actor: dest },
+    ...(state === "done" ? [{ id: 1002 + i * 10, ts: iso(endMin * 60_000), state: "done", note: summary, actor: dest }]
+      : [{ id: 1002 + i * 10, ts: iso((claim - 60) * 60_000), state: "blocked", note: summary, actor: dest }])];
+});
+// slices that reached the sea today, and earlier done rows
+const done = [...globalThis.jdone];
+for (let i = 0; i < 24; i++) {
+  const rig = pick(["alpha", "beta", "gamma"]), f = `slice:f-0${30 + i}-${pick(["export", "audit-log", "billing-retry", "tenant-roles", "search"])}`;
+  done.push({ id: `qitem-20261001${String(10000 + i * 97).padStart(6, "0")}-d0ne${String(i).padStart(4, "0")}`, state: "done", priority: "routine", source: `coord-lead-claude@${rig}`,
+    destination: `integ-codex@${rig}`, blockedOn: null, tags: [`project:${rig}`, f], created: iso((300 + i * 20) * 60_000), updated: iso((10 + i * 25) * 60_000), summary: "merged" });
 }
 const attention = [
   { id: "qitem-20261001115500-d121aaaa", state: "pending", priority: "urgent", source: "integ-codex@beta", destination: "human@kernel", blockedOn: null, tags: ["project:beta"], created: iso(131 * 60_000), updated: iso(60_000), summary: "F-056 restore from snapshot: gate HOLD 58%. A merge  B add test  C defer" },
@@ -73,7 +100,7 @@ for (let m = 1440; m > 0; m--) {
 const raw = {
   at: AT, host: { id: "host-demo01", cores: 32, load: [6.4, 7.1, 6.8], memUsedGB: 41.2, memTotalGB: 64 },
   daemon: { ok: true, latencyMs: 12, version: "0.6.3", cpuPct: 5.1, loopUtil: 0.18, error: null },
-  rigs, queue, attention, gates, accounts, heavy: [{ cls: "build", held: 2, total: 2, waiting: 1 }, { cls: "browser", held: 1, total: 2, waiting: 0 }], events,
+  rigs, queue, attention, gates, accounts, done, transitions, heavy: [{ cls: "build", held: 2, total: 2, waiting: 1 }, { cls: "browser", held: 1, total: 2, waiting: 0 }], events,
   refreshMs: 5000, sources: { daemon: "ok", accounts: "ok", heavy: "ok", gates: "ok" },
 };
 fs.writeFileSync(fileURLToPath(new URL("./demo.json", import.meta.url)), JSON.stringify({ note: "Neutral demo data for rig-console (made up).", raw, history }) + "\n");
