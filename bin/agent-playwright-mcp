@@ -19,18 +19,36 @@ import os, re, sys
 PROC = os.environ.get("AGENT_PLAYWRIGHT_MCP_PROC", "/proc")   # tests only
 
 
+def stat(pid):
+    """(ppid, start time in clock ticks since boot) from /proc/<pid>/stat."""
+    f = open(f"{PROC}/{pid}/stat").read().rsplit(")", 1)[1].split()
+    return int(f[1]), int(f[19])
+
+
 def from_ancestors(pid):
-    seen = set()
+    """The nearest ancestor's OPENRIG_SESSION_NAME. Identity check (QA PR87): an ancestor started no later than its
+    child, so a pid that was reused after the real ancestor exited (a newer process) ends the walk: no seat, "local",
+    rather than another process's seat."""
+    seen, child_start = set(), None
+    try:
+        child_start = stat(os.getpid())[1]
+    except (OSError, ValueError, IndexError):
+        return None
     while pid > 1 and pid not in seen:
         seen.add(pid)
         try:
+            ppid, start = stat(pid)
+            if start > child_start:
+                return None
             env = open(f"{PROC}/{pid}/environ", "rb").read().split(b"\0")
+            if stat(pid)[1] != start:   # replaced while we read it
+                return None
             for kv in env:
                 if kv.startswith(b"OPENRIG_SESSION_NAME="):
                     v = kv.split(b"=", 1)[1].decode("utf-8", "replace")
                     if v:
                         return v
-            pid = int(open(f"{PROC}/{pid}/stat").read().rsplit(")", 1)[1].split()[1])
+            pid, child_start = ppid, start
         except (OSError, ValueError, IndexError):
             return None
     return None

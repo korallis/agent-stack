@@ -42,12 +42,22 @@ test("launcher: a runtime that strips the environment (Codex) still gets the sea
   assert.equal(r.status, 0, r.stderr);
   assert.match(r.stdout.trim(), /playwright-mcp\/impl-codex-2@shop$/);
   // and through a /proc stand-in: parent without it, grandparent with it
-  const proc = join(root, `proc${n}`), me = process.pid, gp = 424242;
-  const entry = (pid, env, ppid) => { fs.mkdirSync(join(proc, String(pid)), { recursive: true }); fs.writeFileSync(join(proc, String(pid), "environ"), env.join("\0") + "\0");
-    fs.writeFileSync(join(proc, String(pid), "stat"), `${pid} (node) S ${ppid} 1 1 0`); };
-  entry(me, ["PATH=/bin"], gp); entry(gp, ["HOME=/h", "OPENRIG_SESSION_NAME=review-claude-1@shop"], 1);
-  const p = launch(h, { AGENT_PLAYWRIGHT_MCP_PROC: proc });
-  assert.match(p.stdout.trim(), /playwright-mcp\/review-claude-1@shop$/);
+  // and through a /proc stand-in: the launcher (start 9000) ← its parent without a seat (8000) ← a grandparent with one
+  const proc = join(root, `proc${n}`), gp = 424242;
+  const stat = (pid, ppid, start) => `${pid} (x) S ${ppid} 1 1 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 ${start} 0`;
+  const entry = (pid, env, ppid, start) => { fs.mkdirSync(join(proc, String(pid)), { recursive: true }); fs.writeFileSync(join(proc, String(pid), "environ"), env.join("\0") + "\0");
+    fs.writeFileSync(join(proc, String(pid), "stat"), stat(pid, ppid, start)); };
+  const run2 = (gpStart) => {
+    // the launcher's own pid and its parent's are only known at run time: a tiny wrapper writes them, then execs it
+    fs.rmSync(proc, { recursive: true, force: true });
+    const w = join(root, `wrap${n}.sh`);
+    fs.writeFileSync(w, `#!/bin/sh\nmkdir -p ${proc}/$$ ${proc}/$PPID\nprintf '%s (sh) S %s 1 1 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 9000 0' $$ $PPID > ${proc}/$$/stat\nprintf 'PATH=/bin\\0' > ${proc}/$$/environ\nprintf '%s (node) S ${gp} 1 1 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 8000 0' $PPID > ${proc}/$PPID/stat\nprintf 'PATH=/bin\\0' > ${proc}/$PPID/environ\nexec ${join(repo, "bin/agent-playwright-mcp")} -y x\n`, { mode: 0o755 });
+    entry(gp, ["HOME=/h", "OPENRIG_SESSION_NAME=review-claude-1@shop"], 1, gpStart);
+    return spawnSync(w, [], { encoding: "utf8", env: { PATH: process.env.PATH, HOME: h, AGENT_PLAYWRIGHT_MCP_DRY: "1", AGENT_PLAYWRIGHT_MCP_PROC: proc } }).stdout.trim();
+  };
+  assert.match(run2(7000), /playwright-mcp\/review-claude-1@shop$/, "an ancestor that started before its child");
+  // QA PR87: a pid reused by a newer process (it started after the child that names it as parent) is not an ancestor
+  assert.match(run2(9999), /playwright-mcp\/local$/, "a reused pid ends the walk: local, never another process's seat");
 });
 
 // ---- retention ------------------------------------------------------------------------------------------------------
