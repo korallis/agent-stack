@@ -65,7 +65,7 @@ cur = re.search(r'^args = (\[[^\n]*\])', sec.group(1), re.M) if sec else None
 if text is None or not sec or not cur:
     say(False, f"{CODEX} has no [mcp_servers.playwright] args (copy it from system/codex/config.toml)")
 elif cur.group(1) == want_args:
-    say(True, "Codex Playwright MCP runs with --secrets")
+    say(True, "Codex Playwright MCP runs with --secrets and --output-dir")
 elif CHECK:
     say(False, f"Codex Playwright MCP args are {cur.group(1)}; want {want_args}")
 else:
@@ -77,7 +77,7 @@ else:
         f.write(new)
     os.chmod(tmp, os.stat(CODEX).st_mode & 0o777)
     os.replace(tmp, CODEX)
-    say(True, "Codex Playwright MCP args set to the template's (with --secrets); backup kept")
+    say(True, "Codex Playwright MCP args set to the template's (with --secrets and --output-dir); backup kept")
 
 print("\n".join(out))
 sys.exit(1 if CHECK and warn else 0)

@@ -3,10 +3,11 @@
 //
 // Installs the credential read guard (credguard-read-hook) as a PreToolUse hook, idempotently, keeping every other
 // hook and setting:
-//   - Claude Code: one entry in ~/.claude/settings.json hooks.PreToolUse (matcher Bash|Read|Grep). Running sessions
-//     pick up settings-file hook changes through Claude Code's file watcher, so seats need no relaunch.
-//   - Codex: a managed block in ~/.codex/config.toml with a [[hooks.PreToolUse]] group (matcher Bash: Codex's
-//     exec_command) and its [hooks.state."<key>"] trusted_hash. Codex runs a config hook only when that hash matches
+//   - Claude Code: two entries in ~/.claude/settings.json hooks.PreToolUse (matcher Bash|Read|Grep, and NET_MATCHER:
+//     the Playwright MCP network/console tools, WO57). Running sessions pick up settings-file hook changes through
+//     Claude Code's file watcher, so seats need no relaunch.
+//   - Codex: a managed block in ~/.codex/config.toml with two [[hooks.PreToolUse]] groups (matcher Bash: Codex's
+//     exec_command; and NET_MATCHER, which Codex applies to MCP tool names) and their [hooks.state."<key>"] trusted_hash. Codex runs a config hook only when that hash matches
 //     (the hash is Codex's own: sha256 of the canonical JSON of the hook's identity), so the block trusts exactly
 //     this command and nothing else. Codex reads config at start: running Codex seats get it at their next launch.
 // A changed file is backed up first (<file>.bak-credguard-<time>). --check changes nothing. Each line is "ok ..." or
@@ -18,6 +19,8 @@ const MARK = "agent-credguard-read-hook";
 const BEGIN = "# BEGIN AGENT-STACK CREDENTIAL READ GUARD (managed by agent-stack install.sh; do not edit)";
 const END = "# END AGENT-STACK CREDENTIAL READ GUARD";
 const TIMEOUT = 10;
+// The Playwright MCP tools whose output lists request URLs, headers or console text (any MCP server name).
+const NET_MATCHER = "^mcp__.+__browser_(network_requests|network_request|console_messages)$";
 
 const claudeCommand = (hook) => `"${hook}" --runtime claude`;
 const codexCommand = (hook) => `"${hook}" --runtime codex`;
@@ -26,16 +29,18 @@ const codexCommand = (hook) => `"${hook}" --runtime codex`;
 // groups (a group left with other handlers keeps them; one left empty goes); every other hook stays as it was.
 function withClaudeHook(settings, hook) {
   const s = { ...settings, hooks: { ...(settings.hooks || {}) } };
-  const entry = { matcher: "Bash|Read|Grep", hooks: [{ type: "command", command: claudeCommand(hook), timeout: TIMEOUT }] };
+  const entry = (matcher) => ({ matcher, hooks: [{ type: "command", command: claudeCommand(hook), timeout: TIMEOUT }] });
   const list = (s.hooks.PreToolUse || []).map((g) => {
     const kept = (g.hooks || []).filter((h) => !String(h.command || "").includes(MARK));
     return kept.length === (g.hooks || []).length ? g : kept.length ? { ...g, hooks: kept } : null;
   }).filter(Boolean);
-  s.hooks.PreToolUse = [...list, entry];
+  s.hooks.PreToolUse = [...list, entry("Bash|Read|Grep"), entry(NET_MATCHER)];
   return s;
 }
-const claudeHasHook = (settings, hook) => (settings.hooks?.PreToolUse || []).some((g) => /(^|\|)Bash(\||$)/.test(g.matcher || "") && /Read/.test(g.matcher || "")
-  && (g.hooks || []).some((h) => h.command === claudeCommand(hook)));
+const claudeHasHook = (settings, hook) => {
+  const has = (test) => (settings.hooks?.PreToolUse || []).some((g) => test(g.matcher || "") && (g.hooks || []).some((h) => h.command === claudeCommand(hook)));
+  return has((m) => /(^|\|)Bash(\||$)/.test(m) && /Read/.test(m)) && has((m) => m === NET_MATCHER);
+};
 
 // Codex's trust hash for one command hook (codex-rs hooks discovery `command_hook_hash`): sha256 over the compact JSON
 // of { event_name, matcher, hooks: [{ type, command, timeout, async }] } with every object's keys sorted.
@@ -68,17 +73,19 @@ function withCodexBlock(text, hook, keySource, parse = parseToml) {
   if (pre != null && !Array.isArray(pre)) throw new Error("hooks.PreToolUse is not an array of groups");
   const group = (pre || []).length;
   const command = codexCommand(hook);
-  const hash = codexHookHash({ event: "pre_tool_use", matcher: "Bash", command, timeout: TIMEOUT });
-  const block = [BEGIN,
-    "[[hooks.PreToolUse]]", 'matcher = "Bash"', "",
-    "[[hooks.PreToolUse.hooks]]", 'type = "command"', `command = ${JSON.stringify(command)}`, `timeout = ${TIMEOUT}`, "",
-    `[hooks.state.${JSON.stringify(`${keySource}:pre_tool_use:${group}:0`)}]`, `trusted_hash = ${JSON.stringify(hash)}`,
-    END, ""].join("\n");
-  const next = base + "\n" + block, parsed = parse(next);
-  const at = (parsed.hooks?.PreToolUse || []).findIndex((g) => g.matcher === "Bash" && (g.hooks || []).some((h) => h.command === command));
-  const key = `${keySource}:pre_tool_use:${group}:0`;
-  if (at !== group || parsed.hooks?.state?.[key]?.trusted_hash !== hash)
-    throw new Error(`the guard would not sit at PreToolUse group ${group} with its trust recorded (found at ${at}); edit the file by hand`);
+  // Two groups, in this order: Bash at <group>, the Playwright network/console tools at <group + 1>.
+  const groups = [["Bash", group], [NET_MATCHER, group + 1]].map(([matcher, at]) => ({
+    matcher, at, key: `${keySource}:pre_tool_use:${at}:0`, hash: codexHookHash({ event: "pre_tool_use", matcher, command, timeout: TIMEOUT }) }));
+  const lines = [BEGIN];
+  for (const g of groups) lines.push("[[hooks.PreToolUse]]", `matcher = ${JSON.stringify(g.matcher)}`, "",
+    "[[hooks.PreToolUse.hooks]]", 'type = "command"', `command = ${JSON.stringify(command)}`, `timeout = ${TIMEOUT}`, "");
+  for (const g of groups) lines.push(`[hooks.state.${JSON.stringify(g.key)}]`, `trusted_hash = ${JSON.stringify(g.hash)}`);
+  const next = base + "\n" + [...lines, END, ""].join("\n"), parsed = parse(next);
+  for (const g of groups) {
+    const at = (parsed.hooks?.PreToolUse || []).findIndex((x) => x.matcher === g.matcher && (x.hooks || []).some((h) => h.command === command));
+    if (at !== g.at || parsed.hooks?.state?.[g.key]?.trusted_hash !== g.hash)
+      throw new Error(`the guard would not sit at PreToolUse group ${g.at} (${g.matcher}) with its trust recorded (found at ${at}); edit the file by hand`);
+  }
   return next;
 }
 function stripBlock(text) {
@@ -103,7 +110,7 @@ function main(argv) {
   let settings = {}, unreadable = null;
   if (fs.existsSync(claude)) { try { settings = JSON.parse(fs.readFileSync(claude, "utf8")); } catch (e) { unreadable = e.message; } }
   if (unreadable) say(false, `Claude: ${claude} is not valid JSON (${unreadable}); left unchanged: fix it, then run this again`);
-  else if (claudeHasHook(settings, hook)) say(true, `Claude: credential read guard in ${claude} (PreToolUse Bash|Read|Grep)`);
+  else if (claudeHasHook(settings, hook)) say(true, `Claude: credential read guard in ${claude} (PreToolUse Bash|Read|Grep and the Playwright network/console tools)`);
   else if (check) say(false, `Claude: credential read guard missing from ${claude}`);
   else {
     const next = withClaudeHook(settings, hook);
@@ -120,12 +127,12 @@ function main(argv) {
     catch (e) { say(false, `Codex: ${codex}: ${e.message}; left unchanged`); }
     if (parsed && parsed.features?.hooks !== true) say(false, `Codex: [features] hooks = true is not set in ${codex} (OpenRig sets it; without it no hook runs)`);
     if (next === null) { /* reported above */ }
-    else if (next === text) say(true, `Codex: credential read guard in ${codex} (PreToolUse Bash, trusted)`);
+    else if (next === text) say(true, `Codex: credential read guard in ${codex} (PreToolUse Bash and the Playwright network/console tools, trusted)`);
     else if (check) say(false, `Codex: credential read guard missing or outdated in ${codex}`);
     else { backup(codex); fs.writeFileSync(codex, next); say(true, `Codex: credential read guard written to ${codex} (Codex seats get it at their next launch)`); }
   }
   return missing ? 1 : 0;
 }
 
-module.exports = { withClaudeHook, claudeHasHook, codexHookHash, withCodexBlock, stripBlock, parseToml, BEGIN, END, claudeCommand, codexCommand };
+module.exports = { NET_MATCHER, withClaudeHook, claudeHasHook, codexHookHash, withCodexBlock, stripBlock, parseToml, BEGIN, END, claudeCommand, codexCommand };
 if (require.main === module) process.exit(main(process.argv.slice(2)));

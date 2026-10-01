@@ -70,6 +70,10 @@ has_guard = lambda g: any(GUARD in str(h.get("command", "")) for h in g.get("hoo
 cl_pre = ((cl.get("hooks") or {}).get("PreToolUse") or []) if isinstance(cl.get("hooks"), dict) else []
 rep(guard_bin and any({"Bash", "Read"} <= set((g.get("matcher") or "").split("|")) and has_guard(g) for g in cl_pre),
     "Claude: credential read guard (PreToolUse Bash|Read|Grep in ~/.claude/settings.json)", "missing; run install.sh")
+# WO57: the same hook guards the Playwright MCP network/console tools (output to a protected file only).
+NET_MATCHER = "^mcp__.+__browser_(network_requests|network_request|console_messages)$"
+rep(guard_bin and any((g.get("matcher") or "") == NET_MATCHER and has_guard(g) for g in cl_pre),
+    "Claude: Playwright network/console guard (PreToolUse on those MCP tools in ~/.claude/settings.json)", "missing; run install.sh")
 cx_hooks = cx.get("hooks") if isinstance(cx.get("hooks"), dict) else {}
 
 
@@ -82,14 +86,14 @@ def codex_hook_hash(event, group, handler):
     return "sha256:" + hashlib.sha256(json.dumps(ident, sort_keys=True, separators=(",", ":"), ensure_ascii=False).encode()).hexdigest()
 
 
-def codex_guard_problem():
-    """Why Codex would not run the guard, or None: it needs the hooks feature, the guard group, and a recorded
-    trusted_hash equal to the hash of the guard as written (a changed or wrong hash makes Codex skip it)."""
+def codex_guard_problem(matcher="Bash"):
+    """Why Codex would not run the guard group with this matcher, or None: it needs the hooks feature, the group, and
+    a recorded trusted_hash equal to the hash of the guard as written (a changed or wrong hash makes Codex skip it)."""
     if (cx.get("features") or {}).get("hooks") is not True:
         return "[features] hooks = true is not set"
     for g, grp in enumerate(cx_hooks.get("PreToolUse") or []):
         for i, h in enumerate(grp.get("hooks") or []):
-            if grp.get("matcher") == "Bash" and GUARD in str(h.get("command", "")):
+            if grp.get("matcher") == matcher and GUARD in str(h.get("command", "")):
                 key = f"{os.path.realpath(os.path.join(HOME, '.codex/config.toml'))}:pre_tool_use:{g}:{i}"
                 got = ((cx_hooks.get("state") or {}).get(key) or {}).get("trusted_hash")
                 if got is None:
@@ -101,6 +105,9 @@ def codex_guard_problem():
 cx_problem = codex_guard_problem() if guard_bin else "the hook script is not installed"
 rep(cx_problem is None, "Codex: credential read guard, trusted (PreToolUse Bash in ~/.codex/config.toml)",
     f"{cx_problem}; run install.sh (Codex seats get it at their next launch)")
+cx_net = codex_guard_problem(NET_MATCHER) if guard_bin else "the hook script is not installed"
+rep(cx_net is None, "Codex: Playwright network/console guard, trusted (PreToolUse on those MCP tools in ~/.codex/config.toml)",
+    f"{cx_net}; run install.sh (Codex seats get it at their next launch)")
 
 spec = arg("--spec")
 if spec:

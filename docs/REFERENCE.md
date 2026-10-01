@@ -225,7 +225,15 @@ Details are in the `agent-stack` skill. What went wrong before: [docs/incidents/
   then only alerts.
 - **Heavy runs:** every seat runs tsc, eslint, tests, builds and Playwright through `agent-heavy build|browser -- <cmd>`
   (2 slots, capped CPU and RAM, max runtime 45min build / 30min browser; a stop at the cap is logged, `journalctl -t
-  agent-heavy`). It refuses long-lived servers (`npm start`,
+  agent-heavy`). Memory (WO58): each run's scope has a ceiling and no swap (build 14G, browser 8G;
+  `AGENT_HEAVY_<CLASS>_MEM`/`_SWAP`), and every scope sits in `agent-heavy.slice`, whose ceiling holds all heavy runs
+  together to 24G (`AGENT_HEAVY_TOTAL_MEM`; set as a runtime property before each run). A run over either is OOM-killed
+  inside its scope, exits 137 with a "killed: … memory ceiling" message saying how to rerun it focused, and is logged
+  like a stop at the cap; the rest of the host keeps its memory. The job's env carries worker hints (4 unless set,
+  `AGENT_HEAVY_WORKERS`): `PYTEST_XDIST_AUTO_NUM_WORKERS` (pytest `-n auto`), `VITEST_MAX_WORKERS` (Vitest 4+),
+  `VITEST_MAX_THREADS`/`VITEST_MAX_FORKS` (Vitest 3). `node --test` and Jest read no such variable: pass
+  `--test-concurrency=4` / `--maxWorkers=4`. Without a systemd user session it warns and runs the job unconfined, under
+  `timeout` for the max runtime. Every scope is cleared afterwards (`reset-failed`), so failed ones don't pile up. It refuses long-lived servers (`npm start`,
   `start:*`, `dev`, `next start`, `vite`), which run outside it. `agent-heavy status` shows who holds each slot.
   A nested call of the same class (a script that wraps its own runs) runs inline in the parent's slot; a different
   class takes its own slot. The rig template's CULTURE.md makes it binding, and `agent-project-check` WARNs when a
@@ -299,10 +307,13 @@ Seats never stop for permission, so instructions alone don't stop a seat printin
 transcript (two leaks on 2026-09-30, both `cat` of a runtime-url file). `system/credguard-read-hook` is a PreToolUse
 hook that refuses the tool call instead. `install.sh` places it at `~/.local/share/agent-stack/bin/agent-credguard-read-hook`
 and `system/credguard-read-install` merges it idempotently, keeping every other hook and backing up a changed file:
-- **Claude Code:** `~/.claude/settings.json` `hooks.PreToolUse`, matcher `Bash|Read|Grep`. It answers with a JSON
+- **Claude Code:** `~/.claude/settings.json` `hooks.PreToolUse`, matcher `Bash|Read|Grep`, plus a second entry for the
+  Playwright network/console tools (below). It answers with a JSON
   `permissionDecision: "deny"`, which blocks even under `bypassPermissions` (per the hooks guide). Running sessions
   pick up settings-file hook changes through Claude Code's file watcher, so seats need no relaunch.
-- **Codex:** a managed block in `~/.codex/config.toml`: `[[hooks.PreToolUse]]`, matcher `Bash`. That is the name
+- **Codex:** a managed block in `~/.codex/config.toml`: `[[hooks.PreToolUse]]`, matcher `Bash`, and a second group for
+  the Playwright network/console tools (Codex runs PreToolUse hooks for MCP tools too, named `mcp__<server>__<tool>`,
+  with the tool's arguments as `tool_input`), each with its own trusted hash. That is the name
   Codex gives its `exec_command` shell tool in hooks, and Codex reads files only through that shell. The block also
   holds the hook's `[hooks.state."<config>:pre_tool_use:<n>:0"] trusted_hash`: Codex runs a config hook only when
   that hash matches, and it is Codex's own (sha256 of the canonical JSON of the hook's identity; checked against a
@@ -361,6 +372,25 @@ Paths are resolved the way the shell will run the command:
   only where it surely applies.
 - Backstop: if the command names a protected path anywhere, a print whose operand still holds a value the guard can't
   resolve (a variable it didn't see set, a substitution) is refused.
+
+**Playwright network and console listings (WO57).** `browser_network_requests`, `browser_network_request` and
+`browser_console_messages` (Playwright MCP 0.0.80) return request URLs, headers or console text, where tokens minted at
+runtime appear (session JWTs, `?token=`, signed URLs, dev-browser tokens); `--secrets` only masks the values listed in
+its file. The same hook, registered for `^mcp__.+__browser_(network_requests|network_request|console_messages)$` in
+both runtimes, allows them only with the tool's own `filename` set to an absolute path in the seat's scratch dir,
+`~/.local/state/agent-stack/playwright-mcp/net/<OPENRIG_SESSION_NAME>/` (made 0700; no symlink on the way), named by
+what the call writes: `requests-…` (the list), `request-…` (one request's details), `part-…` (one `part`: a raw
+header block or body, written as is) or `console-…`. With
+`filename` the MCP writes the file and returns only a link to it. That dir is in the default protected patterns, so
+`cat`, Read, content Grep and copies of it are refused like any credential file, a glob into it included.
+`agent-net-summary <file>` takes the file's kind from that name, never from its content (a raw body can look like
+anything), and reads only that kind's own record lines; a `part-…` file or any other name prints only a line count. It
+prints one line per request, `<n>. <METHOD> <host><path> => <status>`: query strings,
+fragments, `user:password@` and `;params` are dropped, token-like path segments (long hex, JWTs, long mixed runs) show
+as `<masked>`, and headers, bodies and console messages are only counted. The MCP runs with
+`--output-dir ~/.local/state/agent-stack/playwright-mcp` (install.sh, both runtimes), because it writes only inside its
+output dir or the workspace; until a seat's MCP has that flag, the call fails with the MCP's "File access denied",
+which leaks nothing. Seats pick up the new MCP args at their next launch; the hook entries load as above.
 
 Limits (honest): it stops accidental printing by a seat, not a determined one. A script that reads and prints a
 file itself (`node -e`, `python -c`, a project script) isn't parsed. A path held by a variable from outside the
@@ -574,7 +604,8 @@ the lead or a person. Send Jev evidence, not conclusions.
 
   If a verifiable source disagrees with the first one, the verdict is CONFLICT and lists both. If none is
   verifiable, it is `NONE VERIFIABLE`, with what each source lacked. For the gate, the review must be `success`.
-- **Dispatch:** `agent-dispatch pick-seat --rig R --role implementer --task "..."` lists the running seats of the role
+- **Dispatch:** `agent-dispatch pick-seat --rig R --role implementer --task "..."` (the role, or its pod's short name:
+  `impl`, `review`, `qa`, `arch`, `integ`, `tests`, `ops`; an unknown role is an error naming the valid ones) lists the running seats of the role
   that are idle with no open work, with their load notes (code), and Jev's `intake.seat` picks one. On review or uncertain the lead picks
   and records why in the row.
 - **Stuck seats:** `agent-stuck-check` runs every 10 minutes. For a seat holding work whose screen stopped changing,

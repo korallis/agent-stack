@@ -1,0 +1,114 @@
+#!/usr/bin/env python3
+"""agent-net-summary <file>...: a Playwright MCP network or console log, reduced to what is safe to print.
+
+The credential guard lets browser_network_requests, browser_network_request and browser_console_messages run only
+with `filename` in the seat's scratch dir (~/.local/state/agent-stack/playwright-mcp/net/<seat>/), because their raw
+output carries request URLs, headers and console text where runtime tokens appear. This prints, per request:
+
+    <n>. <METHOD> <host><path> => <status>
+
+Query strings, fragments, user:password@ and ;params are dropped, and a path segment that looks like a token (long
+hex, a JWT, a long mixed letters-and-digits run) is shown as <masked>. Headers, bodies and console messages are never
+printed, only counted; a console log's "Total messages" line is shown. The file's kind comes from its name, which the
+guard enforces when the MCP writes it (requests-…, request-…, console-…), never from its content; only that kind's
+record lines are read. A part-… file (a raw header or body) or any other name prints nothing but the count.
+Exit 1 when a file can't be read.
+"""
+import os
+import re
+import sys
+
+METHODS = r"(GET|HEAD|POST|PUT|PATCH|DELETE|OPTIONS|CONNECT|TRACE)"
+# The record lines Playwright MCP 0.0.80 writes, matched whole (renderRequestLine / renderRequestDetails):
+LIST_LINE = re.compile(rf"^(\d+)\. \[{METHODS}\] (\S+)(?: => \[(\d{{3}}|FAILED)\].*)?$")   # browser_network_requests
+DETAIL_HEAD = re.compile(rf"^#(\d+) \[{METHODS}\] (\S+)$")                                  # browser_network_request
+DETAIL_STATUS = re.compile(r"^\s+status:\s+\[(\d{3}|FAILED)\]")   # read only before the first headers/body section
+TOTALS = re.compile(r"^Total messages: \d+ \(Errors: \d+, Warnings: \d+\)$")                 # browser_console_messages
+NOTE = re.compile(r"^Note: \d+ static requests? not shown, run with .* option to see (it|them)\.$")
+
+
+def tokenish(seg):
+    if len(seg) > 64 or seg.startswith("eyJ"):
+        return True
+    if len(seg) >= 16 and re.fullmatch(r"[0-9a-fA-F-]+", seg):
+        return True
+    return len(seg) >= 20 and bool(re.search(r"[A-Za-z]", seg)) and bool(re.search(r"\d", seg))
+
+
+def safe_url(url):
+    if url.startswith("data:"):
+        return "data:" + url[5:].split(",", 1)[0].split(";", 1)[0]
+    m = re.match(r"^([a-zA-Z][a-zA-Z0-9+.-]*):(//)?([^/?#]*)([^?#]*)", url)
+    if not m:
+        return "<unparsed url>"
+    host = m.group(3).rsplit("@", 1)[-1].lower()
+    path = m.group(4).split(";", 1)[0]
+    segs = ["<masked>" if s and tokenish(s) else s for s in path.split("/")]
+    return host + "/".join(segs) if m.group(2) else f"{m.group(1)}:" + "/".join(segs)
+
+
+def kind_of(path):
+    """The file's kind from its name, which the credential guard enforced when the MCP wrote it: requests-…, request-…,
+    console-… are read; part-… (a raw header or body) and anything else print only the count."""
+    k = os.path.basename(path).split("-", 1)[0]
+    return k if k in ("requests", "request", "console") else None
+
+
+def summarise(text, kind):
+    """Only the record lines of the file's kind (given by its name, never guessed from its content), matched whole: text
+    inside a console message, a header or a body is never taken for a request, whatever it looks like."""
+    lines = [l for l in text.splitlines() if l.strip()]
+    out, shown = [], 0
+    first = lines[0] if lines else ""
+    if kind == "console" and TOTALS.match(first):     # the totals line only
+        out, shown = [first], 1
+    elif kind == "request" and DETAIL_HEAD.match(first):   # its first line, and the status in General
+        m = DETAIL_HEAD.match(first)
+        status = None
+        for l in lines[1:]:
+            if l.strip() in ("Request headers", "Response headers", "Request body", "Response body") or not DETAIL_STATUS.match(l) and ":" in l and l.strip().split(":")[0] not in ("status", "duration", "type"):
+                break
+            d = DETAIL_STATUS.match(l)
+            if d:
+                status, shown = d.group(1), 1
+                break
+        out = [f"1. {m.group(2)} {safe_url(m.group(3))}" + (f" => {status}" if status else "")]
+        shown += 1
+    elif kind == "requests":                          # numbered lines, numbers increasing, and the list's note
+        last = 0
+        for l in lines:
+            m = LIST_LINE.match(l)
+            if m and int(m.group(1)) > last:
+                last = int(m.group(1))
+                out.append(f"{len(out) + 1}. {m.group(2)} {safe_url(m.group(3))}" + (f" => {m.group(4)}" if m.group(4) else ""))
+                shown += 1
+            elif NOTE.match(l):
+                shown += 1
+    other = len(lines) - shown
+    if other:
+        out.append(f"({other} other line{'s' if other != 1 else ''} not shown: headers, bodies or console text)")
+    return out
+
+
+def main(argv):
+    if not argv or argv[0] in ("-h", "--help"):
+        print(__doc__.strip())
+        return 0 if argv else 2
+    rc = 0
+    for f in argv:
+        try:
+            with open(f, encoding="utf-8", errors="replace") as fh:
+                text = fh.read()
+        except OSError as e:
+            print(f"{f}: {e.strerror}", file=sys.stderr)
+            rc = 1
+            continue
+        if len(argv) > 1:
+            print(f"== {f}")
+        for line in summarise(text, kind_of(f)):
+            print(line)
+    return rc
+
+
+if __name__ == "__main__":
+    sys.exit(main(sys.argv[1:]))

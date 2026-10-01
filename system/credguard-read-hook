@@ -1,6 +1,6 @@
 #!/usr/bin/env node
 // agent-stack credential read guard: a PreToolUse hook for Claude Code (Bash, Read, Grep) and Codex (Bash, which is
-// Codex's exec_command). It refuses a tool call that would PRINT a credential file into the transcript, where it
+// Codex's exec_command), plus the Playwright MCP tools that list network requests or console text (both runtimes). It refuses a tool call that would PRINT a credential file into the transcript, where it
 // stays (and gets copied, summarised and synced). Using the values without printing them stays allowed:
 // `set -a; . .env; set +a; npm run migrate`, `--env-file .env`, dotenv loaders in scripts, `grep -q KEY .env`.
 //
@@ -13,12 +13,22 @@
 // Best effort against ACCIDENTAL printing by a seat, not a sandbox: a script that reads and prints a file itself
 // (node -e, python -c) is not parsed. The guard never fails closed on its own errors (a broken hook must not stop
 // every seat); install.sh and agent-never-prompt-check report whether it is installed.
+// Playwright MCP (WO57): browser_network_requests, browser_network_request and browser_console_messages print request
+// URLs, headers and console text, where tokens minted at runtime (session JWTs, ?token=, signed URLs) appear; the
+// MCP's --secrets only masks the values in its secrets file. They are allowed only with the tool's own `filename`
+// pointing into the seat's scratch dir (NET_DIR/<seat>/), which is protected like a credential file; the seat reads
+// it through agent-net-summary (method, host, path, status).
 "use strict";
 const fs = require("node:fs"), path = require("node:path"), os = require("node:os");
 
-const DEFAULT_PATTERNS = ["**/.env", "**/.env.*", "**/*runtime-url*", "**/*.pem", "~/.config/agent-stack/secrets/**", "**/prod.env"];
+// Under the Playwright MCP's --output-dir (install.sh), so the MCP may write there; one dir per seat.
+const NET_DIR = "~/.local/state/agent-stack/playwright-mcp/net";
+const DEFAULT_PATTERNS = ["**/.env", "**/.env.*", "**/*runtime-url*", "**/*.pem", "~/.config/agent-stack/secrets/**", "**/prod.env", `${NET_DIR}/**`];
+const NET_TOOL = /^mcp__.+__browser_(network_requests|network_request|console_messages)$/;
 // Templates that hold no values.
 const EXEMPT = /(^|\/)\.env\.(example|sample|template)$/;
+// Not inside the Playwright scratch tree: every file there is raw MCP output, whatever its name.
+const exempt = (abs, home) => EXEMPT.test(abs) && !abs.startsWith(path.join(home, NET_DIR.slice(2)) + "/");
 
 function patterns(env = process.env, home = os.homedir()) {
   const file = env.AGENT_CREDGUARD_READ_PATHS || path.join(home, ".config/agent-stack/credguard-read-paths");
@@ -120,7 +130,7 @@ function taintedBy(abs, ctx) {
 }
 function checkAbs(abs, ctx) {
   if (taintedBy(abs, ctx)) return { path: abs, pattern: "a copy or link of a credential file made earlier in this command" };
-  const byPattern = (x) => !EXEMPT.test(x) && ctx.pats.find((p) => globRe(p, ctx.home).test(x));
+  const byPattern = (x) => !exempt(x, ctx.home) && ctx.pats.find((p) => globRe(p, ctx.home).test(x));
   let p = byPattern(abs);
   if (p) return { path: abs, pattern: p };
   let real = null;
@@ -148,10 +158,17 @@ function globHit(abs, ctx) {
       return null;
     }
   }
+  // A glob inside a protected tree (`secrets/*/x`, `net/**`): its fixed directory part decides, whatever the names.
+  const fixed = abs.split("/"), cut = fixed.findIndex((seg) => /[*?[]/.test(seg));
+  if (cut > 0) {
+    const probe = fixed.slice(0, cut).join("/") + "/credguard-probe";
+    const p = ctx.pats.find((x) => globRe(x, ctx.home).test(probe));
+    if (p) return { path: abs, pattern: p };
+  }
   for (const smp of SAMPLES) {
     if (!okName(smp)) continue;
     const cand = path.join(dir, smp);
-    if (EXEMPT.test(cand)) continue;
+    if (exempt(cand, ctx.home)) continue;
     const p = ctx.pats.find((x) => globRe(x, ctx.home).test(cand));
     if (p) return { path: abs, pattern: p };
   }
@@ -611,9 +628,59 @@ function keyNames(text) {
 }
 
 // Pure: the decision for one hook input. { deny: false } or { deny: true, reason }.
-function decide(input, { home = os.homedir(), pats = patterns(process.env, home) } = {}) {
+// The seat's scratch dir for Playwright network/console output: NET_DIR/<seat> (OPENRIG_SESSION_NAME, else "local").
+function netDir(home, env = process.env) {
+  return path.join(home, NET_DIR.slice(2), (env.OPENRIG_SESSION_NAME || "local").replace(/[^A-Za-z0-9._@-]/g, "_"));
+}
+
+// What a call writes, named by the file's prefix, so agent-net-summary knows a file's kind from its origin and never
+// from its content (a raw body can look like anything): the request list, one request's details, one part of a
+// request (headers or a body, raw), console messages.
+function netKind(tool, ti = {}) {
+  if (/__browser_network_requests$/.test(tool)) return "requests";
+  if (/__browser_network_request$/.test(tool)) return ti.part != null ? "part" : "request";
+  return "console";
+}
+
+// A Playwright network/console call: null when its output goes to a file in the seat's scratch dir (an absolute path
+// below it, named <kind>-…, no symlink on the way; the dir is created 0700), else why not.
+function netVerdict(ti, home, env = process.env, tool = "") {
+  const dir = netDir(home, env), f = ti.filename, kind = netKind(tool, ti);
+  if (typeof f !== "string" || !f.trim()) return "it has no filename, so the output would come back as text";
+  if (!path.isAbsolute(f)) return "its filename is not an absolute path in your scratch dir";
+  const abs = path.resolve(f);
+  if (!abs.startsWith(dir + path.sep)) return `its filename is not inside your scratch dir ${dir.replace(home, "~")}`;
+  if (!path.basename(abs).startsWith(`${kind}-`)) return `its file name must start with "${kind}-" (what this call writes)`;
+  const top = path.dirname(path.dirname(dir));   // the MCP output dir
+  for (let p = abs; p.length >= top.length; p = path.dirname(p)) {
+    try { if (fs.lstatSync(p).isSymbolicLink()) return `${p.replace(home, "~")} is a symlink`; } catch { /* not there yet */ }
+    if (p === top) break;
+  }
+  try { fs.mkdirSync(dir, { recursive: true, mode: 0o700 }); fs.chmodSync(path.dirname(dir), 0o700); fs.chmodSync(dir, 0o700); } catch { /* the MCP reports it */ }
+  return null;
+}
+
+function netDenial(tool, why, home, env = process.env, ti = {}) {
+  const dir = netDir(home, env).replace(home, "~"), short = tool.replace(/^mcp__.+__/, ""), file = `${dir}/${netKind(tool, ti)}-1.log`;
+  return [
+    `agent-stack credential guard: blocked ${short}, because ${why}. Its output (request URLs, headers or console text)`,
+    "would enter the transcript and stay there, and tokens minted at runtime (session JWTs, ?token=…, signed URLs) are",
+    "not masked by --secrets.",
+    `Send it to a file in your scratch dir with the tool's own filename argument (an absolute path):`,
+    `  ${short}({ …, filename: "${file.replace("~", home)}" })`,
+    `then print a summary that keeps method, host, path and status only (no query strings, no headers):`,
+    `  agent-net-summary ${file}`,
+    `The scratch dir is protected like a credential file: don't open the raw file.`,
+  ].join("\n");
+}
+
+function decide(input, { home = os.homedir(), pats = patterns(process.env, home), env = process.env } = {}) {
   const ctx = { cwd: input.cwd || process.cwd(), home, pats };
   const t = input.tool_name, ti = input.tool_input || {};
+  if (NET_TOOL.test(t || "")) {
+    const why = netVerdict(ti, home, env, t);
+    return why ? { deny: true, reason: netDenial(t, why, home, env, ti) } : { deny: false };
+  }
   let v = null;
   if (t === "Bash") v = bashVerdict(ti.command, ctx);
   else if (t === "Read") { const h = protectedPath(ti.file_path, ctx); if (h) v = { why: "reading it shows its contents", hit: h }; }
@@ -650,5 +717,5 @@ function main() {
   process.exit(0);
 }
 
-module.exports = { DEFAULT_PATTERNS, patterns, globRe, protectedPath, lex, parseArgs, bashVerdict, keyNames, decide };
+module.exports = { DEFAULT_PATTERNS, NET_DIR, NET_TOOL, netDir, netKind, netVerdict, patterns, globRe, protectedPath, lex, parseArgs, bashVerdict, keyNames, decide };
 if (require.main === module) main();

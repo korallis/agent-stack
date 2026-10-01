@@ -12,7 +12,16 @@ and usually completes. Retrying then would start a SECOND successor. This wrappe
      OpenRig only records successes there; a failure after the timeout is never recorded, so when --wait (default
      600 s) runs out the answer is UNKNOWN: do NOT hand over again; check `rig seat status` and the seat's tmux
      sessions first.
-Exit: 0 complete (or a dry run), 1 failed, 3 unknown.
+  4. parked rows keep their wakes (WO56): at a seat swap OpenRig stops every watchdog job the retiring generation
+     registered, park timers included (`rig queue block --wake-after`); the successor is meant to re-arm its own
+     and nothing does. So before the handover the seat's blocked rows and their timed wakes are recorded (the wake
+     the daemon itself projects for each row, waiting.nextBackstop, so a custom message or an attached watchdog
+     counts too), and after "complete" each row that is still blocked, still the seat's, and has no live wake any
+     more is re-parked on the same blocker with the same interval; what was re-armed is printed. A row that still
+     has a live wake is left alone (never two). A repeating wait (the wake ladder) can't be re-armed from the CLI:
+     it is reported, to re-park by hand. A row that can't be read, before or after, is reported too, never skipped.
+Exit: 0 complete (or a dry run), 1 failed, 3 unknown, 4 complete but a wake could not be re-armed or checked (listed).
+`agent-seat-handover <seat> --wakes` only prints the parked-row timers a handover would stop, and changes nothing.
 Before a --source rebuild handover, check the seat's chain: agent-seat-recap show --seat <seat>.
 """
 import datetime, json, os, subprocess, sys, time
@@ -31,6 +40,154 @@ POLL = float(os.environ.get("AGENT_SEAT_HANDOVER_POLL", "5"))
 if "--dry-run" in args:
     os.execvp("rig", ["rig", "seat", "handover", *args])
 
+
+def rig_json(*a):
+    """(parsed JSON, None) or (None, why)."""
+    try:
+        r = subprocess.run(["rig", *a], capture_output=True, text=True, timeout=60)
+    except (OSError, subprocess.TimeoutExpired) as e:
+        return None, str(e)
+    if r.returncode != 0:
+        return None, f"exit {r.returncode}: {' '.join((r.stderr or r.stdout).split())[-200:]}"
+    try:
+        return json.loads(r.stdout), None
+    except ValueError:
+        return None, "output is not JSON"
+
+
+def live_wake(row):
+    """The row's armed, still-active watchdog job id, as the daemon projects it (waiting.nextBackstop); else None.
+    This is the row's own wake record, so a custom message or an attached watchdog counts too."""
+    mech = str(((row.get("waiting") or {}).get("nextBackstop") or {}).get("mechanism") or "")
+    return mech[len("watchdog:"):] if mech.startswith("watchdog:") else None
+
+
+def ladder(job):
+    """A repeating wait (the wake ladder) keeps its state as JSON in the spec: the CLI can't arm one."""
+    try:
+        return bool(json.loads(job.get("specYaml") or "").get("context", {}).get("queue_wait", {}).get("qitemId"))
+    except (ValueError, AttributeError):
+        return False
+
+
+UNKNOWN_MESSAGE = object()   # the spec couldn't be read: treat the message as not the default
+
+
+def wake_message(job):
+    """The message a periodic-reminder job delivers, read the way OpenRig's policy reads it: the spec is YAML (JSON
+    included), `message` or else `context.message`. None when there is none; UNKNOWN_MESSAGE when unreadable."""
+    try:
+        import yaml
+        spec = yaml.safe_load(str(job.get("specYaml") or ""))
+    except Exception:   # no PyYAML, or a spec it can't parse
+        return UNKNOWN_MESSAGE
+    if not isinstance(spec, dict):
+        return UNKNOWN_MESSAGE
+    ctx = spec.get("context") if isinstance(spec.get("context"), dict) else {}
+    msg = spec.get("message") if spec.get("message") is not None else ctx.get("message")
+    return None if msg is None else str(msg)
+
+
+def default_message(q):   # what OpenRig writes for a plain `--wake-after` (queue-repository)
+    return f"Wake timer fired for parked qitem {q}. Resume the recorded continuation and update the row."
+
+
+def parked_wakes(targets):
+    """The seat's blocked rows that have a live wake: ({qitem: {interval, ladder, job, blocked_on}}, [problems]);
+    or (None, why) when the rows can't be listed at all."""
+    rows, problems = {}, []
+    for t in sorted(targets):
+        listed, why = rig_json("queue", "list", "-A", "--destination", t, "--state", "blocked", "--json", "--limit", "1000")
+        if not isinstance(listed, list):
+            return None, why or "rig queue list did not return a list"
+        for item in listed:
+            q = item.get("qitemId") if isinstance(item, dict) else None
+            if not q or q in rows:
+                continue
+            row, why = rig_json("queue", "show", q, "--full", "--json")
+            if not isinstance(row, dict):
+                problems.append(f"{q}: could not read the row ({why})"); continue
+            job_id = live_wake(row)
+            if row.get("state") != "blocked" or not job_id:
+                continue   # no timed wake to lose (a blocker's resolution is its wake)
+            job, why = rig_json("watchdog", "show", job_id, "--json")
+            if not isinstance(job, dict):
+                problems.append(f"{q}: could not read its wake {job_id} ({why})"); continue
+            rows[q] = {"interval": job.get("intervalSeconds"), "ladder": ladder(job), "job": job_id, "blocked_on": row.get("blockedOn"),
+                       "policy": job.get("policy"), "message": wake_message(job)}
+    return rows, problems
+
+
+st0, _ = rig_json("seat", "status", seat, "--json")
+targets = {seat} | ({st0["current_occupant"]} if isinstance(st0, dict) and st0.get("current_occupant") else set())
+wakes, snap = parked_wakes(targets)   # snap: why, when wakes is None; else the rows that couldn't be read
+if "--wakes" in args:
+    if wakes is None:
+        sys.exit(f"could not read the seat's parked rows: {snap}")
+    for p in snap:
+        print(f"WARN: {p}", file=sys.stderr)
+    for q, w in sorted(wakes.items()):
+        print(f"{q}: {'repeating wait' if w['ladder'] else 'timer'} every {w['interval']}s (job {w['job']}), blocked on {w['blocked_on'] or '-'}")
+    print(f"{len(wakes)} parked row(s) of {seat} with a timed wake; a handover stops the old occupant's, and this wrapper re-arms them")
+    sys.exit(1 if snap else 0)
+if wakes is None:
+    print(f"WARN: could not record {seat}'s parked rows ({snap}); no wake will be re-armed after the handover", file=sys.stderr)
+    snap = [f"the seat's parked rows could not be recorded ({snap})"]
+else:
+    for p in snap:
+        print(f"WARN: {p}; its wake is not recorded and won't be re-armed", file=sys.stderr)
+
+
+def rearm(occupant):
+    """After a completed handover: re-park each recorded row that lost its wake. Returns how many need a hand."""
+    failed = len(snap)   # rows that couldn't be recorded: the caller has to check them
+    owners = targets | ({occupant} if occupant and occupant != "?" else set())
+    for q, w in sorted((wakes or {}).items()):
+        row, rwhy = rig_json("queue", "show", q, "--full", "--json")
+        if not isinstance(row, dict):
+            print(f"wake of {q}: NOT checked: could not read the row ({rwhy}); re-arm by hand if it's gone: "
+                  f"rig queue update {q} --state blocked{' --blocked-on ' + w['blocked_on'] if w['blocked_on'] else ''} --wake-after {w['interval']}s",
+                  file=sys.stderr); failed += 1; continue
+        if row.get("state") != "blocked":
+            print(f"wake of {q}: not needed, the row is {row.get('state')} now"); continue
+        if row.get("destinationSession") not in owners:
+            print(f"wake of {q}: left alone, the row belongs to {row.get('destinationSession')} now"); continue
+        live = live_wake(row)
+        if live:
+            print(f"wake of {q}: still live (job {live}), left alone"); continue
+        if w["ladder"]:
+            print(f"wake of {q}: NOT re-armed: it was a repeating wait (every {w['interval']}s), which the CLI can't arm; re-park it by hand",
+                  file=sys.stderr); failed += 1; continue
+        if w.get("policy") != "periodic-reminder" or not w["interval"]:
+            print(f"wake of {q}: NOT re-armed: its wake was watchdog {w['job']} (policy {w.get('policy')}), not a timer the CLI can arm; "
+                  f"attach a live one by hand (rig queue block {q} --wake-watchdog <job>)", file=sys.stderr); failed += 1; continue
+        cmd = ["rig", "queue", "update", q, "--state", "blocked", "--wake-after", f"{w['interval']}s",
+               "--note", f"wake re-armed after the seat handover of {seat} (the retiring occupant's wake {w['job']} was stopped)"]
+        if row.get("blockedOn"):
+            cmd[6:6] = ["--blocked-on", row["blockedOn"]]   # after --state blocked
+        try:
+            u = subprocess.run(cmd, capture_output=True, text=True, timeout=60)
+            ok, uwhy = u.returncode == 0, " ".join((u.stderr or u.stdout).split())[-200:]
+        except (OSError, subprocess.TimeoutExpired) as e:
+            ok, uwhy = False, str(e)
+        if ok:
+            print(f"wake of {q}: re-armed, every {w['interval']}s{', blocked on ' + row['blockedOn'] if row.get('blockedOn') else ''}")
+            if w["message"] is UNKNOWN_MESSAGE:
+                print(f"wake of {q}: its wake message could not be read, so it may NOT have been kept; see rig watchdog show {w['job']}",
+                      file=sys.stderr); failed += 1
+            elif w["message"] is not None and w["message"] != default_message(q):   # the CLI can't set a wake message
+                print(f"wake of {q}: its custom wake message was NOT kept (the CLI can't set one); it said: {w['message']}", file=sys.stderr)
+                failed += 1
+        else:
+            print(f"wake of {q}: NOT re-armed: {uwhy}", file=sys.stderr); failed += 1
+    for p in snap:
+        print(f"CHECK BY HAND: {p}", file=sys.stderr)
+    return failed
+
+
+def done(occupant):
+    sys.exit(4 if rearm(occupant) else 0)
+
 start = datetime.datetime.now(datetime.timezone.utc)   # full precision: the daemon records handover_at in ms
 cmd = ["rig", "seat", "handover", *args] + ([] if "--json" in args else ["--json"])
 r = subprocess.run(cmd, capture_output=True, text=True)
@@ -42,7 +199,7 @@ if isinstance(res, dict) and "ok" in res:
     if res["ok"]:
         occ = (res.get("currentStatus") or {}).get("currentOccupant") or res.get("currentOccupant") or "?"
         print(f"handover of {seat}: complete (occupant {occ})")
-        sys.exit(0)
+        done(occ)
     print(f"handover of {seat}: FAILED: {res.get('code', '?')}: {res.get('message', '')}", file=sys.stderr)
     sys.exit(1)
 
@@ -71,9 +228,12 @@ while True:
     if st.get("handover_result") == "complete" and at and at >= start:
         print(f"handover of {seat}: complete at {st['handover_at']} (occupant {st.get('current_occupant', '?')}, "
               f"previous {st.get('previous_occupant', '?')})")
-        sys.exit(0)
+        done(st.get("current_occupant"))
     if time.monotonic() >= deadline:
         print(f"handover of {seat}: UNKNOWN after {wait:.0f}s (no completed handover recorded since {start:%H:%M:%S.%f}Z). "
               f"Do NOT start another handover: check `rig seat status {seat}` and the seat's tmux sessions first.", file=sys.stderr)
+        if wakes:
+            print(f"Parked rows whose timers a completed handover stops (re-run `agent-seat-handover {seat} --wakes` after and re-arm what's gone): "
+                  + ", ".join(f"{q} ({w['interval']}s)" for q, w in sorted(wakes.items())), file=sys.stderr)
         sys.exit(3)
     time.sleep(POLL)

@@ -3,7 +3,15 @@
 # agent-heavy status [build|browser]   who holds each slot: seat, cwd, command, age, remaining runtime (read-only)
 # Runs a heavy build or browser test under a SHARED machine budget so 24 agents cannot starve the host:
 #   - concurrency slots (flock)            build: 2 at once, browser: 2 at once
-#   - cgroup limits via systemd-run --user build: 8 CPUs / 16G RAM, browser: 4 CPUs / 8G RAM
+#   - cgroup limits via systemd-run --user build: 8 CPUs / 14G RAM, browser: 4 CPUs / 8G RAM, no swap; a run over
+#                                          its ceiling is OOM-killed inside its own scope (exit 137, says so, logs it)
+#                                          instead of pushing the whole host into swap
+#   - one ceiling for ALL heavy runs       every scope sits in agent-heavy.slice, MemoryMax 24G (AGENT_HEAVY_TOTAL_MEM;
+#                                          "infinity" lifts it): four slots' ceilings would add up to most of the host
+#   - worker hints in the job's env        PYTEST_XDIST_AUTO_NUM_WORKERS (pytest -n auto), VITEST_MAX_WORKERS (Vitest
+#                                          4+), VITEST_MAX_THREADS / VITEST_MAX_FORKS (Vitest 3): 4 each unless set
+#                                          (AGENT_HEAVY_WORKERS). node --test and jest read none: pass
+#                                          --test-concurrency=4 / --maxWorkers=4 yourself.
 #   - a max runtime per job (RuntimeMaxSec) build: 45min, browser: 30min; the job is stopped at the limit, so a hung or
 #                                          endless job can't hold a slot; it then exits 124 (as timeout(1)) and logs
 #                                          the stop (journalctl -t agent-heavy).
@@ -16,9 +24,13 @@
 # class would let one run hold both, and two such runs would wait on each other until the cap. A nested call of a
 # different class (a build inside a browser run) takes its own slot as usual. That is allowed, but it holds two slots
 # at once, so two runs nesting in opposite orders can still wait on each other until --wait runs out (exit 75).
-# Budgets are ordinary code/config, never a model decision. Override with AGENT_HEAVY_<CLASS>_{SLOTS,CPU,MEM,MAX_RUNTIME}.
+# Without a systemd user session (no systemd-run, or no user bus) it warns and runs the job without CPU/memory limits,
+# under timeout(1) for the max runtime.
+# Budgets are ordinary code/config, never a model decision. Override with
+# AGENT_HEAVY_<CLASS>_{SLOTS,CPU,MEM,SWAP,MAX_RUNTIME}, AGENT_HEAVY_TOTAL_MEM and AGENT_HEAVY_WORKERS.
 set -euo pipefail
-dir=${XDG_RUNTIME_DIR:-/tmp}/agent-heavy
+dir=${AGENT_HEAVY_DIR:-${XDG_RUNTIME_DIR:-/tmp}/agent-heavy}   # the slot locks (AGENT_HEAVY_DIR: tests only)
+slice=${AGENT_HEAVY_SLICE:-agent-heavy.slice}                    # the all-heavy ceiling (AGENT_HEAVY_SLICE: tests only)
 PROC=${AGENT_HEAVY_PROC:-/proc}
 dur() { local t=$1; ((t >= 3600)) && printf '%dh%02dm' $((t / 3600)) $((t % 3600 / 60)) || printf '%dm%02ds' $((t / 60)) $((t % 60)); }
 
@@ -83,10 +95,10 @@ while [[ $# -gt 0 && $1 != "--" ]]; do case $1 in
 [[ ${1:-} == "--" ]] && shift
 [[ $# -gt 0 ]] || { echo "no command given" >&2; exit 2; }
 case $class in
-  build)   slots=${AGENT_HEAVY_BUILD_SLOTS:-2};   cpu=${AGENT_HEAVY_BUILD_CPU:-800%};   mem=${AGENT_HEAVY_BUILD_MEM:-16G}
-           max=${max:-${AGENT_HEAVY_BUILD_MAX_RUNTIME:-45min}} ;;
+  build)   slots=${AGENT_HEAVY_BUILD_SLOTS:-2};   cpu=${AGENT_HEAVY_BUILD_CPU:-800%};   mem=${AGENT_HEAVY_BUILD_MEM:-14G}
+           swap=${AGENT_HEAVY_BUILD_SWAP:-0}; max=${max:-${AGENT_HEAVY_BUILD_MAX_RUNTIME:-45min}} ;;
   browser) slots=${AGENT_HEAVY_BROWSER_SLOTS:-2}; cpu=${AGENT_HEAVY_BROWSER_CPU:-400%}; mem=${AGENT_HEAVY_BROWSER_MEM:-8G}
-           max=${max:-${AGENT_HEAVY_BROWSER_MAX_RUNTIME:-30min}} ;;
+           swap=${AGENT_HEAVY_BROWSER_SWAP:-0}; max=${max:-${AGENT_HEAVY_BROWSER_MAX_RUNTIME:-30min}} ;;
   *) echo "class must be build or browser" >&2; exit 2 ;;
 esac
 # A span in seconds: N, Ns, Nmin (or Nm), Nh.
@@ -161,21 +173,58 @@ if [[ " ${AGENT_HEAVY_ACTIVE:-} " == *" $class "* ]]; then
   AGENT_HEAVY_SLOT=$(tr ' ' '\n' <<<"${AGENT_HEAVY_SLOT:-}" | grep -v "^$class\." | paste -sd' ' || true)
 fi
 
+total=${AGENT_HEAVY_TOTAL_MEM:-24G} workers=${AGENT_HEAVY_WORKERS:-4}
+# Test runners default to one worker per core (32 here, ~1 GB each): a hint the job's tools read, unless already set.
+export PYTEST_XDIST_AUTO_NUM_WORKERS=${PYTEST_XDIST_AUTO_NUM_WORKERS:-$workers} VITEST_MAX_WORKERS=${VITEST_MAX_WORKERS:-$workers} \
+  VITEST_MAX_THREADS=${VITEST_MAX_THREADS:-$workers} VITEST_MAX_FORKS=${VITEST_MAX_FORKS:-$workers}
+# A systemd user session to put the job in a scope: systemd-run, and a user manager that answers.
+if command -v systemd-run >/dev/null 2>&1 && systemctl --user show-environment >/dev/null 2>&1; then systemd=1; else systemd=0; fi
+cmdline() { printf '%s ' "$@" | tr '\n' ' ' | sed 's/ $//'; }
+log() { logger -t agent-heavy "$1: seat=${OPENRIG_SESSION_NAME:-$USER} class=$class slot=$i runtime=$(( $(date +%s) - start ))s max=$max cwd=$PWD cmd=$(cmdline "${@:2}")" \
+  2>/dev/null || true; }
+focused="Rerun it focused: a subset of the tests, or fewer workers (node --test --test-concurrency=4, vitest --maxWorkers=4,
+  jest --maxWorkers=4, pytest -n 4)"
+
 mkdir -p "$dir"
 deadline=$(( $(date +%s) + wait_s ))
 while :; do
   for i in $(seq 1 "$slots"); do
     exec {fd}>"$dir/$class.$i.lock"
     if flock -n "$fd"; then
-      echo "[agent-heavy] $class slot $i/$slots (cpu=$cpu mem=$mem max=$max) seat=${OPENRIG_SESSION_NAME:-$USER}" >&2
+      echo "[agent-heavy] $class slot $i/$slots (cpu=$cpu mem=$mem swap=$swap all-heavy=$total max=$max workers=$workers) seat=${OPENRIG_SESSION_NAME:-$USER}" >&2
       unit="agent-heavy-$class-$i-$$" start=$(date +%s) rc=0
       holder=$dir/$class.$i.holder   # for `agent-heavy status`; cmd last, since it may hold anything
       printf 'pid=%s\nseat=%s\ncwd=%s\nstart=%s\nmax=%s\ncmd=%s\n' "$$" "${OPENRIG_SESSION_NAME:-$USER}" "$PWD" "$start" "$max_s" \
         "$(printf '%s ' "$@" | tr '\n' ' ' | sed 's/ $//')" > "$holder"
       trap 'rm -f "$holder"' EXIT
       export AGENT_HEAVY_ACTIVE="${AGENT_HEAVY_ACTIVE:+$AGENT_HEAVY_ACTIVE }$class" AGENT_HEAVY_SLOT="${AGENT_HEAVY_SLOT:+$AGENT_HEAVY_SLOT }$class.$i"
-      systemd-run --user --scope --quiet -p CPUQuota="$cpu" -p MemoryMax="$mem" -p MemorySwapMax=0 -p RuntimeMaxSec="$max_s" \
-        --unit="$unit" -- "$@" || rc=$?
+      if [[ $systemd == 0 ]]; then
+        echo "[agent-heavy] WARN: no systemd user session (systemd-run --user unavailable): running WITHOUT the CPU and memory" \
+             "limits, only the slot and the max runtime" >&2
+        timeout --kill-after=30 "$max_s" "$@" || rc=$?
+        if [[ $rc == 124 || $rc == 137 && $(( $(date +%s) - start )) -ge $max_s ]]; then
+          log "stopped at the $class max runtime" "$@"
+          echo "[agent-heavy] stopped: reached the $class max runtime ($max). Split the job, run a focused subset, or pass" \
+               "--max-runtime if it genuinely needs longer." >&2
+          exit 124
+        fi
+        exit $rc
+      fi
+      # The shared ceiling for every heavy run (a runtime property: nothing is written outside /run).
+      systemctl --user set-property --runtime "$slice" MemoryMax="$total" MemorySwapMax=0 >/dev/null 2>&1 \
+        || echo "[agent-heavy] WARN: could not set the all-heavy ceiling ($total) on $slice; per-run limits still apply" >&2
+      systemd-run --user --scope --quiet --slice="$slice" -p CPUQuota="$cpu" -p MemoryMax="$mem" \
+        -p MemorySwapMax="$swap" -p RuntimeMaxSec="$max_s" --unit="$unit" -- "$@" || rc=$?
+      # Killed for memory? systemd counts the kernel's OOM kills in the scope (its own ceiling, or the all-heavy one).
+      ooms=$(systemctl --user show -p OOMKills --value "$unit.scope" 2>/dev/null || true)
+      if [[ ${ooms:-0} =~ ^[0-9]+$ && ${ooms:-0} -gt 0 ]]; then
+        systemctl --user reset-failed "$unit.scope" 2>/dev/null || true
+        log "killed for memory: $class ceiling $mem, all heavy runs $total" "$@"
+        echo "[agent-heavy] killed: the run went over its memory ceiling ($class: $mem, no swap; all heavy runs together:" \
+             "$total) and the kernel stopped it inside its own scope; the host was not touched. $focused." \
+             "If it genuinely needs more, set AGENT_HEAVY_${class^^}_MEM." >&2
+        exit 137   # as a SIGKILL: never a success, whatever the job returned
+      fi
       # Stopped at the limit? Ask systemd (Result=timeout) rather than trust the exit code: a job that traps SIGTERM
       # can exit 0. If systemd can't say, the elapsed time decides.
       if result=$(systemctl --user show -p Result --value "$unit.scope" 2>/dev/null); then
@@ -186,13 +235,12 @@ while :; do
       if [[ $timed_out == 1 ]]; then
         systemctl --user reset-failed "$unit.scope" 2>/dev/null || true
         # findable later with `journalctl -t agent-heavy`, like a kernel OOM kill
-        logger -t agent-heavy "stopped at the $class max runtime: seat=${OPENRIG_SESSION_NAME:-$USER} class=$class" \
-          "slot=$i runtime=$(( $(date +%s) - start ))s max=$max cwd=$PWD cmd=$(printf '%s ' "$@" | tr '\n' ' ' | sed 's/ $//')" \
-          2>/dev/null || true
+        log "stopped at the $class max runtime" "$@"
         echo "[agent-heavy] stopped: reached the $class max runtime ($max). Split the job, run a focused subset, or pass" \
              "--max-runtime if it genuinely needs longer." >&2
         exit 124   # as timeout(1): never a success, whatever the job returned when it was stopped
       fi
+      systemctl --user reset-failed "$unit.scope" 2>/dev/null || true   # a failed scope otherwise stays listed
       exit $rc
     fi
     exec {fd}>&-

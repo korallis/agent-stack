@@ -139,14 +139,15 @@ test("installer: merges into both configs, keeps every other hook, is idempotent
   r = install(h); assert.equal(r.status, 0, r.stdout);
   const s = JSON.parse(fs.readFileSync(join(h, "settings.json"), "utf8"));
   assert.deepEqual(s.permissions, settings.permissions); assert.deepEqual(s.hooks.Stop, settings.hooks.Stop);
-  assert.deepEqual(s.hooks.PreToolUse.map((x) => x.matcher), ["Edit", "Bash|Read|Grep"]);
-  assert.equal(s.hooks.PreToolUse[1].hooks[0].command, `"${join(h, "hook")}" --runtime claude`);
-  const t = tomlJson(join(h, "config.toml"));
-  assert.deepEqual(t.hooks.PreToolUse.map((x) => x.hooks[0].command), ["audit", `"${join(h, "hook")}" --runtime codex`]);
+  assert.deepEqual(s.hooks.PreToolUse.map((x) => x.matcher), ["Edit", "Bash|Read|Grep", inst.NET_MATCHER]);
+  for (const i of [1, 2]) assert.equal(s.hooks.PreToolUse[i].hooks[0].command, `"${join(h, "hook")}" --runtime claude`);
+  const t = tomlJson(join(h, "config.toml")), cx = `"${join(h, "hook")}" --runtime codex`;
+  assert.deepEqual(t.hooks.PreToolUse.map((x) => [x.matcher, x.hooks[0].command]), [["Bash", "audit"], ["Bash", cx], [inst.NET_MATCHER, cx]]);
   assert.equal(t.projects["/x"].trust_level, "trusted");
-  const key = `${fs.realpathSync(join(h, "config.toml"))}:pre_tool_use:1:0`;   // positional: after the existing group
-  assert.deepEqual(Object.keys(t.hooks.state), [key]);
-  assert.equal(t.hooks.state[key].trusted_hash, inst.codexHookHash({ event: "pre_tool_use", matcher: "Bash", command: `"${join(h, "hook")}" --runtime codex`, timeout: 10 }));
+  const key = (g) => `${fs.realpathSync(join(h, "config.toml"))}:pre_tool_use:${g}:0`;   // positional: after the existing group
+  assert.deepEqual(Object.keys(t.hooks.state), [key(1), key(2)]);
+  assert.equal(t.hooks.state[key(1)].trusted_hash, inst.codexHookHash({ event: "pre_tool_use", matcher: "Bash", command: cx, timeout: 10 }));
+  assert.equal(t.hooks.state[key(2)].trusted_hash, inst.codexHookHash({ event: "pre_tool_use", matcher: inst.NET_MATCHER, command: cx, timeout: 10 }));
   const after = [fs.readFileSync(join(h, "settings.json"), "utf8"), fs.readFileSync(join(h, "config.toml"), "utf8")];
   const backups = fs.readdirSync(h).filter((f) => f.includes(".bak-credguard-")).length;
   r = install(h); assert.equal(r.status, 0);
@@ -196,7 +197,8 @@ test("installer: a guard handler sharing a group with another hook leaves that h
   assert.equal(install(h).status, 0);
   const pre = JSON.parse(fs.readFileSync(join(h, "settings.json"), "utf8")).hooks.PreToolUse;
   assert.deepEqual(pre.map((g) => [g.matcher, g.hooks.map((x) => x.command)]),
-    [["Bash", ["echo audit"]], ["Bash|Read|Grep", [`"${join(h, "hook")}" --runtime claude`]]], "the old guard handlers go; audit stays; an emptied group goes");
+    [["Bash", ["echo audit"]], ["Bash|Read|Grep", [`"${join(h, "hook")}" --runtime claude`]], [inst.NET_MATCHER, [`"${join(h, "hook")}" --runtime claude`]]],
+    "the old guard handlers go; audit stays; an emptied group goes");
 });
 
 test("installer: malformed settings JSON is refused, never overwritten (QA WO42 f4)", () => {
@@ -215,7 +217,7 @@ test("installer: the Codex group index comes from the parsed TOML, comments and 
     assert.equal(install(h).status, 0, header);
     const t = tomlJson(join(h, "config.toml"));
     assert.equal(t.hooks.PreToolUse.findIndex((grp) => /--runtime codex/.test(grp.hooks[0].command)), 1, header);
-    assert.deepEqual(Object.keys(t.hooks.state), [`${fs.realpathSync(join(h, "config.toml"))}:pre_tool_use:1:0`], header);
+    assert.deepEqual(Object.keys(t.hooks.state), [1, 2].map((g) => `${fs.realpathSync(join(h, "config.toml"))}:pre_tool_use:${g}:0`), header);
     assert.equal(install(h, "--check").status, 0);
   }
   const h = fs.mkdtempSync(join(root, "q-")); fs.writeFileSync(join(h, "hook"), ""); fs.writeFileSync(join(h, "settings.json"), "{}");
@@ -267,10 +269,14 @@ test("Codex accepts the installed guard as trusted (hooks/list)", { skip: !codex
     env: { PATH: process.env.PATH, HOME: h, CODEX_HOME: join(h, "home") } });
   const line = r.stdout.split("\n").find((l) => /"id":2/.test(l));
   assert.ok(line, r.stderr.slice(-500));
-  const guard = JSON.parse(line).result.data[0].hooks.find((x) => /--runtime codex/.test(x.command || ""));
-  assert.deepEqual([guard.eventName, guard.matcher, guard.enabled, guard.trustStatus], ["preToolUse", "Bash", true, "trusted"]);
-  assert.equal(guard.key, `${fs.realpathSync(join(h, "home/config.toml"))}:pre_tool_use:1:0`);
-  assert.equal(guard.currentHash, tomlJson(join(h, "home/config.toml")).hooks.state[guard.key].trusted_hash);
+  const ours = JSON.parse(line).result.data[0].hooks.filter((x) => /--runtime codex/.test(x.command || ""));
+  // both groups: Bash, and the Playwright network/console tools (WO57)
+  assert.deepEqual(ours.map((g) => [g.eventName, g.matcher, g.enabled, g.trustStatus]),
+    [["preToolUse", "Bash", true, "trusted"], ["preToolUse", inst.NET_MATCHER, true, "trusted"]]);
+  ours.forEach((guard, i) => {
+    assert.equal(guard.key, `${fs.realpathSync(join(h, "home/config.toml"))}:pre_tool_use:${i + 1}:0`);
+    assert.equal(guard.currentHash, tomlJson(join(h, "home/config.toml")).hooks.state[guard.key].trusted_hash);
+  });
 });
 
 // ---- globs, cd, links and quoting against a real directory (the operator's attack list) ---------------------------
