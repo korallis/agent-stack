@@ -289,7 +289,7 @@ agent-credguard-check
 ```
 
 `install.sh --check` lists what is missing and changes nothing: no file, directory, mode or backup under your HOME,
-nothing in the repo, no service started, no package fetched. Claude Code and Codex are asked about their plugins and MCP
+nothing in the repo, no service started, no package fetched (npm doesn't run at all). Claude Code and Codex are asked about their plugins and MCP
 servers only once they have run in your HOME (the first run of either writes its own state). A full install needs
 `./install.sh --apply`; `--help` prints the usage, and any other argument is refused. `agent-skills-check` prints one line per skill
 source. `agent-credguard-check` shows which running seats have `neon` and `vercel` behind the credential guard. The

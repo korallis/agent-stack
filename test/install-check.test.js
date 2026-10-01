@@ -77,6 +77,7 @@ test("WO59: install.sh --check writes nothing under HOME or in the repo, starts 
   assert.deepEqual(snapshot(h), before, "nothing under HOME changed (contents, modes, mtimes, links)");
   assert.equal(gitState(), git, "nothing in the repo changed");
   assert.doesNotMatch(r.calls, MUTATING, "no installing, enabling or starting");
+  assert.doesNotMatch(r.calls, /^(npm|npx) /m, "npm never runs in --check (even `npx --no` creates npm's cache and logs)");
   // it still reports what an install would change
   assert.match(r.stdout, /--  .*agent-credguard-read-hook differs or missing/);
   assert.match(r.stdout, /--  .*secrets should be a 0700 directory/);
@@ -87,6 +88,13 @@ test("WO59: install.sh --check writes nothing under HOME or in the repo, starts 
   const r2 = run("install.sh", ["--check"], empty);
   assert.equal(r2.status, 0, r2.stderr.slice(-800));
   assert.deepEqual(fs.readdirSync(empty), [], "an empty HOME stays empty");
+  // QA PR66: Claude Code and Codex write their own state on their first run in a HOME, so neither is asked there, by
+  // install.sh or by the agent-skills-check it runs; where each has run before, it is asked (a read).
+  assert.doesNotMatch(r2.calls, /^(claude|codex) /m, "a fresh HOME: no claude or codex call at all");
+  assert.match(r2.stdout, /Claude Code has not run in this HOME yet/); assert.match(r2.stdout, /Codex has not run in this HOME yet/);
+  const used = fs.mkdtempSync(join(root, "used-")); fs.writeFileSync(join(used, ".claude.json"), "{}"); fs.mkdirSync(join(used, ".codex"));
+  const r3 = run("install.sh", ["--check"], used);
+  assert.match(r3.calls, /^claude plugin list$/m); assert.match(r3.calls, /^codex plugin list$/m); assert.doesNotMatch(r3.calls, MUTATING);
 });
 
 test("WO59: --help prints usage and does nothing; unknown arguments, both modes, or no mode without a terminal are refused", () => {
@@ -134,4 +142,31 @@ test("WO59: every instruction to run install.sh says --apply, --check or --help"
     });
   }
   assert.deepEqual(bad, [], "say ./install.sh --apply (or --check / --help)");
+});
+
+// QA PR66 f2: playwright-browsers --check runs no npm: it finds the pinned release in the npx cache by reading it, runs
+// that tree's own playwright, and gives Playwright/Chromium a throwaway HOME (the real browser builds named explicitly).
+test("WO59: playwright-browsers --check reads the npx cache, runs no npm, and launches with a throwaway HOME", () => {
+  const h = fs.mkdtempSync(join(root, "pw-")), pin = fs.readFileSync(join(repo, "system/codex/config.toml"), "utf8").match(/"@playwright\/mcp@([^"]+)"/)[1];
+  const seen = join(root, "pw-seen"), nm = join(h, ".npm/_npx/abc123/node_modules");
+  let r = run("bin/playwright-browsers", ["--check"], h);
+  assert.equal(r.status, 1); assert.match(r.stdout, /not in the npx cache yet \(not fetched; \.\/install\.sh --apply fetches it\): not ready/);
+  assert.doesNotMatch(r.calls, /^(npm|npx) /m); assert.deepEqual(fs.readdirSync(h), [], "nothing written");
+  // a cached release: its package.json, its own playwright CLI (prints a plan) and playwright-core (records the launch)
+  const w = (p, c, mode) => { fs.mkdirSync(dirname(join(nm, p)), { recursive: true }); fs.writeFileSync(join(nm, p), c); if (mode) fs.chmodSync(join(nm, p), mode); };
+  w("@playwright/mcp/package.json", JSON.stringify({ name: "@playwright/mcp", version: pin }));
+  w("playwright/cli.js", `#!/usr/bin/env node
+require("fs").appendFileSync(${JSON.stringify(seen)}, "cli HOME=" + process.env.HOME + " BROWSERS=" + process.env.PLAYWRIGHT_BROWSERS_PATH + "\\n");
+console.log("Chrome for Testing 153.0.0.1 (playwright chromium v1243)\\n  Install location:    /x/chromium-1243");\n`, 0o755);
+  fs.mkdirSync(join(nm, ".bin")); fs.symlinkSync("../playwright/cli.js", join(nm, ".bin/playwright"));
+  w("playwright-core/index.js", `module.exports = { chromium: { launch: async () => { require("fs").appendFileSync(${JSON.stringify(seen)}, "launch HOME=" + process.env.HOME + "\\n"); return { close: async () => {} }; } } };\n`);
+  const before = snapshot(h);
+  r = run("bin/playwright-browsers", ["--check"], h);
+  assert.equal(r.status, 0, r.stdout + r.stderr); assert.match(r.stdout, /browser ready \(launches\): Chrome for Testing 153\.0\.0\.1/);
+  assert.doesNotMatch(r.calls, /^(npm|npx) /m, "no npm or npx at all");
+  const log = fs.readFileSync(seen, "utf8");
+  assert.match(log, new RegExp(`^cli HOME=(?!${h})\\S+ BROWSERS=${h}/\\.cache/ms-playwright$`, "m"), "the plan: a throwaway HOME, the real browsers dir");
+  assert.equal((log.match(/^launch HOME=/gm) || []).length, 2, "headless shell and chromium both launched");
+  assert.doesNotMatch(log, new RegExp(`HOME=${h}\\b`), "never the caller's HOME");
+  assert.deepEqual(snapshot(h), before, "nothing under HOME changed");
 });
