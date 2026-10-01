@@ -346,9 +346,23 @@ for key, lvl, what in (("mission_files", "FAIL", "missions have SPEC/PROGRESS/NO
 
 # ---- 4. queue: wave maps + execution-data tags ------------------------------------------------------
 # A failed read must say so: an empty result here used to skip the whole queue section silently.
+# WO77: the list is read WITHOUT --full (tags, sessions and times, no bodies): with every body of every rig it timed
+# out against the CLI's 5 s limit on a large queue (~11,000 rows, ~8 MB of bodies). Bodies are fetched per row, over
+# the daemon's HTTP API, only where a check needs them: wave-map rows, and the newest recent rows for worktree_path=.
+import urllib.parse, urllib.request
+DAEMON = os.environ.get("OPENRIG_URL", "http://127.0.0.1:7433").rstrip("/")
+def full_body(r):
+    """The row's complete body: the list's own when it carries one, else GET /api/queue/<id>; None if unreadable."""
+    if r.get("body"):
+        return r["body"]
+    try:
+        item = json.load(urllib.request.urlopen(f"{DAEMON}/api/queue/{urllib.parse.quote(str(r.get('qitemId') or ''))}", timeout=15))
+        return item.get("body") or "" if isinstance(item, dict) else None
+    except Exception:
+        return None
 q = []
 try:
-    qr = run(["rig", "queue", "list", "-A", "-a", "--full", "--json", "--limit", "20000"], timeout=180)
+    qr = run(["rig", "queue", "list", "-A", "-a", "--json", "--limit", "20000"], timeout=180)
     if qr.returncode != 0:
         rep("WARN", "could not read the queue", f"rig queue list exit {qr.returncode}: {(qr.stderr or qr.stdout).strip()[-200:]}")
     elif not qr.stdout.strip():
@@ -369,7 +383,11 @@ maps = {}
 for r in mine:
     tags = r.get("tags") or []
     if "wave-map" in tags:
-        mb = re.search(r"```json\s*(\{.*?\})\s*```", r.get("body") or "", re.S)
+        body = full_body(r)
+        if body is None:
+            rep("WARN", f"could not read the body of wave-map row {r.get('qitemId')}", f"GET {DAEMON}/api/queue/<id> failed")
+            continue
+        mb = re.search(r"```json\s*(\{.*?\})\s*```", body, re.S)
         try:
             d = json.loads(mb.group(1)) if mb else None
         except json.JSONDecodeError:
@@ -381,7 +399,6 @@ for r in mine:
 # Waves: the daemon's EXECUTION view (what the TUI shows) takes waves from mission.yaml `arrangement.waves`
 # (members = slice SPEC ids) whenever mission.yaml exists; the EC-2 queue row is only a legacy fallback.
 # So ask the daemon itself, exactly as the TUI does.
-import urllib.parse, urllib.request
 # Everything below asks the daemon the same questions the TUI asks (/api/scopes, /api/views/execution) and
 # fails on what the TUI would show as missing. Files that look right but the daemon can't read are the
 # failure mode this catches (it once missed that waves must live in mission.yaml, not queue rows).
@@ -452,7 +469,15 @@ recent = [r for r in mine if (r.get("tsCreated") or "") >= since
           and not any(t in ("stuck-sweep-finding", "wake-escalation", "wave-map") for t in (r.get("tags") or []))]
 tagged = [r for r in recent if any(t.startswith("project:") for t in (r.get("tags") or []))]
 scoped = [r for r in recent if any(t.startswith(("mission:", "slice:")) for t in (r.get("tags") or []))]
-wtp = [r for r in recent if "worktree_path=" in (r.get("body") or "")]
+# worktree_path= lives in the body: read the newest WTP_SAMPLE recent rows' bodies (one request each, 4 at a time), not
+# every row's: a busy rig makes ~2,000 rows a day, and ~50 ms per body read serially added ~10 s for 200 (WO77).
+import concurrent.futures
+WTP_SAMPLE = 100
+wtp_sample = sorted(recent, key=lambda r: r.get("tsCreated") or "", reverse=True)[:WTP_SAMPLE]
+with concurrent.futures.ThreadPoolExecutor(max_workers=4) as pool:
+    wtp_bodies = list(zip(wtp_sample, pool.map(full_body, wtp_sample)))
+wtp_unread = [r for r, b in wtp_bodies if b is None]
+wtp = [r for r, b in wtp_bodies if b and "worktree_path=" in b]
 if not recent and q:
     rep("OK", f"queue rows since {since[:16]}Z: none for this project in the window, so the tag checks have nothing to judge",
         f"{len(mine)} row(s) of this rig in total; the window starts at the later of the seat helper's install time and 24h ago")
@@ -460,7 +485,10 @@ if recent:
     pct = lambda a: f"{len(a)}/{len(recent)}"
     rep("OK" if len(tagged) == len(recent) else "WARN", f"queue rows since {since[:16]}Z carry project:<id>", pct(tagged))
     rep("OK" if len(scoped) >= 0.8 * len(recent) else "WARN", "queue rows carry mission:/slice: tags", pct(scoped))
-    rep("OK" if len(wtp) >= 0.8 * len(recent) else "WARN", "queue rows carry worktree_path= (EC-3)", pct(wtp))
+    judged = len(wtp_sample) - len(wtp_unread)
+    rep("OK" if judged and len(wtp) >= 0.8 * judged else "WARN", "queue rows carry worktree_path= (EC-3)",
+        f"{len(wtp)}/{judged}" + (f" of the newest {len(wtp_sample)} of {len(recent)}" if len(recent) > len(wtp_sample) else "")
+        + (f"; {len(wtp_unread)} body(ies) could not be read" if wtp_unread else ""))
 
 # ---- 5b. seats: spec audit, live conformance, instruction blocks, role skills, commit guard ----------------
 if specs:
