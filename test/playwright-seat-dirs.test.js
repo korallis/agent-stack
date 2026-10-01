@@ -159,6 +159,10 @@ test("retention: UNATTRIBUTED_HOURS ages what no seat can be told for (top-level
   assert.ok(fs.existsSync(join(PW(b.h), "net")), "the old net/ dir itself stays for seats still on an old MCP");
   for (const v of ["nan", "inf", "0", "-1", "soon"]) assert.notEqual(ret(home(), [], { UNATTRIBUTED_HOURS: v }).status, 0, v);
   assert.equal(ret(home(), [], { UNATTRIBUTED_HOURS: "" }).status, 0, "empty means the default");
+  // QA PR91: a seat whose name starts with "unattributed-" is a seat: its rig's window, not the unattributed one
+  const c = home(), seatish = put(join(PW(c), "unattributed-review@normal/old.yml"), 7), arch = put(join(PW(c), "unattributed-2026-10-01/old.yml"), 7);
+  assert.equal(ret(c, [], { KEEP_HOURS: "48", UNATTRIBUTED_HOURS: "6" }).status, 0);
+  assert.deepEqual([fs.existsSync(seatish), fs.existsSync(arch)], [true, false]);
 });
 
 test("wiring: install.sh links both tools, enables the hourly timer, migrates once per apply; the units and guidance say so", () => {

@@ -26,6 +26,7 @@ HOME = os.path.expanduser("~")
 BASE = os.path.join(HOME, ".local/state/agent-stack/playwright-mcp")
 CONF = os.path.join(HOME, ".config/agent-stack/playwright-retention.env")
 SEAT = re.compile(r"^[A-Za-z0-9._-]+@[A-Za-z0-9._-]+$")
+ARCHIVE = re.compile(r"^unattributed-\d{4}-\d{2}-\d{2}$")   # exactly what --migrate creates (a seat name is never this)
 MIGRATE_MIN_AGE = 3600   # seconds since a top-level file was last written before --migrate moves it
 
 
@@ -150,9 +151,12 @@ def main(argv):
                 if not dry:
                     os.unlink(p)
             continue
-        rig = name.split("@", 1)[1] if SEAT.match(name) else None
-        # a seat dir: its rig's window; the old shared net/ tree and unattributed-*: no rig can be told
-        hours = client if rig in rigs else unattributed if (name == "net" or name.startswith("unattributed-")) else keep
+        # a seat dir (seat@rig, whatever its name starts with): its rig's window (QA PR91); the old shared net/ tree and
+        # the --migrate archives: no rig can be told
+        if SEAT.match(name):
+            hours = client if name.split("@", 1)[1] in rigs else keep
+        else:
+            hours = unattributed if (name == "net" or ARCHIVE.match(name)) else keep
         n, size = prune(p, hours, now, dry, {os.path.join(p, "net")})
         if n:
             print(f"{'would delete' if dry else 'deleted'} {n} files ({size // 1024} KiB) older than {hours:g} h in {p.replace(HOME, '~')}")
