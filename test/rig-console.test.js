@@ -232,7 +232,25 @@ test("gate today (QA PR86): every decision of the UTC day, found by a binary sea
     fs.appendFileSync(file, line("2026-10-01T11:00:00Z"));
     c.lastLocal.gates = 0; await c.tick();
     assert.equal(c.raw.gates.length, 3, "then read on from where it left off");
+    // QA PR86: a failed read says unavailable; the next good read restores the state
+    fs.renameSync(file, file + ".away"); c.lastLocal.gates = 0; await c.tick(); assert.equal(c.raw.sources.gates, "unavailable");
+    fs.renameSync(file + ".away", file); fs.appendFileSync(file, line("2026-10-01T11:30:00Z"));
+    c.lastLocal.gates = 0; await c.tick();
+    assert.deepEqual([c.raw.gates.length, c.raw.sources.gates], [4, "ok"], "recovered");
   } finally { c.stop(); d.close(); }
+  // QA PR86: over the cap, the count is a lower bound, and every view says so
+  const p = new Cache({ url: d.url, interval: 5000, events: false, run: async () => null, now: () => now, jevLog: file, gateDayMax: 1 << 20 });
+  const d2 = await stubDaemon(); p.opt.url = d2.url;
+  try {
+    await p.tick();
+    assert.equal(p.raw.sources.gates, "partial");
+    assert.deepEqual(p.raw.gates.map((g) => g.decision), ["hold", "merge", "merge"], "only the day's last 1 MB was read");
+    const raw = { ...fixture.raw, gates: p.raw.gates.map((g) => ({ ...g, ts: "2026-10-01T09:00:00Z" })), sources: { ...fixture.raw.sources, gates: "partial" } };
+    const home = render(raw, hist(), 176, 50, st()).lines().join("\n"), matrixView = render(raw, hist(), 176, 50, st({ view: 1 })).lines().join("\n");
+    assert.match(home, /GATE TODAY ≥/); assert.match(home, /PARTIAL: at least/); assert.match(home, /GATE today ≥3 \(partial\)/); assert.match(home, /gates partial/);
+    assert.match(matrixView, /GATE TODAY ≥3 \(partial\)/);
+    assert.match(render(raw, hist(), 120, 40, st()).lines().join("\n"), /GATE≥/, "the narrow title keeps the mark");
+  } finally { p.stop(); d2.close(); }
   assert.ok(GATE_DAY_MAX >= 32 << 20);
 });
 

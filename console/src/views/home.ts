@@ -41,12 +41,12 @@ export function home(c: Ctx, hist: History): void {
     { title: "OWNER DECISIONS", value: f.owner.length, color: f.owner.length ? t.owner : t.faint,
       lines: f.owner.length ? [["WAITING", t.owner] as [string, RGB], ...f.owner.slice(0, 3).map((q) => [`${q.id.slice(-8)} ${q.destination.split("@")[0]}`] as [string]), [`oldest ${since(raw, f.owner[0].created)}`, t.dim]]
         : [["none waiting", t.dim]] },
-    { title: "GATE TODAY", value: f.gate.total, color: f.gate.total ? t.merged : t.faint,
-      lines: [[`${f.gate.merge} merge ✓`, t.merged], [`${f.gate.hold} hold ▲`, f.gate.hold ? t.blocked : t.dim], [`${f.gate.uncertain} uncertain`, t.violet], [`${f.gate.act} act band`, t.dim], ["since 00:00 UTC", t.faint]], spark: hist.series("gateToday", 24, now) },
+    { title: f.gate.partial ? "GATE TODAY ≥" : "GATE TODAY", value: f.gate.total, color: f.gate.total ? t.merged : t.faint,
+      lines: [...(f.gate.partial ? [["PARTIAL: at least", t.blocked] as [string, RGB]] : []), [`${f.gate.merge} merge ✓`, t.merged], [`${f.gate.hold} hold ▲`, f.gate.hold ? t.blocked : t.dim], [`${f.gate.uncertain} uncertain`, t.violet], [`${f.gate.act} act band`, t.dim], ["since 00:00 UTC", t.faint]], spark: hist.series("gateToday", 24, now) },
   ];
   tiles.forEach((tile, i) => {
     const x = 1 + i * tw, w = tw - 1;
-    panel(s, t, x, y, w, 8, w < 20 ? tile.title.split(" ")[0] : tile.title, { color: tile.value ? tile.color : t.border });
+    panel(s, t, x, y, w, 8, w < 20 ? tile.title.split(" ")[0] + (tile.title.endsWith("≥") ? "≥" : "") : tile.title, { color: tile.value ? tile.color : t.border });
     const v = String(tile.value);
     if (big) {
       const bw = bigWidth(v);
@@ -128,7 +128,7 @@ export function home(c: Ctx, hist: History): void {
   qx = s.put(qx, y + 4, `(on row ${f.queue.onRow} · on PR ${f.queue.onPr} · on owner ${f.queue.onOwner} · other ${f.queue.onOther})`, { fg: t.dim });
   if (s.w - qx < 50) { y += 6; } else {
   qx = s.put(qx + 2, y + 4, "│  GATE today ", { fg: t.faint });
-  qx = s.put(qx, y + 4, `${f.gate.total}  `, { fg: t.text, bold: true });
+  qx = s.put(qx, y + 4, `${f.gate.partial ? "≥" : ""}${f.gate.total}${f.gate.partial ? " (partial)" : ""}  `, { fg: f.gate.partial ? t.blocked : t.text, bold: true });
   qx = s.put(qx, y + 4, `${f.gate.merge} merge ✓  `, { fg: t.merged });
   qx = s.put(qx, y + 4, `${f.gate.hold} hold ▲  `, { fg: f.gate.hold ? t.blocked : t.dim });
   s.put(qx, y + 4, `${f.gate.uncertain} uncertain`, { fg: t.violet });
@@ -175,7 +175,7 @@ export function home(c: Ctx, hist: History): void {
       const lines: [string, RGB][] = [
         [`daemon ${d.ok ? "ok" : "unreachable"} ${d.version ?? ""} · cpu ${d.cpuPct ?? "—"}% · loop ${d.loopUtil === null ? "—" : Math.round(d.loopUtil * 100) + "%"} · healthz ${d.latencyMs ?? "—"}ms`, d.ok ? t.text : t.stuck],
         [`load ${raw.host.load.map((v) => v.toFixed(1)).join(" ")} / ${raw.host.cores} cores · mem ${raw.host.memUsedGB.toFixed(1)}/${Math.round(raw.host.memTotalGB)} GB · ${heavy}`, t.text],
-        [`refresh every ${Math.round(raw.refreshMs / 1000)}s${raw.refreshMs > 5000 ? " (backed off)" : ""} · sources ${Object.entries(raw.sources).map(([k, v]) => `${k} ${v === "ok" ? "✓" : "✗"}`).join(" ")}`, t.dim],
+        [`refresh every ${Math.round(raw.refreshMs / 1000)}s${raw.refreshMs > 5000 ? " (backed off)" : ""} · sources ${Object.entries(raw.sources).map(([k, v]) => `${k} ${v === "ok" ? "✓" : v === "partial" ? "partial" : "✗"}`).join(" ")}`, t.dim],
       ];
       lines.slice(0, sysH - 2).forEach(([l, col], i) => s.put(3, ly + 1 + i, fit(l, lw - 4), { fg: col }));
     }

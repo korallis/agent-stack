@@ -100,7 +100,7 @@ export interface Fleet {
   stuck: Seat[];
   queue: { pending: number; inProgress: number; blocked: number; onRow: number; onPr: number; onOwner: number; onOther: number };
   owner: QRow[];
-  gate: { merge: number; hold: number; uncertain: number; act: number; total: number };
+  gate: { merge: number; hold: number; uncertain: number; act: number; total: number; partial: boolean };
   stages: { label: string; pending: number; inProgress: number; blocked: number }[];
   ctxHigh: Seat[];
   rigs: { rig: Rig; count: Record<Activity, number>; ctxMax: number | null; ctxAvg: number | null; rows: number; health: "ok" | "degraded" | "down" }[];
@@ -125,7 +125,8 @@ export function derive(raw: Raw): Fleet {
     }
   }
   const today = new Date(raw.at).toISOString().slice(0, 10);
-  const gate = { merge: 0, hold: 0, uncertain: 0, act: 0, total: 0 };
+  // partial: today's log was over the read cap, so the counts are a lower bound (shown as ≥ in every view)
+  const gate = { merge: 0, hold: 0, uncertain: 0, act: 0, total: 0, partial: raw.sources.gates === "partial" };
   for (const g of raw.gates) {
     if (!g.ts.startsWith(today)) continue;
     gate.total++;

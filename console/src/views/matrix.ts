@@ -52,7 +52,8 @@ export function matrix(c: Ctx, hist: History): void {
   for (const [label, v, col] of [["WORKING", f.count.working, t.working], ["IDLE", f.count.idle, t.idle], ["STUCK/UNKNOWN", f.stuck.length, f.stuck.length ? t.stuck : t.dim],
     ["DOWN", f.count.detached + f.count.stopped, t.faint], ["BLOCKED ROWS", f.queue.blocked, t.blocked], ["CTX ≥ 80%", f.ctxHigh.length, f.ctxHigh.length ? t.stuck : t.dim], ["GATE TODAY", f.gate.total, t.merged]] as [string, number, RGB][]) {
     x = s.put(x + 3, y, `${label} `, { fg: t.dim });
-    x = s.put(x, y, String(v), { fg: col, bold: true });
+    const partial = label === "GATE TODAY" && f.gate.partial;   // a lower bound when the day's log was over the read cap
+    x = s.put(x, y, `${partial ? "≥" : ""}${v}${partial ? " (partial)" : ""}`, { fg: partial ? t.blocked : col, bold: true });
   }
   y += 2;
 

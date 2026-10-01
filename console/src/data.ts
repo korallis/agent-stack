@@ -17,6 +17,7 @@ import { eventLine, qrowFromItem, seatFromNode, transitionLine, type Account, ty
 export interface Options {
   url: string; interval: number; procDir?: string; jevLog?: string | null; timeoutMs?: number;
   run?: (cmd: string, args: string[], timeoutMs: number) => Promise<string | null>; now?: () => number; events?: boolean;
+  gateDayMax?: number;   // tests only
 }
 export const MIN_INTERVAL = 2000, MAX_INTERVAL = 60_000, RIGS_EVERY = 60_000, QUEUE_EVERY = 30_000;
 /** The most of the gate log read for one UTC day; past it the count is shown as partial (a lower bound). */
@@ -84,6 +85,7 @@ export class Cache {
   private cpu: { ticks: number; at: number; pid: number } | null = null;
   private ticker = new Map<string, Event & { key: string }>();
   private gateDay = "";
+  private gatePartial = false;
   private abort: AbortController | null = null;
   private listeners: (() => void)[] = [];
   private summary: any[] | null = null;
@@ -92,7 +94,7 @@ export class Cache {
   private dirty = { rigs: false, queue: false };
   requests = 0;
   constructor(o: Options) {
-    this.opt = { procDir: "/proc", jevLog: null, timeoutMs: 4000, events: true, ...o, interval: Math.max(MIN_INTERVAL, o.interval) } as Cache["opt"];
+    this.opt = { procDir: "/proc", jevLog: null, timeoutMs: 4000, events: true, gateDayMax: GATE_DAY_MAX, ...o, interval: Math.max(MIN_INTERVAL, o.interval) } as Cache["opt"];
     this.interval = this.opt.interval;
     this.raw = {
       at: this.now(), host: { id: os.hostname(), cores: os.cpus().length, load: [0, 0, 0], memUsedGB: 0, memTotalGB: 0 },
@@ -210,12 +212,14 @@ export class Cache {
       const fd = fs.openSync(file, "r");
       try {
         if (day !== this.gateDay || st.size < this.jevOffset) {
-          this.gateDay = day; this.gates = []; this.raw.sources.gates = "ok";
+          this.gateDay = day; this.gates = []; this.gatePartial = false;
           let from = dayStart(fd, st.size, `${day}T00:00:00`);
-          if (st.size - from > GATE_DAY_MAX) { from = st.size - GATE_DAY_MAX; this.raw.sources.gates = "partial"; }
+          if (st.size - from > this.opt.gateDayMax) { from = st.size - this.opt.gateDayMax; this.gatePartial = true; }
           this.jevOffset = from;
         }
         const len = st.size - this.jevOffset;
+        // every successful read states the source afresh: a read after a failure recovers it (QA PR86)
+        this.raw.sources.gates = this.gatePartial ? "partial" : "ok";
         if (len <= 0) return;
         const buf = Buffer.alloc(len); fs.readSync(fd, buf, 0, len, this.jevOffset);
         let text = buf.toString("utf8");
