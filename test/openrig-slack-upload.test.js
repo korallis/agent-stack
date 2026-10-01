@@ -128,6 +128,22 @@ test("patched reader: images, video and PDF by absolute path; a PROOF.md or rela
   fs.truncateSync(big, LOCAL_ATTACHMENT_MAX_BYTES); assert.equal(defaultReadLocalImage(big).bytes.length, LOCAL_ATTACHMENT_MAX_BYTES);
 });
 
+test("patched reader (QA/CodeRabbit on upstream #298): the path is opened once and read through that descriptor; a FIFO never blocks", async () => {
+  const { defaultReadLocalImage } = await load(patched, "slack-delivery.js");
+  const d = join(tmp, "fd"); fs.mkdirSync(d);
+  const png = join(d, "once.png"); fs.writeFileSync(png, Buffer.alloc(4096, 7));
+  const counts = { open: 0, stat: 0, readFile: 0 };
+  const orig = { openSync: fs.default.openSync, statSync: fs.default.statSync, readFileSync: fs.default.readFileSync };
+  fs.default.openSync = (...a) => { if (a[0] === png) counts.open++; return orig.openSync(...a); };
+  fs.default.statSync = (...a) => { if (a[0] === png) counts.stat++; return orig.statSync(...a); };
+  fs.default.readFileSync = (...a) => { if (a[0] === png) counts.readFile++; return orig.readFileSync(...a); };
+  let got;
+  try { got = defaultReadLocalImage(png); } finally { Object.assign(fs.default, orig); }
+  assert.equal(got.bytes.length, 4096); assert.deepEqual(counts, { open: 1, stat: 0, readFile: 0 });
+  const fifo = join(d, "pipe.mp4"); spawnSync("mkfifo", [fifo]);
+  assert.deepEqual(defaultReadLocalImage(fifo), { skipped: "not a regular file" });
+});
+
 const store = () => { const s = new Set(); return { load: () => s, mark: (k) => s.add(k) }; };
 async function deliver(dir, evidenceRef, calls, logs) {
   const { subsystemSlackDeliver } = await load(dir, "slack-delivery.js");

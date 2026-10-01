@@ -65,7 +65,7 @@
  const TRANSPORT_FAILURE_RECEIPT_PREFIX = "::transport-failure-receipt::";
  const TRANSPORT_FAILURE_RECEIPT_REPAIRED = "::repaired";
  function transportFailureReceiptKey(decisionId, failureClass, detail) {
-@@ -41,18 +45,25 @@
+@@ -41,18 +45,41 @@
          return { key, error: `pending transport-failure receipt is unreadable: ${e.message}` };
      }
  }
@@ -78,27 +78,45 @@
 +        return null;
 +    if (!LOCAL_ATTACHMENT_EXT.has(path.extname(refPath).toLowerCase()))
 +        return null;
++    // The path is resolved ONCE: open it, then stat and read that same descriptor, so the file checked is the file
++    // sent. O_NONBLOCK keeps the open from waiting on a FIFO (refused below as not a regular file); the read is bounded
++    // by the size just checked.
++    let fd = null;
      try {
 -        if (!path.isAbsolute(refPath))
 -            return null;
 -        if (!LOCAL_IMAGE_EXT.has(path.extname(refPath).toLowerCase()))
 -            return null;
-+        const st = fs.statSync(refPath);
+-        const bytes = fs.readFileSync(refPath);
+-        return { bytes: new Uint8Array(bytes), filename: path.basename(refPath) };
++        fd = fs.openSync(refPath, fs.constants.O_RDONLY | fs.constants.O_NONBLOCK);
++        const st = fs.fstatSync(fd);
 +        if (!st.isFile())
 +            return { skipped: "not a regular file" };
 +        if (st.size > LOCAL_ATTACHMENT_MAX_BYTES)
 +            return { skipped: `${st.size} bytes is over the ${LOCAL_ATTACHMENT_MAX_BYTES}-byte attachment cap` };
-         const bytes = fs.readFileSync(refPath);
-         return { bytes: new Uint8Array(bytes), filename: path.basename(refPath) };
++        const bytes = new Uint8Array(st.size);
++        let read = 0;
++        while (read < bytes.length) {
++            const n = fs.readSync(fd, bytes, read, bytes.length - read, read);
++            if (n === 0)
++                break;
++            read += n;
++        }
++        return { bytes: read === bytes.length ? bytes : bytes.subarray(0, read), filename: path.basename(refPath) };
      }
 -    catch {
 -        return null;
 +    catch (e) {
 +        return { skipped: `unreadable (${e.code ?? "error"})` };
++    }
++    finally {
++        if (fd !== null)
++            fs.closeSync(fd);
      }
  }
  /** Build the subsystem DeliverFn. Contract mirrors the retired connector handleDecision. */
-@@ -240,7 +251,10 @@
+@@ -240,7 +267,10 @@
          const local = q.evidenceRef && !/^https:\/\//.test(String(q.evidenceRef))
              ? (opts.readLocalImage ?? defaultReadLocalImage)(String(q.evidenceRef))
              : null;

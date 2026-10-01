@@ -44,7 +44,7 @@
              reason: c.reason,
 --- a/daemon/dist/domain/session-transport.js
 +++ b/daemon/dist/domain/session-transport.js
-@@ -102,6 +102,90 @@
+@@ -102,6 +102,94 @@
          return null;
      return truncateEvidence(priorTrimmed);
  }
@@ -100,11 +100,15 @@
 +        plain.pop();
 +        lines.pop();
 +    }
-+    // The whole capture, not a recent window: Codex's "Working (… esc to interrupt)" status line sits above the
-+    // composer at a varying distance (queued or incoming message blocks can come in between). A stray match in
-+    // history only withholds an idle verdict, the safe direction.
++    // Codex's live turn-status row ("• Working (1h 09m 39s • esc to interrupt)", or its reasoning-summary header in
++    // place of "Working") sits above the composer at a varying distance (queued or incoming message blocks can come
++    // in between), so that signature counts anywhere in the capture. The generic mid-work patterns count only in the
++    // last 8 non-blank lines: completed output such as "Working tree is clean." further up is history.
 +    const everything = plain.join("\n");
-+    if (MID_WORK_PATTERNS.some((pattern) => pattern.test(everything)))
++    const recent = plain.filter((line) => line !== "").slice(-8).join("\n");
++    if (plain.some((line) => /^[•◦]\s+\S.*\((?:\d+[hms]\s*)+•\s*esc to interrupt\)/.test(line)))
++        return null;
++    if (MID_WORK_PATTERNS.some((pattern) => pattern.test(recent)))
 +        return null;
 +    if (PERMISSION_PROMPT_PATTERNS.some((pattern) => pattern.test(everything)))
 +        return null;
