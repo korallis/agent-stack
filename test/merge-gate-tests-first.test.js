@@ -7,7 +7,7 @@ import * as fs from "node:fs";
 import { join, dirname } from "node:path";
 import { fileURLToPath } from "node:url";
 import { createRequire } from "node:module";
-import { testScope, outcome } from "../orchestration/merge-evidence.js";
+import { testScope, outcome, buildMergeInput } from "../orchestration/merge-evidence.js";
 
 const repo = join(dirname(fileURLToPath(import.meta.url)), "..");
 const YAML = createRequire(join(repo, "jev/package.json"))("yaml");
@@ -18,14 +18,14 @@ const dir = join(repo, "test/fixtures/merge-gate-tests-first");
 const fx = Object.fromEntries(fs.readdirSync(dir).filter((f) => f.endsWith(".json")).map((f) => [f.replace(/\.json$/, ""), JSON.parse(fs.readFileSync(join(dir, f), "utf8"))]));
 
 test("review.merge_gate is version 2 and states the tests-first rule and every exception", () => {
-  assert.equal(gate.version, 2);
+  assert.equal(gate.version, 3);
   assert.deepEqual(gate.outputs.decision.uncertain_labels, ["hold"]);
   assert.deepEqual(gate.fallback, [{ kind: "code", result: { decision: "hold" } }], "unchanged: no Jev, no merge");
   assert.match(instr, /Test-first process: acceptance tests for a feature are reviewed and merged BEFORE the feature is built/);
   assert.match(instr, /its change carries the line 'scope \(from the diff\): tests-only', computed from the diff/);
   assert.match(instr, /tests that QA actually ran \(on this head, or on an earlier commit when the evidence shows the test files unchanged since, a carried run\) and saw fail exactly at the step needing the unbuilt feature, with the run's result in the evidence/);
   assert.match(instr, /QA's verdict for this head is FAIL or there is no QA verdict for it at all \(the exception never replaces the QA gate\)/);
-  assert.match(instr, /when the scope line says NOT tests-only, says unknown, or is absent/);
+  assert.match(instr, /when a 'scope check' line says the PR was called tests-only but the diff changes code, when the scope line says code change, says unknown, or is absent/);
   assert.match(instr, /when QA did not run the tests \(a predicted or inferred failure/);
   assert.match(instr, /a bare count such as '2 failed' names no step/);
   assert.match(instr, /a test fails at a step that is already built/);
@@ -36,12 +36,12 @@ test("review.merge_gate is version 2 and states the tests-first rule and every e
 });
 
 test("the measured fixtures are complete gate inputs, anonymised, carry the builder's scope line, and differ from the positive only in their case", () => {
-  assert.deepEqual(Object.keys(fx).sort(), ["app-file-changed", "failure-at-built-step", "failure-not-observed", "missing-review", "no-failure-location",
-    "positive", "qa-fail", "qa-missing", "red-ci", "stale-ci"]);
+  assert.deepEqual(Object.keys(fx).sort(), ["app-file-changed", "claimed-tests-only-code-change", "failure-at-built-step", "failure-not-observed", "missing-review",
+    "no-failure-location", "positive", "qa-fail", "qa-missing", "red-ci", "stale-ci"]);
   for (const [name, input] of Object.entries(fx)) {
     for (const k of gate.inputs.required) assert.equal(typeof input[k], "string", `${name}.${k}`);
     assert.doesNotMatch(JSON.stringify(input), /\/home\/|github\.com\/|@[a-z]+\.(com|io)/i, `${name} carries no paths, links or addresses`);
-    assert.match(input.change, name === "app-file-changed" ? /\nscope \(from the diff\): NOT tests-only, 1 non-test path\(s\): app\/reports\/export\.ts/ : /\nscope \(from the diff\): tests-only, 3 path\(s\)/, name);
+    assert.match(input.change, ["app-file-changed", "claimed-tests-only-code-change"].includes(name) ? /\nscope \(from the diff\): code change, 1 non-test path\(s\): app\/reports\/export\.ts/ : /\nscope \(from the diff\): tests-only, 3 path\(s\)/, name);
   }
   const p = fx.positive;
   assert.match(p.ci, /all pass/); assert.match(p.review, /QA actually executed .* then failed at the absent, not-yet-built Export report page/);
@@ -59,14 +59,14 @@ test("testScope: tests-only from the diff, or the non-test paths named; a rename
   const f = (path, oldPath = path) => ({ path, oldPath, added: [], removed: [] });
   assert.match(testScope([f("tests/acceptance/F-1/a.spec.ts"), f("tests/acceptance/fixtures/seed/F-1.json"), f("src/x.test.ts"), f("e2e/flow.ts")]),
     /^scope \(from the diff\): tests-only, 4 path\(s\), all tests, fixtures or test helpers: /);
-  assert.equal(testScope([f("tests/a.spec.ts"), f("app/reports/export.ts")]), "scope (from the diff): NOT tests-only, 1 non-test path(s): app/reports/export.ts (plus 1 test path(s))");
-  assert.equal(testScope([f("tests/x.ts", "src/x.ts")]), "scope (from the diff): NOT tests-only, 1 non-test path(s): src/x.ts → tests/x.ts");
-  assert.equal(testScope([{ ...f("tests/a.ts"), unknown: true }]).startsWith("scope (from the diff): NOT tests-only"), true, "an unreadable entry is never tests-only");
+  assert.equal(testScope([f("tests/a.spec.ts"), f("app/reports/export.ts")]), "scope (from the diff): code change, 1 non-test path(s): app/reports/export.ts (plus 1 test path(s))");
+  assert.equal(testScope([f("tests/x.ts", "src/x.ts")]), "scope (from the diff): code change, 1 non-test path(s): src/x.ts → tests/x.ts");
+  assert.equal(testScope([{ ...f("tests/a.ts"), unknown: true }]).startsWith("scope (from the diff): code change"), true, "an unreadable entry is never tests-only");
   assert.equal(testScope([]), "scope (from the diff): unknown, the diff could not be read");
   // QA PR80: runtime specs, API schemas, CI under a test-named dir, manifests, configs and migrations are never tests
   for (const p of ["packages/daemon/specs/rigs/launch/kernel/rig.yaml", "spec/openapi.yaml", ".github/workflows/test/ci.yaml", "tests/package.json",
     "tests/playwright.config.ts", "test/migrations/0001.sql", "e2e/Dockerfile", "tests/schema/user.json", "db/schema.prisma"])
-    assert.match(testScope([f(p)]), /^scope \(from the diff\): NOT tests-only/, p);
+    assert.match(testScope([f(p)]), /^scope \(from the diff\): code change/, p);
   assert.match(testScope([f("tests/acceptance/fixtures/seed/F-1.json"), f("tests/acceptance/F-1/flow.spec.ts")]), /tests-only, 2 path/);
 });
 
@@ -83,4 +83,18 @@ test("outcome (QA PR80): a live Jev merge in the act band still HOLDs when a det
     const o = outcome(rec, facts);
     assert.equal(o.code, 1, why); assert.match(o.text, /live Jev merge in the act band, but a gate this helper checks is not green/, why);
   }
+});
+
+test("WO79: an ordinary PR's scope line is neutral; the contradiction line appears only when tests-only is claimed but code changed", () => {
+  const f = (path) => ({ path, oldPath: path, added: [], removed: [] });
+  const code = testScope([f("bin/tool"), f("tests/tool.test.js")]);
+  assert.equal(code, "scope (from the diff): code change, 1 non-test path(s): bin/tool (plus 1 test path(s))");
+  assert.doesNotMatch(code, /NOT|not tests-only/, "no defect wording for an ordinary change");
+  const facts = (change, scope) => ({ pr: 1, head: "a".repeat(40), base: "b".repeat(40), baseRef: "main", headRef: "x", change, scope, checks: [], mergeable: "MERGEABLE", isDraft: false });
+  const ordinary = buildMergeInput(facts("Fix the export date sort", code));
+  assert.equal(ordinary.change, `Fix the export date sort\n${code}`);
+  const claimed = buildMergeInput(facts("F-031 locked journey. Tests only.", code));
+  assert.match(claimed.change, /\nscope check: the change or review calls this tests-only, but the diff changes 1 non-test path\(s\): bin\/tool \(plus 1 test path\(s\)\)$/);
+  const honest = buildMergeInput(facts("F-031 locked journey. Tests only.", testScope([f("tests/a.spec.ts")])));
+  assert.doesNotMatch(honest.change, /scope check/, "a tests-only diff is no contradiction");
 });
