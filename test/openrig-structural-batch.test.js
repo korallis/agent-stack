@@ -34,7 +34,7 @@ const { Adapter } = await import(pathToFileURL(mod).href);
 test.after(() => fs.rmSync(tmp, { recursive: true, force: true }));
 
 // A fake tmux server: `sessions` maps name -> pane text (newline-terminated, as capture-pane prints it).
-function tmux(sessions, { failListing = false, vanish = new Set() } = {}) {
+function tmux(sessions, { failListing = false, vanish = new Set(), maxBuffer = Infinity } = {}) {
   const calls = [];
   const unquote = (s) => s.replace(/'"'"'/g, "\u0000").replace(/^'|'$/g, "").replace(/\u0000/g, "'");
   const exec = async (cmd) => {
@@ -52,6 +52,7 @@ function tmux(sessions, { failListing = false, vanish = new Set() } = {}) {
       if (part.startsWith("display-message")) out += unquote(part.match(/('(?:[^']|'"'"')*')$/)[1]) + "\n";
       else out += part.includes(" -e ") ? `\x1b[2m${sessions[name]}\x1b[0m\n` : sessions[name];
     }
+    if (out.length > maxBuffer) throw new Error("stdout maxBuffer length exceeded"); // as exec's 1 MiB limit
     return out;
   };
   return { exec, calls };
@@ -66,17 +67,30 @@ test("live seats in ONE chained call after one listing; text as capture-pane pri
   assert.match(t.calls[1], /capture-pane -p -t '=alpha:' -S -20/);
 });
 
-test("chunks of 24 bound each call; a chunk whose session vanished is left out for the per-seat path, the others kept", async () => {
+test("chunks of 24: 50 distinct live sessions take 1 listing + 3 calls; each call chains at most 24 sessions", async () => {
   const sessions = Object.fromEntries(Array.from({ length: 50 }, (_, i) => [`s${i}`, pane(`s${i}`)]));
-  const t = tmux(sessions, { vanish: new Set(["s30"]) });
+  const t = tmux(sessions);
   const got = await new Adapter(t.exec).capturePanesContent(Object.keys(sessions), 20);
   assert.equal(t.calls.length, 1 + 3);
   for (const c of t.calls.slice(1)) assert.ok(c.split(" \\; ").length <= 48, "24 seats = 48 chained commands at most");
-  for (let i = 0; i < 50; i++) {
-    const inFailedChunk = i >= 24 && i < 48;
-    assert.equal(got.has(`s${i}`), !inFailedChunk, `s${i}`);
-    if (!inFailedChunk) assert.equal(got.get(`s${i}`), pane(`s${i}`));
-  }
+  for (let i = 0; i < 50; i++) assert.equal(got.get(`s${i}`), pane(`s${i}`));
+});
+
+test("QA PR79: a session that vanished after the listing is isolated by halving: only it is left out (per-seat read)", async () => {
+  const sessions = Object.fromEntries(Array.from({ length: 50 }, (_, i) => [`s${i}`, pane(`s${i}`)]));
+  const t = tmux(sessions, { vanish: new Set(["s30"]) });
+  const got = await new Adapter(t.exec).capturePanesContent(Object.keys(sessions), 20);
+  for (let i = 0; i < 50; i++) assert.equal(got.has(`s${i}`), i !== 30, `s${i}`);
+  assert.ok(t.calls.length < 1 + 3 + 24, `${t.calls.length} calls, fewer than reading that chunk per seat`);
+});
+
+test("QA PR79: a chunk whose output overflows the exec buffer is split until it fits; every pane captured", async () => {
+  const big = (n) => `${n}:` + "x".repeat(40_000) + "\n";
+  const sessions = Object.fromEntries(Array.from({ length: 24 }, (_, i) => [`w${i}`, big(`w${i}`)]));
+  const t = tmux(sessions, { maxBuffer: 300_000 }); // 24 x 40 KB = 960 KB: two halvings to fit
+  const got = await new Adapter(t.exec).capturePanesContent(Object.keys(sessions), 20);
+  for (const n of Object.keys(sessions)) assert.equal(got.get(n), sessions[n], n);
+  assert.equal(t.calls.length, 1 + 1 + 2 + 4, "listing, the full chunk, two halves, four quarters");
 });
 
 test("tmux can't be listed -> null (the sweep falls back to per-seat); knownLive skips the listing; ansi adds -e", async () => {

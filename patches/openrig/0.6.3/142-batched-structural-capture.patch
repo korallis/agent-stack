@@ -4,13 +4,13 @@
      return { ok: false, code: "unknown", message: err.message };
  }
  /** Shell-quote a string using single quotes (POSIX-safe). */
-+/** Patch 142: how many sessions one batched capture chains; bounds one tmux call's output (exec's 1 MiB buffer) and
-+ *  what a failed chunk falls back to. */
++/** Patch 142: the most sessions one batched capture chains. Not a byte bound: a chunk whose output overflows exec's
++ *  1 MiB buffer fails and is split in half (capturePanesContent). */
 +const CAPTURE_BATCH = 24;
  function shellQuote(s) {
      // Replace each ' with '"'"' (end quote, double-quote the apostrophe, resume quote)
      return "'" + s.replace(/'/g, "'\"'\"'") + "'";
-@@ -750,6 +753,70 @@
+@@ -750,6 +753,79 @@
              return null;
          }
      }
@@ -18,8 +18,8 @@
 +     *  says which targets exist: a missing one maps to null (as a failed per-target capture), without a fork. The live
 +     *  ones are captured in chunks of CAPTURE_BATCH chained commands (`display-message` marker, then `capture-pane`),
 +     *  each pane's output delimited by a marker unique to the call. tmux stops a chain at its first failing command,
-+     *  so a chunk that fails (a session gone since the listing) leaves its targets OUT of the map: the caller reads
-+     *  those per target. Null when tmux can't be listed at all. `ansi` keeps SGR escapes (`-e`). `knownLive` (the
++     *  so a chunk that fails is split in half and retried (an oversized output or a session gone since the listing);
++     *  a single session that still fails is left OUT of the map: the caller reads it per target. Null when tmux can't be listed at all. `ansi` keeps SGR escapes (`-e`). `knownLive` (the
 +     *  sessions a capture moments ago found) skips the listing. */
 +    async capturePanesContent(targets, lines = 20, ansi = false, knownLive = null) {
 +        let live = knownLive;
@@ -39,8 +39,10 @@
 +            else
 +                out.set(t, null);
 +        }
-+        for (let i = 0; i < present.length; i += CAPTURE_BATCH) {
-+            const chunk = present.slice(i, i + CAPTURE_BATCH);
++        // A chunk that fails is split in half and retried, down to one session: its output overflowed exec's 1 MiB
++        // buffer (wide, colour-dense panes: each capture is the visible pane plus the requested history) or a session
++        // vanished since the listing. A single session that still fails is left out: the caller reads it per target.
++        const captureChunk = async (chunk) => {
 +            const nonce = randomUUID().replace(/-/g, "");
 +            const mark = (k) => `__openrig_capture_${nonce}_${k}__`;
 +            // `=<name>:` targets exactly that session's current pane: no prefix match, and a name with a "." (which `-t
@@ -51,7 +53,12 @@
 +                output = await this.exec(cmd);
 +            }
 +            catch {
-+                continue; // read per target by the caller
++                if (chunk.length > 1) {
++                    const half = Math.ceil(chunk.length / 2);
++                    await captureChunk(chunk.slice(0, half));
++                    await captureChunk(chunk.slice(half));
++                }
++                return; // a single session that failed: read per target by the caller
 +            }
 +            const segments = chunk.map(() => null);
 +            let cur = -1;
@@ -75,7 +82,9 @@
 +                const text = segments[k].length ? segments[k].join("\n") + "\n" : "";
 +                out.set(t, text === "" ? null : text);
 +            });
-+        }
++        };
++        for (let i = 0; i < present.length; i += CAPTURE_BATCH)
++            await captureChunk(present.slice(i, i + CAPTURE_BATCH));
 +        return out;
 +    }
      /** Like capturePaneContent, but keeps SGR escapes (`-e`) so a dim placeholder can be told from typed text. */
