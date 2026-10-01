@@ -189,15 +189,52 @@ if specs:
               if j.get("state") == "active" and (j.get("targetSession") or "").endswith(f"@{rig}")]
     except json.JSONDecodeError:
         wd = []
-    def is_timer(j):  # `rig queue block --wake-after` registers a periodic-reminder too; those are parked-row timers
-        spec = json.loads(sh("rig", "watchdog", "show", j["jobId"]) or "{}").get("specYaml", "")
-        return "Wake timer fired for parked qitem" in spec
-    wd = [j for j in wd if j.get("intervalSeconds") in (900, 86400) and not is_timer(j)]
-    merge = [j for j in wd if j.get("intervalSeconds", 0) <= 3600 and (j["targetSession"].startswith("integ-"))]
-    daily = [j for j in wd if j.get("intervalSeconds", 0) >= 43200 and j["targetSession"].startswith("coord-lead")]
-    rep("OK" if len(merge) == 1 else ("WARN" if not merge else "FAIL"), "one merge-sweep watchdog on the merge owner",
-        f"{len(merge)} active" if len(merge) != 1 else "")
-    rep("OK" if len(daily) == 1 else "WARN", "one daily-summary watchdog on the lead", f"{len(daily)} active" if len(daily) != 1 else "")
+    # A watchdog is a merge sweep or a daily summary by what its spec says (the template messages start "Merge sweep:" /
+    # "Daily summary:"), never by its interval: `rig queue block --wake-after 15m|24h` registers a periodic-reminder
+    # with the same 900 s / 86400 s ("Wake timer fired for parked qitem ..."), and those parked-row wakes are not counted.
+    # A job whose spec can't be read is reported, not guessed.
+    def spec_message(j):
+        try:
+            spec = json.loads(sh("rig", "watchdog", "show", j["jobId"], "--json") or "null")
+        except json.JSONDecodeError:
+            spec = None
+        if not isinstance(spec, dict) or not isinstance(spec.get("specYaml"), str):
+            return None
+        try:
+            import yaml
+            doc = yaml.safe_load(spec["specYaml"]) or {}
+        except Exception:
+            return None
+        if not isinstance(doc, dict):
+            return None
+        # What OpenRig delivers: the top-level message, else context.message (`message ?? context.message`; an empty
+        # top-level string is a message, not a fallback).
+        msg = doc.get("message")
+        if msg is None and isinstance(doc.get("context"), dict):
+            msg = doc["context"].get("message")
+        return " ".join(msg.split()) if isinstance(msg, str) else None
+    kinds, unread = {"merge": [], "daily": []}, []
+    for j in wd:
+        if j.get("policy", "periodic-reminder") != "periodic-reminder":
+            continue
+        msg = spec_message(j)
+        if msg is None:
+            unread.append(j["jobId"])
+        elif msg.startswith("Merge sweep:"):
+            kinds["merge"].append(j)
+        elif msg.startswith("Daily summary:"):
+            kinds["daily"].append(j)
+    merge, daily = kinds["merge"], kinds["daily"]
+    def verdict(js, seat_prefix):
+        right = len(js) == 1 and js[0]["targetSession"].startswith(seat_prefix)
+        detail = [] if right else ["none active" if not js else f"{len(js)} active ({', '.join(sorted(j['targetSession'] for j in js))})"]
+        if unread:
+            detail.append(f"{len(unread)} watchdog(s) whose spec could not be read were not counted")
+        return ("OK" if right and not unread else "FAIL" if len(js) > 1 else "WARN"), "; ".join(detail)
+    level, detail = verdict(merge, "integ-")
+    rep(level, "one merge-sweep watchdog on the merge owner", detail)
+    level, detail = verdict(daily, "coord-lead")
+    rep(level, "one daily-summary watchdog on the lead", detail)
 else:
     rep("FAIL", "no rig spec in <workspace>/rig/")
 excl = read(f"{REPO}/.git/info/exclude") or ""
