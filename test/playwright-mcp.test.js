@@ -43,12 +43,17 @@ fs.mkdirSync(bin);
 // A fake npx install tree, like the real one: .bin/playwright -> ../playwright/cli.js, @playwright/mcp/package.json, and a
 // playwright-core whose chromium.launch() works only once installed (READY). The stub runs the probe's real sh -c script
 // with that tree's .bin on PATH, so node module resolution is exercised for real.
-const tree = join(root, "npx-tree", "node_modules");
+// It lives where npx caches it ($HOME/.npm/_npx/<id>/node_modules): --check reads it there and runs no npm (WO59).
+const tree = join(root, ".npm/_npx/fake0001", "node_modules");
 const mkTree = (mcpVersion) => {
-  fs.rmSync(join(root, "npx-tree"), { recursive: true, force: true });
+  fs.rmSync(join(root, ".npm/_npx/fake0001"), { recursive: true, force: true });
   fs.mkdirSync(join(tree, ".bin"), { recursive: true }); fs.mkdirSync(join(tree, "playwright")); fs.mkdirSync(join(tree, "@playwright/mcp"), { recursive: true });
   fs.mkdirSync(join(tree, "playwright-core"));
-  fs.writeFileSync(join(tree, "playwright/cli.js"), "#!/usr/bin/env node\n", { mode: 0o755 });
+  fs.writeFileSync(join(tree, "playwright/cli.js"), `#!/usr/bin/env node
+if (process.argv.includes("--dry-run") && process.env.FAKE_PLAN !== "empty") console.log([
+  "Chrome for Testing 153.0.8010.12 (playwright chromium v1243)", "  Install location:    ${cache}/chromium-1243",
+  "Chrome Headless Shell 153.0.8010.12 (playwright chromium-headless-shell v1243)", "  Install location:    ${cache}/chromium_headless_shell-1243"].join("\\n"));
+`, { mode: 0o755 });
   fs.symlinkSync("../playwright/cli.js", join(tree, ".bin/playwright"));
   fs.writeFileSync(join(tree, "@playwright/mcp/package.json"), JSON.stringify({ version: mcpVersion }));
   fs.writeFileSync(join(tree, "playwright-core/index.js"), `module.exports = { chromium: { launch: async () => {
@@ -81,6 +86,7 @@ test("playwright-browsers: ready means it launches; --check reports and installs
   assert.equal(check.status, 1);
   assert.match(check.stdout, new RegExp(`@playwright/mcp@${esc(pin)} needs Chrome for Testing 153\\.0\\.8010\\.12 \\(playwright chromium v1243\\), which does not launch: headless shell: .*Executable doesn't exist`));
   assert.doesNotMatch(check.c, /install --force/, "--check installs nothing");
+  assert.equal(check.c, "", "--check runs no npx (WO59): it reads the npx cache");
   const inst = ensure();
   assert.equal(inst.status, 0, inst.stdout + inst.stderr);
   assert.match(inst.c, new RegExp(`^npx -y -p @playwright/mcp@${esc(pin)} playwright install --force chromium \\(cwd `, "m"));
@@ -148,7 +154,13 @@ test("a playwright-core in the caller's directory can't stand in for the pinned 
 
 test("a playwright tree that isn't from the pinned @playwright/mcp release is refused, never 'ready'", () => {
   fresh("0.0.83"); fs.writeFileSync(ready, "");   // a browser that would launch, but from the wrong release
-  const r = ensure(["--check"]);
+  // --check only takes a cached tree whose @playwright/mcp IS the pin (WO59: it reads the npx cache, runs no npm)
+  let r = ensure(["--check"]);
+  assert.equal(r.status, 1);
+  assert.match(r.stdout, new RegExp(`@playwright/mcp@${esc(pin)} is not in the npx cache yet .*: not ready`));
+  assert.doesNotMatch(r.stdout, /browser ready/);
+  // the launch probe itself refuses a tree from another release (plain mode, where npx resolves the tree)
+  r = ensure();
   assert.equal(r.status, 1);
   assert.match(r.stdout, new RegExp(`the playwright found is not from @playwright/mcp@${esc(pin)} \\(found 0\\.0\\.83 in `));
 });

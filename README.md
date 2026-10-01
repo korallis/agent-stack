@@ -132,7 +132,7 @@ Then install, and sign in to your accounts. Logins open a browser, so they can't
 
 ```bash
 # Illustrative: installs software and needs your accounts (the README test checks each command and flag exists).
-./install.sh
+./install.sh --apply
 gh auth login
 agent-login claude claude-a        # once per Claude subscription (claude-b, ...)
 agent-login codex codex-a          # once per ChatGPT subscription
@@ -288,9 +288,10 @@ agent-skills-check
 agent-credguard-check
 ```
 
-`install.sh --check` lists what is missing and installs or configures nothing. It is not read-only: in a fresh HOME it
-creates empty directories, sets the secrets directory to 0700, fills the npm cache while it checks the Playwright
-browser, and Claude Code may create its own `~/.claude.json` when asked for its MCP servers. `agent-skills-check` prints one line per skill
+`install.sh --check` lists what is missing and changes nothing: no file, directory, mode or backup under your HOME,
+nothing in the repo, no service started, no package fetched (npm doesn't run at all). Claude Code and Codex are asked about their plugins and MCP
+servers only once they have run in your HOME (the first run of either writes its own state). A full install needs
+`./install.sh --apply`; `--help` prints the usage, and any other argument is refused. `agent-skills-check` prints one line per skill
 source. `agent-credguard-check` shows which running seats have `neon` and `vercel` behind the credential guard. The
 credential read guard (a PreToolUse hook for Claude and Codex seats) refuses printing `.env`, `*runtime-url*`, `*.pem`
 and secrets files into a transcript: [docs/REFERENCE.md](docs/REFERENCE.md#credential-read-guard).

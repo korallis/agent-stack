@@ -2,6 +2,7 @@
 # playwright-browsers [--check]: make sure the Chrome for Testing build that the pinned Playwright MCP needs is installed
 # AND launches. The pin is the @playwright/mcp@<version> in system/codex/config.toml. Everything goes through THAT
 # release's own Playwright (npx -p @playwright/mcp@<version> …), never playwright@latest, whose browser build can differ.
+# --check runs no npm and writes nothing under HOME (below).
 #   1. its install plan (playwright install --dry-run chromium) must be recognisable: a Chrome for Testing build and
 #      install locations; anything else is an error, never "present";
 #   2. ready means that Playwright really launches Chromium headless (headless shell and full Chromium) and closes it.
@@ -18,7 +19,26 @@ say() { echo "playwright-browsers: $*"; logger -t playwright-browsers "$*" 2>/de
 # Always from an empty directory, so no project's node_modules (a different playwright/playwright-core) can shadow the
 # pinned release's own copy, for npx and for node's module resolution alike.
 neutral=$(mktemp -d); trap 'rm -rf "$neutral"' EXIT
-pw() { (cd "$neutral" && npx -y -p "@playwright/mcp@$pin" "$@"); }
+if [ "${1:-}" != --check ]; then
+  pw() { (cd "$neutral" && npx -y -p "@playwright/mcp@$pin" "$@"); }
+else
+  # --check writes nothing under HOME. npm can't run at all (even `npx --no` creates its cache and log directories when
+  # it loads), so the pinned release is found in the npx cache by reading it, and its own playwright runs from there;
+  # what Playwright or Chromium writes at a launch (profiles, ~/.pki, font caches) goes to a throwaway HOME, with the
+  # real browser builds named explicitly. Not in the npx cache yet = not ready (an install run fetches it).
+  nm=""
+  for f in "${npm_config_cache:-$HOME/.npm}"/_npx/*/node_modules/@playwright/mcp/package.json; do   # npm's cache dir
+    [ -f "$f" ] && [ "$(grep -o '"version" *: *"[^"]*"' "$f" | head -1 | sed 's/.*"\([^"]*\)"$/\1/')" = "$pin" ] && [ -e "${f%/@playwright/mcp/package.json}/.bin/playwright" ] \
+      && { nm=${f%/@playwright/mcp/package.json}; break; }
+  done
+  [ -n "$nm" ] || { say "@playwright/mcp@$pin is not in the npx cache yet (not fetched; ./install.sh --apply fetches it): not ready"; exit 1; }
+  # Where Playwright keeps the builds, resolved as it does (on Linux: PLAYWRIGHT_BROWSERS_PATH, else
+  # ${XDG_CACHE_HOME:-~/.cache}/ms-playwright), BEFORE HOME and the XDG dirs are pointed at the scratch dir.
+  browsers=${PLAYWRIGHT_BROWSERS_PATH:-${XDG_CACHE_HOME:-$HOME/.cache}/ms-playwright}
+  scratch=$(mktemp -d); trap 'rm -rf "$neutral" "$scratch"' EXIT
+  pw() { (cd "$neutral" && env HOME="$scratch" XDG_CACHE_HOME="$scratch/.cache" XDG_CONFIG_HOME="$scratch/.config" \
+    XDG_DATA_HOME="$scratch/.local/share" PLAYWRIGHT_BROWSERS_PATH="$browsers" PATH="$nm/.bin:$PATH" "$@"); }
+fi
 
 plan=$(pw playwright install --dry-run chromium 2>/dev/null) || { say "could not ask @playwright/mcp@$pin which browser it needs"; exit 1; }
 build=$(grep -m1 -oE 'Chrome for Testing [0-9.]+ \(playwright chromium v[0-9]+\)' <<<"$plan")

@@ -15,6 +15,8 @@ const OR = join(H, ".local/share/agent-stack/openrig/lib/node_modules/@openrig/c
 const skill = (d) => { fs.mkdirSync(d, { recursive: true }); fs.writeFileSync(join(d, "SKILL.md"), "---\nname: x\n---\n"); };
 const ln = (target, at) => { fs.mkdirSync(dirname(at), { recursive: true }); fs.rmSync(at, { recursive: true, force: true }); fs.symlinkSync(target, at); };
 const DIRS = [join(H, ".claude/skills"), join(H, ".agents/skills")];
+// Claude Code and Codex have run in this HOME before, so the check asks them about plugins (WO59: never on a first run).
+fs.mkdirSync(join(H, ".codex"), { recursive: true }); fs.writeFileSync(join(H, ".claude.json"), "{}");
 
 // Fake repo: the script, our two skills, two role agents, the openrig-shared link.
 fs.mkdirSync(join(S, "bin"), { recursive: true }); fs.copyFileSync(join(repo, "bin/agent-skills-check"), join(S, "bin/agent-skills-check"));

@@ -51,17 +51,17 @@ def rep(ok, what, detail=""):
 cx = toml(f"{HOME}/.codex/config.toml") or {}
 rep(cx.get("approval_policy") == "never" and cx.get("sandbox_mode") == "danger-full-access",
     "Codex config: approval_policy = never, sandbox_mode = danger-full-access (~/.codex/config.toml)",
-    f"now {cx.get('approval_policy', 'unset')} / {cx.get('sandbox_mode', 'unset')}; run install.sh (system/codex-never-prompt)")
+    f"now {cx.get('approval_policy', 'unset')} / {cx.get('sandbox_mode', 'unset')}; run ./install.sh --apply (system/codex-never-prompt)")
 try:
     cl = json.loads(read(f"{HOME}/.claude/settings.json") or "{}")
 except json.JSONDecodeError:
     cl = {}
 rep((cl.get("permissions") or {}).get("defaultMode") == "bypassPermissions" and cl.get("skipDangerousModePermissionPrompt") is True,
     "Claude: permissions.defaultMode = bypassPermissions, skipDangerousModePermissionPrompt (~/.claude/settings.json)",
-    f"defaultMode now {(cl.get('permissions') or {}).get('defaultMode', 'unset')}; run install.sh")
+    f"defaultMode now {(cl.get('permissions') or {}).get('defaultMode', 'unset')}; run ./install.sh --apply")
 shim = read(f"{HOME}/.local/share/agent-stack/seat-bin/codex") or ""
 rep('"-a", "never"' in shim, "seat shim adds -a never to Codex seats (~/.local/share/agent-stack/seat-bin/codex)",
-    "run install.sh to place system/seat-bin-codex")
+    "run ./install.sh --apply to place system/seat-bin-codex")
 # The credential read guard: seats never stop for permission, so this PreToolUse hook is what refuses a command or
 # read that would print a credential file into the transcript (install.sh, system/credguard-read-install).
 GUARD = "agent-credguard-read-hook"
@@ -69,11 +69,11 @@ guard_bin = os.path.exists(f"{HOME}/.local/share/agent-stack/bin/{GUARD}")
 has_guard = lambda g: any(GUARD in str(h.get("command", "")) for h in g.get("hooks") or [])
 cl_pre = ((cl.get("hooks") or {}).get("PreToolUse") or []) if isinstance(cl.get("hooks"), dict) else []
 rep(guard_bin and any({"Bash", "Read"} <= set((g.get("matcher") or "").split("|")) and has_guard(g) for g in cl_pre),
-    "Claude: credential read guard (PreToolUse Bash|Read|Grep in ~/.claude/settings.json)", "missing; run install.sh")
+    "Claude: credential read guard (PreToolUse Bash|Read|Grep in ~/.claude/settings.json)", "missing; run ./install.sh --apply")
 # WO57: the same hook guards the Playwright MCP network/console tools (output to a protected file only).
 NET_MATCHER = "^mcp__.+__browser_(network_requests|network_request|console_messages)$"
 rep(guard_bin and any((g.get("matcher") or "") == NET_MATCHER and has_guard(g) for g in cl_pre),
-    "Claude: Playwright network/console guard (PreToolUse on those MCP tools in ~/.claude/settings.json)", "missing; run install.sh")
+    "Claude: Playwright network/console guard (PreToolUse on those MCP tools in ~/.claude/settings.json)", "missing; run ./install.sh --apply")
 cx_hooks = cx.get("hooks") if isinstance(cx.get("hooks"), dict) else {}
 
 
@@ -104,10 +104,10 @@ def codex_guard_problem(matcher="Bash"):
 
 cx_problem = codex_guard_problem() if guard_bin else "the hook script is not installed"
 rep(cx_problem is None, "Codex: credential read guard, trusted (PreToolUse Bash in ~/.codex/config.toml)",
-    f"{cx_problem}; run install.sh (Codex seats get it at their next launch)")
+    f"{cx_problem}; run ./install.sh --apply (Codex seats get it at their next launch)")
 cx_net = codex_guard_problem(NET_MATCHER) if guard_bin else "the hook script is not installed"
 rep(cx_net is None, "Codex: Playwright network/console guard, trusted (PreToolUse on those MCP tools in ~/.codex/config.toml)",
-    f"{cx_net}; run install.sh (Codex seats get it at their next launch)")
+    f"{cx_net}; run ./install.sh --apply (Codex seats get it at their next launch)")
 
 spec = arg("--spec")
 if spec:

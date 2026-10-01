@@ -41,7 +41,7 @@ def say(ok, text):
 # 1. the secrets file
 if not os.path.exists(SECRETS):
     if CHECK:
-        say(False, f"{SECRETS} missing (run install.sh)")
+        say(False, f"{SECRETS} missing (run ./install.sh --apply)")
     else:
         os.makedirs(os.path.dirname(SECRETS), mode=0o700, exist_ok=True)
         fd = os.open(SECRETS, os.O_WRONLY | os.O_CREAT | os.O_EXCL, 0o600)

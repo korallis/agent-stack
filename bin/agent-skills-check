@@ -48,7 +48,7 @@ if not names:
     row("WARN", "OpenRig core skills", f"no installed openrig-core skills at {core} (install OpenRig: openrig-ensure)")
 else:
     row("WARN" if bad else "ok", "OpenRig core skills",
-        f"{len(bad)} of {len(names) * 2} links missing: {', '.join(bad[:4])}{' …' if len(bad) > 4 else ''}; run install.sh" if bad
+        f"{len(bad)} of {len(names) * 2} links missing: {', '.join(bad[:4])}{' …' if len(bad) > 4 else ''}; run ./install.sh --apply" if bad
         else f"{len(names)} linked for Claude and Codex")
 
 # 3. OpenRig role skills: projected into seats by the rig specs (agents/*/agent.yaml `uses.skills`), from the installed
@@ -78,9 +78,12 @@ else:
         f"named in rig/template/agents but not in OpenRig's shared agent: {', '.join(missing)}" if missing
         else f"{len(want)} used by the rig specs, all present: {', '.join(sorted(want))}")
 
-# 4. Plugins.
-out = run(["claude", "plugin", "list"])
-if out is None:
+# 4. Plugins. Claude Code and Codex write their own state (~/.claude.json, ~/.codex/) the first time they run in a HOME,
+# and this check is read-only: they are asked only where they have run before (a later run changes nothing).
+out = run(["claude", "plugin", "list"]) if os.path.exists(f"{HOME}/.claude.json") else False
+if out is False:
+    row("WARN", "Claude Code plugins", "Claude Code has not run in this HOME yet (no ~/.claude.json); not asked, so nothing is written")
+elif out is None:
     row("WARN", "Claude Code plugins", "`claude plugin list` failed")
 else:
     blocks = {}
@@ -95,8 +98,10 @@ else:
     bad = [p for p in CLAUDE_PLUGINS if p not in blocks or "enabled" not in blocks[p]]
     row("WARN" if bad else "ok", "Claude Code plugins",
         f"not installed or not enabled: {', '.join(bad)}" if bad else ", ".join(CLAUDE_PLUGINS))
-out = run(["codex", "plugin", "list"])
-if out is None:
+out = run(["codex", "plugin", "list"]) if os.path.isdir(f"{HOME}/.codex") else False
+if out is False:
+    row("WARN", "Codex plugins", "Codex has not run in this HOME yet (no ~/.codex); not asked, so nothing is written")
+elif out is None:
     row("WARN", "Codex plugins", "`codex plugin list` failed")
 else:
     bad = [p for p in CODEX_PLUGINS

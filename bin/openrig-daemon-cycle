@@ -12,6 +12,9 @@
 # Seats live in the tmux server (openrig-tmux.service), which none of this touches.
 set -uo pipefail
 STATE=${OPENRIG_HOME:-$HOME/.openrig}/daemon.json
+# Only the daemon of this HOME: an inherited OPENRIG_HOME elsewhere (a seat's env under a test HOME) names someone else's.
+case "$(realpath -m "$STATE")" in "$(realpath -m "$HOME")"/*) ;; *)
+  echo "openrig-daemon-cycle: $STATE is not under HOME=$HOME; refusing to stop or start a daemon this HOME doesn't own" >&2; exit 2 ;; esac
 WAIT=${OPENRIG_CYCLE_WAIT:-30}
 do_stop=1 do_start=1 reason="manual"
 while [ $# -gt 0 ]; do case $1 in
