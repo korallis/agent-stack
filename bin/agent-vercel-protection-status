@@ -9,7 +9,8 @@ memory and prints:
   - protection bypass: configured yes/no, how many entries, their scopes counted, and when the newest was created.
 Never a key or a value. Run it instead of `vercel api …/projects/…` whenever the question is "is it set up".
 The real `vercel` is called directly (the seat guard around `vercel` would refuse this endpoint on stdout, rightly).
-Exit 0 when the project was read, 1 when not.
+Exit 0 when the project was read, 1 when not; a failure says only its category (not found, no access, not logged
+in, unknown) and the exit code, never the CLI's own text.
 """
 import datetime, glob, json, os, re, subprocess, sys
 
@@ -28,10 +29,14 @@ def real_vercel():
     return sorted(found)[-1] if found else None
 
 
-def masked(text):
-    """A short, safe line from a failure: long token-like runs are masked."""
-    line = (text or "").strip().splitlines()[0] if (text or "").strip() else ""
-    return re.sub(r"[A-Za-z0-9_\-]{20,}", "<masked>", line)[:160]
+def failure(text):
+    """Why a read failed, as a fixed category: the CLI's own text is never printed (it can carry anything)."""
+    t = (text or "").lower()
+    for words, what in ((("not found", "404", "does not exist"), "project not found"), (("forbidden", "403", "permission"), "no access to it"),
+                        (("not logged in", "login", "401", "unauthorized", "credentials"), "not logged in")):
+        if any(w in t for w in words):
+            return what
+    return "unknown reason"
 
 
 def when(ms):
@@ -102,8 +107,9 @@ def main(argv):
     except ValueError:
         p = None
     if not isinstance(p, dict) or "error" in p:
-        print(f"agent-vercel-protection-status: could not read project {project} (vercel exit {r.returncode}"
-              f"{': ' + masked(r.stderr) if masked(r.stderr) else ''})", file=sys.stderr)
+        why = failure((r.stderr or "") + " " + (r.stdout or "")) if r.returncode != 0 else "not a project object"
+        print(f"agent-vercel-protection-status: could not read project {project}: {why} (vercel exit {r.returncode}); the CLI's "
+              f"own message is not shown (it can carry secrets)", file=sys.stderr)
         return 1
     s = summary(p)
     if as_json:

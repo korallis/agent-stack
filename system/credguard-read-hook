@@ -35,8 +35,10 @@ const INTERP = /^(node|nodejs|bun|deno|python[0-9.]*|ruby|perl|php)$/;
 const NET_TOOL = /^mcp__.+__browser_(network_requests|network_request|console_messages)$/;
 // Templates that hold no values.
 const EXEMPT = /(^|\/)\.env\.(example|sample|template)$/;
-// Not inside the Playwright scratch tree: every file there is raw MCP output, whatever its name.
-const exempt = (abs, home) => EXEMPT.test(abs) && !abs.startsWith(path.join(home, NET_DIR.slice(2)) + "/");
+// Not inside a raw-output tree (Playwright network/console logs, Vercel project JSON): every file there is raw tool
+// output, whatever its name, so a template name gives it no pass.
+const RAW_DIRS = [NET_DIR, VERCEL_DIR];
+const exempt = (abs, home) => EXEMPT.test(abs) && !RAW_DIRS.some((d) => abs.startsWith(path.join(home, d.slice(2)) + "/"));
 
 function patterns(env = process.env, home = os.homedir()) {
   const file = env.AGENT_CREDGUARD_READ_PATHS || path.join(home, ".config/agent-stack/credguard-read-paths");

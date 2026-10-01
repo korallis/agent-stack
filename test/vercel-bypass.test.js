@@ -107,7 +107,28 @@ test("WO62 agent-vercel-protection-status: yes/no and counts only, never a key; 
   r = status(["shop-web"], JSON.stringify({ ...project, protectionBypass: {} }));
   assert.match(r.stdout, /protection bypass: not configured/);
   r = status(["shop-web"], "", 1);
-  assert.equal(r.status, 1); assert.match(r.stderr, /could not read project shop-web \(vercel exit 1: Error: token <masked> rejected\)/);
+  assert.equal(r.status, 1); assert.match(r.stderr, /could not read project shop-web: unknown reason \(vercel exit 1\); the CLI's own message is not shown/);
   assert.doesNotMatch(r.stdout + r.stderr, /SYNTHETIC/);
+  // QA PR68: whatever shape a secret has in the CLI's error (short, segmented, in JSON), none of it is printed
+  for (const [err, why] of [["Error: Project not found (key ab1)", "project not found"], ["403 Forbidden: k-1.2.3", "no access to it"],
+    ["Error: not logged in (x.y.z)", "not logged in"], ['{"error":{"code":"x","bypass":"S1-2"}}', "unknown reason"]])
+    for (const args of [["shop-web"], ["shop-web", "--json"]]) {
+      fs.writeFileSync(join(stubs, "vercel"), `#!/bin/sh\necho ${JSON.stringify(err)} >&2\necho '${err.replace(/'/g, "")}'\nexit 1\n`, { mode: 0o755 });
+      const x = spawnSync(join(repo, "bin/agent-vercel-protection-status"), args, { encoding: "utf8", env: { PATH: `${seat}:${stubs}:/usr/bin:/bin`, HOME: home } });
+      assert.equal(x.status, 1); assert.match(x.stderr, new RegExp(`: ${why} \\(vercel exit 1\\)`), err);
+      for (const bit of ["ab1", "k-1.2.3", "x.y.z", "S1-2"]) assert.doesNotMatch(x.stdout + x.stderr, new RegExp(bit.replace(/[.]/g, "\\.")), `${err}: ${bit}`);
+    }
   for (const bad of [[], ["../x"], ["a b"]]) assert.notEqual(status(bad).status, 0, JSON.stringify(bad));
+});
+
+test("WO62 (QA PR68): template names get no pass inside the raw Vercel dir; outside it they are still templates", () => {
+  const work = join(root, "work2"); fs.mkdirSync(work, { recursive: true }); fs.mkdirSync(vdir, { recursive: true });
+  const dec = (tool_name, tool_input) => g.decide({ tool_name, tool_input, cwd: work }, { home, pats: g.DEFAULT_PATTERNS }).deny;
+  for (const n of [".env.example", ".env.sample", ".env.template"]) {
+    fs.writeFileSync(join(vdir, n), "x"); fs.writeFileSync(join(work, n), "x");
+    assert.equal(dec("Read", { file_path: join(vdir, n) }), true, `Read ${n} in the Vercel dir`);
+    for (const c of [`cat ${join(vdir, n)}`, `jq . ${join(vdir, n)}`]) assert.equal(dec("Bash", { command: c }), true, c);
+    assert.equal(dec("Read", { file_path: join(work, n) }), false, `${n} outside: a template`);
+    assert.equal(dec("Bash", { command: `cat ${n}` }), false, `cat ${n} outside`);
+  }
 });
