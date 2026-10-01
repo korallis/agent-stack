@@ -6,6 +6,10 @@
 #                      an older OpenRig against a database the newer one migrated is not a supported state)
 # Stops with exit 1, before any restart, when the installed package is not the version asked for.
 set -euo pipefail
+# Never act for another HOME: an inherited OPENRIG_HOME outside $HOME (a seat's env under a test HOME) names a daemon and
+# database this HOME doesn't own.
+if [ -n "${OPENRIG_HOME:-}" ]; then case "$(realpath -m "$OPENRIG_HOME")/" in "$(realpath -m "$HOME")/"*) ;; *)
+  echo "$(basename "$0"): OPENRIG_HOME=$OPENRIG_HOME is not under HOME=$HOME; refusing. Nothing changed." >&2; exit 2 ;; esac; fi
 S=$(cd "$(dirname "$(readlink -f "$0")")/.." && pwd)
 source "$S/config/versions.defaults.env"; [ -f "$S/config/versions.env" ] && source "$S/config/versions.env"   # tracked defaults, local override
 restart=1 downgrade=0

@@ -18,7 +18,9 @@ say() { echo "playwright-browsers: $*"; logger -t playwright-browsers "$*" 2>/de
 # Always from an empty directory, so no project's node_modules (a different playwright/playwright-core) can shadow the
 # pinned release's own copy, for npx and for node's module resolution alike.
 neutral=$(mktemp -d); trap 'rm -rf "$neutral"' EXIT
-pw() { (cd "$neutral" && npx -y -p "@playwright/mcp@$pin" "$@"); }
+# --check reads only: npx may not fetch the package (that would write into ~/.npm); not fetched yet = not ready.
+if [ "${1:-}" = --check ]; then fetch=--no; else fetch=-y; fi
+pw() { (cd "$neutral" && npx "$fetch" -p "@playwright/mcp@$pin" "$@"); }
 
 plan=$(pw playwright install --dry-run chromium 2>/dev/null) || { say "could not ask @playwright/mcp@$pin which browser it needs"; exit 1; }
 build=$(grep -m1 -oE 'Chrome for Testing [0-9.]+ \(playwright chromium v[0-9]+\)' <<<"$plan")

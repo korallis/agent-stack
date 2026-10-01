@@ -2,15 +2,38 @@
 # install.sh: set up agent-stack on a Linux machine with a systemd user session.
 # Safe to re-run: every step checks what is already there, backs up files it replaces, and never touches
 # existing secrets, OAuth logins or proxy config. Clone this repo to ~/Projects/agent-stack first.
-#   ./install.sh            install / repair everything
-#   ./install.sh --check    only report what is missing
+#   ./install.sh --apply    install / repair everything
+#   ./install.sh --check    only report what is missing: writes nothing (no file, link, directory, mode or backup
+#                           under $HOME or in this repo), starts and enables no unit, installs nothing
+#   ./install.sh            asks first when run from a terminal; refused otherwise
+#   ./install.sh --help     this text
+# Any other argument is refused before anything runs. (It once meant a full install: `./install.sh --help` installed.)
 set -euo pipefail
 S=$(cd "$(dirname "$(readlink -f "$0")")" && pwd)
 source "$S/config/versions.defaults.env"; [ -f "$S/config/versions.env" ] && source "$S/config/versions.env"   # tracked defaults, local override
 PW_MCP=$(sed -n 's/.*"@playwright\/mcp@\([^"]*\)".*/\1/p' "$S/system/codex/config.toml" | head -1)   # the Playwright MCP pin
 L=$HOME/.local/share/agent-stack; B=$HOME/.local/bin; C=$HOME/.config/agent-stack; SEC=$C/secrets
-CHECK=0; [ "${1:-}" = "--check" ] && CHECK=1
+usage() { awk 'NR > 1 && !/^#/ { exit } NR > 1 { sub(/^# ?/, ""); print }' "$S/install.sh"; }
+CHECK="" ; for a in "$@"; do case $a in
+  --check) [ "$CHECK" = 0 ] && { echo "install.sh: --check and --apply together; pick one. Nothing was done." >&2; exit 2; }; CHECK=1 ;;
+  --apply) [ "$CHECK" = 1 ] && { echo "install.sh: --check and --apply together; pick one. Nothing was done." >&2; exit 2; }; CHECK=0 ;;
+  -h|--help) usage; exit 0 ;;
+  *) echo "install.sh: unknown argument '$a'. Nothing was done." >&2; usage >&2; exit 2 ;;
+esac; done
+if [ -z "$CHECK" ]; then   # no mode given: a full install only when a person at a terminal says yes
+  if [ -t 0 ] && [ -t 1 ]; then
+    read -r -p "Install / repair agent-stack into $HOME? (--check only reports) [y/N] " yn
+    case $yn in y|Y|yes|YES) CHECK=0 ;; *) echo "Nothing was done."; exit 1 ;; esac
+  else echo "install.sh: say --apply to install or --check to report (no terminal to ask). Nothing was done." >&2; usage >&2; exit 2; fi
+fi
+# Never act on another HOME's OpenRig: a seat's OPENRIG_HOME (or a test that changed HOME but kept it) would point the
+# daemon steps at a daemon this HOME doesn't own.
+under_home() { case "$(realpath -m "$1")/" in "$(realpath -m "$HOME")/"*) return 0 ;; *) return 1 ;; esac; }
+if [ -n "${OPENRIG_HOME:-}" ] && ! under_home "$OPENRIG_HOME"; then
+  echo "install.sh: OPENRIG_HOME=$OPENRIG_HOME is not under HOME=$HOME; refusing (unset it or run with the HOME it belongs to). Nothing was done." >&2; exit 2
+fi
 step() { printf '\n\033[1m== %s\033[0m\n' "$*"; }
+[ $CHECK = 1 ] && echo "install.sh --check: report only, nothing is written or started" || echo "install.sh: installing / repairing"
 ok()   { printf '   ok  %s\n' "$*"; }
 todo() { printf '   --  %s\n' "$*"; }
 backup() { if [ -e "$1" ] && [ ! -L "$1" ]; then cp -p "$1" "$1.bak-$(date +%Y%m%d%H%M%S)"; fi; }
@@ -21,7 +44,9 @@ place() { # place <rendered-source> <dest> [mode]: install a rendered file, back
   [ $CHECK = 1 ] && { rm -f "$tmp"; todo "$2 differs or missing"; return; }
   mkdir -p "$(dirname "$2")"; backup "$2"; install -m "${3:-644}" "$tmp" "$2"; rm -f "$tmp"; ok "$2 (installed)"
 }
-link() { mkdir -p "$(dirname "$2")"; if [ "$(readlink "$2" 2>/dev/null)" = "$1" ]; then ok "$2"; elif [ $CHECK = 1 ]; then todo "link $2"; else backup "$2"; ln -sfn "$1" "$2"; ok "$2 -> $1"; fi; }
+link() { if [ "$(readlink "$2" 2>/dev/null)" = "$1" ]; then ok "$2"; elif [ $CHECK = 1 ]; then todo "link $2"; else mkdir -p "$(dirname "$2")"; backup "$2"; ln -sfn "$1" "$2"; ok "$2 -> $1"; fi; }
+# Directories this run needs, created only when installing (--check writes nothing, not even a directory).
+dirs() { [ $CHECK = 1 ] || mkdir -p "$@"; }
 launcher() { # launcher <name> <node-major> <script>: small wrapper pinned to a mise Node
   local node; node=$(mise where "node@$2")/bin/node
   local body="#!/usr/bin/env bash
@@ -48,7 +73,9 @@ fi
 for t in "node@$NODE_GLOBAL" "node@$NODE_FOR_OPENRIG" "node@$NODE_FOR_JEV" claude codex; do mise where "$t" >/dev/null 2>&1 && ok "$t" || todo "$t"; done
 
 step "Secrets (never in git)"
-mkdir -p "$SEC"; chmod 700 "$SEC"
+if [ $CHECK = 1 ]; then
+  [ -d "$SEC" ] && [ "$(stat -c %a "$SEC")" = 700 ] && ok "$SEC (0700)" || todo "$SEC should be a 0700 directory"
+else mkdir -p "$SEC"; chmod 700 "$SEC"; fi
 if [ -s "$SEC/cliproxy.env" ]; then ok "$SEC/cliproxy.env"; elif [ $CHECK = 1 ]; then todo "$SEC/cliproxy.env"; else
   umask 077; printf 'CLIPROXY_CLIENT_KEY=sk-local-%s\nCLIPROXY_MGMT_KEY=%s\n' "$(python3 -c 'import secrets;print(secrets.token_hex(24))')" "$(python3 -c 'import secrets;print(secrets.token_hex(24))')" > "$SEC/cliproxy.env"
   ok "$SEC/cliproxy.env (new local proxy keys generated)"; fi
@@ -71,13 +98,13 @@ if [ -s "$HOME/.cli-proxy-api/config.yaml" ]; then ok "$HOME/.cli-proxy-api/conf
   chmod 600 "$HOME/.cli-proxy-api/config.yaml"; ok "proxy config written (the proxy hashes the management key on first start)"; fi
 
 step "Helper scripts"
-mkdir -p "$L/bin" "$L/seat-bin" "$B"
+dirs "$L/bin" "$L/seat-bin" "$B"
 for f in agent-login cliproxy-healthcheck cliproxy-key openrig-healthcheck cliproxy-authwatch cliproxy-quotawatch agent-repos-sync; do place "$S/system/$f" "$L/bin/$f" 755; done
 place "$S/system/seat-bin-codex" "$L/seat-bin/codex" 755
 # Credential guard for seats' neon/vercel (refuses to print secrets into a transcript); env.sh adds the seat functions.
 place "$S/system/seat-bin-credguard" "$L/seat-bin/credguard" 755
 for f in neon neonctl vercel vc; do link "$L/seat-bin/credguard" "$L/seat-bin/$f"; done
-mkdir -p "$L/seat-tools"; place "$S/system/seat-tools-rig" "$L/seat-tools/rig" 755   # queue writes get the project tag + EC-3 worktree_path
+dirs "$L/seat-tools"; place "$S/system/seat-tools-rig" "$L/seat-tools/rig" 755   # queue writes get the project tag + EC-3 worktree_path
 link "$L/bin/agent-login" "$B/agent-login"
 for f in claude-pool agent-heavy openrig-ensure playwright-browsers agent-claude-trust openrig-upgrade openrig-update agent-project-new agent-project-onboard agent-owner-address agent-project-check agent-net-summary agent-never-prompt-check agent-credguard-check agent-skills-check agent-seat-recap agent-seat-handover agent-human-inbox-tidy openrig-daemon-cycle openrig-tmux-adopt agent-queue-backfill agent-refresh-guidance agent-project-repair agent-waves-sync; do link "$S/bin/$f" "$B/$f"; done
 link "$S/proxy/status.py" "$B/agent-proxy-status"
@@ -217,12 +244,18 @@ if [ $CHECK = 0 ]; then
   claude mcp get Neon >/dev/null 2>&1 || claude mcp add --scope user --transport http Neon https://mcp.neon.tech/mcp >/dev/null
   "$S/bin/playwright-browsers" >/dev/null || todo "playwright chromium for @playwright/mcp@$PW_MCP"
 fi
+# Claude Code and Codex write their own state (~/.claude.json, ~/.codex/) the first time they run in a HOME, so --check
+# asks them only where they have run before (a later run changes nothing; measured).
+asks() { [ $CHECK = 0 ] || [ -e "$1" ]; }
+if asks "$HOME/.claude.json"; then
 claude plugin list 2>/dev/null | grep -q superpowers && ok "Superpowers (Claude Code)" || todo "Superpowers (Claude Code)"
 claude mcp get playwright 2>/dev/null | grep -qF -- "Args: -y @playwright/mcp@$PW_MCP --headless --browser chromium --secrets $SEC/playwright.env --output-dir $HOME/.local/state/agent-stack/playwright-mcp" \
   && ok "Playwright MCP (Claude Code): @playwright/mcp@$PW_MCP, Chrome for Testing, --secrets, --output-dir" || todo "WARN: Playwright MCP (Claude Code) not on @playwright/mcp@$PW_MCP --browser chromium --secrets $SEC/playwright.env --output-dir ~/.local/state/agent-stack/playwright-mcp"
+else todo "Claude Code has not run in this HOME yet (no ~/.claude.json): its plugins and MCP servers can't be checked without it writing that"; fi
 "$S/system/playwright-mcp-config" --check | sed 's/^/   /' || true   # secrets file 0600 + Codex args with --secrets
 "$S/bin/playwright-browsers" --check >/dev/null && ok "Playwright MCP browser installed" || todo "Playwright MCP browser: run playwright-browsers"
-codex plugin list 2>/dev/null | grep -q "superpowers.*installed" && ok "Superpowers (Codex)" || todo "Superpowers (Codex)"
+if asks "$HOME/.codex"; then codex plugin list 2>/dev/null | grep -q "superpowers.*installed" && ok "Superpowers (Codex)" || todo "Superpowers (Codex)"
+else todo "Codex has not run in this HOME yet (no ~/.codex): its plugins can't be checked without it writing there"; fi
 command -v toon >/dev/null && ok "toon CLI" || todo "toon CLI"
 command -v neon >/dev/null && ok "Neon CLI + skills" || todo "Neon CLI (npm i -g neon; then neon login)"
 
