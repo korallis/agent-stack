@@ -18,6 +18,8 @@ fs.mkdirSync(bin);
 fs.writeFileSync(join(bin, "systemd-run"), `#!/usr/bin/env bash
 printf '%s\\n' "systemd-run $*" >> "${calls}"
 max=""; unit=""; while [ "$1" != "--" ]; do case $1 in RuntimeMaxSec=*) max=\${1#RuntimeMaxSec=};; --unit=*) unit=\${1#--unit=};; esac; shift; done; shift
+# WO58: an "oom-next" file makes this run look OOM-killed: systemd counts it (OOMKills) and the job dies with 137
+if [ -f "${root}/oom-next" ]; then rm -f "${root}/oom-next"; echo 1 > "${root}/oom-$unit.scope"; exit 137; fi
 t0=$(date +%s); timeout --preserve-status "$max" "$@"; rc=$?
 [ $(( $(date +%s) - t0 )) -ge "$max" ] && echo timeout > "${root}/result-$unit.scope"
 exit $rc
@@ -26,7 +28,9 @@ fs.writeFileSync(join(bin, "systemctl"), `#!/usr/bin/env bash
 printf '%s\\n' "systemctl $*" >> "${calls}"
 case "$*" in
   "--user show -p Result --value "*) f="${root}/result-\${@: -1}"; [ -f "$f" ] && cat "$f" || echo success ;;
-  "--user reset-failed "*) rm -f "${root}/result-\${@: -1}" ;;
+  "--user show -p OOMKills --value "*) f="${root}/oom-\${@: -1}"; [ -f "$f" ] && cat "$f" || echo 0 ;;
+  "--user show-environment") [ -f "${root}/no-bus" ] && exit 1; echo PATH=/usr/bin ;;
+  "--user reset-failed "*) rm -f "${root}/result-\${@: -1}" "${root}/oom-\${@: -1}" ;;
 esac
 `, { mode: 0o755 });
 
@@ -290,4 +294,89 @@ test("an unverifiable marker is dropped only for its class; other classes in the
   assert.equal(r.status, 0, r.stderr);
   assert.equal((r.c.match(/^systemd-run /gm) || []).length, 1);
   assert.match(r.stdout, /^active=browser build slot=browser\.2 build\.1$/m);
+});
+
+// ---- WO58: memory ceilings, the all-heavy ceiling, worker hints, and the fallback without systemd -----------------
+test("WO58: each run gets its class ceiling, no swap, inside agent-heavy.slice whose all-heavy ceiling is set first", () => {
+  let r = heavy(["build", "--", "true"]);
+  assert.equal(r.status, 0, r.stderr);
+  assert.match(r.c, /^systemctl --user set-property --runtime agent-heavy\.slice MemoryMax=24G MemorySwapMax=0$/m);
+  assert.match(r.c, /^systemd-run --user --scope --quiet --slice=agent-heavy\.slice -p CPUQuota=800% -p MemoryMax=14G -p MemorySwapMax=0 -p RuntimeMaxSec=2700 /m);
+  const order = r.c.split("\n"); assert.ok(order.findIndex((l) => /set-property/.test(l)) < order.findIndex((l) => /^systemd-run/.test(l)), "the ceiling before the run");
+  assert.match(r.stderr, /build slot \d\/2 \(cpu=800% mem=14G swap=0 all-heavy=24G max=45min workers=4\)/);
+  r = heavy(["browser", "--", "true"]);
+  assert.match(r.c, /^systemd-run .* -p CPUQuota=400% -p MemoryMax=8G -p MemorySwapMax=0 /m);
+  r = heavy(["build", "--", "true"], { AGENT_HEAVY_BUILD_MEM: "10G", AGENT_HEAVY_BUILD_SWAP: "1G", AGENT_HEAVY_TOTAL_MEM: "infinity" });
+  assert.match(r.c, /MemoryMax=10G -p MemorySwapMax=1G /); assert.match(r.c, /set-property --runtime agent-heavy\.slice MemoryMax=infinity /);
+  r = heavy(["build", "--", "true"], { AGENT_HEAVY_SLICE: "throwaway-test.slice" });
+  assert.match(r.c, /set-property --runtime throwaway-test\.slice /); assert.match(r.c, /--slice=throwaway-test\.slice /);
+});
+
+test("WO58: a run killed for memory says so, exits 137 whatever it returned, is logged, its scope is cleared and the slot freed", () => {
+  fs.writeFileSync(join(root, "oom-next"), "");
+  const r = heavy(["build", "--", "true"], { OPENRIG_SESSION_NAME: "impl-2@proj" });
+  assert.equal(r.status, 137, r.stderr);
+  assert.match(r.stderr, /killed: the run went over its memory ceiling \(build: 14G, no swap; all heavy runs together: 24G\)/);
+  assert.match(r.stderr, /Rerun it focused: a subset of the tests, or fewer workers \(node --test --test-concurrency=4, vitest --maxWorkers=4,\s+jest --maxWorkers=4, pytest -n 4\)/);
+  assert.match(r.stderr, /set AGENT_HEAVY_BUILD_MEM/);
+  assert.match(r.c, /^logger -t agent-heavy killed for memory: build ceiling 14G, all heavy runs 24G: seat=impl-2@proj class=build slot=\d runtime=\d+s max=45min cwd=.* cmd=true$/m);
+  assert.match(r.c, /^systemctl --user reset-failed agent-heavy-build-\d+-\d+\.scope$/m);
+  assert.doesNotMatch(r.stderr, /max runtime/);
+  assert.equal(heavy(["build", "--wait", "1", "--", "true"]).status, 0, "the slot is free");
+  assert.equal(heavy(["build", "--wait", "1", "--", "true"]).status, 0);
+});
+
+test("WO58: every run clears its scope afterwards, so failed scopes don't pile up; an ordinary failure is not a memory kill", () => {
+  const r = heavy(["build", "--", "false"]);
+  assert.equal(r.status, 1); assert.doesNotMatch(r.stderr, /memory ceiling|max runtime/);
+  assert.match(r.c, /^systemctl --user reset-failed agent-heavy-build-\d+-\d+\.scope$/m);
+});
+
+test("WO58: worker hints in the job's env (4 unless set or overridden)", () => {
+  const show = ["sh", "-c", 'echo "W=$PYTEST_XDIST_AUTO_NUM_WORKERS/$VITEST_MAX_WORKERS/$VITEST_MAX_THREADS/$VITEST_MAX_FORKS"'];
+  assert.match(heavy(["build", "--", ...show]).stdout, /^W=4\/4\/4\/4$/m);
+  assert.match(heavy(["build", "--", ...show], { AGENT_HEAVY_WORKERS: "2" }).stdout, /^W=2\/2\/2\/2$/m);
+  assert.match(heavy(["build", "--", ...show], { VITEST_MAX_WORKERS: "8", PYTEST_XDIST_AUTO_NUM_WORKERS: "1" }).stdout, /^W=1\/8\/4\/4$/m, "a value the caller set is kept");
+});
+
+test("WO58: without a systemd user session it warns and still runs the job (slot, exit code and max runtime kept)", () => {
+  fs.writeFileSync(join(root, "no-bus"), "");
+  try {
+    let r = heavy(["build", "--", "sh", "-c", "echo ran; exit 3"]);
+    assert.equal(r.status, 3); assert.match(r.stdout, /^ran$/m);
+    assert.match(r.stderr, /WARN: no systemd user session \(systemd-run --user unavailable\): running WITHOUT the CPU and memory limits/);
+    assert.doesNotMatch(r.c, /^systemd-run|set-property/m);
+    r = heavy(["build", "--max-runtime", "1", "--", "sleep", "30"]);
+    assert.equal(r.status, 124); assert.match(r.stderr, /stopped: reached the build max runtime \(1\)/);
+  } finally { fs.rmSync(join(root, "no-bus"), { force: true }); }
+  const sr = fs.readFileSync(join(bin, "systemd-run")); fs.rmSync(join(bin, "systemd-run"));
+  try {
+    const r = spawnSync(join(repo, "bin/agent-heavy"), ["build", "--", "true"], { encoding: "utf8", env: { PATH: `${bin}:/usr/bin:/bin`, XDG_RUNTIME_DIR: root, USER: "t" } });
+    if (!fs.existsSync("/usr/bin/systemd-run") && !fs.existsSync("/bin/systemd-run")) { assert.equal(r.status, 0); assert.match(r.stderr, /WARN: no systemd user session/); }
+  } finally { fs.writeFileSync(join(bin, "systemd-run"), sr, { mode: 0o755 }); }
+});
+
+// One REAL check, where a systemd user session exists (never on CI or a live seat's run): a throwaway command allocates
+// past a tiny ceiling in a throwaway slice and lock dir; it is killed inside its scope, the slot is released, and no
+// unit or slice drop-in is left behind. The live agent-heavy.slice and slot locks are never touched.
+const realSystemd = !process.env.CI && spawnSync("systemctl", ["--user", "show-environment"]).status === 0 && spawnSync("sh", ["-c", "command -v systemd-run"]).status === 0;
+test("WO58 real: a run past its ceiling is OOM-killed in its own scope, the slot is released, nothing is left behind", { skip: !realSystemd && "no systemd user session" }, () => {
+  const locks = fs.mkdtempSync(join(root, "real-")), sl = `agent-heavy-wo58test-${process.pid}.slice`;
+  const env = { ...process.env, AGENT_HEAVY_DIR: locks, AGENT_HEAVY_SLICE: sl, AGENT_HEAVY_BUILD_MEM: "64M", AGENT_HEAVY_TOTAL_MEM: "128M" };
+  const alloc = ["python3", "-c", "import time; b = bytearray(256 * 1024 * 1024); time.sleep(0.5); print('survived')"];
+  try {
+    const failedScopes = () => spawnSync("systemctl", ["--user", "list-units", "--all", "--no-legend", "--plain", "--state=failed", "agent-heavy-*.scope"], { encoding: "utf8" }).stdout.split("\n").filter(Boolean).length;
+    const failedBefore = failedScopes();
+    const before = spawnSync("sh", ["-c", "free -m | awk '/^Mem:/ {print $7}'"], { encoding: "utf8" }).stdout.trim();
+    let r = spawnSync(join(repo, "bin/agent-heavy"), ["build", "--", ...alloc], { encoding: "utf8", env });
+    assert.equal(r.status, 137, r.stderr); assert.doesNotMatch(r.stdout, /survived/);
+    assert.match(r.stderr, /killed: the run went over its memory ceiling \(build: 64M/);
+    r = spawnSync(join(repo, "bin/agent-heavy"), ["build", "--wait", "1", "--", "python3", "-c", "b = bytearray(16 * 1024 * 1024); print('fits')"], { encoding: "utf8", env });
+    assert.equal(r.status, 0, r.stderr); assert.match(r.stdout, /fits/, "the slot was released and a run under the ceiling works");
+    assert.ok(failedScopes() <= failedBefore, "the killed run's failed scope was cleared");
+    assert.ok(Number(spawnSync("sh", ["-c", "free -m | awk '/^Mem:/ {print $7}'"], { encoding: "utf8" }).stdout.trim()) > Number(before) - 2048, "the host is unaffected");
+  } finally {
+    spawnSync("systemctl", ["--user", "stop", sl]); spawnSync("systemctl", ["--user", "revert", sl]);
+  }
+  assert.equal(fs.existsSync(`/run/user/${process.getuid()}/systemd/user.control/${sl}.d`), false, "the throwaway slice's drop-in is gone");
 });
