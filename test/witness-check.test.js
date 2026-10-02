@@ -205,6 +205,12 @@ test("templates: Owner decisions are the owner's only, with a source; operator a
   assert.match(jev, /^Reading a Jev result \(operator rule, 2026-10-02 18:32Z\)/);
   assert.match(jev, /Only `decided_by: jev` is Jev's decision\. A `fallback_model` answer is not, whatever its top-level band/);
   assert.match(jev, /On `fallback_model`, review, uncertain or `none_fit`, change nothing and\s+escalate to the operator with the question, the options and the Jev record ids/);
+  // operator rule 20:13Z: a published PR is refreshed by merging main, never rebased or force-pushed
+  assert.match(sec("Operator and lead rules"), /^- 2026-10-02: Never rebase or force-push a published PR branch \(no `gh pr update-branch --rebase`, no `git push --force` on a PR head\)\. To refresh a PR, merge main into it.*\(operator, 20:13Z\)$/m);
+  assert.match(role("integrator"), /`gh pr update-branch <n>` \(a merge of main; never `--rebase`\)/);
+  assert.match(role("integrator"), /merge announcements are refresh triggers: the author merges main into the PR; never a rebase or force-push/);
+  for (const f of ["rig/template/agents/integrator/guidance/role.md", "rig/template/project-sdlc.yaml", "rig/template/CULTURE.md"])
+    assert.doesNotMatch(fs.readFileSync(join(repo, f), "utf8"), /rebase triggers/, f);
   // the owner's 18:29Z standing order, recorded as given
   assert.match(sec("Owner decisions"), /^- 2026-10-02: Speed without losing quality: nothing waits unless it must; parallelise independent work across free seats; ship each change as soon as its checks pass \(no batching\); route reviews and QA to any free eligible reviewer; every quality gate stays\. \(standing: every seat, every rig\) \(owner, Slack 18:29Z\)$/m);
 });

@@ -35,4 +35,4 @@ sdlc:
 git:
   integration_truth: main               # continuous integration to main: each PR merges when its gates are green
   base: main
-  reconcile: every merge (no release branch); merge announcements are rebase triggers for open candidates
+  reconcile: every merge (no release branch); merge announcements are refresh triggers for open candidates (merge main in; never rebase a published PR)

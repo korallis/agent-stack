@@ -23,6 +23,7 @@ Operating rules, but they are not the owner's word: an owner decision wins over 
 them as the owner's.
 - 2026-10-02: Only the owner overrides a Jev result; a lead or seat does not set one aside. (operator, 18:07Z)
 - 2026-10-02: A scope or option ruling that no specific Jev decision covers goes to `decide.option`: the question, the criteria, the evidence and at most 12 options your research found. On act, follow it. On review, uncertain or none_fit, escalate with that evidence; never substitute your own pick. (operator, 18:08Z)
+- 2026-10-02: Never rebase or force-push a published PR branch (no `gh pr update-branch --rebase`, no `git push --force` on a PR head). To refresh a PR, merge main into it (a normal merge commit). Rewriting published history invalidates every review and CI result and strands collaborators' local branches. (operator, 20:13Z)
 
 ## Reading a Jev result (operator rule, 2026-10-02 18:32Z)
 - Only `decided_by: jev` is Jev's decision. A `fallback_model` answer is not, whatever its top-level band; when
