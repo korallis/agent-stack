@@ -157,12 +157,27 @@ def main():
         except BlockingIOError:
             return 0
     state = json.loads(args.state.read_text()) if args.state.exists() else {}
+    # Reconcile durable outcomes before consulting current nodes, transcripts or activity.
+    # A successor may already have replaced the triggering session, or the node may be gone.
+    report, held = [], set()
+    for seat, receipt in state.items():
+        if receipt.get('attemptedKey') and receipt.get('outcome') not in (None, 'complete'):
+            held.add(seat)
+            report.append({'seat': seat, 'action': receipt['outcome'], 'dryRun': args.dry_run})
+            if not args.dry_run and not receipt.get('outcomeNotified'):
+                try:
+                    receipt['outcomeNotified'] = notice(args.recovery, seat, receipt['attemptedKey'], receipt['outcome'], args.state.parent)
+                except (OSError, subprocess.TimeoutExpired):
+                    receipt['outcomeNotified'] = False
+                save(args.state, state)
     nodes = rows(read(['rig', 'ps', '--nodes', *(['--rig', args.rig] if args.rig else ['-A']), '--full', '--json']))
-    report, attempted = [], False
+    attempted = False
     for node in nodes:
         if node.get('runtime') not in ('claude-code', 'codex'):
             continue
         seat = node['canonicalSessionName']
+        if seat in held:
+            continue  # Recovery owns unresolved outcomes until it inspects and clears the receipt.
         s = state.setdefault(seat, {})
         try:
             error = read_error(node)

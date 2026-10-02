@@ -896,7 +896,9 @@ instead of a rebuild. The watcher checks seat continuity and repeats the idle, t
 immediately before calling `agent-seat-handover --source rebuild`. One invocation attempts at most one rebuild.
 
 A handover attempt is recorded before calling the wrapper. Failed or unknown outcomes, and wakes needing repair,
-create a recovery row; the same error is never blindly retried. Inspect `rig seat status` and repair wakes before
+create a recovery row; the same error is never blindly retried. Unsent outcome notices retry before node, error or
+activity checks, including after the original session disappears. An unresolved outcome holds further rebuilds of
+that seat until the recovery owner inspects it and clears its state receipt. Inspect `rig seat status` and repair wakes before
 clearing an attempt record. Default recovery owner: `operator-agent@kernel`; `--recovery <seat>` selects another.
 The daemon has no atomic idle precondition, so an external dispatch between the final check and handover remains a
 race. Keep recovery custody with one owner; the watcher itself is protected by a process lock.

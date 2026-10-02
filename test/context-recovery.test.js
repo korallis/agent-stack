@@ -54,3 +54,24 @@ sys.exit(int(os.environ.get('HANDOVER_RC','0')))
   seed();r=run({HANDOVER_RC:'3'});assert.match(readFileSync(calls,'utf8'),/HANDOVER/);r=run();assert.equal((readFileSync(calls,'utf8').match(/HANDOVER/g)||[]).length,1);
  }finally{rmSync(root,{recursive:true,force:true});}
 });
+
+test('unresolved outcomes retry notices even with no nodes, no error or changed activity; never rebuild',()=>{
+ const root=mkdtempSync(join(tmpdir(),'context-outbox-'));
+ try{
+  const state=join(root,'state.json'),calls=join(root,'calls');
+  writeFileSync(join(root,'rig'),`#!/usr/bin/env python3
+import sys,json,os
+with open(os.environ['CALLS'],'a') as f:f.write(json.dumps(sys.argv[1:])+'\\n')
+if sys.argv[1]=='ps':print('[]')
+elif sys.argv[1:3]==['queue','create']:print('{}')
+else:sys.exit(99)
+`,{mode:0o755});
+  const run=()=>spawnSync(script,['--all','--state',state],{env:{...process.env,PATH:`${root}:/usr/bin:/bin`,CALLS:calls},encoding:'utf8'});
+  for(const outcome of ['handover-unknown','wake-repair-needed','handover-failed']){
+   writeFileSync(state,JSON.stringify({'gone@test':{attemptedKey:'old-error',outcome,outcomeNotified:false}}));writeFileSync(calls,'');
+   let r=run();assert.equal(r.status,0,r.stderr);assert.equal(JSON.parse(readFileSync(state))['gone@test'].outcomeNotified,true);
+   r=run();assert.equal(r.status,0,r.stderr);const argv=readFileSync(calls,'utf8').trim().split('\n').map(JSON.parse);
+   assert.equal(argv.filter(x=>x[0]==='queue'&&x[1]==='create').length,1);assert.ok(!argv.some(x=>x[0]==='seat'));
+  }
+ }finally{rmSync(root,{recursive:true,force:true});}
+});
