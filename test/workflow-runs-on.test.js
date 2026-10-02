@@ -23,3 +23,8 @@ test("every job runs local only with CI_LOCAL=1 and never for a fork PR; hosted 
   assert.equal(pick("1", "pull_request", "someone/agent-stack"), "ubuntu-24.04", "a fork PR never reaches the local runner");
   assert.equal(pick("", "push", undefined), "ubuntu-24.04", "no local runner registered: hosted");
 });
+
+test("setup-python runs only on hosted runners (no Arch builds); the local runner uses the host's python3 with pyyaml", () => {
+  assert.match(wf, /- uses: actions\/setup-python@v5\n\s+if: runner\.environment == 'github-hosted'\n/);
+  assert.match(wf, /if \[ "\$RUNNER_ENVIRONMENT" = github-hosted \]; then python -m pip install --quiet pyyaml\n\s+else python3 -c 'import yaml' \|\| \{ echo "::error::the local runner host needs python3 with pyyaml"; exit 1; \}; fi/);
+});
