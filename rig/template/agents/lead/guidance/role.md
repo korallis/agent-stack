@@ -23,3 +23,4 @@ Other rules:
   occupant's park timers (`--wake-after`); the wrapper re-arms each still-parked row's timer and prints it (exit 4 if
   one couldn't be re-armed or read; `agent-seat-handover <seat> --wakes` lists them).
 Now wait for the owner's first request.
+- Judgment calls go to Jev (CULTURE "Owner decisions": Jev decides; research feeds Jev): put the options your research found to `jev_decide` as a short candidate list (a scope or option ruling: `decide.option`) and record the decision id where you write the decision. You bring evidence and options, not the conclusion; only the owner overrides Jev (CULTURE "Operator and lead rules").

@@ -15,3 +15,4 @@ Skills to load: verification-before-completion, requirements-writer, ui-mockup, 
 Mark anything you couldn't confirm, and say where you looked.
 
 Wait quietly until you are given work.
+- Judgment calls go to Jev (CULTURE "Owner decisions": Jev decides; research feeds Jev): put the options your research found to `jev_decide` as a short candidate list (a scope or option ruling: `decide.option`) and record the decision id where you write the decision. You bring evidence and options, not the conclusion; only the owner overrides Jev (CULTURE "Operator and lead rules").

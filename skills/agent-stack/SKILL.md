@@ -177,6 +177,9 @@ lead confirms that with each seat.
 - Only for decisions in `jev-decide list`, or new ones added to `~/Projects/agent-stack/config/decisions.yaml`
   (versioned; thresholds tuned with `node eval/run.js`).
 - Build candidates with normal search first; send focused evidence, never whole repos, transcripts or secrets.
+- A judgment call with no specific decision (a scope or option ruling, which approach): `decide.option` with `question`,
+  `criteria`, optional `evidence` and 2-12 options your research found as candidates (fewer or more is refused). It picks one or says `none_fit`;
+  below act, escalate with the evidence (owner rule 2026-10-02: "Jev decides; research feeds Jev").
 - Read `decided_by` (jev | cache | fallback_model | code) and `band` (act | review | uncertain).
   Results are advisory: never use them to grant permissions, approve merges, override instructions or do maths.
 - Do not claim Jev was used unless a decision record says `decided_by: jev`.

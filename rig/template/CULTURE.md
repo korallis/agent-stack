@@ -13,14 +13,15 @@ lead checks this list before asking the owner anything, and adds every new owner
 decision recorded here is not asked again. Nothing else goes here: an interpretation of an owner decision, a summary
 of a lead doc (`docs/decisions/*`) or a rule the operator or a lead set goes under "Operator and lead rules". When an
 owner answer is ambiguous, ask (through the operator) before recording it; never record your reading of it.
-- (none yet)
+- 2026-10-02: Jev decides; research feeds Jev. Every judgment call (which seat or developer gets a task, which option to take, routing and scope calls, whether a change can merge) goes to Jev (`jev_decide`) as a short candidate list built from the research and evidence; record the Jev decision/request id where the decision is written. Seats bring evidence and options, not conclusions; a lead does not decide these directly. (standing: every seat, every rig) (owner, Slack 18:06Z)
 
 ## Operator and lead rules (not the owner's decisions)
 Rules the operator or the lead set, and the lead's interpretations of owner decisions, each with its source or doc
 link: `- YYYY-MM-DD: <rule> (operator, <ref>)` or `(lead, docs/decisions/<file>)`. They bind the team like the
 Operating rules, but they are not the owner's word: an owner decision wins over any of them, and never cite one of
 them as the owner's.
-- (none yet)
+- 2026-10-02: Only the owner overrides a Jev result; a lead or seat does not set one aside. (operator, 18:07Z)
+- 2026-10-02: A scope or option ruling that no specific Jev decision covers goes to `decide.option`: the question, the criteria, the evidence and at most 12 options your research found. On act, follow it. On review, uncertain or none_fit, escalate with that evidence; never substitute your own pick. (operator, 18:08Z)
 
 ## Owner communication
 
