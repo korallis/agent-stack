@@ -22,6 +22,7 @@ const TOKEN = "TOKEN-SECRET-4f9a";
 const stubs = join(root, "stubs"), sysStubs = join(root, "sys-stubs"); fs.mkdirSync(stubs); fs.mkdirSync(sysStubs);
 fs.writeFileSync(join(stubs, "gh"), `#!/usr/bin/env python3
 import json, os, sys
+os.getcwd()  # like mise's shim: a deleted working directory fails here
 sc = os.environ["GH_SCENARIO"]; s = json.load(open(sc)); a = sys.argv[1:]
 open(os.environ["CALLS"], "a").write(json.dumps({"tool": "gh", "argv": a, "home": os.environ.get("HOME")}) + "\\n")
 j = " ".join(a)
@@ -100,8 +101,11 @@ test("register: a fresh ephemeral registration with a clean work dir; the token 
   for (const f of ["config.sh", "run.sh"]) fs.copyFileSync(join(rel, f), join(d, f));
   fs.chmodSync(join(d, "config.sh"), 0o755); fs.writeFileSync(join(d, ".runner"), "{}");
   fs.mkdirSync(join(env.AGENT_CI_STATE, "slots"), { recursive: true }); fs.writeFileSync(join(env.AGENT_CI_STATE, "slots/demo"), "1");
-  const r = run("register", "demo");
-  assert.equal(r.status, 0, r.stderr);
+  // as the unit does: WorkingDirectory is the runner dir, which register replaces
+  fs.writeFileSync(env.CALLS, "");
+  const r0 = spawnSync("python3", [tool, "register", "demo"], { encoding: "utf8", env, cwd: d });
+  assert.equal(r0.status, 0, r0.stderr);
+  const r = { ...r0, calls: fs.readFileSync(env.CALLS, "utf8").trim().split("\n").filter(Boolean).map(JSON.parse) };
   const argv = fs.readFileSync(join(d, "config-argv.txt"), "utf8").trim().split("\n");
   assert.deepEqual(argv, ["--unattended", "--ephemeral", "--replace", "--disableupdate", "--url", "https://github.com/korallis/demo",
     "--name", "testhost-demo", "--labels", "korallis-local", "--work", "_work"]);
