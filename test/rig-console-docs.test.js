@@ -1,69 +1,104 @@
-// WO86: the README's rig-console section can't rot. Every line of its "Runs from a checkout" block runs here, from the
-// repo root, on the demo fleet (interactive ones also with --once, since a test has no terminal); the ':' commands it
-// names run against the console's own command handler; and console/docs/make-assets.mjs renders every image and demo
-// frame from the fixture (--check: HTML only, no browser) and finds each one the README shows, on disk.
-import { test } from "node:test";
-import assert from "node:assert/strict";
-import * as fs from "node:fs";
-import { join, dirname } from "node:path";
-import { fileURLToPath } from "node:url";
-import { spawnSync } from "node:child_process";
+// Public docs use only the invented v3 snapshot, rendered by production code.
+import { test } from 'node:test';
+import assert from 'node:assert/strict';
+import * as fs from 'node:fs';
+import { join, dirname } from 'node:path';
+import { fileURLToPath } from 'node:url';
+import { spawnSync } from 'node:child_process';
+import { SHOTS, DEMO, FIXTURE, screenOf, html } from '../console/docs/make-assets.mjs';
+import { initialState, key } from '../console/src/v3/controller.ts';
+import { commandItems } from '../console/src/v3/render.ts';
 
-const repo = join(dirname(fileURLToPath(import.meta.url)), "..");
-const readme = fs.readFileSync(join(repo, "README.md"), "utf8");
-const plain = (s) => s.replace(/\x1b\[[0-9;?]*[A-Za-z]/g, "");
-const console_ = (args) => spawnSync(process.execPath, [join(repo, "console/src/main.ts"), ...args],
-  { cwd: repo, encoding: "utf8", env: { PATH: process.env.PATH, HOME: join(repo, "nonexistent-home") }, timeout: 30_000 });
+const repo = join(dirname(fileURLToPath(import.meta.url)), '..');
+const readme = fs.readFileSync(join(repo, 'README.md'), 'utf8');
+const fixtureText = fs.readFileSync(join(repo, FIXTURE), 'utf8'), fixture = JSON.parse(fixtureText);
+const plain = text => text.replace(/\x1b\[[0-9;?]*[A-Za-z]/g, '');
+const run = args => spawnSync(process.execPath, ['console/src/main.ts', ...args], {
+  cwd: repo, encoding: 'utf8', env: { PATH: process.env.PATH, HOME: join(repo, 'nonexistent-home') }, timeout: 30000,
+});
 
-const block = [...readme.matchAll(/```bash\n(# Runs from a checkout[\s\S]*?)```/g)].map((m) => m[1]);
-const lines = block.flatMap((b) => b.split("\n")).map((l) => l.replace(/\s+#\s.*$/, "").trim()).filter((l) => l && !l.startsWith("#"));
-
-test("README: the rig-console examples run from a checkout on the demo fleet", () => {
-  assert.equal(block.length, 1, "one 'Runs from a checkout' block");
-  assert.deepEqual(lines[0], "cd ~/Projects/agent-stack");
-  const runs = lines.slice(1);
-  assert.ok(runs.length >= 5 && runs.every((l) => l.startsWith("rig-console ")), runs.join("\n"));
-  for (const line of runs) {
-    const args = line.split(/\s+/).slice(1);
-    assert.ok(args.includes("--fixture") && fs.existsSync(join(repo, args[args.indexOf("--fixture") + 1])), `${line}: the demo fleet`);
-    const once = args.includes("--once") ? args : [...args, "--once", "--size", "176x50"];
-    const r = console_([...once, "--color", "0"]);
-    assert.equal(r.status, 0, `${line}\n${r.stderr}`);
-    const out = plain(r.stdout);
-    assert.match(out, /OPENRIG/, `${line}: a frame`);
-    const view = args.includes("--seat") ? null : (args[args.indexOf("--view") + 1] ?? "home");
-    const title = { home: "MISSION CONTROL", matrix: "SEAT MATRIX", river: "RIVER", focus: "FOCUS", pool: "POOL" }[view];
-    if (title) assert.match(out, new RegExp(title), `${line}: the ${view} view`);
-    if (args.includes("--seat")) assert.match(out, /LIVE TERMINAL/, `${line}: the seat's drill-in`);
-    if (args.includes("--theme")) assert.match(out, /theme Tokyo Night/, `${line}: the theme`);
+test('README: every checkout command renders its documented v3 view without a live source', () => {
+  const blocks = [...readme.matchAll(/```bash\n(# Runs from a checkout[\s\S]*?)```/g)];
+  assert.equal(blocks.length, 1);
+  const lines = blocks[0][1].split('\n').map(l => l.replace(/\s+#\s.*$/, '').trim()).filter(l => l && !l.startsWith('#'));
+  assert.equal(lines.shift(), 'cd ~/Projects/agent-stack');
+  assert.equal(lines.length, 6);
+  for (const [i, line] of lines.entries()) {
+    assert.ok(line.startsWith('node console/src/main.ts '), line);
+    const args = line.split(/\s+/).slice(2);
+    assert.equal(args[args.indexOf('--fixture') + 1], FIXTURE);
+    assert.ok(!args.includes('--legacy'));
+    const result = run([...args, '--once', '--size', '160x50', '--color', '0']);
+    assert.equal(result.status, 0, line + '\n' + result.stderr);
+    assert.match(plain(result.stdout), SHOTS[i].expect, line);
+    assert.match(plain(result.stdout), /neutral fixture/);
   }
+  const legacy = readme.match(/`node console\/src\/main\.ts (--legacy [^`]+)`/);
+  assert.ok(legacy, 'old views require explicit --legacy');
+  const result = run([...legacy[1].split(/\s+/), '--once', '--size', '160x50', '--color', '0']);
+  assert.equal(result.status, 0, result.stderr); assert.match(plain(result.stdout), /MISSION CONTROL/);
 });
 
-test("README: the ':' commands it names work", async () => {
-  const { runCommand } = await import(join(repo, "console/src/main.ts"));
-  const fixture = JSON.parse(fs.readFileSync(join(repo, "docs/fixtures/demo-fleet.json"), "utf8"));
-  const named = [...readme.matchAll(/`:(stuck \d+|theme [a-z-]+)`/g)].map((m) => m[1]);
-  assert.deepEqual(named.sort(), ["stuck 10", "theme nord"]);
-  const st = { view: 0, rigFocus: 0, seatFocus: [0, 0], help: false, frame: 0, note: null, theme: "pad39a" };
-  assert.match(runCommand(st, "stuck 10", fixture.raw), /stuck after 10 quiet minutes/); assert.equal(st.stuckMinutes, 10);
-  runCommand(st, "theme nord", fixture.raw); assert.equal(st.theme, "nord");
-  // the keys table lists only keys the console handles
-  for (const k of ["1` to `5", "Tab", "`e`", "`:`", "`⏎`", "`[` `]`", "`esc`", "`r`", "`?`", "`q`"]) assert.ok(readme.includes(`| ${k.startsWith("`") ? k : "`" + k + "`"}`), k);
+test('README: documented navigation opens every view and both overlays', () => {
+  const state = initialState();
+  for (const [i, view] of ['fleet', 'team', 'agent', 'task', 'pr', 'capacity'].entries()) {
+    key(state, String(i + 1), fixture); assert.equal(state.view, view);
+  }
+  key(state, '?', fixture); assert.equal(state.help, true);
+  key(state, '\x1b', fixture); assert.equal(state.help, false);
+  key(state, ':', fixture); for (const ch of 'cobalt') key(state, ch, fixture);
+  assert.ok(commandItems(fixture, state.command).some(item => item.view === 'team' && item.id === 'cobalt'));
+  key(state, '\x1b', fixture); assert.equal(state.command, null);
+  const selected = state.selected;
+  key(state, ']', fixture); assert.equal(state.scroll, 1);
+  key(state, '\x1b[6~', fixture); assert.equal(state.scroll, 6);
+  key(state, '\x1b[5~', fixture); assert.equal(state.scroll, 1);
+  key(state, '[', fixture); assert.equal(state.scroll, 0); assert.equal(state.selected, selected);
+  key(state, 'p', fixture); assert.equal(state.paused, true);
+  assert.equal(key(state, 'r', fixture), 'refresh'); assert.equal(key(state, 'q', fixture), 'quit');
+  for (const k of ['`1` to `6`', '`[` `]`', '`PgUp` `PgDn`', '`⏎`', '`:`', '`esc`', '`p`', '`r`', '`?`', '`q`']) assert.ok(readme.includes(`| ${k} |`), k);
 });
 
-test("docs assets: the script renders every image and demo frame from the fixture, and the README shows each one", async () => {
-  const r = spawnSync(process.execPath, [join(repo, "console/docs/make-assets.mjs"), "--check"], { cwd: repo, encoding: "utf8", timeout: 120_000 });
-  assert.equal(r.status, 0, r.stdout + r.stderr);
-  assert.match(r.stdout, /^rendered 13 images and 11 demo frames from docs\/fixtures\/demo-fleet\.json$/m);
-  // each image and tour frame says what it must show, and --check holds it to that (QA PR98: a "journey" that wasn't)
-  const { SHOTS, DEMO } = await import(join(repo, "console/docs/make-assets.mjs"));
-  for (const s of [...SHOTS, ...DEMO.steps]) assert.ok(s.expect instanceof RegExp, JSON.stringify(s.keys ?? s.st));
-  assert.deepEqual(SHOTS.find((s) => s.name === "river-journey").never, /loading/);
-  const dir = join(repo, "docs/assets/rig-console"), files = fs.readdirSync(dir);
-  assert.deepEqual(files.filter((f) => !/\.(png|gif)$/.test(f)), [], "images only");
-  const bytes = files.reduce((n, f) => n + fs.statSync(join(dir, f)).size, 0);
+// Parse GIF image blocks, skipping compressed sub-blocks rather than counting bytes in pixel data.
+function gifFrames(data) {
+  assert.match(data.toString('ascii', 0, 6), /^GIF8[79]a$/);
+  let at = 13 + (data[10] & 128 ? 3 * 2 ** ((data[10] & 7) + 1) : 0), frames = 0;
+  const blocks = () => { for (;;) { const n = data[at++]; assert.ok(n !== undefined); if (!n) break; at += n; assert.ok(at <= data.length); } };
+  while (at < data.length) {
+    const marker = data[at++];
+    if (marker === 0x3b) return frames;
+    if (marker === 0x21) { at++; blocks(); }
+    else { assert.equal(marker, 0x2c); const packed = data[at + 8]; at += 9; if (packed & 128) at += 3 * 2 ** ((packed & 7) + 1); at++; blocks(); frames++; }
+  }
+  assert.fail('GIF trailer missing');
+}
+
+test('docs assets: every generated view and tour frame contains its promised content', () => {
+  const result = spawnSync(process.execPath, ['console/docs/make-assets.mjs', '--check'], { cwd: repo, encoding: 'utf8', timeout: 120000 });
+  assert.equal(result.status, 0, result.stdout + result.stderr);
+  assert.match(result.stdout, /rendered 8 images and 8 demo frames from console\/fixtures\/v3.json/);
+  for (const shot of [...SHOTS, ...DEMO.steps.map(step => ({ ...step, size: DEMO.size }))]) {
+    const { screen } = screenOf(shot), text = screen.lines().join('\n');
+    assert.ok(shot.expect instanceof RegExp); assert.match(text, shot.expect);
+    assert.doesNotMatch(html(screen, 'neutral'), /\/home\/|\/Users\/|https?:\/\//);
+  }
+  const dir = join(repo, 'docs/assets/rig-console'), files = fs.readdirSync(dir);
+  assert.deepEqual(files.sort(), [...SHOTS.map(s => `${s.name}.png`), 'demo.gif'].sort());
+  let bytes = 0;
+  for (const shot of SHOTS) {
+    const data = fs.readFileSync(join(dir, `${shot.name}.png`)); bytes += data.length;
+    assert.equal(data.subarray(0, 8).toString('hex'), '89504e470d0a1a0a');
+    assert.ok(data.readUInt32BE(16) >= 1000 && data.readUInt32BE(20) >= 700, shot.name);
+  }
+  const gif = fs.readFileSync(join(dir, 'demo.gif')); bytes += gif.length;
+  assert.equal(gifFrames(gif), DEMO.steps.length);
   assert.ok(bytes < 3 * 1024 * 1024, `assets stay small: ${bytes} bytes`);
-  // the images come from the neutral fixture only, which carries no paths, links or addresses
-  assert.match(fs.readFileSync(join(repo, "console/docs/make-assets.mjs"), "utf8"), /export const FIXTURE = "docs\/fixtures\/demo-fleet\.json"/);
-  assert.doesNotMatch(fs.readFileSync(join(repo, "docs/fixtures/demo-fleet.json"), "utf8"), /\/home\/|\/Users\/|github\.com|@[a-z]+\.(com|io|dev)\b/i);
+});
+
+test('docs fixture stays neutral and adapter documentation names the production contract', () => {
+  assert.equal(FIXTURE, 'console/fixtures/v3.json'); assert.match(fixture.source, /neutral fixture.*invented/);
+  assert.doesNotMatch(fixtureText, /\/home\/|\/Users\/|github\.com|@[a-z]+\.(com|io|dev)\b/i);
+  assert.ok(fixture.prs.every(pr => new URL(pr.url).hostname === 'example.org'));
+  const doc = fs.readFileSync(join(repo, 'console/docs/adapter.md'), 'utf8');
+  for (const token of ['Snapshot', 'snapshot()', 'start(onChange)', 'select(', 'refresh()', 'stop()', 'null', 'unknown', 'stale', 'Ratatui', 'factory', 'progressLabel', 'lastDecision', 'cooldownUntil', 'weekly']) assert.ok(doc.includes(token), token);
 });

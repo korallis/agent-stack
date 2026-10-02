@@ -117,9 +117,9 @@ test("views: the River at 176, 120 and 100 columns; a selected chip; the journey
 test("CLI: --view river and --slice <project>/<slice> (strict)", () => {
   assert.equal(parseArgs(["--view", "river"], {}).view, 2);
   const a = parseArgs(["--slice", J], {}); assert.deepEqual([a.view, a.slice], [2, J]);
-  const bad = spawnSync(process.execPath, [join(repo, "console/src/main.ts"), "--slice", "no-project"], { encoding: "utf8" });
+  const bad = spawnSync(process.execPath, [join(repo, "console/src/main.ts"), "--legacy", "--slice", "no-project"], { encoding: "utf8" });
   assert.equal(bad.status, 2); assert.match(bad.stderr, /--slice is <project>\/<slice>/);
-  const r = spawnSync(process.execPath, [join(repo, "console/src/main.ts"), "--once", "--fixture", join(repo, "console/fixtures/demo.json"), "--size", "176x50", "--color", "0", "--slice", J], { encoding: "utf8" });
+  const r = spawnSync(process.execPath, [join(repo, "console/src/main.ts"), "--legacy", "--once", "--fixture", join(repo, "console/fixtures/demo.json"), "--size", "176x50", "--color", "0", "--slice", J], { encoding: "utf8" });
   assert.equal(r.status, 0, r.stderr); assert.match(r.stdout, /JOURNEY · F-055/);
 });
 

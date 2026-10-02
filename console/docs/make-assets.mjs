@@ -1,5 +1,5 @@
 #!/usr/bin/env node
-// Renders the README's rig-console images from the neutral demo fleet (docs/fixtures/demo-fleet.json): the console's
+// Renders the README's rig-console images from the neutral v3 fixture (console/fixtures/v3.json): the console's
 // own frames, drawn cell by cell into HTML (no terminal, no tmux), then screenshotted by a headless Chromium and
 // shrunk to a 256-colour palette. Re-run it after a UI change:
 //
@@ -16,56 +16,36 @@ import { spawnSync } from "node:child_process";
 import { fileURLToPath } from "node:url";
 
 const repo = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "../..");
-const { render, handleKey, loadFixture } = await import(path.join(repo, "console/src/main.ts"));
-const { History } = await import(path.join(repo, "console/src/history.ts"));
+const { renderV3 } = await import(path.join(repo, "console/src/v3/render.ts"));
+const { initialState, key } = await import(path.join(repo, "console/src/v3/controller.ts"));
+const { fixture } = await import(path.join(repo, "console/src/v3/main.ts"));
 
-export const FIXTURE = "docs/fixtures/demo-fleet.json";
+export const FIXTURE = "console/fixtures/v3.json";
 export const ASSETS = "docs/assets/rig-console";
 
 /** Every image: a name, a caption, a size, how to get there (view state, then keys as a person would press them),
  *  and what the frame must show (`expect`, checked by --check and so by the tests). */
 export const SHOTS = [
-  { name: "mission-control", caption: "Mission Control: the whole fleet on one screen", size: [176, 50], st: { view: 0 }, expect: /MISSION CONTROL[\s\S]*WORK IN FLIGHT/ },
-  { name: "seat-matrix", caption: "Seat Matrix: every seat, context use and activity", size: [176, 50], st: { view: 1 }, expect: /SEAT MATRIX · 93 AGENTS/ },
-  { name: "river", caption: "The River: slices flowing through the roles", size: [176, 50], st: { view: 2 }, expect: /THE RIVER/, never: /JOURNEY ·/ },
-  // F-055 is the demo slice with its rows' transitions, so worked vs waited are filled in (QA PR98)
-  { name: "river-journey", caption: "A slice's journey: who had it, worked vs waited", size: [176, 50], st: { view: 2 }, keys: [":", ..."slice F-055", "\r"], expect: /^(?=[\s\S]*JOURNEY · F-055)(?=[\s\S]*total worked \d)/, never: /loading/ },
-  { name: "focus", caption: "Calm Focus: what needs you, then the fleet's pulse", size: [176, 50], st: { view: 3 }, expect: /what needs me\?[\s\S]*FLEET PULSE/ },
-  { name: "seat-drill-in", caption: "A seat's drill-in: work, context and its live terminal", size: [176, 50], st: { view: 0, seat: "impl-codex-4@gamma" }, expect: /CURRENT WORK[\s\S]*LIVE TERMINAL/ },
-  { name: "pool", caption: "Pool & System: 24 h graphs, the subscription pool, health", size: [176, 50], st: { view: 4 }, expect: /SUBSCRIPTION POOL[\s\S]*SYSTEM/ },
-  { name: "command-bar", caption: "The ':' command bar, with completions", size: [176, 50], st: { view: 1 }, keys: [":", "s", "e", "a", "t", " ", "i", "m", "p", "l"], expect: /: seat impl/ },
-  { name: "mission-control-120", caption: "Mission Control at 120 columns", size: [120, 40], st: { view: 0 }, expect: /MISSION CONTROL/ },
-  { name: "theme-pad39a", caption: "Pad 39A", size: [120, 36], st: { view: 1, theme: "pad39a" }, expect: /theme Pad 39A/ },
-  { name: "theme-catppuccin", caption: "Catppuccin", size: [120, 36], st: { view: 1, theme: "catppuccin" }, expect: /theme Catppuccin/ },
-  { name: "theme-tokyo-night", caption: "Tokyo Night", size: [120, 36], st: { view: 1, theme: "tokyo-night" }, expect: /theme Tokyo Night/ },
-  { name: "theme-nord", caption: "Nord", size: [120, 36], st: { view: 1, theme: "nord" }, expect: /theme Nord/ },
+  { name: "fleet", caption: "Fleet: decisions, projects, capacity and recent events", size: [160, 50], st: { view: "fleet" }, expect: /NEEDS YOU[\s\S]*PROJECTS[\s\S]*JUST HAPPENED/ },
+  { name: "team", caption: "Team: milestones, feature journeys and agents", size: [160, 50], st: { view: "team", teamId: "cobalt" }, expect: /MILESTONES[\s\S]*FEATURE JOURNEYS[\s\S]*MERGED PER DAY/ },
+  { name: "agent", caption: "Agent: terminal, context and current task", size: [160, 50], st: { view: "agent", agentId: "impl@cobalt" }, expect: /LIVE TERMINAL[\s\S]*CONTEXT[\s\S]*HISTORY/ },
+  { name: "task", caption: "Task: journey, acceptance and linked PR", size: [160, 50], st: { view: "task", taskId: "cobalt-task-2" }, expect: /JOURNEY[\s\S]*WHAT TO DO[\s\S]*DONE WHEN/ },
+  { name: "pr-gate", caption: "PR and gate: checks, reviews and Jev's verdict", size: [160, 50], st: { view: "pr", prId: "cobalt-pr-121" }, expect: /PIPELINE[\s\S]*JEV MERGE GATE[\s\S]*CHECKS/ },
+  { name: "capacity", caption: "Capacity: usage history, accounts and resets", size: [160, 50], st: { view: "capacity" }, expect: /5h avg[\s\S]*ACCOUNTS[\s\S]*FALLBACK[\s\S]*5H +WEEKLY[\s\S]*Three tasks rerouted[\s\S]*RESET/ },
+  { name: "help", caption: "Help: keys and status meanings", size: [160, 50], st: { view: "fleet" }, keys: ["?"], expect: /Help[\s\S]*command palette[\s\S]*PgUp PgDn[\s\S]*unknown values stay unknown/ },
+  { name: "command-palette", caption: "Command palette: find a team or work item", size: [160, 50], st: { view: "fleet" }, keys: [":", ..."cobalt"], expect: /COMMAND[\s\S]*Team Cobalt[\s\S]*esc close/ },
 ];
 
-/** The animated demo: a short tour, one frame per step, each held for `hold` seconds; `expect` as for SHOTS. */
-export const DEMO = { name: "demo", size: [176, 50], hold: 1.8, steps: [
-  { st: { view: 0 }, expect: /MISSION CONTROL/ }, { keys: ["l", "l"], expect: /MISSION CONTROL/ }, { keys: ["2"], expect: /SEAT MATRIX/ },
-  { keys: ["3"], expect: /THE RIVER/, never: /JOURNEY ·/ }, { keys: [":", ..."slice F-055", "\r"], expect: /^(?=[\s\S]*JOURNEY · F-055)(?=[\s\S]*total worked \d)/, never: /loading/ }, { keys: ["\x1b", "4"], expect: /what needs me\?/ },
-  { keys: [":", "s", "e", "a", "t", " ", "i", "m", "p", "l", "-", "c", "o", "d", "e", "x", "-", "4", "@", "g", "a", "m", "m", "a"], expect: /: seat impl-codex-4@gamma/ },
-  { keys: ["\r"], expect: /LIVE TERMINAL/ }, { keys: ["5"], expect: /SUBSCRIPTION POOL/ },
-  { keys: [":", "t", "h", "e", "m", "e", " ", "t", "o", "k", "y", "o", "-", "n", "i", "g", "h", "t", "\r"], expect: /theme Tokyo Night/ },
-  { keys: ["1"], expect: /MISSION CONTROL[\s\S]*theme Tokyo Night/ },
-] };
-/** Whether a frame shows what its shot or step promises. */
+/** Deterministic neutral tour: all six real views and both overlays. */
+export const DEMO = { name: "demo", size: [160, 50], hold: 2.5,
+  steps: SHOTS.map(({ st, keys, expect, never }) => ({ st, keys, expect, never })) };
 const shows = (screen, { expect, never }) => { const text = screen.lines().join("\n"); return expect.test(text) && !(never && never.test(text)); };
+function fleet() { return fixture(path.join(repo, FIXTURE)); }
 
-const BASE = { view: 0, rigFocus: 0, seatFocus: [0, 0], help: false, frame: 0, note: null, riverFocus: [0, 0], journey: null,
-  pane: 0, expand: false, select: 0, cmd: null, seat: null, theme: "pad39a" };
-
-function fleet() {
-  const fx = loadFixture(path.join(repo, FIXTURE));
-  const hist = new History(null); hist.samples = fx.history;
-  return { raw: fx.raw, hist };
-}
-
-/** A shot's screen: its view state, then its keys, drawn at its size. */
-export function screenOf(shot, { raw, hist } = fleet(), st = { ...BASE, ...structuredClone(shot.st ?? {}) }) {
-  for (const k of shot.keys ?? []) handleKey(st, k, raw);
-  return { screen: render(raw, hist, shot.size[0], shot.size[1], st), st };
+/** Uses the production renderer and controller; no live adapter is started. */
+export function screenOf(shot, snapshot = fleet(), st = { ...initialState(), ...structuredClone(shot.st ?? {}) }) {
+  for (const k of shot.keys ?? []) key(st, k, snapshot);
+  return { screen: renderV3(snapshot, shot.size[0], shot.size[1], st).screen, st };
 }
 
 const css = (rgb) => `rgb(${rgb.join(",")})`;
@@ -142,11 +122,10 @@ async function main() {
       fs.writeFileSync(file, html(screen, `rig-console · ${s.caption}`));
       return { s, file };
     });
-    // the demo's frames: one view state carried through every step
-    const st = { ...BASE }, frames = [];
+    // Each demo frame has the same explicit state as its gallery image.
+    const frames = [];
     for (const [i, step] of DEMO.steps.entries()) {
-      Object.assign(st, structuredClone(step.st ?? {}));
-      const { screen } = screenOf({ size: DEMO.size, keys: step.keys }, f, st);
+      const { screen } = screenOf({ ...step, size: DEMO.size }, f);
       if (!shows(screen, step)) wrong.push(`demo frame ${i} doesn't show ${step.expect}${step.never ? ` without ${step.never}` : ""}`);
       const file = path.join(tmp, `demo-${String(i).padStart(2, "0")}.html`);
       fs.writeFileSync(file, html(screen, "rig-console · a tour of the demo fleet")); frames.push(file);

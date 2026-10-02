@@ -23,7 +23,7 @@ process.on("exit", () => fs.rmSync(scratch, { recursive: true, force: true }));
 const plain = (s) => s.replace(/\x1b\[[0-9;?]*[A-Za-z]/g, "");
 const hist = (samples = fixture.history) => { const h = new History(null); h.samples = samples; return h; };
 const st = (o = {}) => ({ view: 0, rigFocus: 0, seatFocus: [0, 0], help: false, frame: 0, note: null, ...o });
-const cli = (args, env = {}) => spawnSync(process.execPath, [join(repo, "console/src/main.ts"), ...args], { encoding: "utf8", env: { PATH: process.env.PATH, HOME: scratch, ...env }, timeout: 30_000 });
+const cli = (args, env = {}) => spawnSync(process.execPath, [join(repo, "console/src/main.ts"), "--legacy", ...args], { encoding: "utf8", env: { PATH: process.env.PATH, HOME: scratch, ...env }, timeout: 30_000 });
 
 test("renderer: a second frame writes only the changed cells; a resize redraws everything", () => {
   const a = new Screen(20, 3), b = new Screen(20, 3);
@@ -346,7 +346,7 @@ test("CLI: a live --once frame against a stub daemon runs no tmux (a tmux on PAT
   for (const t of ["tmux", "agent-proxy-status", "agent-heavy"]) fs.writeFileSync(join(bin, t), `#!/bin/sh\necho "${t} $*" >> ${log}\n`, { mode: 0o755 });
   try {
     const r = await new Promise((res) => {
-      const p = spawn(process.execPath, [join(repo, "console/src/main.ts"), "--once", "--size", "120x40", "--color", "0", "--url", d.url],
+      const p = spawn(process.execPath, [join(repo, "console/src/main.ts"), "--legacy", "--once", "--size", "120x40", "--color", "0", "--url", d.url],
         { env: { PATH: `${bin}:/usr/bin:/bin`, HOME: scratch, AGENT_STACK_STATE: join(scratch, "state") } });
       let out = ""; p.stdout.on("data", (b) => (out += b)); p.on("exit", (code) => res({ code, out }));
     });

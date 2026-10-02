@@ -177,9 +177,9 @@ test("CLI: --view focus|pool, --seat <seat@rig>, --theme (strict); RIG_CONSOLE_T
   assert.equal(parseArgs(["--seat", SEAT], {}).seat, SEAT); assert.equal(parseArgs(["--theme", "nord"], {}).theme, "nord");
   assert.equal(parseArgs([], { RIG_CONSOLE_THEME: "catppuccin" }).theme, "catppuccin"); assert.equal(parseArgs([], { RIG_CONSOLE_THEME: "neon" }).theme, "pad39a");
   for (const bad of [["--seat", "no-rig"], ["--theme", "neon"], ["--view", "constellation"]]) {
-    const r = spawnSync(process.execPath, [join(repo, "console/src/main.ts"), ...bad], { encoding: "utf8" });
+    const r = spawnSync(process.execPath, [join(repo, "console/src/main.ts"), "--legacy", ...bad], { encoding: "utf8" });
     assert.equal(r.status, 2, bad.join(" "));
   }
-  const r = spawnSync(process.execPath, [join(repo, "console/src/main.ts"), "--once", "--fixture", join(repo, "console/fixtures/demo.json"), "--size", "176x50", "--color", "0", "--seat", SEAT], { encoding: "utf8" });
+  const r = spawnSync(process.execPath, [join(repo, "console/src/main.ts"), "--legacy", "--once", "--fixture", join(repo, "console/fixtures/demo.json"), "--size", "176x50", "--color", "0", "--seat", SEAT], { encoding: "utf8" });
   assert.equal(r.status, 0, r.stderr); assert.match(r.stdout, /LIVE TERMINAL/);
 });

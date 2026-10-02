@@ -302,5 +302,8 @@ async function main() {
 }
 
 if (import.meta.url === `file://${process.argv[1]}` || process.argv[1]?.endsWith("/rig-console") || process.argv[1]?.endsWith("main.ts")) {
-  main().catch((e) => { process.stdout.write(ALT_OFF); console.error(`rig-console: ${e instanceof Error ? e.message : e}`); process.exit(1); });
+  const legacy = process.argv.includes('--legacy');
+  if (legacy) process.argv.splice(process.argv.indexOf('--legacy'), 1);
+  const run = legacy ? main : async () => (await import('./v3/main.ts')).runConsole(process.argv.slice(2));
+  run().catch((e) => { process.stdout.write(ALT_OFF); console.error(`rig-console: ${e instanceof Error ? e.message : e}`); process.exit(1); });
 }

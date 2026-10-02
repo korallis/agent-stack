@@ -1,0 +1,3669 @@
+{
+  "version": 1,
+  "at": 1790952720000,
+  "source": "neutral fixture · all data invented",
+  "stale": false,
+  "sources": {
+    "daemon": "fixture",
+    "accounts": "fixture",
+    "gates": "fixture",
+    "projects": "fixture"
+  },
+  "headline": "2 decisions need you. Beacon is blocked until you answer. Cobalt is waiting for staging.",
+  "teams": [
+    {
+      "id": "atlas",
+      "name": "Atlas",
+      "description": "booking app",
+      "status": "ok",
+      "reason": "",
+      "sentence": "Payments and refunds are in review. One feature needs a rebase.",
+      "milestone": "Payments & refunds",
+      "progress": 68,
+      "eta": "2026-10-02T15:52:00.000Z",
+      "milestones": [
+        {
+          "id": "M1",
+          "label": "Accounts",
+          "state": "done",
+          "at": "2026-09-24T14:52:00.000Z",
+          "detail": "Witness passed"
+        },
+        {
+          "id": "M2",
+          "label": "Courses",
+          "state": "done",
+          "at": "2026-09-27T14:52:00.000Z",
+          "detail": "Witness passed"
+        },
+        {
+          "id": "M3",
+          "label": "Payments & refunds",
+          "state": "active",
+          "at": null,
+          "detail": "Current milestone"
+        },
+        {
+          "id": "M4",
+          "label": "Reports",
+          "state": "unknown",
+          "at": null,
+          "detail": "Planned"
+        },
+        {
+          "id": "M5",
+          "label": "Launch",
+          "state": "unknown",
+          "at": null,
+          "detail": "Planned"
+        }
+      ],
+      "agentIds": [
+        "impl@atlas",
+        "review@atlas",
+        "qa@atlas"
+      ],
+      "taskIds": [
+        "atlas-task-1",
+        "atlas-task-2",
+        "atlas-task-3"
+      ],
+      "merges": [
+        {
+          "day": "2026-09-19",
+          "count": 2
+        },
+        {
+          "day": "2026-09-20",
+          "count": 3
+        },
+        {
+          "day": "2026-09-21",
+          "count": 1
+        },
+        {
+          "day": "2026-09-22",
+          "count": 4
+        },
+        {
+          "day": "2026-09-23",
+          "count": 5
+        },
+        {
+          "day": "2026-09-24",
+          "count": 3
+        },
+        {
+          "day": "2026-09-25",
+          "count": 6
+        },
+        {
+          "day": "2026-09-26",
+          "count": 4
+        },
+        {
+          "day": "2026-09-27",
+          "count": 5
+        },
+        {
+          "day": "2026-09-28",
+          "count": 7
+        },
+        {
+          "day": "2026-09-29",
+          "count": 6
+        },
+        {
+          "day": "2026-09-30",
+          "count": 8
+        },
+        {
+          "day": "2026-10-01",
+          "count": 6
+        },
+        {
+          "day": "2026-10-02",
+          "count": 9
+        }
+      ]
+    },
+    {
+      "id": "beacon",
+      "name": "Beacon",
+      "description": "case management",
+      "status": "blocked",
+      "reason": "your decision",
+      "sentence": "Intake is almost done. The next milestone waits for your decision.",
+      "milestone": "Intake & triage",
+      "progress": 61,
+      "eta": "2026-10-02T16:12:00.000Z",
+      "milestones": [
+        {
+          "id": "M1",
+          "label": "Accounts",
+          "state": "done",
+          "at": "2026-09-24T14:52:00.000Z",
+          "detail": "Witness passed"
+        },
+        {
+          "id": "M2",
+          "label": "Courses",
+          "state": "done",
+          "at": "2026-09-27T14:52:00.000Z",
+          "detail": "Witness passed"
+        },
+        {
+          "id": "M3",
+          "label": "Intake & triage",
+          "state": "active",
+          "at": null,
+          "detail": "Current milestone"
+        },
+        {
+          "id": "M4",
+          "label": "Reports",
+          "state": "unknown",
+          "at": null,
+          "detail": "Planned"
+        },
+        {
+          "id": "M5",
+          "label": "Launch",
+          "state": "unknown",
+          "at": null,
+          "detail": "Planned"
+        }
+      ],
+      "agentIds": [
+        "impl@beacon",
+        "review@beacon",
+        "qa@beacon"
+      ],
+      "taskIds": [
+        "beacon-task-1",
+        "beacon-task-2",
+        "beacon-task-3"
+      ],
+      "merges": [
+        {
+          "day": "2026-09-19",
+          "count": 2
+        },
+        {
+          "day": "2026-09-20",
+          "count": 3
+        },
+        {
+          "day": "2026-09-21",
+          "count": 1
+        },
+        {
+          "day": "2026-09-22",
+          "count": 4
+        },
+        {
+          "day": "2026-09-23",
+          "count": 5
+        },
+        {
+          "day": "2026-09-24",
+          "count": 3
+        },
+        {
+          "day": "2026-09-25",
+          "count": 6
+        },
+        {
+          "day": "2026-09-26",
+          "count": 4
+        },
+        {
+          "day": "2026-09-27",
+          "count": 5
+        },
+        {
+          "day": "2026-09-28",
+          "count": 7
+        },
+        {
+          "day": "2026-09-29",
+          "count": 6
+        },
+        {
+          "day": "2026-09-30",
+          "count": 8
+        },
+        {
+          "day": "2026-10-01",
+          "count": 6
+        },
+        {
+          "day": "2026-10-02",
+          "count": 9
+        }
+      ]
+    },
+    {
+      "id": "cobalt",
+      "name": "Cobalt",
+      "description": "training platform",
+      "status": "waiting",
+      "reason": "staging down",
+      "sentence": "Booking is built. A witness resumes when staging returns.",
+      "milestone": "Booking",
+      "progress": 43,
+      "eta": "2026-10-02T16:32:00.000Z",
+      "milestones": [
+        {
+          "id": "M1",
+          "label": "Accounts",
+          "state": "done",
+          "at": "2026-09-24T14:52:00.000Z",
+          "detail": "Witness passed"
+        },
+        {
+          "id": "M2",
+          "label": "Courses",
+          "state": "done",
+          "at": "2026-09-27T14:52:00.000Z",
+          "detail": "Witness passed"
+        },
+        {
+          "id": "M3",
+          "label": "Booking",
+          "state": "active",
+          "at": null,
+          "detail": "Current milestone"
+        },
+        {
+          "id": "M4",
+          "label": "Reports",
+          "state": "unknown",
+          "at": null,
+          "detail": "Planned"
+        },
+        {
+          "id": "M5",
+          "label": "Launch",
+          "state": "unknown",
+          "at": null,
+          "detail": "Planned"
+        }
+      ],
+      "agentIds": [
+        "impl@cobalt",
+        "review@cobalt",
+        "qa@cobalt"
+      ],
+      "taskIds": [
+        "cobalt-task-1",
+        "cobalt-task-2",
+        "cobalt-task-3"
+      ],
+      "merges": [
+        {
+          "day": "2026-09-19",
+          "count": 2
+        },
+        {
+          "day": "2026-09-20",
+          "count": 3
+        },
+        {
+          "day": "2026-09-21",
+          "count": 1
+        },
+        {
+          "day": "2026-09-22",
+          "count": 4
+        },
+        {
+          "day": "2026-09-23",
+          "count": 5
+        },
+        {
+          "day": "2026-09-24",
+          "count": 3
+        },
+        {
+          "day": "2026-09-25",
+          "count": 6
+        },
+        {
+          "day": "2026-09-26",
+          "count": 4
+        },
+        {
+          "day": "2026-09-27",
+          "count": 5
+        },
+        {
+          "day": "2026-09-28",
+          "count": 7
+        },
+        {
+          "day": "2026-09-29",
+          "count": 6
+        },
+        {
+          "day": "2026-09-30",
+          "count": 8
+        },
+        {
+          "day": "2026-10-01",
+          "count": 6
+        },
+        {
+          "day": "2026-10-02",
+          "count": 9
+        }
+      ]
+    },
+    {
+      "id": "factory",
+      "name": "Factory",
+      "description": "builds the factory",
+      "status": "ok",
+      "reason": "",
+      "sentence": "Automatic fallbacks are at the merge gate.",
+      "milestone": "Reroute & fallbacks",
+      "progress": 57,
+      "eta": "2026-10-02T16:52:00.000Z",
+      "milestones": [
+        {
+          "id": "M1",
+          "label": "Accounts",
+          "state": "done",
+          "at": "2026-09-24T14:52:00.000Z",
+          "detail": "Witness passed"
+        },
+        {
+          "id": "M2",
+          "label": "Courses",
+          "state": "done",
+          "at": "2026-09-27T14:52:00.000Z",
+          "detail": "Witness passed"
+        },
+        {
+          "id": "M3",
+          "label": "Reroute & fallbacks",
+          "state": "active",
+          "at": null,
+          "detail": "Current milestone"
+        },
+        {
+          "id": "M4",
+          "label": "Reports",
+          "state": "unknown",
+          "at": null,
+          "detail": "Planned"
+        },
+        {
+          "id": "M5",
+          "label": "Launch",
+          "state": "unknown",
+          "at": null,
+          "detail": "Planned"
+        }
+      ],
+      "agentIds": [
+        "impl@factory",
+        "review@factory",
+        "qa@factory"
+      ],
+      "taskIds": [
+        "factory-task-1",
+        "factory-task-2",
+        "factory-task-3"
+      ],
+      "merges": [
+        {
+          "day": "2026-09-19",
+          "count": 2
+        },
+        {
+          "day": "2026-09-20",
+          "count": 3
+        },
+        {
+          "day": "2026-09-21",
+          "count": 1
+        },
+        {
+          "day": "2026-09-22",
+          "count": 4
+        },
+        {
+          "day": "2026-09-23",
+          "count": 5
+        },
+        {
+          "day": "2026-09-24",
+          "count": 3
+        },
+        {
+          "day": "2026-09-25",
+          "count": 6
+        },
+        {
+          "day": "2026-09-26",
+          "count": 4
+        },
+        {
+          "day": "2026-09-27",
+          "count": 5
+        },
+        {
+          "day": "2026-09-28",
+          "count": 7
+        },
+        {
+          "day": "2026-09-29",
+          "count": 6
+        },
+        {
+          "day": "2026-09-30",
+          "count": 8
+        },
+        {
+          "day": "2026-10-01",
+          "count": 6
+        },
+        {
+          "day": "2026-10-02",
+          "count": 9
+        }
+      ]
+    },
+    {
+      "id": "kernel",
+      "name": "Kernel",
+      "description": "operations",
+      "status": "ok",
+      "reason": "",
+      "sentence": "The operator is checking fleet health.",
+      "milestone": "Operations",
+      "progress": null,
+      "eta": null,
+      "milestones": [
+        {
+          "id": "M1",
+          "label": "Accounts",
+          "state": "done",
+          "at": "2026-09-24T14:52:00.000Z",
+          "detail": "Witness passed"
+        },
+        {
+          "id": "M2",
+          "label": "Courses",
+          "state": "done",
+          "at": "2026-09-27T14:52:00.000Z",
+          "detail": "Witness passed"
+        },
+        {
+          "id": "M3",
+          "label": "Operations",
+          "state": "active",
+          "at": null,
+          "detail": "Current milestone"
+        },
+        {
+          "id": "M4",
+          "label": "Reports",
+          "state": "unknown",
+          "at": null,
+          "detail": "Planned"
+        },
+        {
+          "id": "M5",
+          "label": "Launch",
+          "state": "unknown",
+          "at": null,
+          "detail": "Planned"
+        }
+      ],
+      "agentIds": [
+        "impl@kernel",
+        "review@kernel",
+        "qa@kernel"
+      ],
+      "taskIds": [
+        "kernel-task-1",
+        "kernel-task-2",
+        "kernel-task-3"
+      ],
+      "merges": [
+        {
+          "day": "2026-09-19",
+          "count": 2
+        },
+        {
+          "day": "2026-09-20",
+          "count": 3
+        },
+        {
+          "day": "2026-09-21",
+          "count": 1
+        },
+        {
+          "day": "2026-09-22",
+          "count": 4
+        },
+        {
+          "day": "2026-09-23",
+          "count": 5
+        },
+        {
+          "day": "2026-09-24",
+          "count": 3
+        },
+        {
+          "day": "2026-09-25",
+          "count": 6
+        },
+        {
+          "day": "2026-09-26",
+          "count": 4
+        },
+        {
+          "day": "2026-09-27",
+          "count": 5
+        },
+        {
+          "day": "2026-09-28",
+          "count": 7
+        },
+        {
+          "day": "2026-09-29",
+          "count": 6
+        },
+        {
+          "day": "2026-09-30",
+          "count": 8
+        },
+        {
+          "day": "2026-10-01",
+          "count": 6
+        },
+        {
+          "day": "2026-10-02",
+          "count": 9
+        }
+      ]
+    }
+  ],
+  "agents": [
+    {
+      "id": "impl@atlas",
+      "teamId": "atlas",
+      "name": "impl",
+      "model": "GPT",
+      "status": "ok",
+      "activity": "Implementing Payments & refunds",
+      "taskId": "atlas-task-1",
+      "context": 62,
+      "contextHistory": [
+        18,
+        22,
+        28,
+        33,
+        42,
+        47,
+        55,
+        62
+      ],
+      "tail": "$ node --test\n✔ restored queued work completes\n✔ native identity matches current occupant\n✔ human reply survives restore\n\nTests: 24 passed, 0 failed\n\nWriting the verification report and passing the candidate to review.",
+      "tailAt": 1790952715000,
+      "history": [
+        {
+          "id": "queued",
+          "label": "queued",
+          "state": "done",
+          "at": "2026-10-02T14:16:00.000Z",
+          "detail": "Completed with recorded evidence"
+        },
+        {
+          "id": "build",
+          "label": "build",
+          "state": "done",
+          "at": "2026-10-02T14:28:00.000Z",
+          "detail": "Completed with recorded evidence"
+        },
+        {
+          "id": "PR",
+          "label": "PR",
+          "state": "done",
+          "at": "2026-10-02T14:40:00.000Z",
+          "detail": "Completed with recorded evidence"
+        },
+        {
+          "id": "review",
+          "label": "review",
+          "state": "active",
+          "at": "2026-10-02T14:52:00.000Z",
+          "detail": "In progress"
+        },
+        {
+          "id": "QA",
+          "label": "QA",
+          "state": "unknown",
+          "at": null,
+          "detail": "No event yet"
+        },
+        {
+          "id": "gate",
+          "label": "gate",
+          "state": "unknown",
+          "at": null,
+          "detail": "No event yet"
+        },
+        {
+          "id": "merged",
+          "label": "merged",
+          "state": "unknown",
+          "at": null,
+          "detail": "No event yet"
+        },
+        {
+          "id": "witness",
+          "label": "witness",
+          "state": "unknown",
+          "at": null,
+          "detail": "No event yet"
+        }
+      ]
+    },
+    {
+      "id": "review@atlas",
+      "teamId": "atlas",
+      "name": "review",
+      "model": "Opus",
+      "status": "ok",
+      "activity": "Reviewing exact candidate",
+      "taskId": "atlas-task-2",
+      "context": 47,
+      "contextHistory": [
+        18,
+        22,
+        28,
+        33,
+        42,
+        47,
+        55,
+        62
+      ],
+      "tail": "$ node --test\n✔ restored queued work completes\n✔ native identity matches current occupant\n✔ human reply survives restore\n\nTests: 24 passed, 0 failed\n\nWriting the verification report and passing the candidate to review.",
+      "tailAt": 1790952715000,
+      "history": [
+        {
+          "id": "queued",
+          "label": "queued",
+          "state": "done",
+          "at": "2026-10-02T14:16:00.000Z",
+          "detail": "Completed with recorded evidence"
+        },
+        {
+          "id": "build",
+          "label": "build",
+          "state": "done",
+          "at": "2026-10-02T14:28:00.000Z",
+          "detail": "Completed with recorded evidence"
+        },
+        {
+          "id": "PR",
+          "label": "PR",
+          "state": "done",
+          "at": "2026-10-02T14:40:00.000Z",
+          "detail": "Completed with recorded evidence"
+        },
+        {
+          "id": "review",
+          "label": "review",
+          "state": "active",
+          "at": "2026-10-02T14:52:00.000Z",
+          "detail": "In progress"
+        },
+        {
+          "id": "QA",
+          "label": "QA",
+          "state": "unknown",
+          "at": null,
+          "detail": "No event yet"
+        },
+        {
+          "id": "gate",
+          "label": "gate",
+          "state": "unknown",
+          "at": null,
+          "detail": "No event yet"
+        },
+        {
+          "id": "merged",
+          "label": "merged",
+          "state": "unknown",
+          "at": null,
+          "detail": "No event yet"
+        },
+        {
+          "id": "witness",
+          "label": "witness",
+          "state": "unknown",
+          "at": null,
+          "detail": "No event yet"
+        }
+      ]
+    },
+    {
+      "id": "qa@atlas",
+      "teamId": "atlas",
+      "name": "qa",
+      "model": "Sonnet",
+      "status": "ok",
+      "activity": "Checking the user journey",
+      "taskId": "atlas-task-3",
+      "context": 38,
+      "contextHistory": [
+        18,
+        22,
+        28,
+        33,
+        42,
+        47,
+        55,
+        62
+      ],
+      "tail": "$ node --test\n✔ restored queued work completes\n✔ native identity matches current occupant\n✔ human reply survives restore\n\nTests: 24 passed, 0 failed\n\nWriting the verification report and passing the candidate to review.",
+      "tailAt": 1790952715000,
+      "history": [
+        {
+          "id": "queued",
+          "label": "queued",
+          "state": "done",
+          "at": "2026-10-02T14:16:00.000Z",
+          "detail": "Completed with recorded evidence"
+        },
+        {
+          "id": "build",
+          "label": "build",
+          "state": "done",
+          "at": "2026-10-02T14:28:00.000Z",
+          "detail": "Completed with recorded evidence"
+        },
+        {
+          "id": "PR",
+          "label": "PR",
+          "state": "done",
+          "at": "2026-10-02T14:40:00.000Z",
+          "detail": "Completed with recorded evidence"
+        },
+        {
+          "id": "review",
+          "label": "review",
+          "state": "active",
+          "at": "2026-10-02T14:52:00.000Z",
+          "detail": "In progress"
+        },
+        {
+          "id": "QA",
+          "label": "QA",
+          "state": "unknown",
+          "at": null,
+          "detail": "No event yet"
+        },
+        {
+          "id": "gate",
+          "label": "gate",
+          "state": "unknown",
+          "at": null,
+          "detail": "No event yet"
+        },
+        {
+          "id": "merged",
+          "label": "merged",
+          "state": "unknown",
+          "at": null,
+          "detail": "No event yet"
+        },
+        {
+          "id": "witness",
+          "label": "witness",
+          "state": "unknown",
+          "at": null,
+          "detail": "No event yet"
+        }
+      ]
+    },
+    {
+      "id": "impl@beacon",
+      "teamId": "beacon",
+      "name": "impl",
+      "model": "GPT",
+      "status": "ok",
+      "activity": "Implementing Intake & triage",
+      "taskId": "beacon-task-1",
+      "context": 62,
+      "contextHistory": [
+        18,
+        22,
+        28,
+        33,
+        42,
+        47,
+        55,
+        62
+      ],
+      "tail": "$ node --test\n✔ restored queued work completes\n✔ native identity matches current occupant\n✔ human reply survives restore\n\nTests: 24 passed, 0 failed\n\nWriting the verification report and passing the candidate to review.",
+      "tailAt": 1790952715000,
+      "history": [
+        {
+          "id": "queued",
+          "label": "queued",
+          "state": "done",
+          "at": "2026-10-02T14:16:00.000Z",
+          "detail": "Completed with recorded evidence"
+        },
+        {
+          "id": "build",
+          "label": "build",
+          "state": "done",
+          "at": "2026-10-02T14:28:00.000Z",
+          "detail": "Completed with recorded evidence"
+        },
+        {
+          "id": "PR",
+          "label": "PR",
+          "state": "done",
+          "at": "2026-10-02T14:40:00.000Z",
+          "detail": "Completed with recorded evidence"
+        },
+        {
+          "id": "review",
+          "label": "review",
+          "state": "active",
+          "at": "2026-10-02T14:52:00.000Z",
+          "detail": "In progress"
+        },
+        {
+          "id": "QA",
+          "label": "QA",
+          "state": "unknown",
+          "at": null,
+          "detail": "No event yet"
+        },
+        {
+          "id": "gate",
+          "label": "gate",
+          "state": "unknown",
+          "at": null,
+          "detail": "No event yet"
+        },
+        {
+          "id": "merged",
+          "label": "merged",
+          "state": "unknown",
+          "at": null,
+          "detail": "No event yet"
+        },
+        {
+          "id": "witness",
+          "label": "witness",
+          "state": "unknown",
+          "at": null,
+          "detail": "No event yet"
+        }
+      ]
+    },
+    {
+      "id": "review@beacon",
+      "teamId": "beacon",
+      "name": "review",
+      "model": "Opus",
+      "status": "ok",
+      "activity": "Reviewing exact candidate",
+      "taskId": "beacon-task-2",
+      "context": 47,
+      "contextHistory": [
+        18,
+        22,
+        28,
+        33,
+        42,
+        47,
+        55,
+        62
+      ],
+      "tail": "$ node --test\n✔ restored queued work completes\n✔ native identity matches current occupant\n✔ human reply survives restore\n\nTests: 24 passed, 0 failed\n\nWriting the verification report and passing the candidate to review.",
+      "tailAt": 1790952715000,
+      "history": [
+        {
+          "id": "queued",
+          "label": "queued",
+          "state": "done",
+          "at": "2026-10-02T14:16:00.000Z",
+          "detail": "Completed with recorded evidence"
+        },
+        {
+          "id": "build",
+          "label": "build",
+          "state": "done",
+          "at": "2026-10-02T14:28:00.000Z",
+          "detail": "Completed with recorded evidence"
+        },
+        {
+          "id": "PR",
+          "label": "PR",
+          "state": "done",
+          "at": "2026-10-02T14:40:00.000Z",
+          "detail": "Completed with recorded evidence"
+        },
+        {
+          "id": "review",
+          "label": "review",
+          "state": "active",
+          "at": "2026-10-02T14:52:00.000Z",
+          "detail": "In progress"
+        },
+        {
+          "id": "QA",
+          "label": "QA",
+          "state": "unknown",
+          "at": null,
+          "detail": "No event yet"
+        },
+        {
+          "id": "gate",
+          "label": "gate",
+          "state": "unknown",
+          "at": null,
+          "detail": "No event yet"
+        },
+        {
+          "id": "merged",
+          "label": "merged",
+          "state": "unknown",
+          "at": null,
+          "detail": "No event yet"
+        },
+        {
+          "id": "witness",
+          "label": "witness",
+          "state": "unknown",
+          "at": null,
+          "detail": "No event yet"
+        }
+      ]
+    },
+    {
+      "id": "qa@beacon",
+      "teamId": "beacon",
+      "name": "qa",
+      "model": "Sonnet",
+      "status": "ok",
+      "activity": "Checking the user journey",
+      "taskId": "beacon-task-3",
+      "context": 38,
+      "contextHistory": [
+        18,
+        22,
+        28,
+        33,
+        42,
+        47,
+        55,
+        62
+      ],
+      "tail": "$ node --test\n✔ restored queued work completes\n✔ native identity matches current occupant\n✔ human reply survives restore\n\nTests: 24 passed, 0 failed\n\nWriting the verification report and passing the candidate to review.",
+      "tailAt": 1790952715000,
+      "history": [
+        {
+          "id": "queued",
+          "label": "queued",
+          "state": "done",
+          "at": "2026-10-02T14:16:00.000Z",
+          "detail": "Completed with recorded evidence"
+        },
+        {
+          "id": "build",
+          "label": "build",
+          "state": "done",
+          "at": "2026-10-02T14:28:00.000Z",
+          "detail": "Completed with recorded evidence"
+        },
+        {
+          "id": "PR",
+          "label": "PR",
+          "state": "done",
+          "at": "2026-10-02T14:40:00.000Z",
+          "detail": "Completed with recorded evidence"
+        },
+        {
+          "id": "review",
+          "label": "review",
+          "state": "active",
+          "at": "2026-10-02T14:52:00.000Z",
+          "detail": "In progress"
+        },
+        {
+          "id": "QA",
+          "label": "QA",
+          "state": "unknown",
+          "at": null,
+          "detail": "No event yet"
+        },
+        {
+          "id": "gate",
+          "label": "gate",
+          "state": "unknown",
+          "at": null,
+          "detail": "No event yet"
+        },
+        {
+          "id": "merged",
+          "label": "merged",
+          "state": "unknown",
+          "at": null,
+          "detail": "No event yet"
+        },
+        {
+          "id": "witness",
+          "label": "witness",
+          "state": "unknown",
+          "at": null,
+          "detail": "No event yet"
+        }
+      ]
+    },
+    {
+      "id": "impl@cobalt",
+      "teamId": "cobalt",
+      "name": "impl",
+      "model": "GPT",
+      "status": "ok",
+      "activity": "Implementing Booking",
+      "taskId": "cobalt-task-1",
+      "context": 62,
+      "contextHistory": [
+        18,
+        22,
+        28,
+        33,
+        42,
+        47,
+        55,
+        62
+      ],
+      "tail": "$ node --test\n✔ restored queued work completes\n✔ native identity matches current occupant\n✔ human reply survives restore\n\nTests: 24 passed, 0 failed\n\nWriting the verification report and passing the candidate to review.",
+      "tailAt": 1790952715000,
+      "history": [
+        {
+          "id": "queued",
+          "label": "queued",
+          "state": "done",
+          "at": "2026-10-02T14:16:00.000Z",
+          "detail": "Completed with recorded evidence"
+        },
+        {
+          "id": "build",
+          "label": "build",
+          "state": "done",
+          "at": "2026-10-02T14:28:00.000Z",
+          "detail": "Completed with recorded evidence"
+        },
+        {
+          "id": "PR",
+          "label": "PR",
+          "state": "done",
+          "at": "2026-10-02T14:40:00.000Z",
+          "detail": "Completed with recorded evidence"
+        },
+        {
+          "id": "review",
+          "label": "review",
+          "state": "active",
+          "at": "2026-10-02T14:52:00.000Z",
+          "detail": "In progress"
+        },
+        {
+          "id": "QA",
+          "label": "QA",
+          "state": "unknown",
+          "at": null,
+          "detail": "No event yet"
+        },
+        {
+          "id": "gate",
+          "label": "gate",
+          "state": "unknown",
+          "at": null,
+          "detail": "No event yet"
+        },
+        {
+          "id": "merged",
+          "label": "merged",
+          "state": "unknown",
+          "at": null,
+          "detail": "No event yet"
+        },
+        {
+          "id": "witness",
+          "label": "witness",
+          "state": "unknown",
+          "at": null,
+          "detail": "No event yet"
+        }
+      ]
+    },
+    {
+      "id": "review@cobalt",
+      "teamId": "cobalt",
+      "name": "review",
+      "model": "Opus",
+      "status": "ok",
+      "activity": "Reviewing exact candidate",
+      "taskId": "cobalt-task-2",
+      "context": 47,
+      "contextHistory": [
+        18,
+        22,
+        28,
+        33,
+        42,
+        47,
+        55,
+        62
+      ],
+      "tail": "$ node --test\n✔ restored queued work completes\n✔ native identity matches current occupant\n✔ human reply survives restore\n\nTests: 24 passed, 0 failed\n\nWriting the verification report and passing the candidate to review.",
+      "tailAt": 1790952715000,
+      "history": [
+        {
+          "id": "queued",
+          "label": "queued",
+          "state": "done",
+          "at": "2026-10-02T14:16:00.000Z",
+          "detail": "Completed with recorded evidence"
+        },
+        {
+          "id": "build",
+          "label": "build",
+          "state": "done",
+          "at": "2026-10-02T14:28:00.000Z",
+          "detail": "Completed with recorded evidence"
+        },
+        {
+          "id": "PR",
+          "label": "PR",
+          "state": "done",
+          "at": "2026-10-02T14:40:00.000Z",
+          "detail": "Completed with recorded evidence"
+        },
+        {
+          "id": "review",
+          "label": "review",
+          "state": "active",
+          "at": "2026-10-02T14:52:00.000Z",
+          "detail": "In progress"
+        },
+        {
+          "id": "QA",
+          "label": "QA",
+          "state": "unknown",
+          "at": null,
+          "detail": "No event yet"
+        },
+        {
+          "id": "gate",
+          "label": "gate",
+          "state": "unknown",
+          "at": null,
+          "detail": "No event yet"
+        },
+        {
+          "id": "merged",
+          "label": "merged",
+          "state": "unknown",
+          "at": null,
+          "detail": "No event yet"
+        },
+        {
+          "id": "witness",
+          "label": "witness",
+          "state": "unknown",
+          "at": null,
+          "detail": "No event yet"
+        }
+      ]
+    },
+    {
+      "id": "qa@cobalt",
+      "teamId": "cobalt",
+      "name": "qa",
+      "model": "Sonnet",
+      "status": "ok",
+      "activity": "Checking the user journey",
+      "taskId": "cobalt-task-3",
+      "context": 38,
+      "contextHistory": [
+        18,
+        22,
+        28,
+        33,
+        42,
+        47,
+        55,
+        62
+      ],
+      "tail": "$ node --test\n✔ restored queued work completes\n✔ native identity matches current occupant\n✔ human reply survives restore\n\nTests: 24 passed, 0 failed\n\nWriting the verification report and passing the candidate to review.",
+      "tailAt": 1790952715000,
+      "history": [
+        {
+          "id": "queued",
+          "label": "queued",
+          "state": "done",
+          "at": "2026-10-02T14:16:00.000Z",
+          "detail": "Completed with recorded evidence"
+        },
+        {
+          "id": "build",
+          "label": "build",
+          "state": "done",
+          "at": "2026-10-02T14:28:00.000Z",
+          "detail": "Completed with recorded evidence"
+        },
+        {
+          "id": "PR",
+          "label": "PR",
+          "state": "done",
+          "at": "2026-10-02T14:40:00.000Z",
+          "detail": "Completed with recorded evidence"
+        },
+        {
+          "id": "review",
+          "label": "review",
+          "state": "active",
+          "at": "2026-10-02T14:52:00.000Z",
+          "detail": "In progress"
+        },
+        {
+          "id": "QA",
+          "label": "QA",
+          "state": "unknown",
+          "at": null,
+          "detail": "No event yet"
+        },
+        {
+          "id": "gate",
+          "label": "gate",
+          "state": "unknown",
+          "at": null,
+          "detail": "No event yet"
+        },
+        {
+          "id": "merged",
+          "label": "merged",
+          "state": "unknown",
+          "at": null,
+          "detail": "No event yet"
+        },
+        {
+          "id": "witness",
+          "label": "witness",
+          "state": "unknown",
+          "at": null,
+          "detail": "No event yet"
+        }
+      ]
+    },
+    {
+      "id": "impl@factory",
+      "teamId": "factory",
+      "name": "impl",
+      "model": "GPT",
+      "status": "ok",
+      "activity": "Implementing Reroute & fallbacks",
+      "taskId": "factory-task-1",
+      "context": 62,
+      "contextHistory": [
+        18,
+        22,
+        28,
+        33,
+        42,
+        47,
+        55,
+        62
+      ],
+      "tail": "$ node --test\n✔ restored queued work completes\n✔ native identity matches current occupant\n✔ human reply survives restore\n\nTests: 24 passed, 0 failed\n\nWriting the verification report and passing the candidate to review.",
+      "tailAt": 1790952715000,
+      "history": [
+        {
+          "id": "queued",
+          "label": "queued",
+          "state": "done",
+          "at": "2026-10-02T14:16:00.000Z",
+          "detail": "Completed with recorded evidence"
+        },
+        {
+          "id": "build",
+          "label": "build",
+          "state": "done",
+          "at": "2026-10-02T14:28:00.000Z",
+          "detail": "Completed with recorded evidence"
+        },
+        {
+          "id": "PR",
+          "label": "PR",
+          "state": "done",
+          "at": "2026-10-02T14:40:00.000Z",
+          "detail": "Completed with recorded evidence"
+        },
+        {
+          "id": "review",
+          "label": "review",
+          "state": "active",
+          "at": "2026-10-02T14:52:00.000Z",
+          "detail": "In progress"
+        },
+        {
+          "id": "QA",
+          "label": "QA",
+          "state": "unknown",
+          "at": null,
+          "detail": "No event yet"
+        },
+        {
+          "id": "gate",
+          "label": "gate",
+          "state": "unknown",
+          "at": null,
+          "detail": "No event yet"
+        },
+        {
+          "id": "merged",
+          "label": "merged",
+          "state": "unknown",
+          "at": null,
+          "detail": "No event yet"
+        },
+        {
+          "id": "witness",
+          "label": "witness",
+          "state": "unknown",
+          "at": null,
+          "detail": "No event yet"
+        }
+      ]
+    },
+    {
+      "id": "review@factory",
+      "teamId": "factory",
+      "name": "review",
+      "model": "Opus",
+      "status": "ok",
+      "activity": "Reviewing exact candidate",
+      "taskId": "factory-task-2",
+      "context": 47,
+      "contextHistory": [
+        18,
+        22,
+        28,
+        33,
+        42,
+        47,
+        55,
+        62
+      ],
+      "tail": "$ node --test\n✔ restored queued work completes\n✔ native identity matches current occupant\n✔ human reply survives restore\n\nTests: 24 passed, 0 failed\n\nWriting the verification report and passing the candidate to review.",
+      "tailAt": 1790952715000,
+      "history": [
+        {
+          "id": "queued",
+          "label": "queued",
+          "state": "done",
+          "at": "2026-10-02T14:16:00.000Z",
+          "detail": "Completed with recorded evidence"
+        },
+        {
+          "id": "build",
+          "label": "build",
+          "state": "done",
+          "at": "2026-10-02T14:28:00.000Z",
+          "detail": "Completed with recorded evidence"
+        },
+        {
+          "id": "PR",
+          "label": "PR",
+          "state": "done",
+          "at": "2026-10-02T14:40:00.000Z",
+          "detail": "Completed with recorded evidence"
+        },
+        {
+          "id": "review",
+          "label": "review",
+          "state": "active",
+          "at": "2026-10-02T14:52:00.000Z",
+          "detail": "In progress"
+        },
+        {
+          "id": "QA",
+          "label": "QA",
+          "state": "unknown",
+          "at": null,
+          "detail": "No event yet"
+        },
+        {
+          "id": "gate",
+          "label": "gate",
+          "state": "unknown",
+          "at": null,
+          "detail": "No event yet"
+        },
+        {
+          "id": "merged",
+          "label": "merged",
+          "state": "unknown",
+          "at": null,
+          "detail": "No event yet"
+        },
+        {
+          "id": "witness",
+          "label": "witness",
+          "state": "unknown",
+          "at": null,
+          "detail": "No event yet"
+        }
+      ]
+    },
+    {
+      "id": "qa@factory",
+      "teamId": "factory",
+      "name": "qa",
+      "model": "Sonnet",
+      "status": "ok",
+      "activity": "Checking the user journey",
+      "taskId": "factory-task-3",
+      "context": 38,
+      "contextHistory": [
+        18,
+        22,
+        28,
+        33,
+        42,
+        47,
+        55,
+        62
+      ],
+      "tail": "$ node --test\n✔ restored queued work completes\n✔ native identity matches current occupant\n✔ human reply survives restore\n\nTests: 24 passed, 0 failed\n\nWriting the verification report and passing the candidate to review.",
+      "tailAt": 1790952715000,
+      "history": [
+        {
+          "id": "queued",
+          "label": "queued",
+          "state": "done",
+          "at": "2026-10-02T14:16:00.000Z",
+          "detail": "Completed with recorded evidence"
+        },
+        {
+          "id": "build",
+          "label": "build",
+          "state": "done",
+          "at": "2026-10-02T14:28:00.000Z",
+          "detail": "Completed with recorded evidence"
+        },
+        {
+          "id": "PR",
+          "label": "PR",
+          "state": "done",
+          "at": "2026-10-02T14:40:00.000Z",
+          "detail": "Completed with recorded evidence"
+        },
+        {
+          "id": "review",
+          "label": "review",
+          "state": "active",
+          "at": "2026-10-02T14:52:00.000Z",
+          "detail": "In progress"
+        },
+        {
+          "id": "QA",
+          "label": "QA",
+          "state": "unknown",
+          "at": null,
+          "detail": "No event yet"
+        },
+        {
+          "id": "gate",
+          "label": "gate",
+          "state": "unknown",
+          "at": null,
+          "detail": "No event yet"
+        },
+        {
+          "id": "merged",
+          "label": "merged",
+          "state": "unknown",
+          "at": null,
+          "detail": "No event yet"
+        },
+        {
+          "id": "witness",
+          "label": "witness",
+          "state": "unknown",
+          "at": null,
+          "detail": "No event yet"
+        }
+      ]
+    },
+    {
+      "id": "impl@kernel",
+      "teamId": "kernel",
+      "name": "impl",
+      "model": "GPT",
+      "status": "ok",
+      "activity": "Implementing Operations",
+      "taskId": "kernel-task-1",
+      "context": 62,
+      "contextHistory": [
+        18,
+        22,
+        28,
+        33,
+        42,
+        47,
+        55,
+        62
+      ],
+      "tail": "$ node --test\n✔ restored queued work completes\n✔ native identity matches current occupant\n✔ human reply survives restore\n\nTests: 24 passed, 0 failed\n\nWriting the verification report and passing the candidate to review.",
+      "tailAt": 1790952715000,
+      "history": [
+        {
+          "id": "queued",
+          "label": "queued",
+          "state": "done",
+          "at": "2026-10-02T14:16:00.000Z",
+          "detail": "Completed with recorded evidence"
+        },
+        {
+          "id": "build",
+          "label": "build",
+          "state": "done",
+          "at": "2026-10-02T14:28:00.000Z",
+          "detail": "Completed with recorded evidence"
+        },
+        {
+          "id": "PR",
+          "label": "PR",
+          "state": "done",
+          "at": "2026-10-02T14:40:00.000Z",
+          "detail": "Completed with recorded evidence"
+        },
+        {
+          "id": "review",
+          "label": "review",
+          "state": "active",
+          "at": "2026-10-02T14:52:00.000Z",
+          "detail": "In progress"
+        },
+        {
+          "id": "QA",
+          "label": "QA",
+          "state": "unknown",
+          "at": null,
+          "detail": "No event yet"
+        },
+        {
+          "id": "gate",
+          "label": "gate",
+          "state": "unknown",
+          "at": null,
+          "detail": "No event yet"
+        },
+        {
+          "id": "merged",
+          "label": "merged",
+          "state": "unknown",
+          "at": null,
+          "detail": "No event yet"
+        },
+        {
+          "id": "witness",
+          "label": "witness",
+          "state": "unknown",
+          "at": null,
+          "detail": "No event yet"
+        }
+      ]
+    },
+    {
+      "id": "review@kernel",
+      "teamId": "kernel",
+      "name": "review",
+      "model": "Opus",
+      "status": "ok",
+      "activity": "Reviewing exact candidate",
+      "taskId": "kernel-task-2",
+      "context": 47,
+      "contextHistory": [
+        18,
+        22,
+        28,
+        33,
+        42,
+        47,
+        55,
+        62
+      ],
+      "tail": "$ node --test\n✔ restored queued work completes\n✔ native identity matches current occupant\n✔ human reply survives restore\n\nTests: 24 passed, 0 failed\n\nWriting the verification report and passing the candidate to review.",
+      "tailAt": 1790952715000,
+      "history": [
+        {
+          "id": "queued",
+          "label": "queued",
+          "state": "done",
+          "at": "2026-10-02T14:16:00.000Z",
+          "detail": "Completed with recorded evidence"
+        },
+        {
+          "id": "build",
+          "label": "build",
+          "state": "done",
+          "at": "2026-10-02T14:28:00.000Z",
+          "detail": "Completed with recorded evidence"
+        },
+        {
+          "id": "PR",
+          "label": "PR",
+          "state": "done",
+          "at": "2026-10-02T14:40:00.000Z",
+          "detail": "Completed with recorded evidence"
+        },
+        {
+          "id": "review",
+          "label": "review",
+          "state": "active",
+          "at": "2026-10-02T14:52:00.000Z",
+          "detail": "In progress"
+        },
+        {
+          "id": "QA",
+          "label": "QA",
+          "state": "unknown",
+          "at": null,
+          "detail": "No event yet"
+        },
+        {
+          "id": "gate",
+          "label": "gate",
+          "state": "unknown",
+          "at": null,
+          "detail": "No event yet"
+        },
+        {
+          "id": "merged",
+          "label": "merged",
+          "state": "unknown",
+          "at": null,
+          "detail": "No event yet"
+        },
+        {
+          "id": "witness",
+          "label": "witness",
+          "state": "unknown",
+          "at": null,
+          "detail": "No event yet"
+        }
+      ]
+    },
+    {
+      "id": "qa@kernel",
+      "teamId": "kernel",
+      "name": "qa",
+      "model": "Sonnet",
+      "status": "ok",
+      "activity": "Checking the user journey",
+      "taskId": "kernel-task-3",
+      "context": 38,
+      "contextHistory": [
+        18,
+        22,
+        28,
+        33,
+        42,
+        47,
+        55,
+        62
+      ],
+      "tail": "$ node --test\n✔ restored queued work completes\n✔ native identity matches current occupant\n✔ human reply survives restore\n\nTests: 24 passed, 0 failed\n\nWriting the verification report and passing the candidate to review.",
+      "tailAt": 1790952715000,
+      "history": [
+        {
+          "id": "queued",
+          "label": "queued",
+          "state": "done",
+          "at": "2026-10-02T14:16:00.000Z",
+          "detail": "Completed with recorded evidence"
+        },
+        {
+          "id": "build",
+          "label": "build",
+          "state": "done",
+          "at": "2026-10-02T14:28:00.000Z",
+          "detail": "Completed with recorded evidence"
+        },
+        {
+          "id": "PR",
+          "label": "PR",
+          "state": "done",
+          "at": "2026-10-02T14:40:00.000Z",
+          "detail": "Completed with recorded evidence"
+        },
+        {
+          "id": "review",
+          "label": "review",
+          "state": "active",
+          "at": "2026-10-02T14:52:00.000Z",
+          "detail": "In progress"
+        },
+        {
+          "id": "QA",
+          "label": "QA",
+          "state": "unknown",
+          "at": null,
+          "detail": "No event yet"
+        },
+        {
+          "id": "gate",
+          "label": "gate",
+          "state": "unknown",
+          "at": null,
+          "detail": "No event yet"
+        },
+        {
+          "id": "merged",
+          "label": "merged",
+          "state": "unknown",
+          "at": null,
+          "detail": "No event yet"
+        },
+        {
+          "id": "witness",
+          "label": "witness",
+          "state": "unknown",
+          "at": null,
+          "detail": "No event yet"
+        }
+      ]
+    }
+  ],
+  "tasks": [
+    {
+      "id": "atlas-task-1",
+      "teamId": "atlas",
+      "title": "Payments & refunds",
+      "status": "ok",
+      "agentId": "impl@atlas",
+      "prId": null,
+      "acceptance": "The documented user path works; independent review and witness evidence are attached.",
+      "steps": [
+        {
+          "id": "queued",
+          "label": "queued",
+          "state": "done",
+          "at": "2026-10-02T14:40:00.000Z",
+          "detail": "Completed with recorded evidence"
+        },
+        {
+          "id": "build",
+          "label": "build",
+          "state": "active",
+          "at": "2026-10-02T14:52:00.000Z",
+          "detail": "In progress"
+        },
+        {
+          "id": "PR",
+          "label": "PR",
+          "state": "unknown",
+          "at": null,
+          "detail": "No event yet"
+        },
+        {
+          "id": "review",
+          "label": "review",
+          "state": "unknown",
+          "at": null,
+          "detail": "No event yet"
+        },
+        {
+          "id": "QA",
+          "label": "QA",
+          "state": "unknown",
+          "at": null,
+          "detail": "No event yet"
+        },
+        {
+          "id": "gate",
+          "label": "gate",
+          "state": "unknown",
+          "at": null,
+          "detail": "No event yet"
+        },
+        {
+          "id": "merged",
+          "label": "merged",
+          "state": "unknown",
+          "at": null,
+          "detail": "No event yet"
+        },
+        {
+          "id": "witness",
+          "label": "witness",
+          "state": "unknown",
+          "at": null,
+          "detail": "No event yet"
+        }
+      ],
+      "createdAt": "2026-10-02T13:37:00.000Z",
+      "updatedAt": "2026-10-02T14:51:00.000Z"
+    },
+    {
+      "id": "atlas-task-2",
+      "teamId": "atlas",
+      "title": "Calendar validation",
+      "status": "ok",
+      "agentId": "review@atlas",
+      "prId": "atlas-pr-101",
+      "acceptance": "The documented user path works; independent review and witness evidence are attached.",
+      "steps": [
+        {
+          "id": "queued",
+          "label": "queued",
+          "state": "done",
+          "at": "2026-10-02T14:16:00.000Z",
+          "detail": "Completed with recorded evidence"
+        },
+        {
+          "id": "build",
+          "label": "build",
+          "state": "done",
+          "at": "2026-10-02T14:28:00.000Z",
+          "detail": "Completed with recorded evidence"
+        },
+        {
+          "id": "PR",
+          "label": "PR",
+          "state": "done",
+          "at": "2026-10-02T14:40:00.000Z",
+          "detail": "Completed with recorded evidence"
+        },
+        {
+          "id": "review",
+          "label": "review",
+          "state": "active",
+          "at": "2026-10-02T14:52:00.000Z",
+          "detail": "In progress"
+        },
+        {
+          "id": "QA",
+          "label": "QA",
+          "state": "unknown",
+          "at": null,
+          "detail": "No event yet"
+        },
+        {
+          "id": "gate",
+          "label": "gate",
+          "state": "unknown",
+          "at": null,
+          "detail": "No event yet"
+        },
+        {
+          "id": "merged",
+          "label": "merged",
+          "state": "unknown",
+          "at": null,
+          "detail": "No event yet"
+        },
+        {
+          "id": "witness",
+          "label": "witness",
+          "state": "unknown",
+          "at": null,
+          "detail": "No event yet"
+        }
+      ],
+      "createdAt": "2026-10-02T13:22:00.000Z",
+      "updatedAt": "2026-10-02T14:50:00.000Z"
+    },
+    {
+      "id": "atlas-task-3",
+      "teamId": "atlas",
+      "title": "Booking emails",
+      "status": "ok",
+      "agentId": "qa@atlas",
+      "prId": "atlas-pr-102",
+      "acceptance": "The documented user path works; independent review and witness evidence are attached.",
+      "steps": [
+        {
+          "id": "queued",
+          "label": "queued",
+          "state": "done",
+          "at": "2026-10-02T14:04:00.000Z",
+          "detail": "Completed with recorded evidence"
+        },
+        {
+          "id": "build",
+          "label": "build",
+          "state": "done",
+          "at": "2026-10-02T14:16:00.000Z",
+          "detail": "Completed with recorded evidence"
+        },
+        {
+          "id": "PR",
+          "label": "PR",
+          "state": "done",
+          "at": "2026-10-02T14:28:00.000Z",
+          "detail": "Completed with recorded evidence"
+        },
+        {
+          "id": "review",
+          "label": "review",
+          "state": "done",
+          "at": "2026-10-02T14:40:00.000Z",
+          "detail": "Completed with recorded evidence"
+        },
+        {
+          "id": "QA",
+          "label": "QA",
+          "state": "active",
+          "at": "2026-10-02T14:52:00.000Z",
+          "detail": "In progress"
+        },
+        {
+          "id": "gate",
+          "label": "gate",
+          "state": "unknown",
+          "at": null,
+          "detail": "No event yet"
+        },
+        {
+          "id": "merged",
+          "label": "merged",
+          "state": "unknown",
+          "at": null,
+          "detail": "No event yet"
+        },
+        {
+          "id": "witness",
+          "label": "witness",
+          "state": "unknown",
+          "at": null,
+          "detail": "No event yet"
+        }
+      ],
+      "createdAt": "2026-10-02T13:07:00.000Z",
+      "updatedAt": "2026-10-02T14:49:00.000Z"
+    },
+    {
+      "id": "beacon-task-1",
+      "teamId": "beacon",
+      "title": "Intake & triage",
+      "status": "blocked",
+      "agentId": "impl@beacon",
+      "prId": null,
+      "acceptance": "The documented user path works; independent review and witness evidence are attached.",
+      "steps": [
+        {
+          "id": "queued",
+          "label": "queued",
+          "state": "done",
+          "at": "2026-10-02T14:40:00.000Z",
+          "detail": "Completed with recorded evidence"
+        },
+        {
+          "id": "build",
+          "label": "build",
+          "state": "active",
+          "at": "2026-10-02T14:52:00.000Z",
+          "detail": "In progress"
+        },
+        {
+          "id": "PR",
+          "label": "PR",
+          "state": "unknown",
+          "at": null,
+          "detail": "No event yet"
+        },
+        {
+          "id": "review",
+          "label": "review",
+          "state": "unknown",
+          "at": null,
+          "detail": "No event yet"
+        },
+        {
+          "id": "QA",
+          "label": "QA",
+          "state": "unknown",
+          "at": null,
+          "detail": "No event yet"
+        },
+        {
+          "id": "gate",
+          "label": "gate",
+          "state": "unknown",
+          "at": null,
+          "detail": "No event yet"
+        },
+        {
+          "id": "merged",
+          "label": "merged",
+          "state": "unknown",
+          "at": null,
+          "detail": "No event yet"
+        },
+        {
+          "id": "witness",
+          "label": "witness",
+          "state": "unknown",
+          "at": null,
+          "detail": "No event yet"
+        }
+      ],
+      "createdAt": "2026-10-02T13:37:00.000Z",
+      "updatedAt": "2026-10-02T14:51:00.000Z"
+    },
+    {
+      "id": "beacon-task-2",
+      "teamId": "beacon",
+      "title": "Calendar validation",
+      "status": "blocked",
+      "agentId": "review@beacon",
+      "prId": "beacon-pr-111",
+      "acceptance": "The documented user path works; independent review and witness evidence are attached.",
+      "steps": [
+        {
+          "id": "queued",
+          "label": "queued",
+          "state": "done",
+          "at": "2026-10-02T14:16:00.000Z",
+          "detail": "Completed with recorded evidence"
+        },
+        {
+          "id": "build",
+          "label": "build",
+          "state": "done",
+          "at": "2026-10-02T14:28:00.000Z",
+          "detail": "Completed with recorded evidence"
+        },
+        {
+          "id": "PR",
+          "label": "PR",
+          "state": "done",
+          "at": "2026-10-02T14:40:00.000Z",
+          "detail": "Completed with recorded evidence"
+        },
+        {
+          "id": "review",
+          "label": "review",
+          "state": "active",
+          "at": "2026-10-02T14:52:00.000Z",
+          "detail": "In progress"
+        },
+        {
+          "id": "QA",
+          "label": "QA",
+          "state": "unknown",
+          "at": null,
+          "detail": "No event yet"
+        },
+        {
+          "id": "gate",
+          "label": "gate",
+          "state": "unknown",
+          "at": null,
+          "detail": "No event yet"
+        },
+        {
+          "id": "merged",
+          "label": "merged",
+          "state": "unknown",
+          "at": null,
+          "detail": "No event yet"
+        },
+        {
+          "id": "witness",
+          "label": "witness",
+          "state": "unknown",
+          "at": null,
+          "detail": "No event yet"
+        }
+      ],
+      "createdAt": "2026-10-02T13:22:00.000Z",
+      "updatedAt": "2026-10-02T14:50:00.000Z"
+    },
+    {
+      "id": "beacon-task-3",
+      "teamId": "beacon",
+      "title": "Booking emails",
+      "status": "blocked",
+      "agentId": "qa@beacon",
+      "prId": "beacon-pr-112",
+      "acceptance": "The documented user path works; independent review and witness evidence are attached.",
+      "steps": [
+        {
+          "id": "queued",
+          "label": "queued",
+          "state": "done",
+          "at": "2026-10-02T14:04:00.000Z",
+          "detail": "Completed with recorded evidence"
+        },
+        {
+          "id": "build",
+          "label": "build",
+          "state": "done",
+          "at": "2026-10-02T14:16:00.000Z",
+          "detail": "Completed with recorded evidence"
+        },
+        {
+          "id": "PR",
+          "label": "PR",
+          "state": "done",
+          "at": "2026-10-02T14:28:00.000Z",
+          "detail": "Completed with recorded evidence"
+        },
+        {
+          "id": "review",
+          "label": "review",
+          "state": "done",
+          "at": "2026-10-02T14:40:00.000Z",
+          "detail": "Completed with recorded evidence"
+        },
+        {
+          "id": "QA",
+          "label": "QA",
+          "state": "active",
+          "at": "2026-10-02T14:52:00.000Z",
+          "detail": "In progress"
+        },
+        {
+          "id": "gate",
+          "label": "gate",
+          "state": "unknown",
+          "at": null,
+          "detail": "No event yet"
+        },
+        {
+          "id": "merged",
+          "label": "merged",
+          "state": "unknown",
+          "at": null,
+          "detail": "No event yet"
+        },
+        {
+          "id": "witness",
+          "label": "witness",
+          "state": "unknown",
+          "at": null,
+          "detail": "No event yet"
+        }
+      ],
+      "createdAt": "2026-10-02T13:07:00.000Z",
+      "updatedAt": "2026-10-02T14:49:00.000Z"
+    },
+    {
+      "id": "cobalt-task-1",
+      "teamId": "cobalt",
+      "title": "Booking",
+      "status": "waiting",
+      "agentId": "impl@cobalt",
+      "prId": null,
+      "acceptance": "The documented user path works; independent review and witness evidence are attached.",
+      "steps": [
+        {
+          "id": "queued",
+          "label": "queued",
+          "state": "done",
+          "at": "2026-10-02T14:40:00.000Z",
+          "detail": "Completed with recorded evidence"
+        },
+        {
+          "id": "build",
+          "label": "build",
+          "state": "active",
+          "at": "2026-10-02T14:52:00.000Z",
+          "detail": "In progress"
+        },
+        {
+          "id": "PR",
+          "label": "PR",
+          "state": "unknown",
+          "at": null,
+          "detail": "No event yet"
+        },
+        {
+          "id": "review",
+          "label": "review",
+          "state": "unknown",
+          "at": null,
+          "detail": "No event yet"
+        },
+        {
+          "id": "QA",
+          "label": "QA",
+          "state": "unknown",
+          "at": null,
+          "detail": "No event yet"
+        },
+        {
+          "id": "gate",
+          "label": "gate",
+          "state": "unknown",
+          "at": null,
+          "detail": "No event yet"
+        },
+        {
+          "id": "merged",
+          "label": "merged",
+          "state": "unknown",
+          "at": null,
+          "detail": "No event yet"
+        },
+        {
+          "id": "witness",
+          "label": "witness",
+          "state": "unknown",
+          "at": null,
+          "detail": "No event yet"
+        }
+      ],
+      "createdAt": "2026-10-02T13:37:00.000Z",
+      "updatedAt": "2026-10-02T14:51:00.000Z"
+    },
+    {
+      "id": "cobalt-task-2",
+      "teamId": "cobalt",
+      "title": "Calendar validation",
+      "status": "waiting",
+      "agentId": "review@cobalt",
+      "prId": "cobalt-pr-121",
+      "acceptance": "The documented user path works; independent review and witness evidence are attached.",
+      "steps": [
+        {
+          "id": "queued",
+          "label": "queued",
+          "state": "done",
+          "at": "2026-10-02T14:16:00.000Z",
+          "detail": "Completed with recorded evidence"
+        },
+        {
+          "id": "build",
+          "label": "build",
+          "state": "done",
+          "at": "2026-10-02T14:28:00.000Z",
+          "detail": "Completed with recorded evidence"
+        },
+        {
+          "id": "PR",
+          "label": "PR",
+          "state": "done",
+          "at": "2026-10-02T14:40:00.000Z",
+          "detail": "Completed with recorded evidence"
+        },
+        {
+          "id": "review",
+          "label": "review",
+          "state": "active",
+          "at": "2026-10-02T14:52:00.000Z",
+          "detail": "In progress"
+        },
+        {
+          "id": "QA",
+          "label": "QA",
+          "state": "unknown",
+          "at": null,
+          "detail": "No event yet"
+        },
+        {
+          "id": "gate",
+          "label": "gate",
+          "state": "unknown",
+          "at": null,
+          "detail": "No event yet"
+        },
+        {
+          "id": "merged",
+          "label": "merged",
+          "state": "unknown",
+          "at": null,
+          "detail": "No event yet"
+        },
+        {
+          "id": "witness",
+          "label": "witness",
+          "state": "unknown",
+          "at": null,
+          "detail": "No event yet"
+        }
+      ],
+      "createdAt": "2026-10-02T13:22:00.000Z",
+      "updatedAt": "2026-10-02T14:50:00.000Z"
+    },
+    {
+      "id": "cobalt-task-3",
+      "teamId": "cobalt",
+      "title": "Booking emails",
+      "status": "waiting",
+      "agentId": "qa@cobalt",
+      "prId": "cobalt-pr-122",
+      "acceptance": "The documented user path works; independent review and witness evidence are attached.",
+      "steps": [
+        {
+          "id": "queued",
+          "label": "queued",
+          "state": "done",
+          "at": "2026-10-02T14:04:00.000Z",
+          "detail": "Completed with recorded evidence"
+        },
+        {
+          "id": "build",
+          "label": "build",
+          "state": "done",
+          "at": "2026-10-02T14:16:00.000Z",
+          "detail": "Completed with recorded evidence"
+        },
+        {
+          "id": "PR",
+          "label": "PR",
+          "state": "done",
+          "at": "2026-10-02T14:28:00.000Z",
+          "detail": "Completed with recorded evidence"
+        },
+        {
+          "id": "review",
+          "label": "review",
+          "state": "done",
+          "at": "2026-10-02T14:40:00.000Z",
+          "detail": "Completed with recorded evidence"
+        },
+        {
+          "id": "QA",
+          "label": "QA",
+          "state": "active",
+          "at": "2026-10-02T14:52:00.000Z",
+          "detail": "In progress"
+        },
+        {
+          "id": "gate",
+          "label": "gate",
+          "state": "unknown",
+          "at": null,
+          "detail": "No event yet"
+        },
+        {
+          "id": "merged",
+          "label": "merged",
+          "state": "unknown",
+          "at": null,
+          "detail": "No event yet"
+        },
+        {
+          "id": "witness",
+          "label": "witness",
+          "state": "unknown",
+          "at": null,
+          "detail": "No event yet"
+        }
+      ],
+      "createdAt": "2026-10-02T13:07:00.000Z",
+      "updatedAt": "2026-10-02T14:49:00.000Z"
+    },
+    {
+      "id": "factory-task-1",
+      "teamId": "factory",
+      "title": "Reroute & fallbacks",
+      "status": "ok",
+      "agentId": "impl@factory",
+      "prId": null,
+      "acceptance": "The documented user path works; independent review and witness evidence are attached.",
+      "steps": [
+        {
+          "id": "queued",
+          "label": "queued",
+          "state": "done",
+          "at": "2026-10-02T14:40:00.000Z",
+          "detail": "Completed with recorded evidence"
+        },
+        {
+          "id": "build",
+          "label": "build",
+          "state": "active",
+          "at": "2026-10-02T14:52:00.000Z",
+          "detail": "In progress"
+        },
+        {
+          "id": "PR",
+          "label": "PR",
+          "state": "unknown",
+          "at": null,
+          "detail": "No event yet"
+        },
+        {
+          "id": "review",
+          "label": "review",
+          "state": "unknown",
+          "at": null,
+          "detail": "No event yet"
+        },
+        {
+          "id": "QA",
+          "label": "QA",
+          "state": "unknown",
+          "at": null,
+          "detail": "No event yet"
+        },
+        {
+          "id": "gate",
+          "label": "gate",
+          "state": "unknown",
+          "at": null,
+          "detail": "No event yet"
+        },
+        {
+          "id": "merged",
+          "label": "merged",
+          "state": "unknown",
+          "at": null,
+          "detail": "No event yet"
+        },
+        {
+          "id": "witness",
+          "label": "witness",
+          "state": "unknown",
+          "at": null,
+          "detail": "No event yet"
+        }
+      ],
+      "createdAt": "2026-10-02T13:37:00.000Z",
+      "updatedAt": "2026-10-02T14:51:00.000Z"
+    },
+    {
+      "id": "factory-task-2",
+      "teamId": "factory",
+      "title": "Calendar validation",
+      "status": "ok",
+      "agentId": "review@factory",
+      "prId": "factory-pr-131",
+      "acceptance": "The documented user path works; independent review and witness evidence are attached.",
+      "steps": [
+        {
+          "id": "queued",
+          "label": "queued",
+          "state": "done",
+          "at": "2026-10-02T14:16:00.000Z",
+          "detail": "Completed with recorded evidence"
+        },
+        {
+          "id": "build",
+          "label": "build",
+          "state": "done",
+          "at": "2026-10-02T14:28:00.000Z",
+          "detail": "Completed with recorded evidence"
+        },
+        {
+          "id": "PR",
+          "label": "PR",
+          "state": "done",
+          "at": "2026-10-02T14:40:00.000Z",
+          "detail": "Completed with recorded evidence"
+        },
+        {
+          "id": "review",
+          "label": "review",
+          "state": "active",
+          "at": "2026-10-02T14:52:00.000Z",
+          "detail": "In progress"
+        },
+        {
+          "id": "QA",
+          "label": "QA",
+          "state": "unknown",
+          "at": null,
+          "detail": "No event yet"
+        },
+        {
+          "id": "gate",
+          "label": "gate",
+          "state": "unknown",
+          "at": null,
+          "detail": "No event yet"
+        },
+        {
+          "id": "merged",
+          "label": "merged",
+          "state": "unknown",
+          "at": null,
+          "detail": "No event yet"
+        },
+        {
+          "id": "witness",
+          "label": "witness",
+          "state": "unknown",
+          "at": null,
+          "detail": "No event yet"
+        }
+      ],
+      "createdAt": "2026-10-02T13:22:00.000Z",
+      "updatedAt": "2026-10-02T14:50:00.000Z"
+    },
+    {
+      "id": "factory-task-3",
+      "teamId": "factory",
+      "title": "Booking emails",
+      "status": "ok",
+      "agentId": "qa@factory",
+      "prId": "factory-pr-132",
+      "acceptance": "The documented user path works; independent review and witness evidence are attached.",
+      "steps": [
+        {
+          "id": "queued",
+          "label": "queued",
+          "state": "done",
+          "at": "2026-10-02T14:04:00.000Z",
+          "detail": "Completed with recorded evidence"
+        },
+        {
+          "id": "build",
+          "label": "build",
+          "state": "done",
+          "at": "2026-10-02T14:16:00.000Z",
+          "detail": "Completed with recorded evidence"
+        },
+        {
+          "id": "PR",
+          "label": "PR",
+          "state": "done",
+          "at": "2026-10-02T14:28:00.000Z",
+          "detail": "Completed with recorded evidence"
+        },
+        {
+          "id": "review",
+          "label": "review",
+          "state": "done",
+          "at": "2026-10-02T14:40:00.000Z",
+          "detail": "Completed with recorded evidence"
+        },
+        {
+          "id": "QA",
+          "label": "QA",
+          "state": "active",
+          "at": "2026-10-02T14:52:00.000Z",
+          "detail": "In progress"
+        },
+        {
+          "id": "gate",
+          "label": "gate",
+          "state": "unknown",
+          "at": null,
+          "detail": "No event yet"
+        },
+        {
+          "id": "merged",
+          "label": "merged",
+          "state": "unknown",
+          "at": null,
+          "detail": "No event yet"
+        },
+        {
+          "id": "witness",
+          "label": "witness",
+          "state": "unknown",
+          "at": null,
+          "detail": "No event yet"
+        }
+      ],
+      "createdAt": "2026-10-02T13:07:00.000Z",
+      "updatedAt": "2026-10-02T14:49:00.000Z"
+    },
+    {
+      "id": "kernel-task-1",
+      "teamId": "kernel",
+      "title": "Operations",
+      "status": "ok",
+      "agentId": "impl@kernel",
+      "prId": null,
+      "acceptance": "The documented user path works; independent review and witness evidence are attached.",
+      "steps": [
+        {
+          "id": "queued",
+          "label": "queued",
+          "state": "done",
+          "at": "2026-10-02T14:40:00.000Z",
+          "detail": "Completed with recorded evidence"
+        },
+        {
+          "id": "build",
+          "label": "build",
+          "state": "active",
+          "at": "2026-10-02T14:52:00.000Z",
+          "detail": "In progress"
+        },
+        {
+          "id": "PR",
+          "label": "PR",
+          "state": "unknown",
+          "at": null,
+          "detail": "No event yet"
+        },
+        {
+          "id": "review",
+          "label": "review",
+          "state": "unknown",
+          "at": null,
+          "detail": "No event yet"
+        },
+        {
+          "id": "QA",
+          "label": "QA",
+          "state": "unknown",
+          "at": null,
+          "detail": "No event yet"
+        },
+        {
+          "id": "gate",
+          "label": "gate",
+          "state": "unknown",
+          "at": null,
+          "detail": "No event yet"
+        },
+        {
+          "id": "merged",
+          "label": "merged",
+          "state": "unknown",
+          "at": null,
+          "detail": "No event yet"
+        },
+        {
+          "id": "witness",
+          "label": "witness",
+          "state": "unknown",
+          "at": null,
+          "detail": "No event yet"
+        }
+      ],
+      "createdAt": "2026-10-02T13:37:00.000Z",
+      "updatedAt": "2026-10-02T14:51:00.000Z"
+    },
+    {
+      "id": "kernel-task-2",
+      "teamId": "kernel",
+      "title": "Calendar validation",
+      "status": "ok",
+      "agentId": "review@kernel",
+      "prId": "kernel-pr-141",
+      "acceptance": "The documented user path works; independent review and witness evidence are attached.",
+      "steps": [
+        {
+          "id": "queued",
+          "label": "queued",
+          "state": "done",
+          "at": "2026-10-02T14:16:00.000Z",
+          "detail": "Completed with recorded evidence"
+        },
+        {
+          "id": "build",
+          "label": "build",
+          "state": "done",
+          "at": "2026-10-02T14:28:00.000Z",
+          "detail": "Completed with recorded evidence"
+        },
+        {
+          "id": "PR",
+          "label": "PR",
+          "state": "done",
+          "at": "2026-10-02T14:40:00.000Z",
+          "detail": "Completed with recorded evidence"
+        },
+        {
+          "id": "review",
+          "label": "review",
+          "state": "active",
+          "at": "2026-10-02T14:52:00.000Z",
+          "detail": "In progress"
+        },
+        {
+          "id": "QA",
+          "label": "QA",
+          "state": "unknown",
+          "at": null,
+          "detail": "No event yet"
+        },
+        {
+          "id": "gate",
+          "label": "gate",
+          "state": "unknown",
+          "at": null,
+          "detail": "No event yet"
+        },
+        {
+          "id": "merged",
+          "label": "merged",
+          "state": "unknown",
+          "at": null,
+          "detail": "No event yet"
+        },
+        {
+          "id": "witness",
+          "label": "witness",
+          "state": "unknown",
+          "at": null,
+          "detail": "No event yet"
+        }
+      ],
+      "createdAt": "2026-10-02T13:22:00.000Z",
+      "updatedAt": "2026-10-02T14:50:00.000Z"
+    },
+    {
+      "id": "kernel-task-3",
+      "teamId": "kernel",
+      "title": "Booking emails",
+      "status": "ok",
+      "agentId": "qa@kernel",
+      "prId": "kernel-pr-142",
+      "acceptance": "The documented user path works; independent review and witness evidence are attached.",
+      "steps": [
+        {
+          "id": "queued",
+          "label": "queued",
+          "state": "done",
+          "at": "2026-10-02T14:04:00.000Z",
+          "detail": "Completed with recorded evidence"
+        },
+        {
+          "id": "build",
+          "label": "build",
+          "state": "done",
+          "at": "2026-10-02T14:16:00.000Z",
+          "detail": "Completed with recorded evidence"
+        },
+        {
+          "id": "PR",
+          "label": "PR",
+          "state": "done",
+          "at": "2026-10-02T14:28:00.000Z",
+          "detail": "Completed with recorded evidence"
+        },
+        {
+          "id": "review",
+          "label": "review",
+          "state": "done",
+          "at": "2026-10-02T14:40:00.000Z",
+          "detail": "Completed with recorded evidence"
+        },
+        {
+          "id": "QA",
+          "label": "QA",
+          "state": "active",
+          "at": "2026-10-02T14:52:00.000Z",
+          "detail": "In progress"
+        },
+        {
+          "id": "gate",
+          "label": "gate",
+          "state": "unknown",
+          "at": null,
+          "detail": "No event yet"
+        },
+        {
+          "id": "merged",
+          "label": "merged",
+          "state": "unknown",
+          "at": null,
+          "detail": "No event yet"
+        },
+        {
+          "id": "witness",
+          "label": "witness",
+          "state": "unknown",
+          "at": null,
+          "detail": "No event yet"
+        }
+      ],
+      "createdAt": "2026-10-02T13:07:00.000Z",
+      "updatedAt": "2026-10-02T14:49:00.000Z"
+    }
+  ],
+  "prs": [
+    {
+      "id": "atlas-pr-101",
+      "teamId": "atlas",
+      "title": "Calendar validation",
+      "url": "https://example.org/demo/pull/101",
+      "number": 101,
+      "state": "OPEN",
+      "additions": 126,
+      "deletions": 31,
+      "files": 5,
+      "checks": [
+        {
+          "id": "ci",
+          "label": "Tests",
+          "state": "done",
+          "at": "2026-10-02T14:47:00.000Z",
+          "detail": "24 tests pass"
+        }
+      ],
+      "reviews": [
+        {
+          "id": "review",
+          "label": "Independent review",
+          "state": "done",
+          "at": "2026-10-02T14:49:00.000Z",
+          "detail": "Exact-head PASS"
+        }
+      ],
+      "verdict": "ACT",
+      "band": "act",
+      "reason": "Checks and independent review support this candidate.",
+      "signals": [
+        {
+          "name": "Tests",
+          "value": "pass"
+        },
+        {
+          "name": "Review",
+          "value": "pass"
+        },
+        {
+          "name": "Change risk",
+          "value": "bounded"
+        }
+      ],
+      "at": "2026-10-02T14:50:00.000Z"
+    },
+    {
+      "id": "atlas-pr-102",
+      "teamId": "atlas",
+      "title": "Booking emails",
+      "url": "https://example.org/demo/pull/102",
+      "number": 102,
+      "state": "OPEN",
+      "additions": 126,
+      "deletions": 31,
+      "files": 5,
+      "checks": [
+        {
+          "id": "ci",
+          "label": "Tests",
+          "state": "done",
+          "at": "2026-10-02T14:47:00.000Z",
+          "detail": "24 tests pass"
+        }
+      ],
+      "reviews": [
+        {
+          "id": "review",
+          "label": "Independent review",
+          "state": "done",
+          "at": "2026-10-02T14:49:00.000Z",
+          "detail": "Exact-head PASS"
+        }
+      ],
+      "verdict": "ACT",
+      "band": "act",
+      "reason": "Checks and independent review support this candidate.",
+      "signals": [
+        {
+          "name": "Tests",
+          "value": "pass"
+        },
+        {
+          "name": "Review",
+          "value": "pass"
+        },
+        {
+          "name": "Change risk",
+          "value": "bounded"
+        }
+      ],
+      "at": "2026-10-02T14:50:00.000Z"
+    },
+    {
+      "id": "beacon-pr-111",
+      "teamId": "beacon",
+      "title": "Calendar validation",
+      "url": "https://example.org/demo/pull/111",
+      "number": 111,
+      "state": "OPEN",
+      "additions": 126,
+      "deletions": 31,
+      "files": 5,
+      "checks": [
+        {
+          "id": "ci",
+          "label": "Tests",
+          "state": "done",
+          "at": "2026-10-02T14:47:00.000Z",
+          "detail": "24 tests pass"
+        }
+      ],
+      "reviews": [
+        {
+          "id": "review",
+          "label": "Independent review",
+          "state": "done",
+          "at": "2026-10-02T14:49:00.000Z",
+          "detail": "Exact-head PASS"
+        }
+      ],
+      "verdict": "HOLD",
+      "band": "uncertain",
+      "reason": "Owner decision required before this change proceeds.",
+      "signals": [
+        {
+          "name": "Tests",
+          "value": "pass"
+        },
+        {
+          "name": "Review",
+          "value": "pass"
+        },
+        {
+          "name": "Change risk",
+          "value": "bounded"
+        }
+      ],
+      "at": "2026-10-02T14:50:00.000Z"
+    },
+    {
+      "id": "beacon-pr-112",
+      "teamId": "beacon",
+      "title": "Booking emails",
+      "url": "https://example.org/demo/pull/112",
+      "number": 112,
+      "state": "OPEN",
+      "additions": 126,
+      "deletions": 31,
+      "files": 5,
+      "checks": [
+        {
+          "id": "ci",
+          "label": "Tests",
+          "state": "done",
+          "at": "2026-10-02T14:47:00.000Z",
+          "detail": "24 tests pass"
+        }
+      ],
+      "reviews": [
+        {
+          "id": "review",
+          "label": "Independent review",
+          "state": "done",
+          "at": "2026-10-02T14:49:00.000Z",
+          "detail": "Exact-head PASS"
+        }
+      ],
+      "verdict": "HOLD",
+      "band": "uncertain",
+      "reason": "Owner decision required before this change proceeds.",
+      "signals": [
+        {
+          "name": "Tests",
+          "value": "pass"
+        },
+        {
+          "name": "Review",
+          "value": "pass"
+        },
+        {
+          "name": "Change risk",
+          "value": "bounded"
+        }
+      ],
+      "at": "2026-10-02T14:50:00.000Z"
+    },
+    {
+      "id": "cobalt-pr-121",
+      "teamId": "cobalt",
+      "title": "Calendar validation",
+      "url": "https://example.org/demo/pull/121",
+      "number": 121,
+      "state": "OPEN",
+      "additions": 126,
+      "deletions": 31,
+      "files": 5,
+      "checks": [
+        {
+          "id": "ci",
+          "label": "Tests",
+          "state": "done",
+          "at": "2026-10-02T14:47:00.000Z",
+          "detail": "24 tests pass"
+        }
+      ],
+      "reviews": [
+        {
+          "id": "review",
+          "label": "Independent review",
+          "state": "done",
+          "at": "2026-10-02T14:49:00.000Z",
+          "detail": "Exact-head PASS"
+        }
+      ],
+      "verdict": "WAIT",
+      "band": "review",
+      "reason": "Second exact-head review is pending.",
+      "signals": [
+        {
+          "name": "Tests",
+          "value": "pass"
+        },
+        {
+          "name": "Review",
+          "value": "pending"
+        },
+        {
+          "name": "Change risk",
+          "value": "bounded"
+        }
+      ],
+      "at": "2026-10-02T14:50:00.000Z"
+    },
+    {
+      "id": "cobalt-pr-122",
+      "teamId": "cobalt",
+      "title": "Booking emails",
+      "url": "https://example.org/demo/pull/122",
+      "number": 122,
+      "state": "OPEN",
+      "additions": 126,
+      "deletions": 31,
+      "files": 5,
+      "checks": [
+        {
+          "id": "ci",
+          "label": "Tests",
+          "state": "done",
+          "at": "2026-10-02T14:47:00.000Z",
+          "detail": "24 tests pass"
+        }
+      ],
+      "reviews": [
+        {
+          "id": "review",
+          "label": "Independent review",
+          "state": "done",
+          "at": "2026-10-02T14:49:00.000Z",
+          "detail": "Exact-head PASS"
+        }
+      ],
+      "verdict": "WAIT",
+      "band": "review",
+      "reason": "Second exact-head review is pending.",
+      "signals": [
+        {
+          "name": "Tests",
+          "value": "pass"
+        },
+        {
+          "name": "Review",
+          "value": "pending"
+        },
+        {
+          "name": "Change risk",
+          "value": "bounded"
+        }
+      ],
+      "at": "2026-10-02T14:50:00.000Z"
+    },
+    {
+      "id": "factory-pr-131",
+      "teamId": "factory",
+      "title": "Calendar validation",
+      "url": "https://example.org/demo/pull/131",
+      "number": 131,
+      "state": "OPEN",
+      "additions": 126,
+      "deletions": 31,
+      "files": 5,
+      "checks": [
+        {
+          "id": "ci",
+          "label": "Tests",
+          "state": "done",
+          "at": "2026-10-02T14:47:00.000Z",
+          "detail": "24 tests pass"
+        }
+      ],
+      "reviews": [
+        {
+          "id": "review",
+          "label": "Independent review",
+          "state": "done",
+          "at": "2026-10-02T14:49:00.000Z",
+          "detail": "Exact-head PASS"
+        }
+      ],
+      "verdict": "ACT",
+      "band": "act",
+      "reason": "Checks and independent review support this candidate.",
+      "signals": [
+        {
+          "name": "Tests",
+          "value": "pass"
+        },
+        {
+          "name": "Review",
+          "value": "pass"
+        },
+        {
+          "name": "Change risk",
+          "value": "bounded"
+        }
+      ],
+      "at": "2026-10-02T14:50:00.000Z"
+    },
+    {
+      "id": "factory-pr-132",
+      "teamId": "factory",
+      "title": "Booking emails",
+      "url": "https://example.org/demo/pull/132",
+      "number": 132,
+      "state": "OPEN",
+      "additions": 126,
+      "deletions": 31,
+      "files": 5,
+      "checks": [
+        {
+          "id": "ci",
+          "label": "Tests",
+          "state": "done",
+          "at": "2026-10-02T14:47:00.000Z",
+          "detail": "24 tests pass"
+        }
+      ],
+      "reviews": [
+        {
+          "id": "review",
+          "label": "Independent review",
+          "state": "done",
+          "at": "2026-10-02T14:49:00.000Z",
+          "detail": "Exact-head PASS"
+        }
+      ],
+      "verdict": "ACT",
+      "band": "act",
+      "reason": "Checks and independent review support this candidate.",
+      "signals": [
+        {
+          "name": "Tests",
+          "value": "pass"
+        },
+        {
+          "name": "Review",
+          "value": "pass"
+        },
+        {
+          "name": "Change risk",
+          "value": "bounded"
+        }
+      ],
+      "at": "2026-10-02T14:50:00.000Z"
+    },
+    {
+      "id": "kernel-pr-141",
+      "teamId": "kernel",
+      "title": "Calendar validation",
+      "url": "https://example.org/demo/pull/141",
+      "number": 141,
+      "state": "OPEN",
+      "additions": 126,
+      "deletions": 31,
+      "files": 5,
+      "checks": [
+        {
+          "id": "ci",
+          "label": "Tests",
+          "state": "done",
+          "at": "2026-10-02T14:47:00.000Z",
+          "detail": "24 tests pass"
+        }
+      ],
+      "reviews": [
+        {
+          "id": "review",
+          "label": "Independent review",
+          "state": "done",
+          "at": "2026-10-02T14:49:00.000Z",
+          "detail": "Exact-head PASS"
+        }
+      ],
+      "verdict": "ACT",
+      "band": "act",
+      "reason": "Checks and independent review support this candidate.",
+      "signals": [
+        {
+          "name": "Tests",
+          "value": "pass"
+        },
+        {
+          "name": "Review",
+          "value": "pass"
+        },
+        {
+          "name": "Change risk",
+          "value": "bounded"
+        }
+      ],
+      "at": "2026-10-02T14:50:00.000Z"
+    },
+    {
+      "id": "kernel-pr-142",
+      "teamId": "kernel",
+      "title": "Booking emails",
+      "url": "https://example.org/demo/pull/142",
+      "number": 142,
+      "state": "OPEN",
+      "additions": 126,
+      "deletions": 31,
+      "files": 5,
+      "checks": [
+        {
+          "id": "ci",
+          "label": "Tests",
+          "state": "done",
+          "at": "2026-10-02T14:47:00.000Z",
+          "detail": "24 tests pass"
+        }
+      ],
+      "reviews": [
+        {
+          "id": "review",
+          "label": "Independent review",
+          "state": "done",
+          "at": "2026-10-02T14:49:00.000Z",
+          "detail": "Exact-head PASS"
+        }
+      ],
+      "verdict": "ACT",
+      "band": "act",
+      "reason": "Checks and independent review support this candidate.",
+      "signals": [
+        {
+          "name": "Tests",
+          "value": "pass"
+        },
+        {
+          "name": "Review",
+          "value": "pass"
+        },
+        {
+          "name": "Change risk",
+          "value": "bounded"
+        }
+      ],
+      "at": "2026-10-02T14:50:00.000Z"
+    }
+  ],
+  "capacity": [
+    {
+      "id": "claude",
+      "provider": "Claude",
+      "label": "Claude",
+      "used": 75,
+      "weekly": 48,
+      "resetAt": "2026-10-02T15:29:00.000Z",
+      "credits": null,
+      "status": "waiting",
+      "reason": "One account cooling; another remains available",
+      "history": [
+        {
+          "at": 1790925720000,
+          "used": 13
+        },
+        {
+          "at": 1790927520000,
+          "used": 17
+        },
+        {
+          "at": 1790929320000,
+          "used": 21
+        },
+        {
+          "at": 1790931120000,
+          "used": 25
+        },
+        {
+          "at": 1790932920000,
+          "used": 29
+        },
+        {
+          "at": 1790934720000,
+          "used": 33
+        },
+        {
+          "at": 1790936520000,
+          "used": 38
+        },
+        {
+          "at": 1790938320000,
+          "used": 42
+        },
+        {
+          "at": 1790940120000,
+          "used": 46
+        },
+        {
+          "at": 1790941920000,
+          "used": 50
+        },
+        {
+          "at": 1790943720000,
+          "used": 54
+        },
+        {
+          "at": 1790945520000,
+          "used": 58
+        },
+        {
+          "at": 1790947320000,
+          "used": 63
+        },
+        {
+          "at": 1790949120000,
+          "used": 67
+        },
+        {
+          "at": 1790950920000,
+          "used": 71
+        },
+        {
+          "at": 1790952720000,
+          "used": 75
+        }
+      ]
+    },
+    {
+      "id": "codex",
+      "provider": "Codex",
+      "label": "Codex",
+      "used": 40,
+      "weekly": 36,
+      "resetAt": "2026-10-02T15:43:00.000Z",
+      "credits": null,
+      "status": "ok",
+      "reason": "Available",
+      "history": [
+        {
+          "at": 1790925720000,
+          "used": 7
+        },
+        {
+          "at": 1790927520000,
+          "used": 9
+        },
+        {
+          "at": 1790929320000,
+          "used": 11
+        },
+        {
+          "at": 1790931120000,
+          "used": 13
+        },
+        {
+          "at": 1790932920000,
+          "used": 16
+        },
+        {
+          "at": 1790934720000,
+          "used": 18
+        },
+        {
+          "at": 1790936520000,
+          "used": 20
+        },
+        {
+          "at": 1790938320000,
+          "used": 22
+        },
+        {
+          "at": 1790940120000,
+          "used": 24
+        },
+        {
+          "at": 1790941920000,
+          "used": 27
+        },
+        {
+          "at": 1790943720000,
+          "used": 29
+        },
+        {
+          "at": 1790945520000,
+          "used": 31
+        },
+        {
+          "at": 1790947320000,
+          "used": 33
+        },
+        {
+          "at": 1790949120000,
+          "used": 36
+        },
+        {
+          "at": 1790950920000,
+          "used": 38
+        },
+        {
+          "at": 1790952720000,
+          "used": 40
+        }
+      ]
+    },
+    {
+      "id": "grok",
+      "provider": "Grok",
+      "label": "Grok",
+      "used": 31,
+      "weekly": 22,
+      "resetAt": "2026-10-02T15:43:00.000Z",
+      "credits": null,
+      "status": "ok",
+      "reason": "Available",
+      "history": [
+        {
+          "at": 1790925720000,
+          "used": 5
+        },
+        {
+          "at": 1790927520000,
+          "used": 7
+        },
+        {
+          "at": 1790929320000,
+          "used": 9
+        },
+        {
+          "at": 1790931120000,
+          "used": 10
+        },
+        {
+          "at": 1790932920000,
+          "used": 12
+        },
+        {
+          "at": 1790934720000,
+          "used": 14
+        },
+        {
+          "at": 1790936520000,
+          "used": 16
+        },
+        {
+          "at": 1790938320000,
+          "used": 17
+        },
+        {
+          "at": 1790940120000,
+          "used": 19
+        },
+        {
+          "at": 1790941920000,
+          "used": 21
+        },
+        {
+          "at": 1790943720000,
+          "used": 22
+        },
+        {
+          "at": 1790945520000,
+          "used": 24
+        },
+        {
+          "at": 1790947320000,
+          "used": 26
+        },
+        {
+          "at": 1790949120000,
+          "used": 28
+        },
+        {
+          "at": 1790950920000,
+          "used": 29
+        },
+        {
+          "at": 1790952720000,
+          "used": 31
+        }
+      ]
+    },
+    {
+      "id": "kimi",
+      "provider": "Kimi",
+      "label": "Kimi",
+      "used": 44,
+      "weekly": 39,
+      "resetAt": "2026-10-02T16:57:00.000Z",
+      "credits": null,
+      "status": "ok",
+      "reason": "Available",
+      "history": [
+        {
+          "at": 1790925720000,
+          "used": 7
+        },
+        {
+          "at": 1790927520000,
+          "used": 10
+        },
+        {
+          "at": 1790929320000,
+          "used": 12
+        },
+        {
+          "at": 1790931120000,
+          "used": 15
+        },
+        {
+          "at": 1790932920000,
+          "used": 17
+        },
+        {
+          "at": 1790934720000,
+          "used": 20
+        },
+        {
+          "at": 1790936520000,
+          "used": 22
+        },
+        {
+          "at": 1790938320000,
+          "used": 24
+        },
+        {
+          "at": 1790940120000,
+          "used": 27
+        },
+        {
+          "at": 1790941920000,
+          "used": 29
+        },
+        {
+          "at": 1790943720000,
+          "used": 32
+        },
+        {
+          "at": 1790945520000,
+          "used": 34
+        },
+        {
+          "at": 1790947320000,
+          "used": 37
+        },
+        {
+          "at": 1790949120000,
+          "used": 39
+        },
+        {
+          "at": 1790950920000,
+          "used": 42
+        },
+        {
+          "at": 1790952720000,
+          "used": 44
+        }
+      ]
+    }
+  ],
+  "decisions": [
+    {
+      "id": "decision-retention",
+      "teamId": "beacon",
+      "question": "Keep closed cases for seven years or two?",
+      "blocks": "The records milestone",
+      "createdAt": "2026-10-02T14:11:00.000Z"
+    },
+    {
+      "id": "decision-reviews",
+      "teamId": "factory",
+      "question": "Allow a second reviewer runtime?",
+      "blocks": "Two reviews are waiting",
+      "createdAt": "2026-10-02T14:40:00.000Z"
+    }
+  ],
+  "events": [
+    {
+      "id": "e1",
+      "at": "2026-10-02T14:52:00.000Z",
+      "teamId": "factory",
+      "text": "Three tasks rerouted to an available account.",
+      "status": "waiting"
+    },
+    {
+      "id": "e2",
+      "at": "2026-10-02T14:51:00.000Z",
+      "teamId": "factory",
+      "text": "One provider account is cooling; another is available.",
+      "status": "waiting"
+    },
+    {
+      "id": "e3",
+      "at": "2026-10-02T14:49:00.000Z",
+      "teamId": "atlas",
+      "text": "PR #101 passed its independent gate.",
+      "status": "ok"
+    },
+    {
+      "id": "e4",
+      "at": "2026-10-02T14:47:00.000Z",
+      "teamId": "cobalt",
+      "text": "Staging probe reported unavailable.",
+      "status": "blocked"
+    },
+    {
+      "id": "e5",
+      "at": "2026-10-02T14:45:00.000Z",
+      "teamId": "beacon",
+      "text": "A decision is ready for the owner.",
+      "status": "blocked"
+    }
+  ]
+}
