@@ -5,11 +5,11 @@ export type Activity = "working" | "idle" | "stuck" | "unknown" | "detached" | "
 export interface Seat {
   rig: string; pod: string; name: string; session: string; runtime: string; model: string | null;
   ctx: number | null; activity: Activity; why: string | null; assigned: number; pending: number; inProgress: number; blocked: number;
-  lastActivityAt: string | null; kind: string; tokens?: number | null; window?: number | null;
+  lastActivityAt: string | null; kind: string; cwd?: string | null; tokens?: number | null; window?: number | null;
   ingest?: { state: string; reason: string | null; at: string | null } | null;   // the daemon's transcript capture for this seat
 }
 export interface Rig { id: string; name: string; lifecycle: string; seats: Seat[] }
-export interface QRow { id: string; state: string; priority: string; source: string; destination: string; blockedOn: string | null; tags: string[]; created: string; updated: string; summary: string | null }
+export interface QRow { id: string; state: string; priority: string; source: string; destination: string; blockedOn: string | null; tags: string[]; created: string; updated: string; summary: string | null; humanIntent?: string | null; humanDetail?: string | null; body?: string | null; targetRepo?: string | null; evidenceRef?: string | null; waiting?: {nextBackstop?: {mechanism?:string;dueAt?:string|null}|null; blocker?: {ref?:string;owner?:string|null;state?:string|null}|null; liveness?: {activity?:string;needsInput?:{count?:number}}|null}|null; resolution?: string | null; closureReason?: string | null }
 export interface Gate { ts: string; decision: string; band: string }
 /** short / weekly: used percent of each window the provider reports (null: no such limit, e.g. Codex has no 5 h window
  *  since 2026-10); onCredits: a window is used up and the account carries on on credits, so it is not exhausted;
@@ -18,7 +18,7 @@ export interface Account { label: string; provider: string; status: string; shor
   /** Its cooldowns (the proxy's retry restrictions, not overall availability). A credential-scope cooldown gates the
    *  whole account and wins over model timers; otherwise the earliest model timer, with how many models are cooling.
    *  `blocked`: disabled, so no timer promises it back ("unavailable" is how the proxy marks a cooldown itself). */
-  coolScope?: "credential" | "models" | null; coolUntil?: string | null; coolReason?: string | null; coolModels?: number; blocked?: boolean }
+  coolScope?: "credential" | "models" | null; coolUntil?: string | null; coolReason?: string | null; coolModels?: number; blocked?: boolean; resetAt?: string | null; credits?: string | null; observedAt?: string | null }
 export interface Heavy { cls: string; held: number; total: number; waiting: number }
 export interface Event { at: string; kind: string; rig: string | null; text: string; seat?: string | null }
 export interface Raw {
@@ -58,7 +58,7 @@ export function seatFromNode(n: Record<string, any>): Seat {
     model: n.model ? String(n.model).replace(/\[1m\]$/, "") : null,
     ctx: n.contextUsage?.availability === "known" && typeof n.contextUsage.usedPercentage === "number" ? Math.round(n.contextUsage.usedPercentage) : null,
     activity, why, assigned: n.assignedWorkCount ?? 0, pending: n.pendingWorkCount ?? 0, inProgress: n.inProgressWorkCount ?? 0,
-    blocked: n.blockedWorkCount ?? 0, lastActivityAt: n.lastActivityAt ?? null, kind: String(n.nodeKind ?? "agent"),
+    blocked: n.blockedWorkCount ?? 0, lastActivityAt: n.lastActivityAt ?? null, kind: String(n.nodeKind ?? "agent"), cwd: typeof n.cwd === "string" ? n.cwd : null,
     tokens: typeof n.contextUsage?.totalInputTokens === "number" ? n.contextUsage.totalInputTokens : null,
     window: typeof n.contextUsage?.contextWindowSize === "number" ? n.contextUsage.contextWindowSize : null,
     ingest: n.transcriptIngest ? { state: String(n.transcriptIngest.state ?? "unknown"), reason: n.transcriptIngest.reason ?? null, at: n.transcriptIngest.lastCapturedAt ?? null } : null,
@@ -66,7 +66,7 @@ export function seatFromNode(n: Record<string, any>): Seat {
 }
 export function qrowFromItem(q: Record<string, any>): QRow {
   return { id: q.qitemId, state: q.state, priority: q.priority ?? "routine", source: q.sourceSession ?? "", destination: q.destinationSession ?? "",
-    blockedOn: q.blockedOn ?? null, tags: Array.isArray(q.tags) ? q.tags : [], created: q.tsCreated, updated: q.tsUpdated, summary: q.summary ?? null };
+    blockedOn: q.blockedOn ?? null, tags: Array.isArray(q.tags) ? q.tags : [], created: q.tsCreated, updated: q.tsUpdated, summary: q.summary ?? null, humanIntent: q.humanIntent ?? null, humanDetail: q.humanDetail ?? null, body: q.body ?? null, targetRepo: q.targetRepo ?? null, evidenceRef: q.evidenceRef ?? null, waiting: q.waiting ?? null, resolution: typeof q.resolution === "string" ? q.resolution : null, closureReason: q.closureReason ?? null };
 }
 /** A daemon event as one ticker line, or null for the noise (view refreshes, activity samples, watchdog skips). */
 export function eventLine(e: Record<string, any>): Event | null {

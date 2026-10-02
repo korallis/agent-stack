@@ -107,7 +107,7 @@ test("CLI and ':' command: --stuck-minutes (5-240), RIG_CONSOLE_STUCK_MINUTES, :
   assert.equal(parseArgs([], { RIG_CONSOLE_STUCK_MINUTES: "20" }).stuckMinutes, 20);
   assert.equal(parseArgs([], { RIG_CONSOLE_STUCK_MINUTES: "2" }).stuckMinutes, 15, "out of range: the default");
   for (const bad of ["4", "241", "ten", "1.5"]) {
-    const r = spawnSync(process.execPath, [join(repo, "console/src/main.ts"), "--stuck-minutes", bad], { encoding: "utf8" });
+    const r = spawnSync(process.execPath, [join(repo, "console/src/main.ts"), "--legacy", "--stuck-minutes", bad], { encoding: "utf8" });
     assert.equal(r.status, 2, bad); assert.match(r.stderr, /--stuck-minutes is 5 to 240/);
   }
   const s = st();
@@ -156,7 +156,7 @@ test("CLI: the live sample written to history uses the conservative verdict and 
     server.listen(0, "127.0.0.1", () => ok({ url: `http://127.0.0.1:${server.address().port}`, close: () => { server.closeAllConnections(); server.close(); } }));
   });
   const once = (url, file, extra = []) => new Promise((ok) => {
-    const p = spawn(process.execPath, [join(repo, "console/src/main.ts"), "--once", "--size", "176x50", "--color", "0", "--url", url, "--history", file, ...extra],
+    const p = spawn(process.execPath, [join(repo, "console/src/main.ts"), "--legacy", "--once", "--size", "176x50", "--color", "0", "--url", url, "--history", file, ...extra],
       { env: { PATH: "/usr/bin:/bin", HOME: scratch, AGENT_STACK_STATE: join(scratch, "state") } });
     p.stdout.resume(); p.on("exit", (code) => ok(code));
   });

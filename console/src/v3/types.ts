@@ -1,0 +1,15 @@
+/** Renderer-neutral adapter contract. No daemon, filesystem or terminal objects. */
+export type Status = 'ok' | 'waiting' | 'blocked' | 'unknown';
+export type View = 'fleet' | 'team' | 'agent' | 'task' | 'pr' | 'capacity';
+export interface Step { id: string; label: string; state: 'done' | 'active' | 'waiting' | 'blocked' | 'unknown'; at: string | null; detail: string }
+export interface Team { id: string; name: string; description: string; status: Status; reason: string; sentence: string; milestone: string | null; progress: number | null; progressLabel?:string|null; kind?:'project'|'operations'; eta: string | null; milestones: Step[]; agentIds: string[]; taskIds: string[]; merges: {day:string;count:number}[] | null }
+export interface Agent { id:string; teamId:string; name:string; model:string|null; status:Status; activity:string; taskId:string|null; context:number|null; contextHistory:number[]; tail:string|null; tailAt:number|null; history:Step[] }
+export interface Task { id:string; teamId:string|null; title:string; body?:string|null; status:Status; agentId:string|null; prId:string|null; acceptance:string|null; steps:Step[]; createdAt:string|null; updatedAt:string|null }
+export interface PullRequest { id:string; teamId:string|null; title:string; url:string; number:number; state:string; additions:number|null; deletions:number|null; files:number|null; checks:Step[]; reviews:Step[]; verdict:'ACT'|'HOLD'|'WAIT'|'UNKNOWN'; band:string|null; reason:string|null; signals:{name:string;value:string}[]; at:string|null; observedAt?:string|null; freshness?:'fresh'|'stale'; refreshError?:string|null; historicalGate?:{verdict:'ACT'|'HOLD'|'WAIT'|'UNKNOWN';reason:string|null;observedAt:string|null} }
+export interface Capacity { id:string; provider:string; label:string; used:number|null; weekly:number|null; resetAt:string|null; cooldownUntil?:string|null; credits:string|null; status:Status; reason:string; history:{at:number;used:number;window?:'5h'|'weekly'}[] }
+export interface Decision { id:string; teamId:string|null; question:string; blocks:string|null; createdAt:string }
+export interface FleetEvent { id:string; at:string; teamId:string|null; text:string; status:Status; taskId?:string|null }
+export interface Snapshot { version:1; at:number; source:string; stale:boolean; sources:Record<string,string>; headline:string; teams:Team[]; agents:Agent[]; tasks:Task[]; prs:PullRequest[]; capacity:Capacity[]; decisions:Decision[]; lastDecision?:{question:string;answeredAt:string;answer?:string|null}|null; events:FleetEvent[] }
+export interface Adapter { snapshot():Snapshot; start(onChange:()=>void):void; stop():void; refresh():void; select(selection:{teamId?:string|null;agentId?:string|null;taskId?:string|null;prId?:string|null}):void }
+export interface ViewState { view:View; teamId:string|null; agentId:string|null; taskId:string|null; prId:string|null; selected:number; scroll:number; help:boolean; command:string|null; frame:number; paused:boolean; note:string|null }
+export interface Hit { x:number; y:number; w:number; h:number; view:View; id?:string; kind?:'team'|'agent'|'task'|'pr'|'decision' }

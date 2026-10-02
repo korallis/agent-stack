@@ -14,20 +14,14 @@ this merge), and Playwright gives the agents a real browser.
 
 ## Watch the fleet: rig-console
 
-<p align="center"><img src="docs/assets/rig-console/demo.gif" alt="rig-console touring a demo fleet: Mission Control, the Seat Matrix, the River and a slice's journey, Focus, a seat's live terminal, Pool and System, and a theme switch" width="100%"></p>
+<p align="center"><img src="docs/assets/rig-console/demo.gif" alt="rig-console v3: Fleet, Team, Agent, Task, PR and gate, Capacity, help and command palette, using invented data" width="100%"></p>
 
-`rig-console` is a full-screen, read-only console for every team on the machine. One screen tells you what is
-working, what is stuck and why, what waits on you, how far each slice has got, and how much of each subscription is
-left.
+`rig-console` is a full-screen, read-only console for every team on the machine. It opens with what needs you,
+then lets you follow a project through its agents, tasks, reviews and merge gate. Capacity shows recorded usage
+and reset times. Missing measurements stay unknown; cached fleet data is marked stale.
 
-- **It answers "what needs me?" first.** Owner decisions lead the Focus view; the rest of the fleet is a pulse.
-- **"Stuck" is earned, never a guess.** A seat is stuck only when it has been quiet for 15 minutes and none of its
-  work has moved; the console always says why, with the ages.
-- **It is safe to leave open.** It only reads the fleet (its one write is its own 24 h history file); it never
-  touches tmux; it costs the daemon about 0.6% of one core.
-
-Try it on the demo fleet, no team needed: `rig-console --fixture docs/fixtures/demo-fleet.json`. The gallery, keys and
-more examples are in [rig-console in detail](#rig-console-in-detail).
+Try it from this checkout with `node console/src/main.ts --fixture console/fixtures/v3.json`. No daemon or account
+is needed. The gallery, keys and examples are in [rig-console in detail](#rig-console-in-detail).
 
 ## How it works
 
@@ -316,113 +310,84 @@ and secrets files into a transcript: [docs/REFERENCE.md](docs/REFERENCE.md#crede
 
 ## rig-console in detail
 
-Five views, a drill-in for any seat, a command bar and four themes. Every image here is drawn from the neutral demo
-fleet in `docs/fixtures/demo-fleet.json` by `node console/docs/make-assets.mjs`, so they can be redrawn after any UI
-change.
+Six views share one snapshot: Fleet, Team, Agent, Task, PR / gate, and Capacity. The gallery and tour below use
+only invented data from `console/fixtures/v3.json`, rendered by the actual console. Regenerate them with
+`node console/docs/make-assets.mjs` (Chromium and ImageMagick required); `--check` verifies all frames without a browser.
 
 <table>
 <tr>
-<td width="50%"><img src="docs/assets/rig-console/mission-control.png" alt="Mission Control"><br><b>1 Mission Control.</b> Working, idle, stuck, blocked, owner decisions and today's merge-gate decisions; one card per rig; work in flight by role; the account pool; system health; the event log.</td>
-<td width="50%"><img src="docs/assets/rig-console/seat-matrix.png" alt="Seat Matrix"><br><b>2 Seat Matrix.</b> Every seat of every rig: context use shaded (red at 80%), activity glyphs, 24 h telemetry, context pressure and the queue by rig.</td>
+<td width="50%"><img src="docs/assets/rig-console/fleet.png" alt="Fleet with decisions, progress rings and events"><br><b>1 Fleet.</b> A headline, decisions that need you, project progress rings, operational status, capacity and recent events. With no pending decisions, the last recorded answer appears when available.</td>
+<td width="50%"><img src="docs/assets/rig-console/team.png" alt="Team milestone timeline"><br><b>2 Team.</b> Milestones, feature journeys, agents and recorded merges per day.</td>
 </tr>
 <tr>
-<td><img src="docs/assets/rig-console/river.png" alt="The River"><br><b>3 The River.</b> One lane per rig; each open slice sits at the stage its work waits on, with each stage's median time in state and the share spent waiting.</td>
-<td><img src="docs/assets/rig-console/river-journey.png" alt="A slice's journey"><br><b>A slice's journey</b> (<code>⏎</code> on a slice): every row, who had it, worked vs waited per row and per stage, and what it waits on now.</td>
+<td><img src="docs/assets/rig-console/agent.png" alt="Agent terminal and context"><br><b>3 Agent.</b> The terminal tail, context usage, current task and history.</td>
+<td><img src="docs/assets/rig-console/task.png" alt="Task journey and acceptance criteria"><br><b>4 Task.</b> Its journey, recorded time, assignment, acceptance criteria and linked pull request.</td>
 </tr>
 <tr>
-<td><img src="docs/assets/rig-console/focus.png" alt="Calm Focus"><br><b>4 Focus.</b> What needs you first (answered in Slack, never from the console), then the fleet pulse, a live timeline and each rig's progress today.</td>
-<td><img src="docs/assets/rig-console/seat-drill-in.png" alt="A seat's drill-in"><br><b>A seat's drill-in</b> (<code>⏎</code> on a seat, or <code>:seat &lt;name&gt;</code>): its work and slice stages, a context gauge, recent history and its live terminal.</td>
+<td><img src="docs/assets/rig-console/pr-gate.png" alt="Pull request checks and Jev gate"><br><b>5 PR / gate.</b> CI, reviews, the Jev verdict and its recorded signals.</td>
+<td><img src="docs/assets/rig-console/capacity.png" alt="Capacity history and reset times"><br><b>6 Capacity.</b> Usage history with labeled windows, account coverage, reset or cooldown times, and recorded fallback events.</td>
 </tr>
 <tr>
-<td><img src="docs/assets/rig-console/pool.png" alt="Pool and System"><br><b>5 Pool &amp; System.</b> 24 h graphs, every subscription's 5-hour and weekly use (Codex has only a weekly window; accounts running on credits are counted), and system health.</td>
-<td><img src="docs/assets/rig-console/command-bar.png" alt="The command bar"><br><b>The <code>:</code> command bar.</b> Jump to a view, a seat, a rig or a slice, set the stuck threshold or the theme; <code>Tab</code> completes.</td>
+<td><img src="docs/assets/rig-console/help.png" alt="Keyboard help"><br><b>Help.</b> Keys and status meanings, available with <code>?</code>.</td>
+<td><img src="docs/assets/rig-console/command-palette.png" alt="Command palette searching Cobalt"><br><b>Command palette.</b> Press <code>:</code> and search for a team, agent, task or PR.</td>
 </tr>
 </table>
-
-Four themes, shown at 120 columns (`--theme`, `:theme`, or `RIG_CONSOLE_THEME`):
-
-<table>
-<tr>
-<td width="25%"><img src="docs/assets/rig-console/theme-pad39a.png" alt="Pad 39A theme"><br>Pad 39A (default)</td>
-<td width="25%"><img src="docs/assets/rig-console/theme-catppuccin.png" alt="Catppuccin theme"><br>Catppuccin</td>
-<td width="25%"><img src="docs/assets/rig-console/theme-tokyo-night.png" alt="Tokyo Night theme"><br>Tokyo Night</td>
-<td width="25%"><img src="docs/assets/rig-console/theme-nord.png" alt="Nord theme"><br>Nord</td>
-</tr>
-</table>
-
-It fits smaller terminals too. Mission Control at 120 columns:
-
-<img src="docs/assets/rig-console/mission-control-120.png" alt="Mission Control at 120 columns" width="70%">
 
 ### Try it
 
-Each line runs from a checkout on the demo fleet. No team, daemon or account is needed:
+Each line runs from a checkout on the neutral fixture with Node 22.18 or newer. No team, daemon, account or installed
+`rig-console` wrapper is needed:
 
 ```bash
 # Runs from a checkout (the README test runs every line; interactive ones also with --once).
 cd ~/Projects/agent-stack
-rig-console --fixture docs/fixtures/demo-fleet.json                                     # the demo fleet, full screen
-rig-console --fixture docs/fixtures/demo-fleet.json --once --size 176x50 --view river   # one frame to stdout
-rig-console --fixture docs/fixtures/demo-fleet.json --view matrix --theme tokyo-night
-rig-console --fixture docs/fixtures/demo-fleet.json --view focus --stuck-minutes 10
-rig-console --fixture docs/fixtures/demo-fleet.json --seat impl-codex-4@gamma
+node console/src/main.ts --fixture console/fixtures/v3.json
+node console/src/main.ts --fixture console/fixtures/v3.json --team cobalt
+node console/src/main.ts --fixture console/fixtures/v3.json --agent impl@cobalt
+node console/src/main.ts --fixture console/fixtures/v3.json --task cobalt-task-2
+node console/src/main.ts --fixture console/fixtures/v3.json --pr cobalt-pr-121
+node console/src/main.ts --fixture console/fixtures/v3.json --view capacity --once --size 160x50
 ```
 
-Inside the console, `:stuck 10` changes the stuck threshold and `:theme nord` the theme. On your own machine, with
-OpenRig running:
-
-```bash
-# Illustrative: needs the OpenRig daemon (the README test checks each command and flag exists).
-rig-console
-rig-console --view focus --interval 10
-```
+The installed `rig-console` command opens the same v3 console. With OpenRig running, omit `--fixture` to read the
+local fleet. The previous console remains available only with `--legacy`, for example
+`node console/src/main.ts --legacy --fixture docs/fixtures/demo-fleet.json --view home`.
 
 ### Keys
 
 | Key | What it does |
 | --- | --- |
-| `1` to `5` | Mission Control, Seat Matrix, River, Focus, Pool & System |
-| `←→↑↓` or `hjkl` | move between rigs, seats and slices |
-| `⏎` | open: a rig's seats, a seat's drill-in, a slice's journey |
-| `Tab` | next pane in Focus, Pool and a seat's drill-in |
-| `e` | expand the focused pane (again to collapse) |
-| `:` | the command bar: `home` `matrix` `river` `focus` `pool`, `seat <name>`, `rig <name>`, `slice <id>`, `stuck <minutes>`, `theme <name>` |
-| `[` `]` | previous and next slice, in a journey |
-| `j` `k` | select in a pane; scroll a seat's terminal |
-| `esc` | back |
-| `r` | refresh now |
+| `1` to `6` | Fleet, Team, Agent, Task, PR / gate, Capacity |
+| `←→↑↓` or `hjkl` | move the selection |
+| `⏎` | open the selected item |
+| Click | open a card, agent, task, PR or decision |
+| `:` | search the command palette; arrows select, Enter opens |
+| `j` `k` | select rows; scroll an agent's terminal, task detail or capacity accounts |
+| `[` `]` | scroll detail one line without changing the selected item |
+| `PgUp` `PgDn` | scroll detail one page |
+| `esc` | close an overlay or go back |
+| `p` | pause snapshot updates |
+| `r` | request a refresh |
 | `?` | help |
 | `q` | quit |
 
-### How "stuck" is decided
+### Data and guarantees
 
-A seat is **stuck** only when all three hold:
+- **Read-only.** Navigation reads fleet state; it does not answer decisions, dispatch work or merge PRs. The console
+  may write its own local cache and measurement history.
+- **Cached rendering.** Frames use an in-memory snapshot. Background reads enrich selected details without blocking
+  the screen on the daemon. Retained snapshots are marked stale when the live source is unavailable. A footer names
+  stale or unavailable supplemental sources even when the daemon is healthy.
+- **Evidence stays explicit.** Missing progress, ETA, context, history or gate evidence stays unknown or unavailable.
+  A missing value is not zero, a pass, or a prediction. Progress labels identify the recorded measure; operations
+  teams use an OPS status card. Charts use recorded samples. Capacity averages compare the same usage window
+  (5-hour or weekly), show account coverage, and keep cooldown separate from quota reset.
+- **Portable terminal output.** Truecolor, 256-colour, 16-colour and `NO_COLOR` output; at least 100×30 cells,
+  preferably 160×50. Resize profiles that open at 80×24 (including some Windows Terminal defaults). The stack runs
+  on Linux; the display uses terminal cells and standard escape sequences.
 
-1. the daemon reports its activity as unknown, stalled or waiting for input;
-2. its last activity is at least 15 minutes old (`--stuck-minutes`, `:stuck` or `RIG_CONSOLE_STUCK_MINUTES`);
-3. none of its open queue rows, and none of its own queue moves, changed in those minutes.
-
-Every verdict carries its reason and ages, for example `stalled for 42m · no queue movement on 1 open row for 38m`. A
-quiet seat that misses one of them is shown as "quiet, not stuck", with why. A bare "stalled" label caused false
-alarms before; the console never shows one.
-
-### What it guarantees
-
-- **Read-only.** It reads the daemon API and its live events, the Jev decision log, `agent-proxy-status` and
-  `agent-heavy status`. The only files it writes are its own 24 h history and its lock (`~/.local/state/agent-stack/rig-console/`).
-- **Never tmux.** It never polls tmux or asks the daemon to capture a pane. A seat's terminal is read from the
-  transcript file the daemon already writes, and only while that seat is open.
-- **Low load.** One cache refreshes every 5 seconds (never under 2) and backs off to 60 when the daemon is slow. The
-  River and Focus also read the completed rows, every 5 minutes and only while one of them is open; a slice's
-  transitions are read only while its journey is open. Measured on a running fleet: about 0.6% of one core of the
-  daemon.
-
-### Requirements
-
-- Linux and Node 22.18 or newer, which runs TypeScript directly (`install.sh` installs `rig-console` on the pinned Node
-  it uses for Jev).
-- A terminal of at least 100×30; best at 176×50. Truecolor, with 256- and 16-colour and `NO_COLOR` fallbacks.
-- For a live fleet, the OpenRig daemon on the same machine. The demo needs nothing else.
+The renderer accepts plain snapshots through a [documented adapter boundary](console/docs/adapter.md). A future
+factory adapter or Ratatui renderer can use the same data contract without changing what unknown and stale mean.
 
 ## FAQ
 

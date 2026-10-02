@@ -88,6 +88,7 @@ export function parseAccounts(text: string | null): Account[] {
     return (Array.isArray(a) ? a : []).map((x: any) => ({ label: String(x.label), provider: String(x.provider ?? ""), status: String(x.status ?? "?"),
       short: quotaPct(x.short_window_used, String(x.provider ?? "")), weekly: quotaPct(x.weekly_used, String(x.provider ?? "")),
       cooling: x.status !== "active" || (Array.isArray(x.cooldowns) && x.cooldowns.length > 0), onCredits: x.on_credits === true,
+      resetAt: quotaPct(x.short_window_used, String(x.provider ?? "")) !== null ? x.short_window_reset_at ?? x.reset_at ?? null : x.weekly_reset_at ?? x.weekly_window_reset_at ?? x.reset_at ?? null, credits: x.on_credits === true ? "Using credits" : x.credits_unlimited === true ? "Unlimited credits" : x.has_credits === true ? "Credits available" : x.has_credits === false ? "No credits" : null, observedAt: x.quota_observed_at ?? null,
       ...coolingOf(x.cooldowns), blocked: x.disabled === true || x.status === "disabled",   // a timer never promises a disabled account back
       // the status tool's own verdict, which dispatch and recovery read; an older tool without it: a window above 100%
       over: typeof x.over_limit === "boolean" ? x.over_limit
@@ -126,6 +127,9 @@ export class Cache {
   private gateDay = "";
   private gatePartial = false;
   private abort: AbortController | null = null;
+  private lifetime = new AbortController();
+  private reconnectTimer: NodeJS.Timeout | null = null;
+  private reconnectDone: (() => void) | null = null;
   private listeners: (() => void)[] = [];
   private summary: any[] | null = null;
   private summaryAt = -Infinity;
@@ -152,7 +156,7 @@ export class Cache {
   private changed() { for (const f of this.listeners) f(); }
 
   start() { void this.tick(); if (this.opt.events) void this.events(); }
-  stop() { this.stopped = true; if (this.timer) clearTimeout(this.timer); this.abort?.abort(); }
+  stop() { this.stopped = true; if (this.timer) clearTimeout(this.timer); this.abort?.abort(); this.lifetime.abort(); if (this.reconnectTimer) clearTimeout(this.reconnectTimer); this.reconnectDone?.(); }
   /** Pulls the next refresh forward (an event, or 'r'), never sooner than MIN_INTERVAL after the last daemon read. */
   soon() {
     if (this.stopped) return;
@@ -164,9 +168,16 @@ export class Cache {
 
   private async get(p: string): Promise<any> {
     this.requests++;
-    const res = await fetch(this.opt.url + p, { signal: AbortSignal.timeout(this.opt.timeoutMs) });
+    const res = await fetch(this.opt.url + p, { signal: AbortSignal.any([this.lifetime.signal, AbortSignal.timeout(this.opt.timeoutMs)]) });
     if (!res.ok) throw new Error(`${p}: HTTP ${res.status}`);
-    return res.json();
+    if (!res.body) throw new Error(`${p}: empty response`);
+    const reader = res.body.getReader(), chunks: Uint8Array[] = []; let bytes = 0;
+    try {
+      for (;;) { const { done, value } = await reader.read(); if (done) break;
+        bytes += value.length; if (bytes > 16 << 20) throw new Error(`${p}: response exceeds 16 MiB`); chunks.push(value);
+      }
+      return JSON.parse(Buffer.concat(chunks).toString("utf8"));
+    } finally { await reader.cancel().catch(() => {}); }
   }
 
   async tick(): Promise<void> {
@@ -182,6 +193,7 @@ export class Cache {
       this.interval = Math.min(MAX_INTERVAL, this.interval * 2);
     }
     this.lastDaemonAt = this.now();
+    if (this.stopped) { this.busy = false; return; }
     await this.readLocal().catch(() => {});
     this.raw.at = this.now(); this.raw.refreshMs = this.interval;
     this.busy = false;
@@ -252,7 +264,12 @@ export class Cache {
       const kb = (k: string) => Number(mi.match(new RegExp(`^${k}:\\s+(\\d+)`, "m"))?.[1] ?? 0);
       this.raw.host.load = l; this.raw.host.memTotalGB = kb("MemTotal") / 1048576; this.raw.host.memUsedGB = (kb("MemTotal") - kb("MemAvailable")) / 1048576;
     } catch { /* not Linux */ }
-    if (this.due("accounts", 30_000)) { const a = parseAccounts(await run("agent-proxy-status", ["--json"], 5000)); this.raw.accounts = a; this.raw.sources.accounts = a.length ? "ok" : "unavailable"; }
+    if (this.due("accounts", 30_000)) {
+      const text = await run("agent-proxy-status", ["--json"], 5000);
+      let valid = false; try { valid = Array.isArray(JSON.parse(text ?? "null")); } catch {}
+      if (valid) this.raw.accounts = parseAccounts(text);
+      this.raw.sources.accounts = valid ? "ok" : "unavailable (last known readings)";
+    }
     if (this.due("heavy", 10_000)) { const h = parseHeavy(await run("agent-heavy", ["status"], 5000)); this.raw.heavy = h; this.raw.sources.heavy = h.length ? "ok" : "unavailable"; }
     if (this.opt.jevLog && this.due("gates", 10_000)) this.readGates(this.opt.jevLog);
     const today = new Date(this.now()).toISOString().slice(0, 10);
@@ -358,7 +375,7 @@ export class Cache {
         });
       } catch { /* daemon away: retry */ }
       if (this.stopped) break;
-      await new Promise((r) => setTimeout(r, backoff)); backoff = Math.min(60_000, backoff * 2);
+      await new Promise<void>((resolve) => { this.reconnectDone = resolve; this.reconnectTimer = setTimeout(resolve, backoff); }); this.reconnectDone = null; this.reconnectTimer = null; backoff = Math.min(60_000, backoff * 2);
     }
   }
   private async stream(p: string, headers: Record<string, string>, onEvent: (e: any) => void, ac = new AbortController()) {
@@ -369,6 +386,7 @@ export class Cache {
     const dec = new TextDecoder(); let buf = "";
     for await (const chunk of res.body as any) {
       buf += dec.decode(chunk, { stream: true });
+      if (buf.length > 1 << 20) { ac.abort(); throw new Error("event exceeds 1 MiB"); }
       let i;
       while ((i = buf.indexOf("\n\n")) >= 0) {
         const block = buf.slice(0, i); buf = buf.slice(i + 2);
