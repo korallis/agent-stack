@@ -78,10 +78,19 @@ export function rowConstraint(row, role, all = []) {
   }
   if (role === "implementer") {
     const f = known(tag("locked-tests"));
-    if (f) return { exclude: f };
+    if (f) return { exclude: f, because: "locked tests" };
     const lt = lockedTestsAuthor([{ name: "row", text }], all);
-    if (lt?.family) return { exclude: lt.family };
+    if (lt?.family) return { exclude: lt.family, because: "locked tests" };
     if (tag("locked-tests") || /\blocked[- ]tests?\b/i.test(text)) return { unknown: `the row names locked tests but not their family${lt?.reason ? ` (${lt.reason})` : ""}` };
+  }
+  if (role === "test-author") {
+    // Locked tests are written by a family other than the slice's implementer: a moved test row must not land on the
+    // implementer's family (that seat refuses it). The row names it as "Implementer: <seat> (<family>)" or tags; a test
+    // row without it is left for the lead.
+    const seat = tag("implementer") || (text.match(/^Implementer:\s*([\w.@-]+)/im) || [])[1] || null;
+    const fam = known(tag("implementer-family")) || known((text.match(/^Implementer:\s*[\w.@-]+\s*\((\w+)\)/im) || [])[1])
+      || (seat && (all.find((s) => s.seat === seat || s.seat.startsWith(`${seat}@`))?.family || familyFromName(seat))) || null;
+    return fam ? { exclude: fam, because: "the slice's implementer" } : { unknown: "a test-author row without its implementer (add \"Implementer: <seat> (<family>)\")" };
   }
   return {};
 }
@@ -100,5 +109,5 @@ export function pickForWork(all, role, row, { families, excludeFamily = null } =
   }
   const ex = [excludeFamily, c.exclude].filter(Boolean);
   const p = pickFor(all, role, { families, excludeFamily: ex.length ? ex : null, idle: true });
-  return p.seat ? { ...p, constraint: c } : { seat: null, why: `no free ${[role, ...(p.tried || []).slice(1)].join(" or ")} seat${c.exclude ? ` outside the locked tests' family (${c.exclude})` : ""} in any family`, constraint: c };
+  return p.seat ? { ...p, constraint: c } : { seat: null, why: `no free ${[role, ...(p.tried || []).slice(1)].join(" or ")} seat${c.exclude ? ` outside ${c.because === "locked tests" ? "the locked tests'" : "the implementer's"} family (${c.exclude})` : ""} in any family`, constraint: c };
 }
