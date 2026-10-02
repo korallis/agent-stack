@@ -348,6 +348,11 @@ Details are in the `agent-stack` skill. What went wrong before: [docs/incidents/
   2s/1000-line default across ~90 seats kept the daemon's event loop busy. Patch 144 reads all sessions due together
   in a few batched `tmux` calls instead of one fork each. `openrig-daemon-cycle`
   starts the daemon without the `OPENRIG_TRANSCRIPTS_*` overrides that seats inherit from tmux.
+- **Daemon lifecycle is the operator's.** The `~/.local/bin/rig` launcher (written by `install.sh`) asks
+  `rig-lifecycle-guard` before any command naming `up` or `daemon`: from a seat other than the operator's
+  (`AGENT_OPERATOR_SEAT`, default `operator-agent@kernel`) it refuses `rig up` and `rig daemon start|stop|restart` with
+  exit 3 and says to wait and retry. `daemon status` and `logs`, systemd units and a human's shell are unaffected. Patch
+  146 makes OpenRig's own daemon-down advice say the same to seats.
 - **Daemon priority and health:** the daemon runs at `CPUWeight=1000` (10x a build or test) whether `openrig.service`
   or `openrig-daemon-cycle` started it. `openrig-health` probes `/healthz` 3 times (15s each, 10s apart). After a
   cycle it leaves a daemon that is merely slow alone for 10 minutes, alerting instead. A hung one (accept queue at 80%+
