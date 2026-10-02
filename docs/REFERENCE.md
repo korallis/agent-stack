@@ -903,6 +903,17 @@ A stopped operator follows the same timing. A missing node or daemon error is re
 Failed wake delivery still starts the escalation clock. Failed advisor queue writes retry with the same item ID.
 The watchdog never merges or rebuilds a seat itself.
 
+Before a wake it asks the proxy whether the operator's model can be served (`agent-servable`, the same eligibility as
+dispatch). The model can't be served when every eligible credential is cooling on it (seen 2026-10-02: each turn ended
+in the proxy's 429). In that case the wake would only end the same way, so:
+- the watchdog holds the wake (`hold`), and the hold outlasts the 429 turns that reset an episode;
+- when the model is served again, the operator gets one resume message naming the waiting rows, which counts as the
+  episode's wake, so escalation still follows if nothing moves;
+- if the hold reaches 30 minutes, the owner (`agent-owner-address`) gets one informational row (`--human-intent update`)
+  with the model, when the hold began and when the proxy expects it back.
+
+It never switches a model or an account. A proxy status that can't be read holds nothing: the wake goes out as before.
+
 Run `agent-operator-watch --dry-run` to inspect the next action without changing state or sending anything.
 `--operator`, `--advisor` and `--state` select other addresses or an isolated state file. The default state is
 `$AGENT_STACK_STATE/operator-watch.json` (or `~/.local/state/agent-stack/operator-watch.json`), protected by a process
