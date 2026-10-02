@@ -1,0 +1,17 @@
+agent-stack
+Copyright 2026 The agent-stack authors
+
+This product is licensed under the Apache License, Version 2.0 (see LICENSE).
+
+It includes material from third parties, which keeps its own licence:
+
+- OpenRig (https://github.com/mvschwarz/openrig), Apache License 2.0.
+  patches/openrig/ holds patches against the published @openrig/cli package, and
+  test/fixtures/openrig-0.6.3-*/ hold files copied from it for tests. agent-stack
+  is built to run alongside OpenRig.
+- pstack (https://github.com/cursor/plugins/tree/main/pstack), MIT License. The skills
+  skills/blast-radius, skills/review-lenses, skills/technical-writing, skills/unslop and
+  skills/verification-guide are adapted from it; each keeps the licence in its own
+  LICENSE file.
+- skills/bug-review-board is third-party work under the Apache License 2.0 and keeps its own
+  LICENSE file with its copyright notice.
