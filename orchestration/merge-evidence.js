@@ -202,10 +202,12 @@ export function loadConfig({ flagPath, nwo, env = process.env } = {}) {
   return { ...resolveConfig(raw, nwo), path };
 }
 
-// A seat's model family from its name (review-claude-2, impl-codex-1, impl-astra-1). null when the name doesn't say.
-export const FAMILIES = ["claude", "codex", "kimi"];
+// A seat's model family from its name (review-claude-2, impl-codex-1, impl-astra-1, impl-grok-1). null when the name
+// doesn't say. Grok: the native seats (agent-native-seat, WO96); a Grok author needs a review from another family.
+export const FAMILIES = ["claude", "codex", "kimi", "grok"];
 export const familyOf = (seat) => { const s = String(seat || "").toLowerCase();
-  return /claude|fable|opus|sonnet/.test(s) ? "claude" : /codex|gpt|astra/.test(s) ? "codex" : /kimi/.test(s) ? "kimi" : null; };
+  return /claude|fable|opus|sonnet/.test(s) ? "claude" : /codex|gpt|astra/.test(s) ? "codex" : /kimi/.test(s) ? "kimi"
+    : /grok/.test(s) ? "grok" : null; };
 
 const WORD = { success: /^(PASS(ED)?|APPROVED?|YES|MERGE|SHIP)$/i, failure: /^(FAIL(ED)?|BLOCK(ED|ING)?|NO|HOLD|CHANGES[_ ]REQUESTED|REQUEST[_ ]CHANGES)$/i };
 const word = (w) => WORD.success.test(w) ? "success" : WORD.failure.test(w) ? "failure" : null;
@@ -829,7 +831,7 @@ if (import.meta.url === `file://${process.argv[1]}` || process.argv[1]?.endsWith
   const a = process.argv.slice(2);
   const flag = (n) => { const i = a.indexOf(n); return i >= 0 ? a[i + 1] : undefined; };
   const pr = a.find((x) => /^\d+$/.test(x));
-  if (!pr) { console.error("usage: agent-merge-evidence <pr> [--repo o/r] [--mission M --slice S] [--change ...] [--deploy ...] [--rollback ...] [--config F] [--author-family claude|codex|kimi] [--extra-evidence FILE] [--decide]"); process.exit(2); }
+  if (!pr) { console.error("usage: agent-merge-evidence <pr> [--repo o/r] [--mission M --slice S] [--change ...] [--deploy ...] [--rollback ...] [--config F] [--author-family claude|codex|kimi|grok] [--extra-evidence FILE] [--decide]"); process.exit(2); }
   // Extra evidence goes in through this flag, into input.review, so nobody hand-edits the printed JSON.
   let extraEvidence = null;
   if (a.includes("--extra-evidence")) {

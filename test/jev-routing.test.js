@@ -582,6 +582,12 @@ test("review from comments: the latest other-family record; same-family or unkno
   r = reviewFromComments(notes, re, H, null);
   assert.equal(r.review, null); assert.match(r.problem, /author's model family is unknown/);
   assert.deepEqual(["review-claude-2", "impl-codex-1", "impl-astra-1", "review-kimi", "operator"].map(familyOf), ["claude", "codex", "codex", "kimi", null]);
+  // WO96: native Grok seats are a family of their own; a Grok author needs another family's review
+  assert.deepEqual(["impl-grok-1", "review-grok", "tests-grok"].map(familyOf), ["grok", "grok", "grok"]);
+  const g = [rec("review-grok", "PASS", "5"), rec("review-codex-1", "PASS", "6"), rec("review-grok", "PASS", "7")];
+  const gr = reviewFromComments(g, /^## review-(grok|codex)/, H, "grok");
+  assert.deepEqual([gr.review.state, gr.review.creator], ["success", "review-codex-1"], "the grok reviews of a grok author don't count");
+  assert.equal(reviewFromComments([g[0]], /^## review-grok/, H, "grok").review, null);
   const qa = qaFromComments([{ body: `## qa-claude-1\ncandidate ${H}\nVerdict: PASS`, url: "https://x/qa", at: "5" }], /^## qa-/, H);
   assert.deepEqual([qa.artifact_type, qa.verdict, qa.candidate_sha, qa.file], ["qa", "PASS", H, "https://x/qa"]);
   assert.equal(qaFromComments([{ body: `## qa-claude-1\ncandidate ${"c".repeat(40)}\nVerdict: PASS` }], /^## qa-/, H), null, "another head's QA doesn't count");
@@ -684,6 +690,10 @@ process.stdout.write(typeof out === "string" ? out : JSON.stringify(out));
   o = evidence(run(plain, ["--author-family", "claude"]).stdout);
   assert.match(o.review, /independent review comment on a{40}: success "## review-codex-2" \(seat review-codex-2, another family than the author's claude/);
   assert.equal(run(plain, ["--author-family", "gemini"]).status, 2);
+  o = evidence(run(plain, ["--author-family", "grok"]).stdout);
+  assert.match(o.review, /independent review comment on a{40}: success "## review-(claude|codex)-\d" \(seat review-(claude|codex)-\d, another family than the author's grok/, "WO96");
+  o = evidence(run({ view: { ...fixture.view, headRefName: "agent/impl-grok-1" } }).stdout);
+  assert.match(o.review, /another family than the author's grok/, "the branch names a grok author");
   // App-bound context: another app's success does not satisfy it; unreadable runs keep BLOCKED.
   o = evidence(run({ checkRuns: { total_count: 1, check_runs: [{ id: 8, name: "verify", app: { id: 1 }, conclusion: "success" }] } }).stdout);
   assert.match(o.limits, /merge state: BLOCKED \(verify: no result from its required app 15368 \(another producer's result does not count\)\)/);
@@ -933,7 +943,7 @@ test("identity headings: a shared or unmapped login takes its family from the re
   assert.doesNotThrow(() => resolveConfig({ identities: { owner: "shared" } }));
   assert.throws(() => resolveConfig({ identityHeadings: { "^## review-x": "gemini" } }), /identityHeadings\["\^## review-x"\] must be one of/);
   assert.throws(() => resolveConfig({ identityHeadings: { "([": "codex" } }), /is not a valid regex/);
-  assert.throws(() => resolveConfig({ identities: { owner: "everyone" } }), /must be one of claude, codex, kimi or shared/);
+  assert.throws(() => resolveConfig({ identities: { owner: "everyone" } }), /must be one of claude, codex, kimi, grok or shared/);
 });
 
 test("agent-merge-evidence end to end: every seat posts as one shared login; the review heading names the family", () => {

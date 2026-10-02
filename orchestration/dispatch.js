@@ -138,8 +138,12 @@ function testCandidates(repo) {
 }
 
 async function reviewPlan() {
-  const repo = flag("--repo"); const branch = flag("--branch"); const base = flag("--base", "main"); const rigName = flag("--rig");
+  const repo = flag("--repo"); const branch = flag("--branch"); const base = flag("--base", "main");
+  // The caller's own rig unless --rig names another: without a rig the plan had no reviewer and said nothing (WO96).
+  const rigName = flag("--rig") || (process.env.OPENRIG_SESSION_NAME || "").split("@")[1] || null;
   if (!repo || !branch) throw new Error("--repo and --branch are required");
+  if (!existsSync(join(repo, ".git")))
+    throw new Error(`--repo ${repo}: not a local checkout. Give the repository's path on this machine (e.g. ~/Projects/<P>), not owner/name`);
   const files = git(repo, "diff", "--name-only", `${base}...${branch}`).split("\n").filter(Boolean);
   const stat = git(repo, "diff", "--stat", `${base}...${branch}`);
   const log = git(repo, "log", "--format=%s", `${base}..${branch}`);
@@ -152,7 +156,7 @@ async function reviewPlan() {
   const selected = st ? Object.entries(st.result.run).filter(([, v]) => v !== "no").map(([k]) => k) : [];
   // Review matrix (WO90): the author's family is never the reviewer's while another family has a free seat; the order is
   // the reviewer chain; the author's own seat is never a reviewer. Recorded in the plan and the handed-off row.
-  const authorSeat = branch.replace(/^agent\//, "");
+  const authorSeat = branch.replace(/^(?:refs\/remotes\/)?(?:[^/]+\/)?agent\//, "");   // agent/<seat>, origin/agent/<seat>
   const authorFamily = familyFromName(authorSeat) || (/codex/.test(branch) ? "codex" : "claude");
   const chain = (ROLE_CHAIN.reviewer || FAMILIES).filter((f) => f !== authorFamily);
   let reviewer = null, matrix = null;
@@ -161,6 +165,7 @@ async function reviewPlan() {
     branch, files, specialist_reviews: Object.entries(cc.result.reviews).filter(([, v]) => v !== "no").map(([k, v]) => `${k}${v === "uncertain" ? "?" : ""}`),
     tests_to_run: selected, always_run: "full suite before merge (integration owner)",
     reviewer: reviewer?.seat ?? null, cross_family: reviewer ? reviewer.family !== authorFamily : null, ...(matrix ? { reviewer_matrix: matrix } : {}),
+    ...(rigName ? { rig: rigName } : { reviewer_note: "no rig: run it from a seat, or pass --rig <rig>, to get a reviewer" }),
     decisions: { change_class: brief(cc), ...(st ? { select_tests: brief(st) } : {}) },
     note: "Advisory. The reviewer's own reading of the diff and actual test results decide; this never approves a merge.",
   };
