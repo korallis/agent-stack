@@ -842,3 +842,37 @@ Run `agent-operator-watch --dry-run` to inspect the next action without changing
 lock and atomic writes. Only timestamps and delivery receipts are stored. Installation enables
 `agent-operator-watch.timer`; stop that timer to disable it. Detection takes up to one timer interval beyond each
 threshold, plus command latency. No observation history is inferred on first installation.
+
+### Project uptime checks
+
+`agent-uptime-watch.timer` checks configured staging or production health endpoints once per minute. Create the private
+`~/.config/agent-stack/uptime.json` file with one monitor per endpoint (maximum 20):
+
+```json
+[
+  {
+    "id": "sample-staging",
+    "url": "https://staging.example.test/health",
+    "destination": "coord-lead@sample",
+    "bodyContains": "ready",
+    "windows": [{"start": "2030-01-01T09:00:00Z", "end": "2030-01-01T09:30:00Z"}]
+  }
+]
+```
+
+Use a dedicated unauthenticated health endpoint. URLs cannot contain credentials, query parameters or fragments.
+The response must be 2xx. Redirects count as unhealthy, so login redirects cannot hide an outage. Optional
+`bodyContains` checks a literal UTF-8 marker in the first 64 KiB. An endpoint that returns 200 with the wrong marker
+is unhealthy. The watcher checks at most four endpoints concurrently, with a ten-second socket timeout.
+
+After at least 15 minutes of failed observations outside maintenance, the watcher creates one urgent queue row for
+that monitor's destination. The row contains the monitor ID and status, without the URL or response body. The receiver
+investigates and alerts the owner through project policy. The watcher does not restart or deploy services. A healthy
+check rearms the alert. Maintenance windows suppress checks and reset downtime; after the window ends, 15 minutes of
+failed observations are required again. Observation gaps over ten minutes also reset downtime.
+
+Run `agent-uptime-watch --dry-run` to probe and report without writing state or alerting. `--config` and `--state`
+select fixture files. Missing configuration is a no-op. State defaults to
+`$AGENT_STACK_STATE/uptime-watch.json` (or `~/.local/state/agent-stack/uptime-watch.json`). Failed alerts retry with the
+same queue ID; state writes are locked and atomic. Install enables the timer, but no endpoints are guessed or added.
+Stop `agent-uptime-watch.timer` to disable it. Review project endpoint configuration separately before activation.
