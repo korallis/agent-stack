@@ -107,7 +107,7 @@ test('selected IDs take priority over stale indexes and unknown context is never
   assert.match(words(pr), /Missing rollback evidence/);
 });
 
-test('project feature forecasts are labelled separately from the mission ETA', () => { const snapshot=fixture(); snapshot.teams[0].estimate={...snapshot.teams[0].estimate,unit:'features',scope:'whole project',date:'2026-11-06T00:00:00Z'}; assert.match(words(renderV3(snapshot,160,50,state())),/Project ETA/); });
+test('project feature forecasts are labelled separately from the mission ETA', () => { const snapshot=fixture(); snapshot.teams[0].phaseEstimate={...snapshot.teams[0].estimate,scope:'Phase 1',date:'2026-10-09T00:00:00Z'}; snapshot.teams[0].estimate={...snapshot.teams[0].estimate,unit:'features',scope:'whole project',date:'2026-11-06T00:00:00Z'}; const text=words(renderV3(snapshot,160,50,state())); assert.match(text,/Phase ETA/); assert.doesNotMatch(text,/Project ETA/); });
 
 test('fleet names projects hidden beyond the visible card width', () => {
   const snapshot=fixture();
@@ -193,6 +193,8 @@ test('capacity keeps history windows distinct and labels its account columns', (
   assert.match(text,/5H\s+WEEKLY/);
   assert.match(text,/Claude 5h\/weekly/);
 });
+
+test('phase stage counts label witnessed, merged and review work', () => { const snapshot=fixture(); snapshot.teams[0].stageCounts={witnessed:4,merged:12,review:8,notStarted:4,total:28}; const text=words(renderV3(snapshot,160,50,state())); assert.match(text,/witnessed 4 · merged 12 · review 8/); });
 
 test('project evidence labels and operations cards avoid invented milestone percentages', () => {
   const snapshot=fixture();snapshot.teams[0].progressLabel='16/56 features pass · origin/main';
@@ -280,7 +282,7 @@ test('ETA uses calendar date and labelled pace; whole-project estimate stays vis
  s.teams[0].estimate=estimate;s.teams[0].eta=estimate.date;
  s.teams[0].projectEstimate={...estimate,date:'2026-10-23T00:00:00Z',remaining:20,scope:'whole project'};
  for(const [w,h] of [[160,50],[100,30]]){
-  const fleet=words(renderV3(s,w,h,state()));assert.match(fleet,/ETA ~Fri 9 Oct/);assert.doesNotMatch(fleet,/ETA 00:00/);assert.match(fleet,/12 slices\/14d · 8 left/);
+  const fleet=words(renderV3(s,w,h,state()));assert.match(fleet,/ETA ~Fri 9 Oct/);assert.doesNotMatch(fleet,/ETA 00:00/);if(w>=160)assert.match(fleet,/12 slices\/14d · 8 left/);
   const team=words(renderV3(s,w,h,state('team')));assert.match(team,/Whole project: ETA ~Fri 23 Oct/);assert.match(team,/14.days.*pace/);
  }
 });

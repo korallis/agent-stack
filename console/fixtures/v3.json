@@ -19,6 +19,13 @@
       "reason": "",
       "sentence": "Payments & refunds: reviewing a feature that needs a rebase.",
       "milestone": "Payments & refunds",
+      "stageCounts": {
+        "witnessed": 2,
+        "merged": 1,
+        "review": 1,
+        "notStarted": 1,
+        "total": 5
+      },
       "progress": 68,
       "eta": "2026-10-09",
       "milestones": [
@@ -163,6 +170,13 @@
       "reason": "your decision",
       "sentence": "Intake & triage: waiting for your retention decision.",
       "milestone": "Intake & triage",
+      "stageCounts": {
+        "witnessed": 2,
+        "merged": 1,
+        "review": 1,
+        "notStarted": 1,
+        "total": 5
+      },
       "progress": 61,
       "eta": null,
       "milestones": [
@@ -307,6 +321,13 @@
       "reason": "staging down",
       "sentence": "Booking: waiting for staging before the witness resumes.",
       "milestone": "Booking",
+      "stageCounts": {
+        "witnessed": 2,
+        "merged": 1,
+        "review": 1,
+        "notStarted": 1,
+        "total": 5
+      },
       "progress": 43,
       "eta": "2026-10-15",
       "milestones": [
@@ -451,6 +472,13 @@
       "reason": "",
       "sentence": "Reroute & fallbacks: checking the merge gate.",
       "milestone": "Reroute & fallbacks",
+      "stageCounts": {
+        "witnessed": 2,
+        "merged": 1,
+        "review": 1,
+        "notStarted": 1,
+        "total": 5
+      },
       "progress": 57,
       "eta": "2026-10-19",
       "milestones": [
@@ -595,6 +623,13 @@
       "reason": "",
       "sentence": "The operator is checking fleet health.",
       "milestone": "Operations",
+      "stageCounts": {
+        "witnessed": 2,
+        "merged": 1,
+        "review": 1,
+        "notStarted": 1,
+        "total": 5
+      },
       "progress": null,
       "eta": null,
       "milestones": [
