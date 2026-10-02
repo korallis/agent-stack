@@ -40,3 +40,11 @@ test('active Codex plugin contributes unique skills; ambiguous cache versions fa
  const f=fixture(t);f.put('.codex/config.toml','[plugins."example@curated"]\nenabled = true\n');f.skill('.codex/plugins/cache/curated/example/one/skills/unique');assert.equal(f.run('--apply').status,0);
  assert.ok(fs.existsSync(join(f.home,'.grok/skills/unique/SKILL.md')));f.skill('.codex/plugins/cache/curated/example/two/skills/unique');const r=f.run();assert.equal(r.status,1);assert.match(r.stdout,/expected one installed skill version, found 2/);
 });
+test('managed plugin links follow registry upgrades and removal while genuine user skills remain',t=>{
+ const f=fixture(t);for(const v of ['v1','v2'])f.skill('plugin/'+v+'/skills/demo',v);
+ const reg=v=>f.put('.claude/plugins/installed_plugins.json',JSON.stringify({plugins:v?{'demo@test':[{scope:'user',installPath:join(f.home,'plugin',v)}]}:{}}));
+ reg('v1');assert.equal(f.run('--apply').status,0);reg('v2');assert.equal(f.run().status,1);assert.equal(f.run('--apply').status,0);
+ for(const root of roots)assert.match(fs.readFileSync(join(f.home,root,'demo/SKILL.md'),'utf8'),/v2\n$/);
+ f.skill('.agents/skills/owner-choice','keep this');reg(null);assert.equal(f.run().status,1);assert.equal(f.run('--apply').status,0);
+ for(const root of roots){assert.equal(fs.existsSync(join(f.home,root,'demo')),false);assert.ok(fs.existsSync(join(f.home,root,'owner-choice/SKILL.md')));}
+});

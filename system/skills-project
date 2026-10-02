@@ -36,6 +36,8 @@ def add(directory):
         return
     seen.add(directory.resolve())
     for skill in sorted(directory.iterdir()):
+        if skill.is_symlink() and previous.get(str(skill)) == os.readlink(skill):
+            continue  # projected links are consumers, never authoritative source choices
         if (skill / 'SKILL.md').is_file():
             catalog.setdefault(skill.name, skill.resolve())
         elif skill.is_dir():
@@ -99,6 +101,20 @@ except (OSError, ValueError, subprocess.TimeoutExpired):
 if not catalog:
     report(False, 'no installed skills found')
 managed = dict(previous)
+# Remove only our still-identical links for sources no longer present. A malformed source catalog
+# is not evidence of removal; preserve all existing links until discovery succeeds.
+if all(r['ok'] for r in rows):
+    expected = {str(directory / name) for directory in roots.values() for name in catalog}
+    for old, source in previous.items():
+        dest = Path(old)
+        if str(dest) in expected or dest.parent not in roots.values():
+            continue
+        if dest.is_symlink() and os.readlink(dest) == source:
+            if a.apply:
+                dest.unlink()
+                managed.pop(old, None)
+            else:
+                report(False, f'obsolete managed skill: {dest.name}; run install.sh --apply')
 for harness, directory in roots.items():
     missing = []
     for name, source in sorted(catalog.items()):

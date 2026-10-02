@@ -44,7 +44,8 @@ not fetch the website's latest version. The skill's `HERDR_ENV=1` guard remains 
 not install Herdr's per-agent integrations; those are separate hooks/plugins managed by `herdr integration`.
 
 `system/skills-project` and `agent-project-check` report missing or conflicting skills. The helper's default is
-read-only; `--apply` creates missing links and updates its own links. Different existing user skills are preserved
+read-only; `--apply` creates missing links, updates its own links after source upgrades, and removes only its
+unchanged links when a source leaves the catalog. Managed links never count as user source choices. Different existing user skills are preserved
 and reported for reconciliation. Identical existing Markdown is accepted without replacing its directory.
 The helper refuses to guess between multiple cached versions of an enabled Codex plugin. Resolve the active cache
 version before retrying. No authenticated harness is launched by this check.
