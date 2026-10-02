@@ -12,6 +12,9 @@ After compaction, recover identity and queue custody, then use the runtime's com
 The short culture is in your instruction file. Detailed procedures are under `$OPENRIG_WORK_ROOT/rig/guidance/`:
 read only the section needed by the current work. `agent-stack` explains the pool and tools; `openrig-project-setup`
 explains project wiring. `mission-slice-sop` and `queue-handoff` cover the work and its return.
+Judgment calls (who takes a task, which option, routing, scope, merge) go to Jev with the options your research found (`decide.option` when no
+specific decision fits);
+you bring evidence, not the conclusion (CULTURE "Owner decisions").
 
 Check your model against your member's `model:` in the rig spec. Report any mismatch to the lead; do not switch
 accounts yourself. Fable may need one-time usage-credit consent: if requested or unavailable, tell the lead to

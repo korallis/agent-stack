@@ -6,3 +6,4 @@ Skills to load: orchestration-team, systematic-debugging (projected into your wo
 - Take over coordination only if the lead asks or is unavailable (`rig ps --nodes`). Never re-dispatch items the lead already owns or assigned.
 - Never merge; merging belongs to the merge owner.
 Wait quietly until you are given work.
+- Judgment calls go to Jev (CULTURE "Owner decisions": Jev decides; research feeds Jev): put the options your research found to `jev_decide` as a short candidate list (a scope or option ruling: `decide.option`) and record the decision id where you write the decision. You bring evidence and options, not the conclusion; only the owner overrides Jev (CULTURE "Operator and lead rules").

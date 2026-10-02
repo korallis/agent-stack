@@ -469,6 +469,30 @@ decisions:
 
   # ─────────────────────────── Merge gate ───────────────────────────
 
+  decide.option:
+    version: 1
+    purpose: >-
+      The generic bounded choice for a judgment call no specific decision covers: a scope or option ruling, which
+      approach to take, which of several plans fits. The caller lists the options its research found; Jev picks ONE
+      against the stated criteria and evidence (owner rule 2026-10-02: "Jev decides; research feeds Jev"). On
+      review or uncertain, or none_fit, the caller escalates as CULTURE says; it never substitutes its own pick.
+    inputs: {required: [question, criteria], optional: [evidence], candidates: required}
+    min_candidates: 2            # one option is not a choice
+    max_candidates: 12           # a bounded choice: more options means the research isn't done
+    cache_ttl_s: 0               # judgments rest on live evidence; never served from cache
+    outputs:
+      option:
+        kind: choice
+        from_candidates: true
+        extra_labels: {none_fit: "None of the listed options meets the criteria"}
+        uncertain_labels: [none_fit]
+        act: 0.6
+        review: 0.35
+        question:
+          instructions: [*untrusted, "Which listed option best answers `question`, judged against `criteria` and the `evidence`? Judge each option on its merits, not on its position in the list or how it is worded."]
+    escalate_on_uncertain: false   # no second model: below act, the caller escalates with the evidence (CULTURE); it never picks itself
+    fallback: [{kind: code, result: {option: none_fit}}]
+
   review.merge_gate:
     version: 4
     purpose: >-

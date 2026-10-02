@@ -197,6 +197,9 @@ test("templates: Owner decisions are the owner's only, with a source; operator a
   assert.match(role("lead"), /"Owner decisions" holds ONLY the owner's own decisions[\s\S]*Never write your interpretation[\s\S]*ask \(through the operator\) before recording/);
   assert.match(role("integrator"), /Jev chose HOLD in ANY band \(act, review or uncertain\)[\s\S]*an operator or lead rule never overrides a HOLD/);
   assert.doesNotMatch(role("integrator"), /HOLD in the act band/);
+  // the owner's 18:06Z row doesn't say who overrides Jev; that restriction is the operator's rule
+  assert.doesNotMatch(sec("Owner decisions"), /overrides a Jev result/);
+  assert.match(sec("Operator and lead rules"), /^- 2026-10-02: Only the owner overrides a Jev result[^\n]*\(operator, 18:07Z\)$/m);
 });
 
 test("agent-project-check WARNs on an unsourced Owner decisions bullet and on one resting on docs/decisions/*", () => {
@@ -206,7 +209,8 @@ test("agent-project-check WARNs on an unsourced Owner decisions bullet and on on
     env: { PATH: `${bin}:${process.env.PATH}`, HOME: home, OPENRIG_URL: "http://127.0.0.1:9", AGENT_OWNER_ADDRESS: "alex@external", ...extra }, timeout: 60000 }).stdout);
   const find = (r, p) => r.find((x) => x.check.startsWith(p));
   const tmpl = fs.readFileSync(join(repo, "rig/template/CULTURE.md"), "utf8");
-  const withDecisions = (bullets) => tmpl.replace(/(## Owner decisions[^\n]*\n(?:(?!- \(none yet\))[^\n]*\n)*)- \(none yet\)\n/, `$1${bullets}`);
+  // the template's own standing decisions stay; test bullets go at the end of the section
+  const withDecisions = (bullets) => tmpl.replace(/(## Owner decisions[^\n]*\n(?:(?!## )[^\n]*\n)*?)(\n## Operator and lead rules)/, (_, a, b) => `${a}${bullets}${b}`);
   try {
     fs.writeFileSync(join(specDir, "CULTURE.md"), withDecisions([
       "- 2026-09-30: Merges need green CI (all PRs) (owner, Slack 14:05Z)",

@@ -54,6 +54,7 @@ export function buildRequest(id, input) {
     const ids = new Set(candidates.map((c) => c.id));
     if (ids.size !== candidates.length) throw new InputError("candidate ids must be unique");
     if (def.max_candidates && candidates.length > def.max_candidates) throw new InputError(`too many candidates (${candidates.length} > ${def.max_candidates}); pre-filter with ordinary search first`);
+    if (def.min_candidates && candidates.length < def.min_candidates) throw new InputError(`too few candidates (${candidates.length} < ${def.min_candidates}): a choice needs real alternatives`);
   }
   // State = only declared fields (unknown input keys are dropped, never forwarded).
   const state = {};

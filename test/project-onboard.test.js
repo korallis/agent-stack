@@ -88,7 +88,9 @@ test("apply: clones, pulls Development env only, creates the team, stages plan, 
   const section = (h) => c.split(/^## /m).find((s) => s.startsWith(h));
   assert.match(section("Owner decisions"), /no owner approval per PR/);
   assert.match(section("Owner decisions"), /Issue workflow: research, plan, implement, verify\. NEVER close an issue/);
-  for (const b of section("Owner decisions").split("\n").filter((l) => /^- \d{4}-/.test(l)))
+  // the template's own standing decisions keep their source; every decision the onboarding staged ends with its relay
+  const standing = fs.readFileSync(join(repo, "rig/template/CULTURE.md"), "utf8");
+  for (const b of section("Owner decisions").split("\n").filter((l) => /^- \d{4}-/.test(l) && !standing.includes(l)))
     assert.match(b, /\(owner, via operator relay of the onboarding answers\)$/, "every staged owner decision ends with its source (WO41)");
   assert.match(section("Shop specifics"), /Trunk: `main`[\s\S]*pnpm[\s\S]*Required checks: `ci`\.\n  Squash merges only\./);
   const brief = fs.readFileSync(join(W, "docs/lead-brief.md"), "utf8");

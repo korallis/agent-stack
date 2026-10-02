@@ -55,3 +55,24 @@ test("redaction covers common credential shapes", () => {
   for (const s of ["ghp_abcdefghijklmnopqrstuvwxyz123456", "AKIAABCDEFGHIJKLMNOP", "Bearer abcdefghijklmnopqrstuvwxyz", "apikey_abcdef0123456789abcdef"])
     assert.ok(!redactString(`x ${s} y`).includes(s), s);
 });
+
+// Owner rule 2026-10-02 "Jev decides; research feeds Jev": the generic bounded choice for scope and option rulings.
+test("decide.option: question and criteria required, 2-12 caller options, picks only among them; none_fit and low confidence never act", () => {
+  const input = { question: "Which scope for the login slice?", criteria: "Ships this week; no schema change", evidence: "spike notes",
+    candidates: [{ id: "email", text: "Email and password only" }, { id: "sso", text: "Add SSO now" }] };
+  const r = buildRequest("decide.option", input);
+  assert.equal(r.def.version, 1);
+  assert.deepEqual(Object.keys(r.questions.option.criteria).sort(), ["email", "none_fit", "sso"], "the caller's options plus none_fit, nothing else");
+  assert.throws(() => buildRequest("decide.option", { ...input, criteria: undefined }), InputError);
+  assert.throws(() => buildRequest("decide.option", { question: "q", criteria: "c" }), InputError, "options are required");
+  assert.throws(() => buildRequest("decide.option", { ...input, candidates: [{ id: "only", text: "x" }] }), /too few candidates \(1 < 2\)/, "one option is not a choice");
+  assert.throws(() => buildRequest("decide.option", { ...input, candidates: Array.from({ length: 13 }, (_, i) => ({ id: `o${i}`, text: "x" })) }), InputError);
+  const answer = (choice, confidence) => ({ option: { type: "choice", choice, confidence,
+    probabilities: { email: choice === "email" ? confidence : (1 - confidence) / 2, sso: choice === "sso" ? confidence : (1 - confidence) / 2, none_fit: choice === "none_fit" ? confidence : (1 - confidence) / 2 } } });
+  validateResponse(r, { model: "jev-1.13.0", usage: {}, answers: answer("email", 0.8) });
+  assert.equal(applyPolicy(r, answer("email", 0.8)).band, "act");
+  assert.equal(applyPolicy(r, answer("email", 0.4)).band, "review");
+  assert.equal(applyPolicy(r, answer("none_fit", 0.99)).band, "uncertain", "none of the options fits: never an act");
+  assert.throws(() => validateResponse(r, { model: "jev-1.13.0", usage: {}, answers: answer("rewrite_everything", 0.9) }), ValidationError, "never outside the caller's options");
+  assert.deepEqual(r.def.fallback, [{ kind: "code", result: { option: "none_fit" } }], "no model guesses when Jev is out: the caller escalates");
+});
