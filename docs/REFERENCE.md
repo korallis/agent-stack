@@ -887,6 +887,8 @@ the lead or a person. Send Jev evidence, not conclusions.
 
   When the row implies such a constraint but doesn't state it, or can't be read, the row is left for the lead;
   `agent-recover`'s reassign does the same.
+  A row left unmoved (left for the lead, or no free seat in any family) is told to the rig's lead once, naming the row
+  and why; to the deputy when the lead itself can't be served. A failed send is retried on the next pass.
   When the seat won't be served again for 30+ minutes (or nobody knows when), rows move after 5 minutes. A model is
   served again when the first account clears both its credential cooldown and that model's. Each row moves at most once. Rows for a
   human or the owner never move, and a row with no free seat anywhere is reported, not moved. A seat that is served

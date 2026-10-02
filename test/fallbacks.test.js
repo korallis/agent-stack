@@ -374,3 +374,31 @@ test("agent-reroute: a failed queue read moves nothing, forgets nothing, and rep
   cli("reroute.js", ["--apply"], { nodes: lead, rows: held, proxy: [acct("claude", { over_limit: true })], state: st3, failList: true });
   assert.equal(cli("reroute.js", ["--apply"], { nodes: lead, rows: held, proxy: [acct("claude")], state: st3 }).out.resumes[0]?.sent, true);
 });
+
+// WO96 (operator, a day of Kimi limits): a row left "for the lead" now tells that lead, once per row; the deputy when the
+// lead itself can't be served; a failed send is retried on the next pass.
+test("agent-reroute tells the lead once about a row it leaves unmoved; the deputy when the lead is out; retried after a failed send", () => {
+  const ago = (m) => new Date(Date.now() - m * 60e3).toISOString();
+  const row = { qitemId: "q-old-review", state: "pending", destinationSession: "review-kimi@app", sourceSession: "operator@app", tags: [], tsUpdated: ago(30), body: "Please review this." };
+  const nodes = [node("coord.lead-claude", "claude-code", { model: "claude-opus-5-5" }), node("coord.deputy-codex", "codex", { model: "gpt-6.1-sol" }),
+    node("review.kimi", "claude-code", { model: "kimi-k3-256k" }), node("review.codex-1", "codex", { model: "gpt-6.1-sol" })];
+  const kimiOut = [acct("claude"), acct("codex"), acct("kimi-ai", { over_limit: true })];
+  const told = (calls) => calls.split("\n").filter((l) => l.startsWith("rig send ")).map((l) => l.split(" ")[2]);
+  // a failed send first: nothing recorded, so the next pass tells the lead; then never again
+  const st = fs.mkdtempSync(join(process.env.AGENT_STACK_STATE, "tell-"));
+  const fail = cli("reroute.js", ["--apply"], { nodes, rows: [row], proxy: kimiOut, state: st, failSend: true });
+  assert.deepEqual([fail.out.moves[0].to, fail.out.moves[0].tell, fail.out.moves[0].told], [null, "coord-lead-claude@app", undefined]);
+  assert.match(fail.out.moves[0].note, /^left for the lead: a review whose author's family isn't on the row/);
+  const ok = cli("reroute.js", ["--apply"], { nodes, rows: [row], proxy: kimiOut, state: st });
+  assert.equal(ok.out.moves[0].told, true);
+  assert.deepEqual(told(ok.calls), ["coord-lead-claude@app"]);
+  assert.match(ok.calls, /\[agent-reroute\] q-old-review for review-kimi@app was not moved: kimi: no eligible account; left for the lead: .* "Author: <seat> \(<family>\)"/);
+  assert.deepEqual(told(cli("reroute.js", ["--apply"], { nodes, rows: [row], proxy: kimiOut, state: st }).calls), [], "once per row");
+  // the lead's own model out: the deputy hears it
+  const st2 = fs.mkdtempSync(join(process.env.AGENT_STACK_STATE, "tell2-"));
+  const claudeOut = [acct("claude", { over_limit: true }), acct("codex"), acct("kimi-ai", { over_limit: true })];
+  assert.deepEqual(told(cli("reroute.js", ["--apply"], { nodes, rows: [row], proxy: claudeOut, state: st2 }).calls), ["coord-deputy-codex@app"]);
+  // without --apply: who would hear, nothing sent
+  const dry = cli("reroute.js", [], { nodes, rows: [row], proxy: kimiOut, state: fs.mkdtempSync(join(process.env.AGENT_STACK_STATE, "tell3-")) });
+  assert.deepEqual([dry.out.moves[0].tell, told(dry.calls)], ["coord-lead-claude@app", []]);
+});

@@ -81,6 +81,20 @@ export function plan(rows, all, families, { minutes = 20, now = Date.now(), move
   return out;
 }
 
+// Pure: who hears about a row left unmoved: the rig's lead if it is running and servable, else its deputy (a lead on a
+// 429 can't read it), else nobody (reported). Returns the seat or null.
+export function tellWhom(all, families) {
+  const ok = (s) => s && s.running && seatAvailable(s, families);
+  return [all.find((s) => s.role === "lead"), all.find((s) => s.role === "deputy")].find(ok)?.seat ?? null;
+}
+
+// Pure: the message for a row left unmoved (once per row).
+export function leftMessage(m) {
+  return `[agent-reroute] ${m.id} for ${m.from} was not moved: ${m.why}; ${m.note}. It is yours to decide: re-route it, `
+    + `reassign it, or fix the row (a review row needs "Author: <seat> (<family>)", an implementation against locked tests `
+    + `"Locked tests: <seat> (<family>)").`;
+}
+
 // Pure: seats that were unservable (wasOut: seat -> since) and are served again, idle, with claimed rows left: one
 // resume message each, naming the rows. Returns { resume: [{ seat, rows, text }], out: [seats unservable now] }.
 export function resumes(rows, all, families, wasOut = new Set()) {
@@ -108,6 +122,7 @@ async function main() {
   const db = odb();
   db.exec("CREATE TABLE IF NOT EXISTS reroutes (item TEXT PRIMARY KEY, ts INTEGER, from_seat TEXT, to_seat TEXT, why TEXT)");
   db.exec("CREATE TABLE IF NOT EXISTS reroute_unserved (seat TEXT PRIMARY KEY, since INTEGER)");
+  db.exec("CREATE TABLE IF NOT EXISTS reroute_told (item TEXT PRIMARY KEY, ts INTEGER, seat TEXT, note TEXT)");
   const moved = new Set(db.prepare("SELECT item FROM reroutes").all().map((r) => r.item));
   const wasOut = new Set(db.prepare("SELECT seat FROM reroute_unserved").all().map((r) => r.seat));
   const families = eligibleFamilies(), report = [], nudges = [], errors = [];
@@ -131,6 +146,15 @@ async function main() {
         rig(["queue", "handoff", m.id, "--to", m.to, "--note", m.note], { json: true });
         db.prepare("INSERT OR IGNORE INTO reroutes VALUES (?,?,?,?,?)").run(m.id, Date.now(), m.from, m.to, m.why);
         m.applied = true;
+      }
+      // left unmoved (no free seat, or a constraint only a lead can settle): tell the lead once per row (WO96)
+      if (!m.to && !db.prepare("SELECT 1 FROM reroute_told WHERE item = ?").get(m.id)) {
+        const who = tellWhom(all, families);
+        m.tell = who;
+        if (apply && who && rig(["send", who, leftMessage(m)], { allowFail: true }) !== null) {
+          db.prepare("INSERT OR IGNORE INTO reroute_told VALUES (?,?,?,?)").run(m.id, Date.now(), who, m.note);
+          m.told = true;
+        }
       }
       report.push({ rig: rigName, ...m });
     }
