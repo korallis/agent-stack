@@ -129,7 +129,7 @@ test("if systemd can't report the scope's result, the elapsed time decides", () 
 });
 
 test("the seat rules say servers stay outside agent-heavy and jobs have a max runtime", () => {
-  const rules = fs.readFileSync(join(repo, "rig/template/CULTURE.md"), "utf8").split(/^## /m).find(s => s.startsWith("Operating rules"));
+  const rules = fs.readFileSync(join(repo, "rig/template/guidance/host-operations.md"), "utf8");
   assert.match(rules, /Never wrap a server/);
   assert.match(rules, /max runtime \(45min build, 30min browser/);
   const agents = fs.readFileSync(join(repo, "starter-kit/AGENTS.md"), "utf8");

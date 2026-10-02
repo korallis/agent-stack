@@ -382,6 +382,24 @@ Details are in the `agent-stack` skill. What went wrong before: [docs/incidents/
 - **Jev:** MCP server `jev` registered at user scope in both harnesses (runs outside the Codex sandbox); `TYPESAFE_API_KEY`
   exported in shells; skills `typesafe-ai` and `agent-stack` in both harnesses.
 
+### Startup instruction size
+
+New projects load a short `rig/CULTURE.md`, the shared startup context and their selected role's first message.
+Detailed procedures live in `rig/guidance/`: host operations, delivery, coordination and the lead's delivery loop.
+Each role names when to read them. When an older workspace lacks the copies, roles use the shipped guidance
+beside their resolved agent directory. `agent-project-new` copies these files without replacing an existing project's
+rules. Manual setup also copies that directory. Review local owner decisions and project-specific rules before
+adopting the slimmer template in an existing rig; do not overwrite them with the template.
+
+`agent-project-check` reports a warning above 6000 estimated startup tokens (characters divided by four), counting
+the instruction file and role message. This is a cheap size signal, not a Claude or Codex tokenizer. Missing
+on-demand documents referenced by CULTURE are a failure. The check and refresh leave built-in OpenRig blocks alone.
+
+WO89 measurement: the shared culture changed from 5277 to 1699 `o200k_base` tokens (95 lines). With the built-in
+blocks copied from a real seat and each selected role included, template startup fell 40.2–54.3%. These numbers
+exclude global skill catalogs and on-demand reads. Customized existing seats retain substantial local rules, so
+this template result is not a claim of 40% savings across the live fleet. No running seat is changed by this PR.
+
 ### Local fixes for OpenRig + Codex (no fork)
 
 | Symptom | Cause | Fix |

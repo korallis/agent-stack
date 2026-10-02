@@ -12,7 +12,7 @@ const read = (p) => fs.readFileSync(join(repo, p), "utf8");
 const flat = (p) => read(p).replace(/\s+/g, " ");
 
 test("CULTURE teaches one file per owner update row: when, how, where (outliving the job) and what never", () => {
-  const c = flat("rig/template/CULTURE.md");
+  const c = flat("rig/template/guidance/coordination.md");
   assert.match(c, /update row to the owner \(`--human-intent update`\) can carry ONE file, `--evidence-ref <absolute path>`/);
   assert.match(c, /\.png\/\.jpg\/\.gif\/\.webp, an \.mp4\/\.webm\/\.mov or a \.pdf, at most 50 MiB/);
   assert.match(c, /When: a witness pass, a finished user-visible feature, a fix for a bug the owner reported\. Not every step or PR\./);
@@ -24,7 +24,7 @@ test("CULTURE teaches one file per owner update row: when, how, where (outliving
   assert.match(c, /"Posted" \(or the row closing itself\) confirms the TEXT only: the daemon reads and uploads the file after that receipt/);
   assert.match(c, /never delete a proof file because its row posted/);
   assert.match(c, /find "\$HOME\/\.cache\/<rig>-tmp\/<seat>\/proof" -type f -mtime \+7 -delete/);
-  for (const f of ["rig/template/CULTURE.md", "skills/agent-stack/SKILL.md", "rig/template/agents/qa/guidance/role.md",
+  for (const f of ["rig/template/guidance/coordination.md", "skills/agent-stack/SKILL.md", "rig/template/agents/qa/guidance/role.md",
     "rig/template/agents/lead/guidance/role.md", "rig/template/witness-slice/SPEC.md", "docs/REFERENCE.md"]) {
     assert.doesNotMatch(flat(f), /(until|once|after) (the|its) row (shows |is )?(posted|closed)/i, `${f}: posted is not a cleanup signal`);
   }
@@ -36,7 +36,7 @@ test("QA, lead and the witness slice: QA and the witness hand the lead the path;
   const qa = flat("rig/template/agents/qa/guidance/role.md");
   assert.match(qa, /`\$HOME\/\.cache\/<rig>-tmp\/<seat>\/proof\/` and put its absolute path in your PASS row to the lead/);
   assert.match(qa, /Demo or fictional data only; no secrets, tokens or real client data on screen/);
-  const lead = flat("rig/template/agents/lead/guidance/role.md");
+  const lead = flat("rig/template/guidance/lead-loop.md");
   assert.match(lead, /OWNER PROOF: for a witness pass, a finished user-visible feature or a fix for a bug the owner reported/);
   assert.match(lead, /--human-intent update .*--evidence-ref <absolute path>/); assert.match(lead, /Not every step or PR/);
   assert.doesNotMatch(read("rig/template/agents/lead/guidance/role.md"), /@OWNER@/, "only CULTURE.md gets @OWNER@ substituted");

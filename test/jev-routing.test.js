@@ -325,7 +325,7 @@ test("merge outcome: act -> PASS; review band with every gate green -> NEEDS CON
 });
 
 test("the CULTURE template keeps the below-bar confirm path (WO36)", () => {
-  const c = fs.readFileSync(join(repo, "rig/template/CULTURE.md"), "utf8").replace(/\s+/g, " ");
+  const c = fs.readFileSync(join(repo, "rig/template/guidance/delivery.md"), "utf8").replace(/\s+/g, " ");
   assert.match(c, /only live Jev `merge` in the act band merges on its own; a merge below the act bar, with every deterministic gate green, merges after a one-line exact-head `confirm <sha>` from the other-family independent reviewer, as the integrator role says/);
   assert.doesNotMatch(c, /only live Jev `merge` in the act band merges\)/);
 });

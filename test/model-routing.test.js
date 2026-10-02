@@ -70,8 +70,7 @@ test("escalation is a fresh seat on the same model, not an 'Astra seat'; the doc
   assert.match(ref, /operator:model-routing-2026-10-01/); assert.match(ref, /Codex test author \(0\.69\), Codex architect incl\.\s+`arch\.astra` \(0\.64\) and the Codex lead of `fallback-codex\.yaml` \(0\.60\)/);
   // QA PR71: the guidance names the defaults AND the deliberate exceptions, so a correctly pinned seat isn't told it's wrong
   const start = fs.readFileSync(join(repo, "rig/template/startup/context.md"), "utf8");
-  assert.match(start, /the one your rig's spec pins for your seat/); assert.match(start, /Codex `gpt-6\.1-sol`; Claude test authors and UI implementers\s+`claude-sonnet-5-5`/);
-  assert.match(start, /`kimi-k3\[1m\]`\s+or `kimi-k3-256k`/); assert.match(start, /team\.yaml's architect is on Opus 5\.5/);
+  assert.match(start, /Check your model against your member's `model:` in the rig spec/);
   assert.match(fs.readFileSync(join(repo, "rig/template/CULTURE.md"), "utf8"), /\| Plan decomposition, acceptance criteria, architecture \| Fable 5\.1 \(`team\.yaml` keeps Opus 5\.5\) \|/);
   // QA PR71: the README's full-stack row names the merge owner by the model the template pins (integ.codex: 6.1 Sol)
   const fsRow = fs.readFileSync(join(repo, "rig/template/README.md"), "utf8").split("\n").find((l) => l.startsWith("| `full-stack.yaml`"));

@@ -168,6 +168,12 @@ if [ $DRY = 0 ]; then
   # The owner's human address (per machine: agent-owner-address), where the template says @OWNER@. A CULTURE.md that
   # already exists keeps its text: only a remaining placeholder is filled.
   OWNER=$("$AS/bin/agent-owner-address"); sed -i "s#@OWNER@#$OWNER#g" "$W/rig/CULTURE.md"
+  # Detailed procedures stay on demand; existing project guidance keeps its authored text.
+  mkdir -p "$W/rig/guidance"
+  for f in "$AS"/rig/template/guidance/*.md; do
+    dest="$W/rig/guidance/$(basename "$f")"
+    [ -f "$dest" ] || sed "s#@OWNER@#$OWNER#g" "$f" > "$dest"
+  done
   mkdir -p "$W/rig/startup"
   [ -f "$W/rig/startup/context.md" ] || sed "s#@REPO@#$R#g; s#@WT@#$WT#g; s#@TRUNK@#$TRUNK#g" "$AS/rig/template/startup/context.md" > "$W/rig/startup/context.md"
   sed -i "s#@RIG@#$RIG#g; s#@REPO@#$R#g; s#@WT@#$WT#g; s#@AGENT_STACK@#$AS#g; s#@LEAD_SEAT@#$LEAD#g; s#@MERGE_SEAT@#$MERGE#g" \

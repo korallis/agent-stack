@@ -162,6 +162,8 @@ test("existing master-trunk repo, real run: mirror main, pre-push guard, worktre
   // idempotent: a second run changes nothing and keeps the links
   const again = realRun("shop-real", "freal");
   assert.equal(again.status, 0, again.stderr);
+
+
   assert.equal(git(proj, "status", "--porcelain").stdout, "");
 });
 
@@ -308,10 +310,17 @@ test("a new rig's CULTURE.md names this machine's owner address; an existing CUL
   const r = realRun("shop-owner", "fown", [], "ruleset", { AGENT_OWNER_ADDRESS: "ann@external" });
   assert.equal(r.status, 0, r.stderr);
   const culture = fs.readFileSync(join(r.W, "rig/CULTURE.md"), "utf8");
+  for (const doc of ["host-operations.md", "delivery.md", "coordination.md", "lead-loop.md"]) {
+    assert.ok(fs.existsSync(join(r.W, "rig/guidance", doc)), `on-demand ${doc} copied`);
+  }
+
   assert.match(culture, /informational row to the owner \(ann@external\)/); assert.doesNotMatch(culture, /@OWNER@/);
   fs.writeFileSync(join(r.W, "rig/CULTURE.md"), culture.replace("ann@external", "someone@external"));
+  fs.writeFileSync(join(r.W, "rig/guidance/delivery.md"), "project-specific delivery rules\n");
   const again = realRun("shop-owner", "fown", [], "ruleset", { AGENT_OWNER_ADDRESS: "ann@external" });
   assert.equal(again.status, 0, again.stderr);
+  assert.equal(fs.readFileSync(join(r.W, "rig/guidance/delivery.md"), "utf8"), "project-specific delivery rules\n");
+
   assert.match(fs.readFileSync(join(r.W, "rig/CULTURE.md"), "utf8"), /\(someone@external\)/, "an existing rig keeps its text");
 });
 

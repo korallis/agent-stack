@@ -138,6 +138,11 @@ if specs:
         f"missing {', '.join(lacks)}: copy from agent-stack rig/template/CULTURE.md" if lacks else "")
     # Owner decisions hold only the owner's own decisions, each ending with its source; a lead's interpretation filed
     # there reads to every seat as the owner's word (WO41).
+    guidance_refs = set(re.findall(r"guidance/[a-z-]+\.md", read(f"{W}/rig/CULTURE.md") or ""))
+    missing_guidance = [ref for ref in sorted(guidance_refs) if not os.path.isfile(os.path.join(W, "rig", ref))]
+    if guidance_refs:
+        rep("FAIL" if missing_guidance else "OK", "CULTURE on-demand guidance exists",
+            ", ".join(missing_guidance))
     unsourced, lead_docs = owner_decision_problems(read(f"{W}/rig/CULTURE.md") or "")
     rep("OK" if not unsourced else "WARN", "every Owner decisions bullet ends with its owner source",
         f"{len(unsourced)} without (owner or the owner's name, Slack HH:MMZ) or (…, via operator relay of <ref>): {'; '.join(unsourced[:3])}. "
@@ -515,7 +520,7 @@ if specs:
         rep("OK" if "[OK] spec_live_conformance" in dc else "FAIL", "running rig matches its spec (rig doctor --spec)")
     d = yaml.safe_load(read(sp))
     cfile = ((d.get("managed_blocks") or {}).get("claude-code")) or "CLAUDE.md"
-    noblocks, stale, noskills = [], [], []
+    noblocks, stale, noskills, startup_sizes = [], [], [], []
     for pod in d.get("pods", []):
         for mem in pod.get("members", []):
             cwd, rt = mem.get("cwd"), mem.get("runtime")
@@ -526,6 +531,10 @@ if specs:
                 noblocks.append(seat); continue
             ref = (mem.get("agent_ref") or "").replace("path:", "")
             ay = yaml.safe_load(read(os.path.join(ref, "agent.yaml")) or "{}") or {}
+            # A cheap, deterministic estimate, not a provider token count. Include the selected role's
+            # first message; linked on-demand docs do not enter startup until the role needs them.
+            role_text = read(os.path.join(ref, "guidance/role.md")) or ""
+            startup_sizes.append((seat, (len(txt) + len(role_text) + 3) // 4))
             prof = (ay.get("profiles") or {}).get(mem.get("profile") or "default") or {}
             want = [x.split(":")[-1] for x in ((prof.get("uses") or {}).get("skills") or [])]
             sd = os.path.join(cwd or "", ".agents/skills" if rt == "codex" else ".claude/skills")
@@ -541,13 +550,19 @@ if specs:
     except (ValueError, KeyError, TypeError):
         stale = [f"agent-refresh-guidance {W} --json failed: {(rg.stderr or rg.stdout).strip()[-200:]}"]
     if not running:  # OpenRig writes instruction blocks and projects skills at launch
-        noblocks, stale, noskills = [], [], []
+        noblocks, stale, noskills, startup_sizes = [], [], [], []
         rep("WARN", "seat instructions and skills not checked: the rig is not running (rig up, then re-check)")
     rep("OK" if not noblocks else "FAIL", "every seat's instruction file has its OpenRig blocks",
         "run agent-refresh-guidance --apply: " + ", ".join(noblocks) if noblocks else "")
     rep("OK" if not stale else "WARN", "seat instructions carry the current CULTURE.md and startup files",
         "run agent-refresh-guidance --apply: " + ", ".join(stale[:6]) if stale else "")
     rep("OK" if not noskills else "WARN", "every seat has the skills its role declares", ", ".join(noskills[:6]))
+    large = [f"{seat}: ~{size} tokens" for seat, size in startup_sizes if size > 6000]
+    rep("WARN" if large or not startup_sizes else "OK",
+        "seat startup instructions fit the 6000-token estimate budget (characters/4, including role text)",
+        "; ".join(large) if large else ("no instruction files measured" if not startup_sizes else
+        f"{len(startup_sizes)} files; largest ~{max(size for _, size in startup_sizes)} tokens"))
+
 def git(*a):
     return run(["git", "-C", REPO, *a], capture_output=True, text=True).stdout.strip()
 TRUNK = (git("symbolic-ref", "-q", "--short", "refs/remotes/origin/HEAD").removeprefix("origin/")

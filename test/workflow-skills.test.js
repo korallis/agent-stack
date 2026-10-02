@@ -75,7 +75,7 @@ test("bug-review-board has a truthful path for CLI and API work, not only the br
 });
 
 test("the binding guidance agrees with bug-review-board: non-web work has a real path, only P0/P1 block (QA round 2)", () => {
-  const culture = fs.readFileSync(join(repo, "rig/template/CULTURE.md"), "utf8");
+  const culture = fs.readFileSync(join(repo, "rig/template/guidance/delivery.md"), "utf8");
   const done = culture.split(/^## /m).find((s) => s.startsWith("Done means a person could use it"));
   assert.match(done, /A web feature: acceptance tests are browser journeys/);
   assert.match(done, /A feature with no UI \(a CLI, or an API that clients call\): acceptance tests run the public command/);
