@@ -16,7 +16,7 @@ const stack = join(root, "stack"), log = join(root, "calls"), pkg = join(root, "
 write(join(stack, "bin/openrig-ensure"), fs.readFileSync(join(repo, "bin/openrig-ensure"), "utf8"), 0o755);
 write(join(stack, "bin/semver-cmp"), fs.readFileSync(join(repo, "bin/semver-cmp"), "utf8"), 0o755);
 write(join(stack, "bin/openrig-upgrade"), `#!/bin/sh\necho "upgrade $*" >> ${log}\n`, 0o755);
-write(join(stack, "bin/openrig-apply-patches"), `#!/bin/sh\necho "patches $*" >> ${log}\n[ -f ${root}/patches-missing ] && { echo "OpenRig 0.6.1 patches: 8/9 applied; NOT applied: 135-x (run openrig-apply-patches)"; exit 1; }\necho "OpenRig 0.6.1 patches: all 9 applied"\n`, 0o755);
+write(join(stack, "bin/openrig-apply-patches"), `#!/bin/sh\necho "patches $*" >> ${log}\nif [ "$1" != --check ]; then\n  [ -f ${root}/patches-missing ] && { echo "OpenRig 0.6.1 patches: applied 135-x; already applied 132-y"; exit 0; }\n  echo "OpenRig 0.6.1 patches: applied none; already applied 132-y 135-x"; exit 0\nfi\n[ -f ${root}/patches-missing ] && { echo "OpenRig 0.6.1 patches: 8/9 applied; NOT applied: 135-x (run openrig-apply-patches)"; exit 1; }\necho "OpenRig 0.6.1 patches: all 9 applied"\n`, 0o755);
 write(join(stack, "config/versions.defaults.env"), "OPENRIG_VERSION=0.6.1\n");
 
 function ensure({ installed = null, localPin = null, check = false, missing = false } = {}) {
@@ -91,4 +91,17 @@ test("QA: a stale PRERELEASE pin (0.6.1-rc.1) never downgrades 0.6.1; a v-prefix
   assert.equal(bad.status, 1);
   assert.match(bad.stderr, /not a version/);
   assert.doesNotMatch(bad.calls, /upgrade/);
+});
+
+// WO94: a patch added for the version already installed was reported "NOT applied" by install.sh and never applied.
+test("equal or newer install: the installed version's patches are applied (only the missing ones), with a cycle note when any was new", () => {
+  const fresh = ensure({ installed: "0.6.1", missing: true });
+  assert.equal(fresh.status, 0, fresh.stderr);
+  assert.match(fresh.calls, new RegExp(`^patches ${pkg}$`, "m"), "applied to the installed package");
+  assert.match(fresh.stdout, /patches: applied 135-x;/);
+  assert.match(fresh.stdout, /note: the newly applied OpenRig patches load at the daemon's next start: cycle it at a quiet moment \(openrig-daemon-cycle\)/);
+  const same = ensure({ installed: "0.6.1" });
+  assert.match(same.stdout, /patches: applied none;/); assert.doesNotMatch(same.stdout, /next start/, "nothing new: no note");
+  assert.match(ensure({ installed: "0.7.0", missing: true }).calls, /^patches /m, "a kept newer install too");
+  assert.doesNotMatch(ensure({ installed: "0.6.0" }).calls, /^patches /m, "an upgrade applies them itself (openrig-upgrade)");
 });
