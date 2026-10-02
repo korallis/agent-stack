@@ -90,7 +90,10 @@ def instructions(role, culture, agents_dir):
              "# You are an OpenRig seat",
              "Your seat name is in $OPENRIG_SESSION_NAME; `rig whoami --json` shows your rig, pod and role. Work arrives as "
              "queue rows and `rig send` messages: read each row with `rig queue show <id> --full --json`, and follow the "
-             "rig's culture below for claiming, handing off and closing rows."]
+             "rig's culture below for claiming, handing off and closing rows.",
+             "A message sent while you were busy waits in your CLI's input queue and arrives later as its own turn, so it "
+             "can be stale. Before acting on any queued notice about a row, run `rig queue show <id> --full --json`; if "
+             "the row is already done or handed off, skip it without re-reporting it."]
     for title, path in (("Rig culture", culture), ("Your role", Path(agents_dir) / role / "guidance" / "role.md")):
         if path and Path(path).is_file():
             parts += [f"# {title}", Path(path).read_text()]
