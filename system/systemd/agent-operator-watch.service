@@ -1,0 +1,9 @@
+[Unit]
+Description=Wake an inactive operator and hand unclaimed work to the advisor
+After=openrig.service
+[Service]
+Type=oneshot
+Environment=PATH=%h/.local/bin:%h/.local/share/mise/shims:/usr/local/bin:/usr/bin:/bin
+Environment=OPENRIG_SESSION_NAME=operator-watch@agent-stack
+ExecStart=%h/.local/bin/agent-operator-watch
+TimeoutStartSec=4min

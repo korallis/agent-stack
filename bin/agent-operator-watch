@@ -1,0 +1,160 @@
+#!/usr/bin/env python3
+"""Wake an inactive operator once, then queue an advisor after another 15 minutes."""
+import argparse
+import datetime
+import fcntl
+import hashlib
+import json
+import os
+from pathlib import Path
+import subprocess
+import tempfile
+import time
+
+DELAY = 15 * 60
+
+
+def epoch(value):
+    try:
+        dt = datetime.datetime.fromisoformat(str(value).replace('Z', '+00:00'))
+        return dt.replace(tzinfo=dt.tzinfo or datetime.timezone.utc).timestamp()
+    except (ValueError, TypeError):
+        return None
+
+
+def observe(state, node, rows, now):
+    """Return an action and advance observations. Action receipts belong to the caller."""
+    pending = [r for r in rows if r.get('state') == 'pending']
+    if not pending:
+        state.clear()
+        return 'clear'
+    activity = node.get('agentActivity') or {}
+    sampled = epoch(activity.get('sampledAt'))
+    stopped = node.get('sessionStatus') in ('stopped', 'not-found', 'exited')
+    if not stopped and (node.get('sessionStatus') != 'running' or sampled is None
+                        or not 0 <= now - sampled <= 120 or activity.get('state') not in ('idle', 'running')):
+        state.clear()
+        return 'unknown'
+    if not stopped and activity.get('state') == 'running':
+        state.clear()
+        return 'active'
+    # Full node inventory uses lastActivityAt; compact output calls it lastActivity.
+    if not stopped and 'lastActivityAt' not in node:
+        state.clear()
+        return 'unknown'
+    last = node.get('lastActivityAt')
+    if state.get('lastActivity') != last or state.get('inactiveSince', now) > now:
+        state.clear()
+    state.setdefault('inactiveSince', now)
+    state['lastActivity'] = last
+    aged = [r for r in pending if (at := epoch(r.get('tsUpdated') or r.get('tsCreated'))) is not None
+            and now - at >= DELAY]
+    if not aged or now - state['inactiveSince'] < DELAY:
+        return 'observe'
+    if 'wakeAt' not in state:
+        return 'wake'
+    if now - state['wakeAt'] >= DELAY and not state.get('escalated'):
+        return 'escalate'
+    return 'observe'
+
+
+def command(args, **kwargs):
+    return subprocess.run(['rig', *args], text=True, capture_output=True, timeout=60, **kwargs)
+
+
+def read_json(args):
+    res = command([*args, '--json'])
+    if res.returncode:
+        raise ValueError('rig read failed: ' + ' '.join(args[:2]))
+    return json.loads(res.stdout)
+
+
+def rows_from(data):
+    if isinstance(data, list):
+        return data
+    if isinstance(data, dict) and not data.get('truncated'):
+        for key in ('entries', 'nodes', 'items', 'qitems'):
+            if isinstance(data.get(key), list):
+                return data[key]
+    raise ValueError('unrecognized or truncated rig response')
+
+
+def save(path, state):
+    with tempfile.NamedTemporaryFile(mode='w', dir=path.parent, delete=False) as out:
+        json.dump(state, out)
+        temp = out.name
+    os.replace(temp, path)
+
+
+def main():
+    parser = argparse.ArgumentParser(description=__doc__)
+    parser.add_argument('--operator', default='operator-agent@kernel')
+    parser.add_argument('--advisor', default='advisor-lead@kernel')
+    parser.add_argument('--state', type=Path, default=Path(os.environ.get('AGENT_STACK_STATE',
+                        Path.home() / '.local/state/agent-stack')) / 'operator-watch.json')
+    parser.add_argument('--dry-run', action='store_true')
+    args = parser.parse_args()
+    if any(x.count('@') != 1 or not all(x.split('@')) for x in (args.operator, args.advisor)):
+        parser.error('operator and advisor must be seat@rig addresses')
+    lock = None
+    if not args.dry_run:
+        args.state.parent.mkdir(parents=True, exist_ok=True, mode=0o700)
+        lock = open(str(args.state) + '.lock', 'a')
+        os.chmod(lock.name, 0o600)
+        try:
+            fcntl.flock(lock, fcntl.LOCK_EX | fcntl.LOCK_NB)
+        except BlockingIOError:
+            return 0
+    state = json.loads(args.state.read_text()) if args.state.exists() else {}
+    if not isinstance(state, dict):
+        raise ValueError('invalid watchdog state')
+    nodes = rows_from(read_json(['ps', '--nodes', '--rig', args.operator.split('@')[1],
+                                '--session', args.operator, '--full']))
+    nodes = [n for n in nodes if n.get('canonicalSessionName') == args.operator]
+    if len(nodes) != 1:
+        raise ValueError('operator missing or ambiguous; no action')
+    rows = rows_from(read_json(['queue', 'list', '-A', '--destination', args.operator,
+                               '--state', 'pending', '--limit', '1000']))
+    now = time.time()
+    action = observe(state, nodes[0], rows, now)
+    report = {'operator': args.operator, 'action': action, 'dryRun': args.dry_run}
+    if args.dry_run:
+        print(json.dumps(report))
+        return 0
+    save(args.state, state)
+    if action == 'wake':
+        # At most one attempt in an episode, even if the transport reply is lost. Escalation remains armed.
+        state['wakeAt'] = now
+        save(args.state, state)
+        res = command(['send', args.operator,
+                       'Operator watchdog: pending rows have waited over 15 minutes without activity. Check your queue.'])
+        report['delivered'] = res.returncode == 0
+    elif action == 'escalate':
+        key = hashlib.sha256(f'{args.operator}:{state["wakeAt"]}'.encode()).hexdigest()[:24]
+        pending = ', '.join(sorted(str(r['qitemId']) for r in rows if r.get('qitemId'))[:20])
+        body = (f'{args.operator} still has pending work 15 minutes after the watchdog wake attempt. '
+                f'Queue IDs: {pending}. Check current custody before acting. Handle operator-safe work '
+                '(relaunch requests or merges through gate-merge.sh); keep existing approvals and gates. '
+                'If you cannot take custody, alert the owner through the configured Slack route. '
+                'The watchdog has not relaunched or merged anything.')
+        with tempfile.NamedTemporaryFile(mode='w', dir=args.state.parent) as out:
+            out.write(body)
+            out.flush()
+            res = command(['queue', 'create', '--destination', args.advisor, '--priority', 'urgent',
+                           '--summary', 'Operator inactive after watchdog wake', '--id', f'operator-watch-{key}',
+                           '--body-file', out.name, '--tags', 'operator-watch', '--json'])
+        report['delivered'] = res.returncode == 0
+        if res.returncode == 0:
+            state['escalated'] = True
+            save(args.state, state)
+    print(json.dumps(report))
+    return 1 if report.get('delivered') is False or action == 'unknown' else 0
+
+
+if __name__ == '__main__':
+    try:
+        raise SystemExit(main())
+    except (OSError, ValueError, subprocess.TimeoutExpired) as error:
+        # Do not echo CLI output: queue bodies, activity evidence and settings may be private.
+        print(f'agent-operator-watch: {type(error).__name__}; no further action', file=__import__('sys').stderr)
+        raise SystemExit(1)
