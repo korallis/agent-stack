@@ -99,7 +99,7 @@ if [ -s "$HOME/.cli-proxy-api/config.yaml" ]; then ok "$HOME/.cli-proxy-api/conf
 
 step "Helper scripts"
 dirs "$L/bin" "$L/seat-bin" "$B"
-for f in agent-login cliproxy-healthcheck cliproxy-key openrig-healthcheck cliproxy-authwatch cliproxy-quotawatch agent-repos-sync; do place "$S/system/$f" "$L/bin/$f" 755; done
+for f in agent-login cliproxy-healthcheck cliproxy-key openrig-healthcheck cliproxy-authwatch cliproxy-quotawatch agent-repos-sync rig-lifecycle-guard; do place "$S/system/$f" "$L/bin/$f" 755; done
 place "$S/system/seat-bin-codex" "$L/seat-bin/codex" 755
 # Credential guard for seats' neon/vercel (refuses to print secrets into a transcript); env.sh adds the seat functions.
 place "$S/system/seat-bin-credguard" "$L/seat-bin/credguard" 755
@@ -173,7 +173,9 @@ if [ $CHECK = 0 ]; then
   node22=$(mise where "node@$NODE_FOR_OPENRIG")/bin
   # Queue writes go through seat-tools/rig first: inside a seat create/handoff (project tag, EC-3 worktree_path, a human
   # row's subject); outside one `queue create` too, so the operator's rows to a human get a subject as well (WO70).
-  printf '#!/usr/bin/env bash\nif [ -z "${AGENT_STACK_RIG_HELPER:-}" ] && [ "${1:-}" = queue ] && [ -x "%s/seat-tools/rig" ]; then\n  case "${2:-}" in\n    create) exec "%s/seat-tools/rig" "$@" ;;\n    handoff|handoff-and-complete) [ -n "${OPENRIG_NODE_ID:-}" ] && exec "%s/seat-tools/rig" "$@" ;;\n  esac\nfi\nexport PATH="%s:$PATH"\nexec "%s/openrig/bin/rig" "$@"\n' "$L" "$L" "$L" "$node22" "$L" > "$B/rig"; chmod 755 "$B/rig"
+  # Daemon lifecycle is the operator's: any command naming `up` or `daemon` first asks rig-lifecycle-guard, which refuses
+  # `rig up` and `rig daemon start|stop|restart` from a seat other than the operator's (2026-10-02).
+  printf '#!/usr/bin/env bash\nfor a; do case $a in up|daemon) g="%s/bin/rig-lifecycle-guard"; [ ! -x "$g" ] || "$g" "$@" || exit $?; break ;; esac; done\nif [ -z "${AGENT_STACK_RIG_HELPER:-}" ] && [ "${1:-}" = queue ] && [ -x "%s/seat-tools/rig" ]; then\n  case "${2:-}" in\n    create) exec "%s/seat-tools/rig" "$@" ;;\n    handoff|handoff-and-complete) [ -n "${OPENRIG_NODE_ID:-}" ] && exec "%s/seat-tools/rig" "$@" ;;\n  esac\nfi\nexport PATH="%s:$PATH"\nexec "%s/openrig/bin/rig" "$@"\n' "$L" "$L" "$L" "$L" "$node22" "$L" > "$B/rig"; chmod 755 "$B/rig"
   # Never downgrade: install only when OpenRig is missing or the pin is NEWER; a newer install is kept and moves the pin.
   "$S/bin/openrig-ensure" | sed 's/^/   /'
   # Seats' tmux server gets its own unit first (skips itself if a server already runs; bin/openrig-tmux-adopt moves that one).

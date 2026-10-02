@@ -1,0 +1,23 @@
+#!/usr/bin/env bash
+# rig-lifecycle-guard ARGS…: called by the ~/.local/bin/rig launcher (install.sh writes it) before any `rig` command
+# that names `up` or `daemon`. Exit 0 lets the command run; exit 3 refuses it. Daemon lifecycle belongs to the operator:
+# a seat (OPENRIG_SESSION_NAME set) other than the operator seat may not run `rig up` or `rig daemon start|stop|restart`.
+# On 2026-10-02 a seat followed OpenRig's own "Daemon not running … run 'rig daemon start'" advice during the
+# operator's daemon cycle and started a second daemon in its terminal's scope, outside openrig.service's cgroup and
+# CPU weight. Every route to the CLI ends at the launcher (seat-tools/rig execs it too), so this is the one place.
+# Allowed: no seat identity (systemd units, a human's shell) and the operator seat (AGENT_OPERATOR_SEAT, default
+# operator-agent@kernel), which also runs agent-project-new and openrig-daemon-cycle. Status and logs stay open to all.
+operator=${AGENT_OPERATOR_SEAT:-operator-agent@kernel}
+seat=${OPENRIG_SESSION_NAME:-}
+[ -z "$seat" ] || [ "$seat" = "$operator" ] && exit 0
+words=()
+for a in "$@"; do case $a in -*) ;; *) words+=("$a") ;; esac; done
+verb=${words[0]:-} sub=${words[1]:-}
+if [ "$verb" = up ] || { [ "$verb" = daemon ] && [[ $sub =~ ^(start|stop|restart)$ ]]; }; then
+  what=$([ "$verb" = up ] && echo "rig up" || echo "rig daemon $sub")
+  echo "rig: refused: '$what' is the operator's job (daemon lifecycle belongs to $operator)." >&2
+  echo "  If the daemon is down or slow, wait 30 s and retry your command; if it stays down for 2 minutes," >&2
+  echo "  tell $operator (rig send, or a queue row once it is back). Never start or stop it yourself." >&2
+  exit 3
+fi
+exit 0
