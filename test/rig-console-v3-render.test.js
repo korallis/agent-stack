@@ -194,7 +194,7 @@ test('capacity keeps history windows distinct and labels its account columns', (
   assert.match(text,/Claude 5h\/weekly/);
 });
 
-test('phase stage counts label witnessed, merged and review work', () => { const snapshot=fixture(); snapshot.teams[0].stageCounts={witnessed:4,merged:12,review:8,notStarted:4,total:28}; const text=words(renderV3(snapshot,160,50,state())); assert.match(text,/witnessed 4 · merged 12 · review 8/); });
+test('phase stage counts label witnessed, merged and review work', () => { const snapshot=fixture(); snapshot.teams[0].stageCounts={witnessed:4,merged:12,review:8,notStarted:4,total:28}; const text=words(renderV3(snapshot,200,50,state('team'))); assert.match(text,/witnessed 4 · merged 12 · review 8/); });
 
 test('project evidence labels and operations cards avoid invented milestone percentages', () => {
   const snapshot=fixture();snapshot.teams[0].progressLabel='16/56 features pass · origin/main';
