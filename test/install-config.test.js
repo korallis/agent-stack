@@ -43,3 +43,43 @@ test("an existing value is kept, whatever it is", () => {
     assert.match(r.stdout, new RegExp(`ok  queue\\.pickup_stall_threshold_minutes = ${v} \\(kept\\)`));
   }
 });
+
+// Exercise the same settings merge used by install.sh, without installing services or changing live HOME.
+const claudeStart = src.indexOf('if [ $CHECK = 0 ]; then\n  mkdir -p "$HOME/.claude"');
+const claudeBlock = src.slice(claudeStart, src.indexOf("# Credential read guard: seats never stop", claudeStart));
+function claudeSettings(settings, check = 0) {
+  const h = fs.mkdtempSync(join(root, "claude-")), dir = join(h, ".claude"), file = join(dir, "settings.json");
+  fs.mkdirSync(dir);
+  if (settings !== null) fs.writeFileSync(file, JSON.stringify(settings));
+  const r = spawnSync("bash", ["-c", `set -euo pipefail
+ok() { echo "ok $*"; }
+todo() { echo "todo $*"; }
+backup() { cp -p "$1" "$1.bak"; }
+CHECK=${check}
+${claudeBlock}`], { encoding: "utf8", env: { PATH: process.env.PATH, HOME: h, TMPDIR: root } });
+  return { ...r, file, settings: fs.existsSync(file) ? JSON.parse(fs.readFileSync(file, "utf8")) : null };
+}
+test("Claude install disables flagged-message switching, preserves unrelated settings and backs up changes", () => {
+  for (const previous of [null, {}, { switchModelsOnFlag: true }, { switchModelsOnFlag: false }]) {
+    const before = previous === null ? null : { ...previous, hooks: { Stop: [] }, permissions: { allow: ["Read"] }, theme: "dark" };
+    const r = claudeSettings(before);
+    assert.equal(r.status, 0, r.stderr);
+    assert.equal(r.settings.switchModelsOnFlag, false);
+    assert.equal(r.settings.permissions.defaultMode, "bypassPermissions");
+    if (before) {
+      assert.deepEqual(r.settings.hooks, before.hooks);
+      assert.deepEqual(r.settings.permissions.allow, ["Read"]);
+      assert.equal(r.settings.theme, "dark");
+      assert.deepEqual(JSON.parse(fs.readFileSync(r.file + ".bak", "utf8")), before);
+    }
+  }
+});
+test("Claude install check reports the setting without writing", () => {
+  for (const before of [null, { switchModelsOnFlag: true }, { switchModelsOnFlag: false }]) {
+    const r = claudeSettings(before, 1);
+    assert.equal(r.status, 0, r.stderr);
+    assert.deepEqual(r.settings, before);
+    assert.equal(fs.existsSync(r.file + ".bak"), false);
+    assert.match(r.stdout, /switchModelsOnFlag/);
+  }
+});

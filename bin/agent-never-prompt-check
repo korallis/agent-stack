@@ -4,6 +4,7 @@
 Verifies that Claude and Codex agents never stop to ask for permission. Read-only. Checks:
   - Codex global config: ~/.codex/config.toml has approval_policy = "never" and sandbox_mode = "danger-full-access";
   - Claude: ~/.claude/settings.json has permissions.defaultMode = "bypassPermissions" (+ skipDangerousModePermissionPrompt);
+  - Claude: switchModelsOnFlag = false (flagged turns pause instead of silently changing model);
   - the seat shim (~/.local/share/agent-stack/seat-bin/codex) adds `-a never` to every Codex seat launch;
   - the credential read guard (a PreToolUse hook that refuses printing credential files) is installed for Claude
     (~/.claude/settings.json) and Codex (~/.codex/config.toml, with its trust hash);
@@ -59,6 +60,9 @@ except json.JSONDecodeError:
 rep((cl.get("permissions") or {}).get("defaultMode") == "bypassPermissions" and cl.get("skipDangerousModePermissionPrompt") is True,
     "Claude: permissions.defaultMode = bypassPermissions, skipDangerousModePermissionPrompt (~/.claude/settings.json)",
     f"defaultMode now {(cl.get('permissions') or {}).get('defaultMode', 'unset')}; run ./install.sh --apply")
+rep(cl.get("switchModelsOnFlag") is False,
+    "Claude: switchModelsOnFlag = false (~/.claude/settings.json; flagged turns pause)",
+    "missing or not boolean false; run ./install.sh --apply")
 shim = read(f"{HOME}/.local/share/agent-stack/seat-bin/codex") or ""
 rep('"-a", "never"' in shim, "seat shim adds -a never to Codex seats (~/.local/share/agent-stack/seat-bin/codex)",
     "run ./install.sh --apply to place system/seat-bin-codex")

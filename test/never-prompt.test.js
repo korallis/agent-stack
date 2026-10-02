@@ -117,7 +117,7 @@ function machine({ approval = "never", sandbox = "danger-full-access", claude = 
   const h = fs.mkdtempSync(join(root, "m-"));
   write(join(h, ".codex/config.toml"), `approval_policy = "${approval}"\nsandbox_mode = "${sandbox}"\n\n[features]\nhooks = true\n`);
   write(join(h, ".codex/pool-x.config.toml"), 'approval_policy = "never"\n');
-  write(join(h, ".claude/settings.json"), JSON.stringify({ skipDangerousModePermissionPrompt: true, permissions: { defaultMode: claude } }));
+  write(join(h, ".claude/settings.json"), JSON.stringify({ switchModelsOnFlag: false, skipDangerousModePermissionPrompt: true, permissions: { defaultMode: claude } }));
   write(join(h, ".local/share/agent-stack/seat-bin/codex"), `extra += ${shimText}\n`);
   if (guard) {   // the credential read guard, installed by the real installer into this fake HOME
     const hook = join(h, ".local/share/agent-stack/bin/agent-credguard-read-hook");
@@ -211,4 +211,18 @@ test("check: every Codex process of a seat must be never; helpers are recognised
   const live = runCheck(h, "--rig", "r").rows.find(x => x.check.startsWith("live Codex seats of r"));
   assert.match(live.check, /\(3 running\)/);
   assert.equal(live.detail, "a@r, b@r: relaunch them once the shim and config are installed");
+});
+
+test("check: flagged-message model switching requires the boolean false", () => {
+  for (const value of [undefined, true, "false", 0, null, false]) {
+    const h = machine(), file = join(h, ".claude/settings.json");
+    const settings = JSON.parse(fs.readFileSync(file, "utf8"));
+    settings.switchModelsOnFlag = value;
+    fs.writeFileSync(file, JSON.stringify(settings));
+    const result = runCheck(h);
+    const row = result.rows.find(r => r.check.includes("switchModelsOnFlag"));
+    assert.ok(row, "model-switch setting has its own check");
+    assert.equal(row.level, value === false ? "OK" : "FAIL");
+    assert.equal(result.status, value === false ? 0 : 1);
+  }
 });
