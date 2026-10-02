@@ -61,3 +61,20 @@ for rows in [[base,base],[dict(base,url='https://user:secret@example.test')],[di
  except ValueError: ans.append(True)
 print(json.dumps(ans))`);assert.deepEqual(got,[true,true,true,true]);
 });
+
+test('truncated chunks and malformed status lines do not suppress another overdue monitor',async()=>{
+ const {createServer}=await import('node:net');const root=mkdtempSync(join(tmpdir(),'uptime-protocol-'));
+ const server=createServer(socket=>socket.once('data',request=>{
+  const path=request.toString().split(' ')[1];
+  socket.end(path==='/broken'?'HTTP/1.1 200 OK\r\nTransfer-Encoding: chunked\r\nConnection: close\r\n\r\n10\r\nshort':path==='/malformed'?'NOT HTTP\r\n\r\n':'HTTP/1.1 503 Unavailable\r\nContent-Length: 4\r\n\r\ndown');
+ }));await new Promise(resolve=>server.listen(0,'127.0.0.1',resolve));
+ try{
+  const config=join(root,'config.json'),state=join(root,'state.json'),calls=join(root,'calls');
+  const monitors=['broken','malformed','down'].map(id=>({id,url:`http://127.0.0.1:${server.address().port}/${id}`,destination:'ops@test',bodyContains:'ready'}));
+  writeFileSync(config,JSON.stringify(monitors));writeFileSync(state,JSON.stringify(Object.fromEntries(monitors.map(m=>[m.id,{downSince:Date.now()/1000-1000,checkedAt:Date.now()/1000}]))));
+  writeFileSync(join(root,'rig'),`#!/bin/sh\nprintf 'alert\\n' >> "$HOME/calls"\n`,{mode:0o755});
+  const r=await new Promise(resolve=>{const p=spawn(script,['--config',config,'--state',state],{env:{...process.env,HOME:root,PATH:`${root}:/usr/bin:/bin`}});let out='',err='';p.stdout.on('data',b=>out+=b);p.stderr.on('data',b=>err+=b);p.on('close',code=>resolve({code,out,err}));});
+  assert.equal(r.code,0,r.err);assert.deepEqual(JSON.parse(r.out).map(x=>[x.status,x.action,x.delivered]),[['unreachable','alert',true],['unreachable','alert',true],[503,'alert',true]]);
+  assert.equal(readFileSync(calls,'utf8').trim().split('\n').length,3);
+ }finally{await new Promise(resolve=>server.close(resolve));rmSync(root,{recursive:true,force:true});}
+});
