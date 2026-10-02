@@ -598,7 +598,7 @@ are kept where a role didn't change.
 | Every Codex seat (implementers incl. the escalation seat, reviewers, QA, merge owner, recovery, deputies, test authors, architects, the fallback lead) | `gpt-6.1-sol` | 2026-10-01 (both runs); before: `gpt-6-astra` / `gpt-6-sol`. The operator may set `gpt-6-astra` for an escalation case by case |
 | Claude UI implementers and test authors | `claude-sonnet-5-5` | 2026-10-01; before: `claude-opus-5-5` |
 | Claude reviewers | `claude-opus-5-5` | unchanged (2026-10-01) |
-| Kimi reviewers / test author | `kimi-k3[1m]`, `kimi-k3-256k` | unchanged (2026-10-01) |
+| Kimi reviewers / test author | `kimi-k3-256k` (a native kimi seat: `kimi-code/k3-256k`) | 2026-10-02: 256k only; `agent-project-check` FAILs a `[1m]` model outside leads and architects |
 | Claude's default Sonnet (`ANTHROPIC_DEFAULT_SONNET_MODEL`, proxy settings and env.sh) | `claude-sonnet-5-5` | follows the routing |
 
 **Fable's one-time consent.** An account may need a one-time consent before Fable can bill usage credits. The seat

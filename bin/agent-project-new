@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 # agent-project-new: set up a project for an OpenRig build team, the correct way, in one idempotent run.
 #
-#   agent-project-new --name <Project> --rig <short> [--github <user>] [--team full-stack|build|small|core]
+#   agent-project-new --name <Project> --rig <short> [--github <user>] [--team standard|full-stack|build|small|core]
 #                     [--identity "Name <email>"] [--no-github] [--no-up] [--no-deps] [--dry-run]
 #
 # Creates or completes (never overwrites):

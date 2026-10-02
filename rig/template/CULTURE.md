@@ -90,18 +90,21 @@ territories in parallel; wave review remains additional to per-PR checks. QA and
 proof-contract items with `rig proof judge`.
 
 ## Models and routing (who does what)
+From Jev `intake.specialist` (2026-10-02), across all four families. `standard.yaml` (16 seats) pins these.
 | Work | Seat model |
 |---|---|
-| Lead / orchestration (holds the whole backlog; 1M context) | Opus 5.5 `[1m]` |
-| Deputy, merge owner, recovery | GPT-6.1 Sol (Codex) |
-| Plan decomposition, acceptance criteria, architecture | Fable 5.1 (`team.yaml` keeps Opus 5.5) |
-| Volume implementation, unit tests, lint/renames/docs | GPT-6.1 Sol (Codex) |
-| Frontend/UI and large migrations | Sonnet 5.5 |
-| Escalation after two red CI runs on a feature | a fresh seat on the same model (GPT-6.1 Sol); the operator may set GPT-6 Astra case by case |
-| Locked acceptance tests | the family that is NOT implementing the feature (Sonnet 5.5 or GPT-6.1 Sol) |
-| User-level QA | GPT-6.1 Sol (Codex) |
-| Review of Codex PRs / of Claude PRs | Opus 5.5 / GPT-6.1 Sol |
-| Third review on risky changes, long-context reading | Kimi K3 (1M) |
-Fable 5.1 is the Claude fallback when Opus 5.5 is rate-limited. The lead routes with Jev `intake.specialist`
+| Lead / orchestration (holds the backlog) | Opus 5.5 `[1m]`, compacting at 400k |
+| Deputy (acts as lead when the lead is out), merge owner, recovery | GPT-6.1 Sol (Codex) |
+| Plan decomposition, acceptance criteria, architecture | Opus 5.5 `[1m]` (`standard.yaml`; the older templates keep Fable 5.1); GPT-6 Astra while Claude is scarce |
+| Backend implementation | Grok 4.7 Build Fast (native grok seat); else GPT-6.1 Sol |
+| Frontend/UI | Sonnet 5.5; UI or backend: GPT-6.1 Sol |
+| Locked acceptance tests | Grok 4.7 Build Fast or GPT-6.1 Sol, never the implementer's family |
+| Review | Grok 4.7, Kimi K3 (256k) and GPT-6.1 Sol, one seat each: every author has two other families |
+| User-level QA | Opus 5.5; GPT-6.1 Sol while Claude is scarce |
+| Escalation after two red CI runs on a feature | a fresh seat of another family |
+Only leads and architects use a 1M window. Every other seat compacts at 200k, and `agent-project-check` FAILs a
+`[1m]` model on any other seat: a 1M seat re-sends up to a million tokens every turn. Keep a seat on its model; route
+work to a seat of the right family instead of switching a seat's model (a switch loses its prompt cache). Grok and Kimi
+seats run their own CLIs (`agent-native-seat`). The lead routes with Jev `intake.specialist`
 over seats that have capacity; code decides anything exact (capacity, retry counts, protected paths, CI status).
 

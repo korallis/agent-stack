@@ -61,7 +61,7 @@ test("small.yaml is build.yaml minus impl.codex-2/-3, impl.astra and tests.codex
   const t = fs.readFileSync(join(repo, "rig/template/small.yaml"), "utf8");
   for (const line of ["permission_policy: builtin:yolo", "culture_file: CULTURE.md", "path: startup/context.md"]) assert.ok(t.includes(line), line);
   assert.doesNotMatch(t, /impl\.codex-2|impl\.codex-3|impl\.astra|tests\.codex/, "no edges to removed seats");
-  assert.match(fs.readFileSync(join(repo, "bin/agent-project-new"), "utf8"), /--team full-stack\|build\|small\|core/);
+  assert.match(fs.readFileSync(join(repo, "bin/agent-project-new"), "utf8"), /--team standard\|full-stack\|build\|small\|core/);
 });
 
 // ---- WO21: an EXISTING repo whose trunk isn't main (shop-app: master) ---------------------------------------------

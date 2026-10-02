@@ -189,6 +189,35 @@ if specs:
             "In that seat run `/model fable` once, accept, then relaunch it at idle" if stuck_fable else "",
             f"{', '.join(unread)}: screen not readable (seat not in tmux?), so not verified" if unread else ""]))
         rep(level, f"Fable seats can use their model ({', '.join(fable)})", detail)
+    # WO88: only leads and architects hold the backlog in a 1M window (and compact at 400k). Any other seat on a [1m]
+    # model re-sends up to a million tokens every turn; that was the main cause of the quota burn.
+    WIDE_OK = ("coord", "arch")
+    wide = []
+    for pod_block in re.split(r"\n  - id: ", spec or "")[1:]:
+        pod = pod_block.split("\n", 1)[0].strip()
+        for mem in re.split(r"\n      - id: ", pod_block)[1:]:
+            m = re.search(r'model:\s*"?([^"\n]+?)"?\s*$', mem, re.M)
+            if pod not in WIDE_OK and m and "[1m]" in m.group(1):
+                wide.append(f"{pod}-{mem.split(chr(10), 1)[0].strip()} (spec: {m.group(1)})")
+    live_note = ""
+    if running:
+        try:
+            import urllib.request
+            base = os.environ.get("OPENRIG_URL", "http://127.0.0.1:7433").rstrip("/")
+            rid = next((r["id"] for r in json.load(urllib.request.urlopen(f"{base}/api/rigs/summary", timeout=5))
+                        if r.get("name") == rig), None)
+            for n in json.load(urllib.request.urlopen(f"{base}/api/rigs/{rid}/nodes", timeout=10)) if rid else []:
+                model, pod = n.get("model") or "", n.get("podNamespace") or ""
+                if pod not in WIDE_OK and "[1m]" in model and n.get("nodeKind", "agent") == "agent":
+                    seat = n.get("canonicalSessionName") or "?"
+                    if not any(w.startswith(seat.split("@")[0] + " ") for w in wide):
+                        wide.append(f"{seat} (live: {model})")
+        except Exception as e:
+            live_note = f"; live seats not read ({type(e).__name__})"
+    rep("FAIL" if wide else "OK", "only leads and architects use a 1M-token window ([1m] model)",
+        f"{', '.join(wide)}: every turn re-sends up to 1M tokens. Pin the model without [1m] (Kimi: kimi-k3-256k, or a "
+        f"native kimi seat on kimi-code/k3-256k) in the spec and `rig seat set-model`, then relaunch at idle{live_note}"
+        if wide else live_note.lstrip("; "))
     try:
         wd = [j for j in json.loads(sh("rig", "watchdog", "list", "--json") or "[]")
               if j.get("state") == "active" and (j.get("targetSession") or "").endswith(f"@{rig}")]

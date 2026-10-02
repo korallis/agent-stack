@@ -1,0 +1,210 @@
+# STANDARD team (16 seats): the sized-down default for a project rig (WO88, 2026-10-02). It replaces the 22-27 seat teams:
+# in the 24 h before, 15 of their seats claimed nothing and implementers outnumbered what review and QA could verify.
+# Models follow the Jev routing table (CULTURE.md "Models and routing"; Jev intake.specialist, 2026-10-02): Opus 5.5
+# leads, plans and does QA; GPT-6.1 Sol deputises, merges, recovers and takes a share of build, tests, review and QA;
+# native Grok (grok-4.7-build-fast) builds backend and writes tests, Grok 4.7 and Kimi K3 (256k) review, Sonnet 5.5
+# builds UI. Grok and Kimi seats run their own CLIs as terminal members through agent-native-seat (it writes the culture
+# and role, wires busy/idle, resumes its session); `grok login` and `kimi login` must be current.
+# Only leads and architects use a 1M window (they hold the backlog) and compact at 400k; every other seat compacts at
+# 200k (system/env.sh, the Codex shim). agent-project-check FAILs a [1m] model on any other seat.
+# Copy to <workspace>/rig/, replace @RIG@, @REPO@, @WT@, @AGENT_STACK@ (this repo), create one git worktree per seat
+# (<pod>-<member>), then:  rig spec validate standard.yaml  →  rig up standard.yaml
+version: "0.2"
+name: "@RIG@"
+summary: "Standard project team: 16 seats across four model families, verification-sized"
+culture_file: CULTURE.md
+permission_policy: builtin:yolo
+managed_blocks:
+  claude-code: CLAUDE.local.md
+
+workspace:
+  workspace_root: "@REPO@"
+  repos:
+    - name: "@RIG@"
+      path: .
+      kind: project
+  default_repo: "@RIG@"
+
+startup:
+  files:
+    - path: startup/context.md   # identity, environment, system check, skills to load (rig spec audit: startup context)
+      delivery_hint: guidance_merge
+      required: true
+  actions: []
+
+pods:
+  - id: coord
+    label: "Coordination: Opus 5.5 lead (1M window, compacts at 400k), Sol deputy (acts as lead when the lead is out)"
+    members:
+      - id: lead-claude
+        agent_ref: "path:@AGENT_STACK@/rig/template/agents/lead"
+        profile: default
+        runtime: claude-code
+        model: "claude-opus-5-5[1m]"
+        cwd: "@WT@/coord-lead-claude"
+        restore_policy: resume_if_possible
+      - id: deputy-codex
+        agent_ref: "path:@AGENT_STACK@/rig/template/agents/deputy"
+        profile: default
+        runtime: codex
+        model: "gpt-6.1-sol"
+        cwd: "@WT@/coord-deputy-codex"
+        restore_policy: resume_if_possible
+    edges:
+      - kind: delegates_to
+        from: lead-claude
+        to: deputy-codex
+      - kind: escalates_to
+        from: deputy-codex
+        to: lead-claude
+
+  - id: arch
+    label: "Plan and acceptance criteria (Jev intake.specialist 2026-10-02: Opus 5.5, act)"
+    members:
+      - id: claude
+        agent_ref: "path:@AGENT_STACK@/rig/template/agents/architect"
+        profile: default
+        runtime: claude-code
+        model: "claude-opus-5-5[1m]"
+        cwd: "@WT@/arch-claude"
+        restore_policy: resume_if_possible
+    edges: []
+
+  - id: impl
+    label: "Implementers: 2 backend on native Grok 4.7 Build Fast, 1 UI on Sonnet 5.5, 1 UI/backend on Sol"
+    members:
+      - id: grok-1
+        agent_ref: "builtin:terminal"
+        profile: none
+        runtime: terminal
+        cwd: "@WT@/impl-grok-1"
+        startup:
+          actions:
+            # agent-native-seat writes the culture and role, wires activity, and resumes its own session on restore
+            - {type: send_text, value: "agent-native-seat grok --role implementer --model grok-4.7-build-fast", phase: after_files, applies_on: [fresh_start, restore], idempotent: true}
+      - id: grok-2
+        agent_ref: "builtin:terminal"
+        profile: none
+        runtime: terminal
+        cwd: "@WT@/impl-grok-2"
+        startup:
+          actions:
+            # agent-native-seat writes the culture and role, wires activity, and resumes its own session on restore
+            - {type: send_text, value: "agent-native-seat grok --role implementer --model grok-4.7-build-fast", phase: after_files, applies_on: [fresh_start, restore], idempotent: true}
+      - id: claude-ui
+        agent_ref: "path:@AGENT_STACK@/rig/template/agents/implementer"
+        profile: default
+        runtime: claude-code
+        model: "claude-sonnet-5-5"
+        cwd: "@WT@/impl-claude-ui"
+        restore_policy: resume_if_possible
+      - id: codex
+        agent_ref: "path:@AGENT_STACK@/rig/template/agents/implementer"
+        profile: default
+        runtime: codex
+        model: "gpt-6.1-sol"
+        cwd: "@WT@/impl-codex"
+        restore_policy: resume_if_possible
+    edges: []
+
+  - id: tests
+    label: "Locked user-journey tests, from a family other than the implementer's"
+    members:
+      - id: grok
+        agent_ref: "builtin:terminal"
+        profile: none
+        runtime: terminal
+        cwd: "@WT@/tests-grok"
+        startup:
+          actions:
+            # agent-native-seat writes the culture and role, wires activity, and resumes its own session on restore
+            - {type: send_text, value: "agent-native-seat grok --role test-author --model grok-4.7-build-fast", phase: after_files, applies_on: [fresh_start, restore], idempotent: true}
+      - id: codex
+        agent_ref: "path:@AGENT_STACK@/rig/template/agents/test-author"
+        profile: default
+        runtime: codex
+        model: "gpt-6.1-sol"
+        cwd: "@WT@/tests-codex"
+        restore_policy: resume_if_possible
+    edges: []
+
+  - id: review
+    label: "Cross-family review: one Grok, one Kimi, one Sol, so every author has two other families"
+    members:
+      - id: grok
+        agent_ref: "builtin:terminal"
+        profile: none
+        runtime: terminal
+        cwd: "@WT@/review-grok"
+        startup:
+          actions:
+            # agent-native-seat writes the culture and role, wires activity, and resumes its own session on restore
+            - {type: send_text, value: "agent-native-seat grok --role reviewer --model grok-4.7", phase: after_files, applies_on: [fresh_start, restore], idempotent: true}
+      - id: kimi
+        agent_ref: "builtin:terminal"
+        profile: none
+        runtime: terminal
+        cwd: "@WT@/review-kimi"
+        startup:
+          actions:
+            # agent-native-seat writes the culture and role, wires activity, and resumes its own session on restore
+            - {type: send_text, value: "agent-native-seat kimi --role reviewer --model kimi-code/k3-256k", phase: after_files, applies_on: [fresh_start, restore], idempotent: true}
+      - id: codex
+        agent_ref: "path:@AGENT_STACK@/rig/template/agents/reviewer"
+        profile: default
+        runtime: codex
+        model: "gpt-6.1-sol"
+        cwd: "@WT@/review-codex"
+        restore_policy: resume_if_possible
+    edges: []
+
+  - id: qa
+    label: "User-level QA (Jev: Opus 5.5; Sol while Claude is scarce)"
+    members:
+      - id: claude
+        agent_ref: "path:@AGENT_STACK@/rig/template/agents/qa"
+        profile: default
+        runtime: claude-code
+        model: "claude-opus-5-5"
+        cwd: "@WT@/qa-claude"
+        restore_policy: resume_if_possible
+      - id: codex
+        agent_ref: "path:@AGENT_STACK@/rig/template/agents/qa"
+        profile: default
+        runtime: codex
+        model: "gpt-6.1-sol"
+        cwd: "@WT@/qa-codex"
+        restore_policy: resume_if_possible
+    edges: []
+
+  - id: integ
+    label: "Merge owner, the only seat that merges (Jev: Sol, act)"
+    members:
+      - id: codex
+        agent_ref: "path:@AGENT_STACK@/rig/template/agents/integrator"
+        profile: default
+        runtime: codex
+        model: "gpt-6.1-sol"
+        cwd: "@WT@/integ-codex"
+        restore_policy: resume_if_possible
+    edges: []
+
+  - id: ops
+    label: "Recovery: stalled seats, broken CI, merge conflicts (Jev: Sol, act)"
+    members:
+      - id: codex
+        agent_ref: "path:@AGENT_STACK@/rig/template/agents/recovery"
+        profile: default
+        runtime: codex
+        model: "gpt-6.1-sol"
+        cwd: "@WT@/ops-codex"
+        restore_policy: resume_if_possible
+    edges: []
+
+edges:
+  - kind: delegates_to
+    from: coord.lead-claude
+    to: arch.claude
+  - kind: delegates_to
+    from: coord.lead-claude
+    to: integ.codex
