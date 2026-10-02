@@ -166,3 +166,35 @@ test("terminal members (native seats, shells) are left alone: the project's own 
   run("--apply");
   assert.equal(fs.readFileSync(join(WT, "impl-grok-1/AGENTS.md"), "utf8"), "# app notes\n");
 });
+
+// QA PR123: the same protection without a YAML parser (python3 -S) or with a spec that doesn't parse; an agent seat is
+// still refreshed; a cwd the line reader can't tie to a member means --apply writes nothing.
+test("without PyYAML, or with an unparsable spec: native seats still skipped, agent seats still refreshed; unknown membership writes nothing", () => {
+  const nat = "# native app notes\n";
+  const fixture = (extra = "") => {
+    setup(own + B("CULTURE.md", "culture v2") + "\n" + B("startup/context.md", "context v2"));
+    fs.writeFileSync(join(W, "rig/team.yaml"), fs.readFileSync(join(W, "rig/team.yaml"), "utf8") +
+      `  - id: impl\n    members:\n      - id: codex\n        runtime: codex\n        cwd: "${WT}/impl-codex"\n` +
+      `      - {id: shell, runtime: terminal, cwd: "${WT}/impl-shell"}\n` +
+      `      - id: grok-1\n        agent_ref: "builtin:terminal"\n        cwd: "${WT}/impl-grok-1"\n        startup:\n          actions:\n` +
+      `            - {type: send_text, value: "agent-native-seat grok --role implementer"}\n` + extra);
+    for (const d of ["impl-codex", "impl-grok-1", "impl-shell"]) fs.mkdirSync(join(WT, d), { recursive: true });
+    fs.writeFileSync(join(WT, "impl-codex/AGENTS.md"), "# app notes\n\n" + B("CULTURE.md", "culture v1"));
+    fs.writeFileSync(join(WT, "impl-grok-1/AGENTS.md"), nat); fs.writeFileSync(join(WT, "impl-shell/AGENTS.md"), nat);
+  };
+  const py = (args, ...a) => spawnSync("python3", [...args, join(repo, "bin/agent-refresh-guidance"), "P", ...a], { encoding: "utf8", env: { PATH: process.env.PATH, HOME: home } });
+  for (const [label, args, extra] of [["no PyYAML", ["-S"], ""], ["spec doesn't parse", [], "bad: [\n"]]) {
+    fixture(extra);
+    const r = py(args, "--apply");
+    assert.equal(r.status, 0, `${label}: ${r.stderr}`);
+    assert.equal(fs.readFileSync(join(WT, "impl-grok-1/AGENTS.md"), "utf8"), nat, `${label}: native seat untouched`);
+    assert.equal(fs.readFileSync(join(WT, "impl-shell/AGENTS.md"), "utf8"), nat, `${label}: shell untouched`);
+    assert.match(fs.readFileSync(join(WT, "impl-codex/AGENTS.md"), "utf8"), /BLOCK: CULTURE\.md -->\nculture v2\n/, `${label}: agent seat refreshed`);
+  }
+  // a cwd outside any member the line reader recognises: nothing written, and it says why
+  fixture(`odd: {cwd: "${WT}/impl-grok-1"}\nbad: [\n`);
+  const r = py(["-S"], "--apply");
+  assert.notEqual(r.status, 0); assert.match(r.stderr, /can't tell each seat's runtime .* nothing written/);
+  assert.match(fs.readFileSync(join(WT, "impl-codex/AGENTS.md"), "utf8"), /culture v1/, "nothing written at all");
+  assert.equal(fs.readFileSync(join(WT, "impl-grok-1/AGENTS.md"), "utf8"), nat);
+});
