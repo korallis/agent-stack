@@ -61,6 +61,8 @@ test("grok: instructions beside the project's AGENTS.md, OpenRig's activity rela
   assert.equal(p.argv[7], "-s"); assert.match(p.argv[8], /^[0-9a-f-]{36}$/);
   const rules = p.files[".grok/rules/openrig-seat.md"];
   assert.match(rules, /# You are an OpenRig seat/); assert.match(rules, /# Rig culture\s+# Culture\nClaim before you work\./); assert.match(rules, /# Your role\s+/);
+  // a busy native CLI replays queued messages later: stale row notices are checked and skipped, not re-reported
+  assert.match(rules, /Before acting on any queued notice about a row, run `rig queue show <id> --full --json`; if the row is already done or handed off, skip it without re-reporting it\./);
   assert.equal(rules.includes(fs.readFileSync(join(repo, "rig/template/agents/implementer/guidance/role.md"), "utf8").trim()), true);
   assert.ok(!("AGENTS.md" in p.files), "the project's AGENTS.md is never written");
   const hooks = JSON.parse(p.files[".grok/hooks/openrig-activity.json"]).hooks;
@@ -80,6 +82,7 @@ test("kimi: instructions in .kimi-code/AGENTS.md, the folder pre-trusted with ki
   const p = dry("kimi", wt, [], { KIMI_CODE_HOME: join(root, "kimi-home") });
   assert.deepEqual(p.argv, ["kimi", "--auto", "-m", "kimi-code/k3-256k"]);
   assert.match(p.files[".kimi-code/AGENTS.md"], /# You are an OpenRig seat/);
+  assert.match(p.files[".kimi-code/AGENTS.md"], /Before acting on any queued notice about a row, run `rig queue show <id> --full --json`/);
   // kimi's encodeWorkDirKey(canonicalWorkspaceRoot(root)): wd_<slug of the last segment>_<sha256 of the path, 12 hex>
   const real = fs.realpathSync(wt), key = `wd_${basename(real).toLowerCase()}_${createHash("sha256").update(real).digest("hex").slice(0, 12)}`;
   const trust = join(root, "kimi-home", "workspace-trust", key);
