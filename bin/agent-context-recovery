@@ -1,0 +1,242 @@
+#!/usr/bin/env python3
+"""Rebuild idle Claude/Codex seats after a typed token-limit error and a fresh recap."""
+import argparse
+import datetime
+import fcntl
+import hashlib
+import json
+import os
+from pathlib import Path
+import re
+import subprocess
+import tempfile
+import time
+
+LIMIT = re.compile(r'prompt is too long|context_length_exceeded|maximum context length|context window.{0,30}(exceed|full)', re.I)
+
+
+def epoch(value):
+    try:
+        dt = datetime.datetime.fromisoformat(str(value).replace('Z', '+00:00'))
+        return dt.replace(tzinfo=dt.tzinfo or datetime.timezone.utc).timestamp()
+    except (ValueError, TypeError):
+        return None
+
+
+def latest_error(records):
+    """Only runtime-tagged errors qualify; normal assistant/user text clears an earlier error."""
+    found = None
+    for r in records:
+        if not isinstance(r, dict) or r.get('isSidechain') or r.get('agentId'):
+            continue
+        if r.get('type') == 'assistant':
+            found = None
+            if r.get('isApiErrorMessage') and r.get('apiErrorStatus') == 400 and LIMIT.search(json.dumps(r.get('message', {}))):
+                found = r
+        elif r.get('type') == 'user':
+            found = None
+        elif r.get('type') == 'response_item' and (r.get('payload') or {}).get('role') in ('user', 'assistant'):
+            found = None
+        elif r.get('type') == 'event_msg':
+            p = r.get('payload') or {}
+            if p.get('type') == 'error':
+                found = r if p.get('codex_error_info') in ('ContextWindowExceeded', 'context_window_exceeded') or LIMIT.search(str(p.get('message', ''))) else None
+            elif p.get('type') in ('agent_message', 'user_message', 'task_started', 'turn_started'):
+                found = None
+    return found
+
+
+def read_error(node):
+    context = node.get('contextUsage') or {}
+    path = context.get('transcriptPath')
+    if not path or not context.get('sessionId'):
+        return None
+    with open(path, 'rb') as src:
+        src.seek(0, 2)
+        start = max(0, src.tell() - 524288)
+        src.seek(start)
+        data = src.read(524288)
+    lines = data.splitlines()[1:] if start else data.splitlines()
+    records = []
+    for line in lines:
+        try:
+            record = json.loads(line)
+        except ValueError:
+            continue
+        if isinstance(record, dict) and record.get('sessionId', context['sessionId']) == context['sessionId']:
+            records.append(record)
+    error = latest_error(records)
+    at = epoch(error.get('timestamp')) if error else None
+    if at is None or not 0 <= time.time() - at <= 600:
+        return None
+    key = hashlib.sha256((context['sessionId'] + json.dumps(error, sort_keys=True)).encode()).hexdigest()[:24]
+    return key, at
+
+
+def run(command, timeout=60):
+    return subprocess.run(command, capture_output=True, text=True, timeout=timeout)
+
+
+def read(command):
+    result = run(command)
+    if result.returncode:
+        raise ValueError('read command failed')
+    return json.loads(result.stdout)
+
+
+def rows(data):
+    if isinstance(data, list):
+        return data
+    if isinstance(data, dict) and not data.get('truncated'):
+        for field in ('entries', 'nodes', 'items', 'qitems'):
+            if isinstance(data.get(field), list):
+                return data[field]
+    raise ValueError('unknown or truncated list')
+
+
+def idle(node, now):
+    activity = node.get('agentActivity') or {}
+    at = epoch(activity.get('sampledAt'))
+    return (bool(node.get('lastActivityAt')) and node.get('sessionStatus') == 'running' and activity.get('state') == 'idle'
+            and not activity.get('stale') and at is not None and 0 <= now - at <= 120)
+
+
+def fresh_recap(seat, now):
+    chain = read(['agent-seat-recap', 'show', '--seat', seat, '--json'])['chain']
+    path = Path(chain[0]['path'])
+    stat = path.stat()
+    if path.name != 'RECAP.md' or not 0 <= now - stat.st_mtime <= 300 or not path.read_text().strip():
+        raise ValueError('stale or empty authored recap')
+    owned = rows(read(['rig', 'queue', 'list', '-A', '--destination', seat, '--limit', '1000', '--json']))
+    for q in owned:
+        at = epoch(q.get('tsUpdated') or q.get('tsCreated'))
+        if at is None or at > stat.st_mtime:
+            raise ValueError('queue changed after recap')
+    return path, stat.st_mtime_ns
+
+
+def save(path, state):
+    with tempfile.NamedTemporaryFile(mode='w', dir=path.parent, delete=False) as out:
+        json.dump(state, out)
+        temp = out.name
+    os.replace(temp, path)
+
+
+def notice(recovery, seat, key, why, directory):
+    body = (f'Context recovery for {seat}: {why}. Check live seat status and queue custody. '
+            'Read the current transcript and declared recap chain, preserve decisions and remaining work, '
+            'then publish a fresh recap with agent-seat-recap. Unknown handover outcomes require inspection, '
+            'not another blind rebuild. No queue work has been closed or reassigned by this watcher.')
+    digest = hashlib.sha256(f'{seat}:{key}:{why}'.encode()).hexdigest()[:24]
+    with tempfile.NamedTemporaryFile(mode='w', dir=directory) as out:
+        out.write(body)
+        out.flush()
+        result = run(['rig', 'queue', 'create', '--destination', recovery, '--priority', 'urgent',
+                      '--summary', f'Context recovery needs attention: {seat}', '--body-file', out.name,
+                      '--id', f'context-recovery-{digest}', '--tags', 'context-recovery', '--json'])
+    return result.returncode == 0
+
+
+def main():
+    parser = argparse.ArgumentParser(description=__doc__)
+    scope = parser.add_mutually_exclusive_group(required=True)
+    scope.add_argument('--rig')
+    scope.add_argument('--all', action='store_true')
+    parser.add_argument('--recovery', default='operator-agent@kernel')
+    parser.add_argument('--state', type=Path, default=Path(os.environ.get('AGENT_STACK_STATE',
+                        Path.home() / '.local/state/agent-stack')) / 'context-recovery.json')
+    parser.add_argument('--dry-run', action='store_true')
+    args = parser.parse_args()
+    lock = None
+    if not args.dry_run:
+        args.state.parent.mkdir(parents=True, exist_ok=True, mode=0o700)
+        lock = open(str(args.state) + '.lock', 'a')
+        os.chmod(lock.name, 0o600)
+        try:
+            fcntl.flock(lock, fcntl.LOCK_EX | fcntl.LOCK_NB)
+        except BlockingIOError:
+            return 0
+    state = json.loads(args.state.read_text()) if args.state.exists() else {}
+    nodes = rows(read(['rig', 'ps', '--nodes', *(['--rig', args.rig] if args.rig else ['-A']), '--full', '--json']))
+    report, attempted = [], False
+    for node in nodes:
+        if node.get('runtime') not in ('claude-code', 'codex'):
+            continue
+        seat = node['canonicalSessionName']
+        s = state.setdefault(seat, {})
+        try:
+            error = read_error(node)
+        except (OSError, ValueError):
+            error = None
+        if not error:
+            s.pop('idleSince', None)
+            continue
+        key, error_at = error
+        now = time.time()
+        row = {'seat': seat, 'action': 'observe', 'dryRun': args.dry_run}
+        report.append(row)
+        movement = node.get('lastActivityAt')
+        if s.get('key') != key:
+            previous_attempt = s.get('attemptedKey')
+            s.clear()
+            s['attemptedKey'] = previous_attempt
+        if s.get('activity') != movement or not idle(node, now):
+            s.pop('idleSince', None)
+        s.update(key=key, activity=movement)
+        if not idle(node, now):
+            row['action'] = 'not-idle'
+            continue
+        s.setdefault('idleSince', now)
+        if now - s['idleSince'] < 60 or attempted:
+            continue
+        if s.get('attemptedKey') == key:
+            row['action'] = s.get('outcome', 'handover-unknown')
+            if s.get('outcome') != 'complete' and not args.dry_run and not s.get('outcomeNotified'):
+                s['outcomeNotified'] = notice(args.recovery, seat, key, row['action'], args.state.parent)
+            continue
+        try:
+            recap, recap_stamp = fresh_recap(seat, now)
+        except (OSError, ValueError, KeyError, IndexError, subprocess.TimeoutExpired):
+            row['action'] = 'needs-fresh-recap'
+            if not args.dry_run and not s.get('recapNotified'):
+                s['recapNotified'] = notice(args.recovery, seat, key, row['action'], args.state.parent)
+            continue
+        status = read(['rig', 'seat', 'status', seat, '--json'])
+        handed_at = epoch(status.get('handover_at'))
+        if status.get('current_occupant') != seat or (handed_at is not None and handed_at >= error_at):
+            row['action'] = 'seat-changed'
+            continue
+        # Re-read all preconditions just before mutation. Daemon API has no atomic idle precondition.
+        current = rows(read(['rig', 'ps', '--nodes', '--rig', seat.split('@')[1], '--session', seat, '--full', '--json']))
+        if (len(current) != 1 or not idle(current[0], time.time()) or current[0].get('lastActivityAt') != movement
+                or read_error(current[0]) != error or fresh_recap(seat, time.time()) != (recap, recap_stamp)):
+            s.pop('idleSince', None)
+            row['action'] = 'preflight-changed'
+            continue
+        row['action'] = 'rebuild'
+        if args.dry_run:
+            continue
+        attempted = True  # At most one rebuild per invocation.
+        s.update(attemptedKey=key, outcome='handover-unknown')
+        save(args.state, state)  # A crash or timeout after this point must not trigger another rebuild.
+        try:
+            result = run(['agent-seat-handover', seat, '--source', 'rebuild', '--reason', 'context-wall', '--wait', '60'], timeout=180)
+            s['outcome'] = 'complete' if result.returncode == 0 else 'wake-repair-needed' if result.returncode == 4 else 'handover-unknown' if result.returncode == 3 else 'handover-failed'
+        except (OSError, subprocess.TimeoutExpired):
+            s['outcome'] = 'handover-unknown'
+        row['outcome'] = s['outcome']
+        save(args.state, state)
+        if s['outcome'] != 'complete':
+            s['outcomeNotified'] = notice(args.recovery, seat, key, s['outcome'], args.state.parent)
+    if not args.dry_run:
+        save(args.state, state)
+    print(json.dumps(report))
+    return 0
+
+
+if __name__ == '__main__':
+    try:
+        raise SystemExit(main())
+    except (OSError, ValueError, KeyError, subprocess.TimeoutExpired) as error:
+        print(f'agent-context-recovery: {type(error).__name__}; inspect service journal and seat status before retry', file=__import__('sys').stderr)
+        raise SystemExit(1)

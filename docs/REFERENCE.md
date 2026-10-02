@@ -876,3 +876,33 @@ select fixture files. Missing configuration is a no-op. State defaults to
 `$AGENT_STACK_STATE/uptime-watch.json` (or `~/.local/state/agent-stack/uptime-watch.json`). Failed alerts retry with the
 same queue ID; state writes are locked and atomic. Install enables the timer, but no endpoints are guessed or added.
 Stop `agent-uptime-watch.timer` to disable it. Review project endpoint configuration separately before activation.
+
+### Automatic context-wall recovery
+
+`agent-context-recovery --rig <rig>` checks Claude and Codex seats for a recent token-limit request failure.
+`--all` checks all local rigs. The installed one-minute timer uses `--all`. Native runtimes with no supported JSONL
+error record are not rebuilt by this command.
+
+The watcher reads the last 512 KiB of the transcript selected by the live node's context metadata. Claude errors
+must be main-session assistant records marked `isApiErrorMessage`, HTTP 400, with a token-limit message. Codex errors
+must be `event_msg` error records with ContextWindowExceeded or a token-limit message. Normal conversation text,
+subagent errors and context usage percentages do not trigger recovery. A later user or assistant response clears the
+error. Detection requires a timestamp within ten minutes; older errors need operator inspection.
+
+Before a rebuild, the same error and unchanged terminal activity must survive two fresh idle observations at least
+60 seconds apart. The authored RECAP.md must be nonempty, at most five minutes old, and newer than the current queue
+rows. Publish it with `agent-seat-recap write <packet.md>`. Missing or stale recaps create a durable recovery request
+instead of a rebuild. The watcher checks seat continuity and repeats the idle, transcript, queue and recap checks
+immediately before calling `agent-seat-handover --source rebuild`. One invocation attempts at most one rebuild.
+
+A handover attempt is recorded before calling the wrapper. Failed or unknown outcomes, and wakes needing repair,
+create a recovery row; the same error is never blindly retried. Inspect `rig seat status` and repair wakes before
+clearing an attempt record. Default recovery owner: `operator-agent@kernel`; `--recovery <seat>` selects another.
+The daemon has no atomic idle precondition, so an external dispatch between the final check and handover remains a
+race. Keep recovery custody with one owner; the watcher itself is protected by a process lock.
+
+`--dry-run` reads and reports without writing state, sending messages or rebuilding. `--state <file>` selects isolated
+state; the default is `$AGENT_STACK_STATE/context-recovery.json` or
+`~/.local/state/agent-stack/context-recovery.json`. Only hashes, activity times and receipts are persisted, not transcript
+contents. The semantic completeness of a recap remains the author's responsibility. Stop
+`agent-context-recovery.timer` to disable automatic rebuilds.

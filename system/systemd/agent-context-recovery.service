@@ -1,0 +1,9 @@
+[Unit]
+Description=Recover idle seats from token-limit failures using fresh recaps
+After=openrig.service
+[Service]
+Type=oneshot
+Environment=PATH=%h/.local/bin:%h/.local/share/mise/shims:/usr/local/bin:/usr/bin:/bin
+Environment=OPENRIG_SESSION_NAME=context-recovery@agent-stack
+ExecStart=%h/.local/bin/agent-context-recovery --all
+TimeoutStartSec=10min
