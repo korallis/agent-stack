@@ -1,0 +1,5 @@
+[Unit]
+Description=Move CI to hosted runners while a local runner is down (agent-ci-runner watch)
+[Service]
+Type=oneshot
+ExecStart=%h/.local/bin/agent-ci-runner watch

@@ -107,7 +107,7 @@ for f in neon neonctl vercel vc; do link "$L/seat-bin/credguard" "$L/seat-bin/$f
 dirs "$L/seat-tools"; place "$S/system/seat-tools-rig" "$L/seat-tools/rig" 755   # queue writes get the project tag + EC-3 worktree_path
 place "$S/system/seat-tools-gh" "$L/seat-tools/gh" 755
 link "$L/bin/agent-login" "$B/agent-login"
-for f in agent-toon claude-pool agent-heavy agent-native-seat agent-video-fit openrig-ensure playwright-browsers agent-claude-trust openrig-upgrade openrig-update agent-project-new agent-project-onboard agent-owner-address agent-project-check agent-net-summary agent-vercel-protection-status openrig-slack-upload-check agent-never-prompt-check agent-credguard-check agent-skills-check agent-seat-recap agent-seat-handover agent-operator-watch agent-uptime-watch agent-context-recovery agent-human-inbox-tidy openrig-daemon-cycle openrig-tmux-adopt agent-queue-backfill agent-refresh-guidance agent-project-repair agent-waves-sync agent-playwright-mcp agent-playwright-retention; do link "$S/bin/$f" "$B/$f"; done
+for f in agent-toon claude-pool agent-heavy agent-native-seat agent-ci-runner agent-video-fit openrig-ensure playwright-browsers agent-claude-trust openrig-upgrade openrig-update agent-project-new agent-project-onboard agent-owner-address agent-project-check agent-net-summary agent-vercel-protection-status openrig-slack-upload-check agent-never-prompt-check agent-credguard-check agent-skills-check agent-seat-recap agent-seat-handover agent-operator-watch agent-uptime-watch agent-context-recovery agent-human-inbox-tidy openrig-daemon-cycle openrig-tmux-adopt agent-queue-backfill agent-refresh-guidance agent-project-repair agent-waves-sync agent-playwright-mcp agent-playwright-retention; do link "$S/bin/$f" "$B/$f"; done
 link "$S/proxy/status.py" "$B/agent-proxy-status"
 if [ $CHECK = 0 ] || mise where "node@$NODE_FOR_JEV" >/dev/null 2>&1; then
   launcher jev-mcp "$NODE_FOR_JEV" "$S/jev/bin/jev-mcp.js"
@@ -131,6 +131,9 @@ if grep -qF '.config/agent-stack/env.sh' "$HOME/.bashrc" 2>/dev/null; then ok "~
 if [ -s "$HOME/.codex/config.toml" ]; then ok "$HOME/.codex/config.toml (kept; Codex adds machine-specific trust entries. Compare with system/codex/config.toml)"
   # Never prompt, even in a kept config: set the two top-level keys in place (backup first); --check only reports.
   if msg=$("$S/system/codex-never-prompt" $([ $CHECK = 1 ] && echo --check) "$HOME/.codex/config.toml"); then ok "$msg"; else todo "$msg"; fi
+  # Retries to the local proxy at 12 or more, never lowered (seats gave up on seconds-long 429 bursts at 4/5); the
+  # pool-*.config.toml profiles layer on top of this file and inherit it.
+  if msg=$("$S/system/codex-retries" $([ $CHECK = 1 ] && echo --check) "$HOME/.codex/config.toml"); then ok "$msg"; else todo "$msg"; fi
 elif [ $CHECK = 1 ]; then todo "$HOME/.codex/config.toml"; else place "$S/system/codex/config.toml" "$HOME/.codex/config.toml" 600; fi
 for p in pool-deep pool-impl pool-review; do place "$S/system/codex/$p.config.toml" "$HOME/.codex/$p.config.toml" 600; done
 if [ $CHECK = 0 ]; then
@@ -181,7 +184,7 @@ if [ $CHECK = 0 ]; then
   # Seats' tmux server gets its own unit first (skips itself if a server already runs; bin/openrig-tmux-adopt moves that one).
   systemctl --user enable --now openrig-tmux.service >/dev/null 2>&1 || todo "openrig-tmux.service"
   systemctl --user enable --now openrig.service >/dev/null 2>&1 || true
-  for t in cliproxyapi-health cliproxy-usage openrig-health cliproxy-authwatch cliproxy-quotawatch openrig-update agent-repos-sync agent-human-inbox-tidy agent-stuck-check agent-reroute agent-operator-watch agent-uptime-watch agent-context-recovery agent-playwright-retention playwright-browsers; do systemctl --user enable --now "$t.timer" >/dev/null 2>&1 || todo "$t.timer"; done
+  for t in cliproxyapi-health cliproxy-usage openrig-health cliproxy-authwatch cliproxy-quotawatch openrig-update agent-repos-sync agent-human-inbox-tidy agent-stuck-check agent-reroute agent-operator-watch agent-uptime-watch agent-ci-runner-watch agent-context-recovery agent-playwright-retention playwright-browsers; do systemctl --user enable --now "$t.timer" >/dev/null 2>&1 || todo "$t.timer"; done
 fi
 "$S/bin/openrig-ensure" --check | sed 's/^/   /' || true   # WARN installed != pin; FAIL when local patches aren't all applied
 # Transcript capture defaults: every 15s, 400 lines. The shipped 2s/1000 lines across ~90 seats starved the daemon.
