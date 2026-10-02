@@ -17,7 +17,9 @@ test.after(() => fs.rmSync(root, { recursive: true, force: true }));
 const TOKEN = "TOKEN-SECRET-4f9a";
 
 // stubs
-const stubs = join(root, "stubs"); fs.mkdirSync(stubs);
+// gh lives apart from PATH (as a mise shim does): the tool must find it through AGENT_CI_TOOL_PATH. The other stubs are
+// on PATH, so the real systemctl is never reached.
+const stubs = join(root, "stubs"), sysStubs = join(root, "sys-stubs"); fs.mkdirSync(stubs); fs.mkdirSync(sysStubs);
 fs.writeFileSync(join(stubs, "gh"), `#!/usr/bin/env python3
 import json, os, sys
 sc = os.environ["GH_SCENARIO"]; s = json.load(open(sc)); a = sys.argv[1:]
@@ -37,13 +39,13 @@ if j.endswith("/actions/runners --paginate --jq .runners[] | {id, name, status, 
 if a[0] == "api" and a[1].startswith("repos/") and a[1].count("/") == 2: print(a[1][6:]); sys.exit(0)
 sys.exit(3)
 `, { mode: 0o755 });
-fs.writeFileSync(join(stubs, "systemctl"), `#!/usr/bin/env python3
+fs.writeFileSync(join(sysStubs, "systemctl"), `#!/usr/bin/env python3
 import json, os, sys
 s = json.load(open(os.environ["GH_SCENARIO"])); a = sys.argv[1:]
 open(os.environ["CALLS"], "a").write(json.dumps({"tool": "systemctl", "argv": a}) + "\\n")
 if "is-active" in a: print(s.get("active", "active")); sys.exit(0 if s.get("active", "active") == "active" else 3)
 `, { mode: 0o755 });
-for (const t of ["logger", "notify-send"]) fs.writeFileSync(join(stubs, t), "#!/bin/sh\nexit 0\n", { mode: 0o755 });
+for (const t of ["logger", "notify-send"]) fs.writeFileSync(join(sysStubs, t), "#!/bin/sh\nexit 0\n", { mode: 0o755 });
 
 // a fake runner release
 const rel = join(root, "release"); fs.mkdirSync(rel);
@@ -61,7 +63,8 @@ let n = 0;
 function world(initial = {}) {
   const w = join(root, `w${n++}`); fs.mkdirSync(w);
   const sc = join(w, "scenario.json"); fs.writeFileSync(sc, JSON.stringify({ token: TOKEN, ...initial }));
-  const env = { PATH: `${stubs}:/usr/bin:/bin`, GH_SCENARIO: sc, CALLS: join(w, "calls"), AGENT_CI_ROOT: join(w, "runners"),
+  // as in the unit: a minimal PATH; gh is found through AGENT_CI_TOOL_PATH (default ~/.local/bin and the mise shims)
+  const env = { PATH: `${sysStubs}:/usr/bin:/bin`, AGENT_CI_TOOL_PATH: stubs, GH_SCENARIO: sc, CALLS: join(w, "calls"), AGENT_CI_ROOT: join(w, "runners"),
     AGENT_CI_STATE: join(w, "state"), AGENT_CI_CONFIG: join(w, "config/ci-runners.env"), AGENT_CI_CACHE: join(w, "cache"),
     AGENT_CI_TARBALL: tarball, AGENT_CI_SHA256: sha, AGENT_CI_HOST: "testhost", AGENT_CI_POLL_S: "0.05", AGENT_CI_ONLINE_WAIT_S: "1" };
   const run = (...args) => { fs.writeFileSync(env.CALLS, ""); const r = spawnSync("python3", [tool, ...args], { encoding: "utf8", env });
@@ -84,6 +87,7 @@ test("the unit sandboxes the job (no home, keys or seats), bounds it inside agen
     "Environment=ACTIONS_RUNNER_HOOK_JOB_COMPLETED=%h/.local/share/agent-stack/ci-runners/_shared/job-completed.sh"])
     assert.ok(u.split("\n").includes(line), line);
   assert.doesNotMatch(u, /BindPaths=.*(\.codex|\.claude|\.cli-proxy|\.config\/gh|Projects)/);
+  assert.match(u, /\n\[Install\]\nWantedBy=default\.target\n/, "enable --now needs an [Install] section, or install fails on the live host");
   // inside the unit plain nproc reports the CPUQuota (8 of 32 here), which would read a normal host load as overloaded
   assert.match(fs.readFileSync(hook, "utf8"), /cpus=\$\{AGENT_CI_NPROC:-\$\(nproc --all\)\}/);
   const inst = fs.readFileSync(join(repo, "install.sh"), "utf8");
