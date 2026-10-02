@@ -107,6 +107,8 @@ test('selected IDs take priority over stale indexes and unknown context is never
   assert.match(words(pr), /Missing rollback evidence/);
 });
 
+test('project feature forecasts are labelled separately from the mission ETA', () => { const snapshot=fixture(); snapshot.teams[0].estimate={...snapshot.teams[0].estimate,unit:'features',scope:'whole project'}; assert.match(words(renderV3(snapshot,160,50,state())),/Project ETA/); });
+
 test('fleet names projects hidden beyond the visible card width', () => {
   const snapshot=fixture();
   const text=words(renderV3(snapshot,160,50,state()));
