@@ -333,7 +333,7 @@ change.
 <td><img src="docs/assets/rig-console/seat-drill-in.png" alt="A seat's drill-in"><br><b>A seat's drill-in</b> (<code>⏎</code> on a seat, or <code>:seat &lt;name&gt;</code>): its work and slice stages, a context gauge, recent history and its live terminal.</td>
 </tr>
 <tr>
-<td><img src="docs/assets/rig-console/pool.png" alt="Pool and System"><br><b>5 Pool &amp; System.</b> 24 h graphs, every subscription's 5-hour and weekly use (Codex has only a weekly window; accounts running on credits are counted), and system health.</td>
+<td><img src="docs/assets/rig-console/pool.png" alt="Pool and System"><br><b>5 Pool &amp; System.</b> 24 h graphs, every subscription's 5-hour and weekly use (Codex has only a weekly window; accounts running on credits are counted), grokbuild and kimi harness usage next to the proxy, and system health.</td>
 <td><img src="docs/assets/rig-console/command-bar.png" alt="The command bar"><br><b>The <code>:</code> command bar.</b> Jump to a view, a seat, a rig or a slice, set the stuck threshold or the theme; <code>Tab</code> completes.</td>
 </tr>
 </table>
@@ -407,8 +407,9 @@ alarms before; the console never shows one.
 
 ### What it guarantees
 
-- **Read-only.** It reads the daemon API and its live events, the Jev decision log, `agent-proxy-status` and
-  `agent-heavy status`. The only files it writes are its own 24 h history and its lock (`~/.local/state/agent-stack/rig-console/`).
+- **Read-only.** It reads the daemon API and its live events, the Jev decision log, `agent-proxy-status`,
+  `agent-harness-status` and `agent-heavy status`. The only files it writes are its own 24 h history and its lock
+  (`~/.local/state/agent-stack/rig-console/`).
 - **Never tmux.** It never polls tmux or asks the daemon to capture a pane. A seat's terminal is read from the
   transcript file the daemon already writes, and only while that seat is open.
 - **Low load.** One cache refreshes every 5 seconds (never under 2) and backs off to 60 when the daemon is slow. The
@@ -428,7 +429,9 @@ alarms before; the console never shows one.
 ### What does it cost?
 Your AI subscriptions (Claude and ChatGPT; Kimi optional), pooled through CLIProxyAPI, plus a TypeSafe key for Jev and a
 machine that stays on. A bigger team can work on more slices in parallel and uses subscription time faster: pick
-`small` for a handful of issues and `full-stack` only for a large new product. `agent-proxy-status` shows how each account is doing.
+`small` for a handful of issues and `full-stack` only for a large new product. `agent-proxy-status` shows how each
+proxy account is doing. Grok and Kimi quota come from their own CLIs via `agent-harness-status` (install Grok Build
+and `npm i -g @moonshot-ai/kimi-code`, then `grok login` / `kimi login`).
 
 ### Is it safe to run?
 Seats run with permission checks off so they can work unattended, so run it on a machine and accounts you are
@@ -479,7 +482,9 @@ Each entry links its changelog note. [CHANGELOG.md](CHANGELOG.md) has the releas
   window but has credits is shown "on credits" and stays eligible; one past its limit says `OVER`
   ([WO84](changelog.d/WO84.md), [WO85](changelog.d/WO85.md)). `cliproxy-quotawatch` follows the same rules, so it no
   longer warns that Codex seats will stall while they run on credits
-  ([quotawatch](changelog.d/quotawatch-codex.md)).
+  ([quotawatch](changelog.d/quotawatch-codex.md)). Grok (grokbuild) and Kimi quota are not in the proxy parser;
+  `agent-harness-status` reads them from those CLIs and rig-console shows that next to the proxy pool
+  ([harness-quota](changelog.d/harness-quota.md)).
 - **`agent-project-check` reads big queues again** without timing out: the newest 20,000 rows without bodies, then a
   body only where a check needs one ([WO77](changelog.d/WO77.md)).
 

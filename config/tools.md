@@ -17,6 +17,9 @@ servers marked "latest" track upstream, the rest are pinned in `config/versions.
 | Neon CLI (`neon`) | latest (validated 6.3.0) | Neon database branches (one per PR), inspection, restore. Sign in once with `neon login` | `npm i -g neon` |
 | Playwright + Chromium | latest (validated 1.63.0) | Real browser for user-journey tests and hands-on QA | `npx playwright install chromium` |
 | `agent-project-new` / `-check` / `-repair`, `agent-waves-sync`, `agent-queue-backfill`, `agent-refresh-guidance` | this repo (`bin/`) | Set up a project the OpenRig way; audit it against what the daemon/TUI reads; repair it; keep waves, queue rows and seat instructions right | install.sh links them into `~/.local/bin` |
+| Grok Build CLI (`grok` / `grokbuild`) | optional, from xAI | Quota for Grok seats. `agent-harness-status` runs `grok usage --json` (or `grokbuild`). Sign in with `grok login` | you, then `./install.sh --check` reports it |
+| Kimi Code CLI (`kimi`) | optional (`@moonshot-ai/kimi-code`) | Quota for Kimi. `agent-harness-status` runs `kimi usage --json`. Sign in with `kimi login`. `agent-login kimi` is the proxy seat only | `npm i -g @moonshot-ai/kimi-code` |
+| `agent-harness-status` | this repo (`harness/status.js`) | Reads grokbuild and kimi usage for rig-console. Never invents a percent | install.sh launcher |
 
 ## Plugins and skills (loaded into every seat)
 
@@ -60,5 +63,6 @@ servers marked "latest" track upstream, the rest are pinned in `config/versions.
 
 ## Accounts you add yourself
 
-`gh auth login`, `neon login`, one `agent-login claude|codex|kimi <label>` per subscription, and a TypeSafe key in
-`~/.config/agent-stack/secrets/typesafe.env`. None of these are ever stored in this repo.
+`gh auth login`, `neon login`, one `agent-login claude|codex|kimi <label>` per subscription, a TypeSafe key in
+`~/.config/agent-stack/secrets/typesafe.env`, and (for harness quota) `grok login` plus `kimi login` after those
+CLIs are installed. None of these are ever stored in this repo.

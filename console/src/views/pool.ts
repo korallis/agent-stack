@@ -4,7 +4,7 @@ import type { RGB } from "../term.ts";
 import { braille, fit, panel, rpad } from "../draw.ts";
 import { gradient } from "../theme.ts";
 import type { History } from "../history.ts";
-import { accountState, footer, header, ticker, type Ctx } from "./chrome.ts";
+import { accountState, drawHarnessPanel, footer, header, providerAbbrev, ticker, type Ctx } from "./chrome.ts";
 
 export const POOL_PANES = ["working", "queue", "gate", "accounts", "system"];
 
@@ -54,23 +54,26 @@ export function poolPane(c: Ctx, hist: History, pane: string, x: number, y: numb
     return;
   }
   if (pane === "accounts") {
+    const harN = (raw.harness ?? []).length;
+    const harH = h >= 8 ? Math.min(Math.max(4, harN + 2), Math.max(4, Math.floor(h / 2))) : 0;
+    const accH = h - harH;
     const credits = raw.accounts.filter((a) => a.onCredits);
-    panel(s, t, x, y, w, h, "SUBSCRIPTION POOL", { color, right: !credits.length && w >= 72 ? "local proxy · 5 h window / weekly" : undefined });
+    panel(s, t, x, y, w, accH, "SUBSCRIPTION POOL", { color, right: !credits.length && w >= 72 ? "local proxy · 5 h window / weekly" : undefined });
     // on credits is a cost signal: the count in the title, the accounts on the last line
     if (credits.length) {
       const r = ` ● ${credits.length} on credits `;
       s.put(x + w - 2 - [...r].length, y, r, { fg: t.info, bold: true });
-      if (h - 3 > raw.accounts.length) s.put(x + 2, y + h - 2, fit(`● ${credits.length} of ${raw.accounts.length} accounts on credits (a cost signal): ${credits.map((a) => a.label).join(", ")}`, w - 4), { fg: t.info, bold: true });
+      if (accH - 3 > raw.accounts.length) s.put(x + 2, y + accH - 2, fit(`● ${credits.length} of ${raw.accounts.length} accounts on credits (a cost signal): ${credits.map((a) => a.label).join(", ")}`, w - 4), { fg: t.info, bold: true });
     }
     const mw = Math.max(6, Math.floor((w - 48) / 2));
     s.put(x + 2, y + 1, fit("ACCOUNT    PROV  5 H" + " ".repeat(mw + 2) + "WEEK", w - 4), { fg: t.faint });
-    raw.accounts.slice(0, h - 3).forEach((a, i) => {
+    raw.accounts.slice(0, Math.max(0, accH - 3)).forEach((a, i) => {
       const yy = y + 2 + i, [word, wc] = accountState(t, a);
       // a window used up while the account runs on credits is drawn flat in the info colour: used, not exhausted
       const flat = (v: number | null) => (a.onCredits && !a.over && (v ?? 0) >= 100 ? t.info : undefined);
       const numColor = (v: number | null) => (v === null ? t.faint : a.over && v >= 100 ? t.stuck : flat(v) ?? t.text);
       s.put(x + 2, yy, fit(a.label, 10), { fg: t.text });
-      s.put(x + 13, yy, fit(a.provider === "claude" ? "cl" : a.provider === "codex" ? "cx" : "km", 4), { fg: t.dim });
+      s.put(x + 13, yy, fit(providerAbbrev(a.provider), 4), { fg: t.dim });
       gmeter(c, x + 19, yy, mw, a.short === null ? null : a.short / 100, flat(a.short));
       s.put(x + 20 + mw, yy, rpad(a.short === null ? "—" : `${a.short}%`, 5), { fg: numColor(a.short) });
       gmeter(c, x + 27 + mw, yy, mw, a.weekly === null ? null : a.weekly / 100, flat(a.weekly));
@@ -78,6 +81,7 @@ export function poolPane(c: Ctx, hist: History, pane: string, x: number, y: numb
       s.put(x + 35 + 2 * mw, yy, fit(word, w - 37 - 2 * mw), { fg: wc });
     });
     if (!raw.accounts.length) s.put(x + 2, y + 2, "proxy status unavailable", { fg: t.faint });
+    if (harH >= 4) drawHarnessPanel(c, x, y + accH, w, harH, color);
     return;
   }
   // system

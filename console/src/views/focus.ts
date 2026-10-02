@@ -82,7 +82,9 @@ export function focus(c: Ctx): void {
   // status line
   const d = raw.daemon, heavy = raw.heavy.map((h) => `${h.held}/${h.total}`).join(" ");
   const acc = raw.accounts.filter((a) => a.short !== null).slice(0, 2).map((a) => `${a.label} ${a.short}%${a.weekly !== null ? ` / ${a.weekly}%` : ""}`).join(" · ");
-  s.put(2, s.h - 4, fit(`● daemon ${d.cpuPct ?? "—"}% cpu · healthz ${d.latencyMs ?? "—"}ms · heavy slots ${heavy || "—"}   ${acc}   today ${f.gate.partial ? "≥" : ""}${f.gate.total} gate decisions · ${f.gate.merge} merge`, s.w - 4), { fg: t.dim });
+  const har = (raw.harness ?? []).filter((h) => h.short !== null || h.weekly !== null)
+    .map((h) => `${h.label} ${h.short === null ? "—" : `${h.short}%`}${h.weekly !== null ? ` / ${h.weekly}%` : ""}`).join(" · ");
+  s.put(2, s.h - 4, fit(`● daemon ${d.cpuPct ?? "—"}% cpu · healthz ${d.latencyMs ?? "—"}ms · heavy slots ${heavy || "—"}   ${acc}${har ? `   ${har}` : ""}   today ${f.gate.partial ? "≥" : ""}${f.gate.total} gate decisions · ${f.gate.merge} merge`, s.w - 4), { fg: t.dim });
   ticker(c, s.h - 3);
   footerFor(c, pane);
 }

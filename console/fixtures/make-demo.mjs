@@ -95,6 +95,11 @@ for (let i = 0; i < 36; i++) gates.push({ ts: iso(60_000 * (8 + i * 22)), decisi
 const accounts = [["claude-a", "claude", 55, 60, "active"], ["claude-b", "claude", 42, 51, "active"], ["claude-c", "claude", 71, 48, "active"], ["codex-a", "codex", null, 100, "active", true],
   ["codex-b", "codex", null, 58, "active"], ["codex-c", "codex", null, 66, "cooling"], ["codex-d", "codex", null, 40, "active"], ["kimi-a", "kimi", 12, 9, "active"]]
   .map(([label, provider, short, weekly, status, onCredits = false]) => ({ label, provider, status, short, weekly, cooling: status !== "active", onCredits }));
+// made-up harness rows for the demo only; the live collector never invents these
+const harness = [
+  { id: "grok", label: "grokbuild", provider: "grok", harness: "grokbuild", installed: true, status: "ok", short: null, weekly: 34, unknownReason: null },
+  { id: "kimi", label: "kimi", provider: "kimi", harness: "kimi", installed: true, status: "ok", short: 18, weekly: 7, unknownReason: null },
+];
 const KINDS = [["DONE", "integ-codex · F-052 tenant export merged"], ["BLOCKED", "impl-codex-6 · F-057 export audit trail waits on PR #412"], ["QUEUED", "qa-codex-2 → impl-codex-4 (urgent) · F-055 fix round"],
   ["CLAIMED", "review-claude-1 took 7e1c09a2 · cross-family review #415"], ["HANDOFF", "tests-claude-1 → coord-lead-claude · F-058 tests locked"], ["PROOF", "judgment recorded · m4/slices/f-055"],
   ["UP", "impl-codex-3@gamma launched"], ["DONE", "qa-codex-1 · bug board: 0 open findings"]];
@@ -117,7 +122,9 @@ const queueHistory = [["claimed", "F-055 fix round"], ["handed off to review-cla
 const raw = {
   at: AT, host: { id: "host-demo01", cores: 32, load: [6.4, 7.1, 6.8], memUsedGB: 41.2, memTotalGB: 64 },
   daemon: { ok: true, latencyMs: 12, version: "0.6.3", cpuPct: 5.1, loopUtil: 0.18, error: null },
-  rigs, queue, attention, gates, accounts, done, transitions, tails, history: queueHistory, heavy: [{ cls: "build", held: 2, total: 2, waiting: 1 }, { cls: "browser", held: 1, total: 2, waiting: 0 }], events,
-  refreshMs: 5000, sources: { daemon: "ok", accounts: "ok", heavy: "ok", gates: "ok" },
+  rigs, queue, attention, gates, accounts, harness, done, transitions, tails, history: queueHistory, heavy: [{ cls: "build", held: 2, total: 2, waiting: 1 }, { cls: "browser", held: 1, total: 2, waiting: 0 }], events,
+  refreshMs: 5000, sources: { daemon: "ok", accounts: "ok", harness: "ok", heavy: "ok", gates: "ok" },
 };
-fs.writeFileSync(fileURLToPath(new URL("./demo.json", import.meta.url)), JSON.stringify({ note: "Neutral demo data for rig-console (made up).", raw, history }) + "\n");
+const payload = JSON.stringify({ note: "Neutral demo data for rig-console (made up).", raw, history }) + "\n";
+fs.writeFileSync(fileURLToPath(new URL("./demo.json", import.meta.url)), payload);
+fs.writeFileSync(fileURLToPath(new URL("../../docs/fixtures/demo-fleet.json", import.meta.url)), payload);

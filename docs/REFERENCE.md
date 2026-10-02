@@ -173,6 +173,7 @@ agent-refresh-guidance <Project> --apply # after editing a rig's CULTURE.md: upd
 agent-project-repair <Project> --apply   # fix anything agent-project-check flags
 rig down <rig> --snapshot                # stop a team (resume later with: rig up <rig>)
 agent-proxy-status                       # how the subscription pool is doing
+agent-harness-status                     # grokbuild and kimi quota from those CLIs (not the proxy)
 claude-pool                              # your own Claude Code session through the pool (incl. Kimi models)
 openrig-update --check                   # is OpenRig up to date? (+ are local patches ready for the new version)
 ```
@@ -185,7 +186,11 @@ outside them isn't seen (WO77).
 `agent-proxy-status` shows each account's 5-hour and weekly windows as the provider reports them. Codex sends each
 window's length and currently has only a weekly one, so its 5h column is `-`. An account that has used up a window but
 has credits says `in use` under credits: it keeps working and stays eligible. Only an account past its limit (over
-100%, or a used-up Codex window with no credits) is left out of the `eligible` count.
+100%, or a used-up Codex window with no credits) is left out of the `eligible` count. Kimi seats in the proxy have no
+quota headers; Grok is not a proxy provider. Those readings come from `agent-harness-status`, which runs `grok` or
+`grokbuild usage --json` and `kimi usage --json`. A missing CLI or a usage command that prints no number is shown as
+not installed or no reading. The tool never invents a percent. Enable them with the Grok Build CLI (`grok login`) and
+`npm i -g @moonshot-ai/kimi-code` then `kimi login`. `agent-login kimi` only adds a proxy seat.
 
 ## Several projects at once
 
@@ -215,7 +220,8 @@ with `agent-login` and the pool uses it straight away.
   - `4` Focus: what needs the owner (each decision with its lettered options; answered in Slack, never from the
     console), the fleet pulse, a live timeline of outcomes and what is true now (context pressure, stuck seats), and
     each rig's progress today.
-  - `5` Pool & System: 24 h braille graphs coloured along the value axis, the subscription pool, system health.
+  - `5` Pool & System: 24 h braille graphs coloured along the value axis, the subscription pool, harness usage
+    (grokbuild / kimi, from `agent-harness-status`), system health.
   - A seat's drill-in (`⏎` on a matrix cell or a timeline item, or `:seat <name>`): its open work and slice stages,
     context gauge (tokens when known; a warning past 80%), its recent queue history, and its live terminal tail, read
     only while the drill-in is open from the transcript file the daemon's own capture writes
@@ -234,9 +240,9 @@ with `agent-login` and the pool uses it straight away.
   - Keys: `1`-`5` views, `←→↑↓` / `hjkl` move, `⏎` opens (a rig's seats, a seat, a slice's journey), `Tab` next pane,
     `e` expand, `:` commands, `[ ]` previous/next slice in a journey, `j`/`k` select or scroll, `esc` back, `r`
     refresh, `?` help, `q` quits. The README has the full table and a gallery.
-  - It reads the daemon API and its event stream, the Jev decision log, `agent-proxy-status` and `agent-heavy status`
-    through ONE cache. The cache refreshes every 5 s, never under 2 s, and backs off to 60 s when the daemon is slow.
-    It never polls tmux and changes nothing.
+  - It reads the daemon API and its event stream, the Jev decision log, `agent-proxy-status`,
+    `agent-harness-status` and `agent-heavy status` through ONE cache. The cache refreshes every 5 s, never under 2 s,
+    and backs off to 60 s when the daemon is slow. It never polls tmux and changes nothing.
   - Its 24 h history lives in `$AGENT_STACK_STATE/rig-console/history.json`.
   - `rig-console --fixture docs/fixtures/demo-fleet.json` runs on the neutral demo fleet (no daemon); add `--once
     --size 176x50 --view river` for one frame. `node console/docs/make-assets.mjs` redraws the README's images and

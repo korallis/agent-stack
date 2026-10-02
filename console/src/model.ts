@@ -1,5 +1,5 @@
 // The console's data model. `Raw` is one cached read of every source (daemon API, queue, gate log, account pool,
-// heavy slots, host); `derive` turns it into what the views draw. Pure: the views and the tests share it.
+// harness quota, heavy slots, host); `derive` turns it into what the views draw. Pure: the views and the tests share it.
 
 export type Activity = "working" | "idle" | "stuck" | "unknown" | "detached" | "stopped";
 export interface Seat {
@@ -15,13 +15,20 @@ export interface Gate { ts: string; decision: string; band: string }
  *  since 2026-10); onCredits: a window is used up and the account carries on on credits, so it is not exhausted;
  *  over: past its limit, as agent-proxy-status decides it for dispatch and recovery (the console never second-guesses it). */
 export interface Account { label: string; provider: string; status: string; short: number | null; weekly: number | null; cooling: boolean; onCredits?: boolean; over?: boolean }
+/** A quota reading from grokbuild or the Kimi CLI (agent-harness-status), not from the usage proxy.
+ *  short / weekly are used percents the CLI printed, or null when that CLI is missing or printed no number. */
+export type HarnessStatus = "ok" | "unavailable" | "not_installed";
+export interface Harness {
+  id: string; label: string; provider: string; harness: string; installed: boolean; status: HarnessStatus;
+  short: number | null; weekly: number | null; unknownReason: string | null;
+}
 export interface Heavy { cls: string; held: number; total: number; waiting: number }
 export interface Event { at: string; kind: string; rig: string | null; text: string; seat?: string | null }
 export interface Raw {
   at: number;
   host: { id: string; cores: number; load: number[]; memUsedGB: number; memTotalGB: number };
   daemon: { ok: boolean; latencyMs: number | null; version: string | null; cpuPct: number | null; loopUtil: number | null; error: string | null };
-  rigs: Rig[]; queue: QRow[]; attention: QRow[]; gates: Gate[]; accounts: Account[]; heavy: Heavy[]; events: Event[];
+  rigs: Rig[]; queue: QRow[]; attention: QRow[]; gates: Gate[]; accounts: Account[]; harness?: Harness[]; heavy: Heavy[]; events: Event[];
   done?: QRow[]; transitions?: Record<string, Transition[]>;   // phase 2: read only while the River or a journey is open
   // phase 3: the queue's recent transitions as they came (a seat's history), and the one seat's terminal tail
   history?: { id: number; ts: string; actor: string; change: string; summary: string | null; rig: string | null; qitemId: string }[];

@@ -32,7 +32,7 @@ export const SHOTS = [
   { name: "river-journey", caption: "A slice's journey: who had it, worked vs waited", size: [176, 50], st: { view: 2 }, keys: [":", ..."slice F-055", "\r"], expect: /^(?=[\s\S]*JOURNEY · F-055)(?=[\s\S]*total worked \d)/, never: /loading/ },
   { name: "focus", caption: "Calm Focus: what needs you, then the fleet's pulse", size: [176, 50], st: { view: 3 }, expect: /what needs me\?[\s\S]*FLEET PULSE/ },
   { name: "seat-drill-in", caption: "A seat's drill-in: work, context and its live terminal", size: [176, 50], st: { view: 0, seat: "impl-codex-4@gamma" }, expect: /CURRENT WORK[\s\S]*LIVE TERMINAL/ },
-  { name: "pool", caption: "Pool & System: 24 h graphs, the subscription pool, health", size: [176, 50], st: { view: 4 }, expect: /SUBSCRIPTION POOL[\s\S]*SYSTEM/ },
+  { name: "pool", caption: "Pool & System: 24 h graphs, the subscription pool, harness usage, health", size: [176, 50], st: { view: 4 }, expect: /^(?=[\s\S]*SUBSCRIPTION POOL)(?=[\s\S]*HARNESS USAGE)(?=[\s\S]*SYSTEM)/ },
   { name: "command-bar", caption: "The ':' command bar, with completions", size: [176, 50], st: { view: 1 }, keys: [":", "s", "e", "a", "t", " ", "i", "m", "p", "l"], expect: /: seat impl/ },
   { name: "mission-control-120", caption: "Mission Control at 120 columns", size: [120, 40], st: { view: 0 }, expect: /MISSION CONTROL/ },
   { name: "theme-pad39a", caption: "Pad 39A", size: [120, 36], st: { view: 1, theme: "pad39a" }, expect: /theme Pad 39A/ },
@@ -46,7 +46,7 @@ export const DEMO = { name: "demo", size: [176, 50], hold: 1.8, steps: [
   { st: { view: 0 }, expect: /MISSION CONTROL/ }, { keys: ["l", "l"], expect: /MISSION CONTROL/ }, { keys: ["2"], expect: /SEAT MATRIX/ },
   { keys: ["3"], expect: /THE RIVER/, never: /JOURNEY ·/ }, { keys: [":", ..."slice F-055", "\r"], expect: /^(?=[\s\S]*JOURNEY · F-055)(?=[\s\S]*total worked \d)/, never: /loading/ }, { keys: ["\x1b", "4"], expect: /what needs me\?/ },
   { keys: [":", "s", "e", "a", "t", " ", "i", "m", "p", "l", "-", "c", "o", "d", "e", "x", "-", "4", "@", "g", "a", "m", "m", "a"], expect: /: seat impl-codex-4@gamma/ },
-  { keys: ["\r"], expect: /LIVE TERMINAL/ }, { keys: ["5"], expect: /SUBSCRIPTION POOL/ },
+  { keys: ["\r"], expect: /LIVE TERMINAL/ }, { keys: ["5"], expect: /^(?=[\s\S]*SUBSCRIPTION POOL)(?=[\s\S]*HARNESS USAGE)/ },
   { keys: [":", "t", "h", "e", "m", "e", " ", "t", "o", "k", "y", "o", "-", "n", "i", "g", "h", "t", "\r"], expect: /theme Tokyo Night/ },
   { keys: ["1"], expect: /MISSION CONTROL[\s\S]*theme Tokyo Night/ },
 ] };
