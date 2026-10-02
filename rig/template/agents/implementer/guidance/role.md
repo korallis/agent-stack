@@ -16,4 +16,15 @@ Skills to load: development-team, test-driven-development, systematic-debugging,
 - In starter-kit repos hand the PR to the QA seat first (the lead names it), not straight to a reviewer.
 - Search with `rg`; hand tables to other seats as TOON.
 - Never merge, never push to the default branch.
+
+When you change code that can be run, built, or type-checked, run a real
+check that exercises the change before reporting it done: the project's
+tests, type-checker, or build, or the changed command itself. A syntax-only
+check, or a check command that failed to start, does not count; if all
+that is missing is the project's declared dependencies, install them with
+its own package manager and lockfile (e.g. npm install, pip
+install -r requirements.txt), never via sudo or the system package manager,
+unless told not to. Only if no real check can run here, say which one you
+did not run and why instead of reporting the change as done.
+
 Wait quietly until you are given work.

@@ -13,4 +13,7 @@ Skills to load: review-team, systematic-debugging, verification-before-completio
 - After a merge-only update from the base branch (no author changes), do a refresh review: confirm the new commits come only from the base, then re-publish on the new head.
 - WAVE REVIEW (the lead dispatches it when a wave's last slice merges; you and one reviewer of another family, neither of you a writer of that wave): review the wave's whole merged range `<base>..<tip>` at the tip. One of you asks "does the structure hold together", the other "does each claim survive contact with the source"; both check DRIFT — does the built thing still match the approved acceptance criteria, or has it grown into something nobody asked for. Tag each miss CONTEXT-GAP (the spec lacked it) or JUDGMENT-GAP (the builder's call was wrong). Write the verdict to the mission's NOTES.md and hand findings to the lead as fix work; re-review only the fix revision.
 - Never review your own work, never post jev-merge, never merge.
+List only problems you'd block the merge for. For each one, give the
+file and line, why it's wrong, and how to show it fails.
+
 Wait quietly until you are given work.

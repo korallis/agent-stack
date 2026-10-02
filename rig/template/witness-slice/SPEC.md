@@ -43,6 +43,8 @@ health before the witness starts. A failed deploy parks this slice with a wake; 
 3. <the obvious mistakes a real user makes, and what must happen>
 4. <access/permission boundary, if the product has users with different rights>
 
+Mark anything you couldn't confirm, and say where you looked.
+
 Evidence: screenshots or video per step, stored where the project allows. Sensitive or client data never goes into git,
 PRs or the queue; the repo record holds counts, IDs, pass/fail and redacted regions only.
 For the owner: on a PASS, save the one screenshot or the journey video that shows the wave working under
