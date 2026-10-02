@@ -24,6 +24,21 @@ if [ -n "${OPENRIG_NODE_ID:-}" ] && [ -r "$HOME/.config/agent-stack/secrets/clip
   export CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC=1
 fi
 
+# Claude-specific defaults for managed seats; direct human sessions keep their own settings.
+# An explicit launch value wins. Effort env values override /effort until the seat is relaunched without them.
+if [ -n "${OPENRIG_NODE_ID:-}" ]; then
+  if [ -z "${CLAUDE_CODE_EFFORT_LEVEL:-}" ]; then
+    _claude_seat=${OPENRIG_SESSION_NAME:-}; _claude_seat=${_claude_seat%%@*}
+    case "$_claude_seat" in
+      impl-*|dev-impl|dev-impl[0-9]*) export CLAUDE_CODE_EFFORT_LEVEL=medium ;;
+      review-*|qa-*|tests-*|test-author-*|witness-*|dev-qa) export CLAUDE_CODE_EFFORT_LEVEL=high ;;
+    esac
+    unset _claude_seat
+  fi
+  # Search/log-reading subagents use Sonnet by default. Explicit subagent model choices still win (no FORCE).
+  export CLAUDE_CODE_SUBAGENT_MODEL="${CLAUDE_CODE_SUBAGENT_MODEL:-sonnet}"
+fi
+
 # Many seats run app/test servers at once: give each seat its own port (20000-29999, stable per seat folder).
 # The starter kit's Playwright config serves the app on it and never reuses a server it did not start.
 if [ -n "${OPENRIG_NODE_ID:-}" ] && [ -z "${E2E_PORT:-}" ]; then

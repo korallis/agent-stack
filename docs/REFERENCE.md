@@ -543,6 +543,19 @@ start-up context tells a Fable seat to stop and tell the lead instead of carryin
 `agent-project-check <Project>` WARNs when a Fable seat's screen asks for the consent or says the model is
 unavailable. The fix: run `/model fable` once in that seat, accept, then relaunch the seat at idle.
 
+### Claude effort and search subagents
+
+Managed seats get Claude-specific launch defaults from `system/env.sh`. Implementers (`impl-*`, and the development
+pair's `dev-impl` seats) use medium effort. Reviewers, QA, test authors and witness seats use high effort. Other roles
+keep Claude's default. Explicit `CLAUDE_CODE_EFFORT_LEVEL` values win; Claude Code 2.1.287 gives that environment
+setting precedence over `/effort` for the session. Change the launch value and relaunch at idle to change the policy.
+Custom seat names outside those role prefixes need an explicit launch value.
+
+`CLAUDE_CODE_SUBAGENT_MODEL` defaults to `sonnet` in managed seats. Use these subagents for search and log reading;
+keep edits with the main model or give the editing subagent an explicit model. This variable is a default for all
+subagents without a model choice, not a task classifier. The FORCE variable is not set, so explicit model choices
+still win. Human sessions outside OpenRig keep their existing environment; main model routing is unchanged.
+
 ### Jev as the decision layer
 
 Code gathers the evidence and owns the thresholds; Jev makes the judgment; anything short of the act band goes to
