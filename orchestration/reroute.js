@@ -110,11 +110,15 @@ async function main() {
   db.exec("CREATE TABLE IF NOT EXISTS reroute_unserved (seat TEXT PRIMARY KEY, since INTEGER)");
   const moved = new Set(db.prepare("SELECT item FROM reroutes").all().map((r) => r.item));
   const wasOut = new Set(db.prepare("SELECT seat FROM reroute_unserved").all().map((r) => r.seat));
-  const families = eligibleFamilies(), report = [], nudges = [];
+  const families = eligibleFamilies(), report = [], nudges = [], errors = [];
   for (const rigName of rigsToCheck(flag("--rig"))) {
     const all = seats(rigName);
     const q = rig(["queue", "list", "-A", "--state", "pending,in-progress", "--limit", "1000"], { json: true, allowFail: true });
-    const rows = (Array.isArray(q) ? q : q?.items || []).map((x) => ({ id: x.qitemId, state: x.state, destination: x.destinationSession,
+    // a failed or malformed read is unknown, not an empty queue: nothing moves, nothing remembered is forgotten
+    const listed = (x) => (Array.isArray(x) ? x : Array.isArray(x?.items) ? x.items : null);
+    const remember = () => { if (apply) for (const x of all.filter((x) => x.running && !seatAvailable(x, families))) db.prepare("INSERT OR IGNORE INTO reroute_unserved VALUES (?, ?)").run(x.seat, Date.now()); };
+    if (!listed(q)) { errors.push({ rig: rigName, error: "rig queue list failed: nothing moved, resumes kept for the next pass" }); remember(); continue; }
+    const rows = listed(q).map((x) => ({ id: x.qitemId, state: x.state, destination: x.destinationSession,
       source: x.sourceSession, tags: x.tags, updated: x.tsUpdated, created: x.tsCreated, body: x.body, summary: x.summary,
       elided: x.fieldsElided || [] })).filter((r) => String(r.destination || "").endsWith(`@${rigName}`));
     const load = (r) => {
@@ -130,8 +134,9 @@ async function main() {
       }
       report.push({ rig: rigName, ...m });
     }
-    const left = apply ? rig(["queue", "list", "-A", "--state", "in-progress", "--limit", "1000"], { json: true, allowFail: true }) : q;
-    const leftRows = (Array.isArray(left) ? left : left?.items || []).map((x) => ({ id: x.qitemId, state: x.state, destination: x.destinationSession }));
+    const left = listed(apply ? rig(["queue", "list", "-A", "--state", "in-progress", "--limit", "1000"], { json: true, allowFail: true }) : q);
+    if (!left) { errors.push({ rig: rigName, error: "rig queue list (in progress) failed: resumes kept for the next pass" }); remember(); continue; }
+    const leftRows = left.map((x) => ({ id: x.qitemId, state: x.state, destination: x.destinationSession }));
     const r = resumes(leftRows, all, families, new Set([...wasOut].filter((s) => s.endsWith(`@${rigName}`))));
     const failed = new Set();
     for (const n of r.resume) {
@@ -143,12 +148,12 @@ async function main() {
       nudges.push({ rig: rigName, ...n });
     }
     if (apply) {
-      for (const s of r.out) db.prepare("INSERT OR IGNORE INTO reroute_unserved VALUES (?, ?)").run(s, Date.now());
+      remember();
       // served again: nudged above, or working again or holding nothing; forget it, unless the nudge didn't go out
       for (const s of wasOut) if (s.endsWith(`@${rigName}`) && !r.out.includes(s) && !failed.has(s)) db.prepare("DELETE FROM reroute_unserved WHERE seat = ?").run(s);
     }
   }
-  console.log(JSON.stringify({ minutes, applied: apply, moves: report, resumes: nudges }, null, 2));
+  console.log(JSON.stringify({ minutes, applied: apply, moves: report, resumes: nudges, ...(errors.length ? { errors } : {}) }, null, 2));
 }
 
 if (import.meta.url === pathToFileURL(realpathSync(process.argv[1] || "")).href) {

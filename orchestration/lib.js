@@ -65,6 +65,15 @@ export const accountEligible = (r) => !r.disabled && !r.unavailable && r.status 
 export const PROVIDER_FAMILY = { claude: "claude", codex: "codex", kimi: "kimi", "kimi-ai": "kimi", xai: "grok" };
 const bareModel = (m) => String(m || "").replace(/\[1m\]$/, "");
 
+// When a cooldown list ends: 0 when empty, null when any has no known end.
+const cooldownEnd = (cs) => (cs.length ? (cs.every((c) => Number.isFinite(Date.parse(c?.retry_at))) ? Math.max(...cs.map((c) => Date.parse(c.retry_at))) : null) : 0);
+// The earliest an account clears both its credential cooldown and model m's ("*": the credential alone); null if any
+// account's time is unknown or there is no account to wait for.
+function soonest(accts, m) {
+  const ts = accts.map((a) => { const mm = m === "*" ? 0 : cooldownEnd(a.models.get(m) || []); return a.cred === null || mm === null ? null : Math.max(a.cred, mm); });
+  return !ts.length || ts.includes(null) ? null : Math.min(...ts);
+}
+
 // Account availability from the proxy (never estimated by a model): eligible accounts per family. Two details ride on
 // the result, not enumerable (so callers that read the counts are unchanged): `_models`, per family, the models every
 // eligible account is cooling on (a credential-wide cooldown makes the account ineligible outright); and `_native`, the
@@ -74,7 +83,7 @@ export function eligibleFamilies(rows = null) {
     rows ??= JSON.parse(execFileSync("agent-proxy-status", ["--json"], { encoding: "utf8", timeout: 20_000 }));
     const fam = { claude: 0, codex: 0 }, cooling = {}, ready = {};
     const at = (c) => (c?.retry_at ? Date.parse(c.retry_at) : NaN);
-    const end = (cs) => (cs.length ? (cs.every((c) => Number.isFinite(at(c))) ? Math.max(...cs.map(at)) : null) : 0);   // 0: none; null: unknown
+    const end = cooldownEnd;
     for (const r of rows) {
       const f = PROVIDER_FAMILY[r.provider] ?? r.provider;
       fam[f] ??= 0;   // every provider seen starts at 0 (all accounts down is unavailable, not unknown)
@@ -92,16 +101,13 @@ export function eligibleFamilies(rows = null) {
     }
     // a model is out for a family when EVERY eligible account of it is cooling on that model; it can be served again at
     // the earliest time any account clears both its credential cooldown and that model's (null if any is unknown)
-    const soonest = (accts, m) => {
-      const ts = accts.map((a) => { const mm = m === "*" ? 0 : end(a.models.get(m) || []); return a.cred === null || mm === null ? null : Math.max(a.cred, mm); });
-      return !ts.length || ts.includes(null) ? null : Math.min(...ts);
-    };
     const models = {}, until = {};
     for (const [f, maps] of Object.entries(cooling)) {
       models[f] = [...maps[0].keys()].filter((m) => maps.every((x) => x.has(m)));
       for (const m of models[f]) (until[f] ??= {})[m] = soonest(ready[f] || [], m);
     }
     for (const f of Object.keys(fam)) if (fam[f] === 0) (until[f] ??= {})["*"] = soonest(ready[f] || [], "*");
+    Object.defineProperty(fam, "_ready", { value: ready });
     Object.defineProperty(fam, "_models", { value: models });
     Object.defineProperty(fam, "_until", { value: until });
     Object.defineProperty(fam, "_native", { value: { grok: null, kimi: null } });
@@ -123,6 +129,8 @@ export function seatAvailable(s, families = {}) {
 // its quota limit reports no reset here), undefined when it isn't out.
 export function servableAt(s, families = {}) {
   if (s.native || seatAvailable(s, families)) return undefined;
+  // per account, both cooldowns, for this seat's model: also when every account is credential-cooling (QA PR119)
+  if (families._ready) return soonest(families._ready[s.family] || [], s.model ? bareModel(s.model) : "*");
   const u = families._until?.[s.family] || {};
   return families[s.family] === 0 ? u["*"] ?? null : u[bareModel(s.model)] ?? null;
 }

@@ -15,7 +15,7 @@
   note. Destinations must be idle, servable and below their context wall. A moved row keeps its work's independence:
   a review stays away from its author's family, and an implementation from its locked tests' family. A row that
   implies a constraint it doesn't state goes to the lead (`agent-recover` too). Seats served again get one resume
-  message for the claimed rows they still hold, retried if the send fails. review-plan now writes the author on the
+  message for the claimed rows they still hold, retried if the send or the queue read fails. review-plan now writes the author on the
   review row.
 
 ### Fixed

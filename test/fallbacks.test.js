@@ -177,10 +177,10 @@ test("agent-recover reads the proxy's cooling-down 429 as rate limited; role fal
 
 // End to end, both CLIs on the stall: a fake `rig` (records every call) and a fake agent-proxy-status; Jev stubbed.
 import { spawnSync } from "node:child_process";
-function cli(script, args, { nodes, rows, proxy, state, jev = {}, caller = "agent-reroute@app", show = null, failSend = false }) {
+function cli(script, args, { nodes, rows, proxy, state, jev = {}, caller = "agent-reroute@app", show = null, failSend = false, failList = false, failLeft = false }) {
   const dir = fs.mkdtempSync(join(process.env.AGENT_STACK_STATE, "e2e-")), calls = join(dir, "calls.log");
   const w = (n, s) => fs.writeFileSync(join(dir, n), s, { mode: 0o755 });
-  w("rig", `#!/bin/sh\necho "rig $*" >> "${calls}"\ncase "$*" in\n  "ps --json") echo '[{"name":"app"}]' ;;\n` +
+  w("rig", `#!/bin/sh\necho "rig $*" >> "${calls}"\ncase "$*" in "queue list"*) [ -f "${join(dir, "fail-list")}" ] && exit 1 ;; esac\ncase "$*" in "queue list -A --state in-progress "*) [ -f "${join(dir, "fail-left")}" ] && exit 1 ;; esac\ncase "$*" in\n  "ps --json") echo '[{"name":"app"}]' ;;\n` +
     `  "ps --nodes --rig app --json") cat "${join(dir, "nodes.json")}" ;;\n  "queue list -A --state pending,in-progress"*) cat "${join(dir, "rows.json")}" ;;\n` +
     `  "queue list -A --state in-progress"*) cat "${join(dir, "left.json")}" ;;\n  "queue show "*) cat "${join(dir, "show.json")}" ;;\n` +
     `  "queue handoff"*) echo '{"qitemId":"q-new"}' ;;\n  "send "*) [ -f "${join(dir, "fail-send")}" ] && exit 1 ;;\nesac\nexit 0\n`);
@@ -189,6 +189,8 @@ function cli(script, args, { nodes, rows, proxy, state, jev = {}, caller = "agen
   w("left.json", JSON.stringify(rows.filter((r) => r.state === "in-progress"))); w("jev.json", JSON.stringify(jev));
   w("show.json", JSON.stringify(show ?? { qitemId: "q-1", destinationSession: "coord-lead-claude@app", state: "in-progress", body: "", tags: [] }));
   if (failSend) w("fail-send", "");
+  if (failList) w("fail-list", "");
+  if (failLeft) w("fail-left", "");
   const r = spawnSync(process.execPath, [join(repo, "orchestration", script), ...args], { encoding: "utf8",
     env: { PATH: `${dir}:${process.env.PATH}`, HOME: dir, AGENT_STACK_STATE: state, AGENT_JEV_STUB: join(dir, "jev.json"), OPENRIG_SESSION_NAME: caller } });
   assert.equal(r.status, 0, r.stderr);
@@ -316,6 +318,11 @@ test("servableAt: the earliest account to clear both cooldowns, a credential-coo
   assert.equal(servableAt(seat, eligibleFamilies([acct("claude", { cooldowns: [cd(300)] }), acct("claude", { cooldowns: [{ scope: "credential", reason: "x" }] })])), null,
     "a credential cooldown with no end: unknown");
   assert.equal(min(eligibleFamilies([acct("claude", { cooldowns: [cd(300)] }), acct("claude", { over_limit: true })])), 300, "over a limit adds nothing");
+  // every account credential-cooling (the family is out): the model's own cooldown still counts (QA PR119 round 2)
+  assert.equal(min(eligibleFamilies([acct("claude", { cooldowns: [cd(2, "credential"), cd(90)] })])), 90);
+  assert.equal(min(eligibleFamilies([acct("claude", { cooldowns: [cd(5, "credential"), cd(120)] }), acct("claude", { cooldowns: [cd(40, "credential")] })])), 40);
+  assert.equal(Math.round((servableAt(seatInfo(node("qa.claude", "claude-code")), eligibleFamilies([acct("claude", { cooldowns: [cd(5, "credential"), cd(120)] })])) - now) / 60e3), 5,
+    "a seat with no known model: the credential alone");
 });
 
 // QA PR119 P2: a resume that didn't go out is retried, not forgotten.
@@ -343,4 +350,27 @@ test("agent-recover --apply keeps the row's constraint: a grok-authored review i
   assert.match(out.excluded.pool, /^MODEL OUT: every eligible codex account is cooling on gpt-6\.1-sol.*No other family has a free seat/);
   assert.doesNotMatch(calls, /queue handoff/);
   assert.match(calls, /rig queue show q-r --full --json/);
+});
+
+// QA PR119 round 2: a queue read that failed is unknown, not empty; the remembered seat keeps its pending resume.
+test("agent-reroute: a failed queue read moves nothing, forgets nothing, and reports it; the resume comes on the next good pass", () => {
+  const state = fs.mkdtempSync(join(process.env.AGENT_STACK_STATE, "qfail-")), ago = (m) => new Date(Date.now() - m * 60e3).toISOString();
+  const held = [{ qitemId: "held", state: "in-progress", destinationSession: "coord-lead-claude@app", sourceSession: "operator@app", tags: [], tsUpdated: ago(1) }];
+  const lead = [node("coord.lead-claude", "claude-code", { model: "claude-opus-5-5" })];
+  cli("reroute.js", ["--apply"], { nodes: lead, rows: held, proxy: [acct("claude", { over_limit: true })], state });
+  const bad = cli("reroute.js", ["--apply"], { nodes: lead, rows: held, proxy: [acct("claude")], state, failList: true });
+  assert.deepEqual([bad.out.moves, bad.out.resumes, bad.out.errors], [[], [], [{ rig: "app", error: "rig queue list failed: nothing moved, resumes kept for the next pass" }]]);
+  const good = cli("reroute.js", ["--apply"], { nodes: lead, rows: held, proxy: [acct("claude")], state });
+  assert.deepEqual(good.out.resumes.map((n) => [n.seat, n.rows, n.sent]), [["coord-lead-claude@app", ["held"], true]]);
+  assert.equal(good.out.errors, undefined);
+  // only the second read (claimed rows left) fails: still nothing forgotten
+  const st2 = fs.mkdtempSync(join(process.env.AGENT_STACK_STATE, "qfail2-"));
+  cli("reroute.js", ["--apply"], { nodes: lead, rows: held, proxy: [acct("claude", { over_limit: true })], state: st2 });
+  const half = cli("reroute.js", ["--apply"], { nodes: lead, rows: held, proxy: [acct("claude")], state: st2, failLeft: true });
+  assert.deepEqual([half.out.resumes, half.out.errors], [[], [{ rig: "app", error: "rig queue list (in progress) failed: resumes kept for the next pass" }]]);
+  assert.equal(cli("reroute.js", ["--apply"], { nodes: lead, rows: held, proxy: [acct("claude")], state: st2 }).out.resumes[0]?.sent, true);
+  // the seat goes out during a pass whose read failed: it's remembered all the same
+  const st3 = fs.mkdtempSync(join(process.env.AGENT_STACK_STATE, "qfail3-"));
+  cli("reroute.js", ["--apply"], { nodes: lead, rows: held, proxy: [acct("claude", { over_limit: true })], state: st3, failList: true });
+  assert.equal(cli("reroute.js", ["--apply"], { nodes: lead, rows: held, proxy: [acct("claude")], state: st3 }).out.resumes[0]?.sent, true);
 });
