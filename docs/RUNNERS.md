@@ -15,6 +15,11 @@ remain only for the exceptions below, and as the automatic fallback.
   - registers a fresh `--ephemeral` runner `<host>-<repo>` with the label `korallis-local`.
 
   The runner exits after one job, and systemd starts the next fresh one.
+- **Nothing a job writes reaches the next job.** A job can write its whole runner directory. So before every job, the
+  runner itself is re-extracted from the checksum-verified release, and its `home/` and `toolcache/` are wiped. That
+  means each job downloads its tools (Node, Playwright's browser) again. `AGENT_CI_KEEP_CACHE=1` keeps `home/` and
+  `toolcache/` between jobs, which is faster, but a same-repo PR job could then leave files that a later main job
+  uses. The runner itself is always fresh, and a release that fails its checksum is refused at every registration.
 - **The job is sandboxed.** It runs with `PrivateUsers`, `ProtectHome=tmpfs`, `PrivateTmp` and `NoNewPrivileges`, and
   sees only:
   - its own `~/.local/share/agent-stack/ci-runners/<repo>/` (runner, `home/`, `toolcache/`);
@@ -38,6 +43,7 @@ remain only for the exceptions below, and as the automatic fallback.
   AGENT_CI_MAX_LOAD_PER_CPU=1.0
   AGENT_CI_MIN_MEM_GB=6
   AGENT_CI_GATE_WAIT_S=900
+  AGENT_CI_KEEP_CACHE=0        # 1 keeps home/ and toolcache/ between jobs (see above)
   ```
 - **Fallback.** The repo variable `CI_LOCAL=1` sends a repo's Linux jobs here.
   - `agent-ci-runner install` sets it only once GitHub lists the runner online.
