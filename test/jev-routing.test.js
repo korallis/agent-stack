@@ -33,7 +33,8 @@ test("templates: architects on claude-fable-5-1, Codex implementers on gpt-6.1-s
       const role = body.match(/agents\/([\w-]+)"/)?.[1], model = body.match(/model: "?([^"\n]+)"?/)?.[1], rt = body.match(/runtime: (\S+)/)?.[1];
       if (role === "architect") assert.equal(model, "claude-fable-5-1", `${t} architect`);
       if (role === "implementer" && rt === "codex") assert.equal(model, "gpt-6.1-sol", `${t} codex implementer`);
-      if (role === "reviewer") assert.ok(["claude-opus-5-5", "gpt-6.1-sol", "kimi-k3[1m]"].includes(model), `${t} reviewer ${model}`);
+      // Kimi on the 256k model since WO88 (2026-10-02): a [1m] reviewer re-sent up to 1M tokens a turn
+      if (role === "reviewer") assert.ok(["claude-opus-5-5", "gpt-6.1-sol", "kimi-k3-256k"].includes(model), `${t} reviewer ${model}`);
     }
   }
 });

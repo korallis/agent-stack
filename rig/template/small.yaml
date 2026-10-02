@@ -3,7 +3,7 @@
 # Copy to <workspace>/rig/, replace @RIG@, @REPO@, @WT@, @AGENT_STACK@ (this repo), create one git worktree per seat, then:
 #   rig spec validate small.yaml  →  rig up small.yaml   (agent-project-new --team small does all of this)
 # Claude Code seats (incl. Kimi) reach models through CLIProxyAPI via ~/.config/agent-stack/env.sh; Codex seats via ~/.codex/config.toml.
-# Kimi seat: "kimi-k3[1m]" gives the 1M window. One test author (tests.claude) and two implementers (impl.codex-1,
+# Kimi seat: "kimi-k3-256k" (a 1M window re-sends up to 1M tokens a turn; agent-project-check FAILs [1m] outside leads and architects). One test author (tests.claude) and two implementers (impl.codex-1,
 # impl.claude-ui); scale up to build.yaml when more parallel work is needed.
 version: "0.2"
 name: "@RIG@"
@@ -117,7 +117,7 @@ pods:
         agent_ref: "path:@AGENT_STACK@/rig/template/agents/reviewer"
         profile: default
         runtime: claude-code
-        model: "kimi-k3[1m]"
+        model: "kimi-k3-256k"
         cwd: "@WT@/review-kimi"
         restore_policy: resume_if_possible
     edges: []

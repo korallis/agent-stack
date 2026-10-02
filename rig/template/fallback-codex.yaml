@@ -122,7 +122,7 @@ pods:
         agent_ref: "path:@AGENT_STACK@/rig/template/agents/reviewer"
         profile: default
         runtime: claude-code
-        model: "kimi-k3[1m]"
+        model: "kimi-k3-256k"
         cwd: "@WT@/review-kimi"
         restore_policy: resume_if_possible
       - id: astra

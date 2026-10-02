@@ -19,6 +19,17 @@ REPO, WT = os.path.join(HOME, "Projects", P), os.path.join(HOME, "Projects", f"{
 results = []
 
 
+# Native seats (agent-native-seat): a terminal member whose startup action runs the launcher. Its CLI, role and model;
+# None for any other member (an ordinary terminal is a shell, not a seat).
+NATIVE_FILE = {"grok": ".grok/rules/openrig-seat.md", "kimi": ".kimi-code/AGENTS.md"}
+def native_seat(mem):
+    for a in (((mem or {}).get("startup") or {}).get("actions") or []):
+        m = re.match(r"\s*agent-native-seat\s+(grok|kimi)\b(.*)$", str((a or {}).get("value") or ""))
+        if m:
+            opt = lambda k: (re.search(rf"--{k}[ =](\S+)", m[2]) or [None, None])[1]
+            return {"cli": m[1], "role": opt("role"), "model": opt("model"), "agents_dir": opt("agents-dir")}
+    return None
+
 def rep(level, what, detail=""):
     results.append((level, what, detail))
 
@@ -189,6 +200,43 @@ if specs:
             "In that seat run `/model fable` once, accept, then relaunch it at idle" if stuck_fable else "",
             f"{', '.join(unread)}: screen not readable (seat not in tmux?), so not verified" if unread else ""]))
         rep(level, f"Fable seats can use their model ({', '.join(fable)})", detail)
+    # WO88: only leads and architects hold the backlog in a 1M window (and compact at 400k). Any other seat on a [1m]
+    # model re-sends up to a million tokens every turn; that was the main cause of the quota burn.
+    WIDE_OK = ("coord", "arch")
+    wide, unknown = [], []
+    # parsed, not pattern-matched: a safe_dump roundtrip or a flow-style member is the same spec (QA PR118)
+    try:
+        import yaml
+        sdoc = yaml.safe_load(spec or "") or {}
+    except Exception as e:
+        sdoc, _ = {}, unknown.append(f"rig spec not parsed ({type(e).__name__})")
+    for pod in (sdoc.get("pods") or []) if isinstance(sdoc, dict) else []:
+        for mem in (pod or {}).get("members") or []:
+            nat = native_seat(mem)
+            model = str((mem or {}).get("model") or (nat or {}).get("model") or "")
+            if pod.get("id") not in WIDE_OK and "[1m]" in model:
+                wide.append(f"{pod.get('id')}-{mem.get('id')} (spec: {model})")
+    if running:
+        try:
+            import urllib.request
+            base = os.environ.get("OPENRIG_URL", "http://127.0.0.1:7433").rstrip("/")
+            rid = next((r["id"] for r in json.load(urllib.request.urlopen(f"{base}/api/rigs/summary", timeout=5))
+                        if r.get("name") == rig), None)
+            if not rid:
+                unknown.append(f"the daemon lists no rig named {rig}, so live seats not read")
+            for n in json.load(urllib.request.urlopen(f"{base}/api/rigs/{rid}/nodes", timeout=10)) if rid else []:
+                model, pod = n.get("model") or "", n.get("podNamespace") or ""
+                if pod not in WIDE_OK and "[1m]" in model and n.get("nodeKind", "agent") == "agent":
+                    seat = n.get("canonicalSessionName") or "?"
+                    if not any(w.startswith(seat.split("@")[0] + " ") for w in wide):
+                        wide.append(f"{seat} (live: {model})")
+        except Exception as e:
+            unknown.append(f"live seats not read ({type(e).__name__})")
+    # a known violation FAILs; evidence that couldn't be read is a WARN, never an OK
+    rep("FAIL" if wide else "WARN" if unknown else "OK", "only leads and architects use a 1M-token window ([1m] model)",
+        "; ".join(filter(None, [f"{', '.join(wide)}: every turn re-sends up to 1M tokens. Pin the model without [1m] (Kimi: "
+        f"kimi-k3-256k, or a native kimi seat on kimi-code/k3-256k) in the spec and `rig seat set-model`, then relaunch at idle"
+        if wide else "", *unknown])))
     try:
         wd = [j for j in json.loads(sh("rig", "watchdog", "list", "--json") or "[]")
               if j.get("state") == "active" and (j.get("targetSession") or "").endswith(f"@{rig}")]
@@ -521,10 +569,27 @@ if specs:
     d = yaml.safe_load(read(sp))
     cfile = ((d.get("managed_blocks") or {}).get("claude-code")) or "CLAUDE.md"
     noblocks, stale, noskills, startup_sizes = [], [], [], []
+    native_stale = []
     for pod in d.get("pods", []):
         for mem in pod.get("members", []):
             cwd, rt = mem.get("cwd"), mem.get("runtime")
             seat = os.path.basename(cwd or "")
+            nat = native_seat(mem)
+            if rt == "terminal" and not nat:
+                continue   # an ordinary shell: no instructions, no skills
+            if nat:
+                # agent-native-seat writes the rig's culture and the role into the CLI's own rules file at every start;
+                # native CLIs don't load the Claude skills (the launcher keeps them out)
+                txt = read(os.path.join(cwd or "", NATIVE_FILE[nat["cli"]])) or ""
+                if "Managed by agent-native-seat" not in txt:
+                    noblocks.append(f"{seat} ({NATIVE_FILE[nat['cli']]}: relaunch the seat; agent-native-seat writes it)"); continue
+                agents = nat["agents_dir"] or os.path.join(os.path.dirname(os.path.dirname(os.path.realpath(__file__))), "rig/template/agents")
+                role_md = read(os.path.join(agents, nat["role"] or "-", "guidance/role.md")) or ""
+                culture = read(os.path.join(W, "rig/CULTURE.md")) or ""
+                if any(x.strip() and x.strip() not in txt for x in (culture, role_md)):
+                    native_stale.append(f"{seat}/{NATIVE_FILE[nat['cli']]} (older than the rig's CULTURE.md or the {nat['role']} role: relaunch the seat)")
+                startup_sizes.append((seat, (len(txt) + 3) // 4))
+                continue
             f = os.path.join(cwd or "", "AGENTS.md" if rt == "codex" else cfile)
             txt = read(f) or ""
             if "OpenRig MANAGED BLOCK" not in txt:
@@ -549,6 +614,7 @@ if specs:
         stale = [f"{c['seat']}/{c['file']} ({'; '.join(c['reasons'])})" for c in json.loads(rg.stdout)["changed"]]
     except (ValueError, KeyError, TypeError):
         stale = [f"agent-refresh-guidance {W} --json failed: {(rg.stderr or rg.stdout).strip()[-200:]}"]
+    stale += native_stale
     if not running:  # OpenRig writes instruction blocks and projects skills at launch
         noblocks, stale, noskills, startup_sizes = [], [], [], []
         rep("WARN", "seat instructions and skills not checked: the rig is not running (rig up, then re-check)")

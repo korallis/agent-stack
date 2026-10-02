@@ -35,13 +35,14 @@ test("every template seat's model is in the proxy catalogue its runtime uses (Co
 
 test("the 2026-10-01 routing: every Codex seat gpt-6.1-sol; Claude test authors and UI implementers Sonnet 5.5; leads, Claude reviewers, architects and Kimi unchanged", () => {
   const off = [];
-  for (const x of members) {
+  // native grok/kimi seats (WO88) carry their model in the launch command; test/standard-roster.test.js checks them
+  for (const x of members.filter((m) => m.runtime !== "terminal")) {
     const want = x.runtime === "codex" ? (/^kimi/.test(x.model) ? x.model : "gpt-6.1-sol")
       : /^kimi/.test(x.model) ? x.model
       : ["tests", "impl"].includes(x.pod) ? "claude-sonnet-5-5"
       : x.pod === "review" || x.pod === "integ" ? "claude-opus-5-5"
       : x.pod === "coord" ? (bare(x.model) === "claude-opus-5-5" ? x.model : "claude-opus-5-5")
-      : x.pod === "arch" ? (["claude-fable-5-1", "claude-opus-5-5"].includes(x.model) ? x.model : "claude-fable-5-1")
+      : x.pod === "arch" ? (["claude-fable-5-1", "claude-opus-5-5", "claude-opus-5-5[1m]"].includes(x.model) ? x.model : "claude-fable-5-1")   // [1m]: Jev 2026-10-02 (standard.yaml)
       : x.model;
     if (x.model !== want) off.push(`${x.file} ${x.pod}.${x.member} (${x.runtime}): ${x.model}, want ${want}`);
   }
@@ -71,7 +72,7 @@ test("escalation is a fresh seat on the same model, not an 'Astra seat'; the doc
   // QA PR71: the guidance names the defaults AND the deliberate exceptions, so a correctly pinned seat isn't told it's wrong
   const start = fs.readFileSync(join(repo, "rig/template/startup/context.md"), "utf8");
   assert.match(start, /Check your model against your member's `model:` in the rig spec/);
-  assert.match(fs.readFileSync(join(repo, "rig/template/CULTURE.md"), "utf8"), /\| Plan decomposition, acceptance criteria, architecture \| Fable 5\.1 \(`team\.yaml` keeps Opus 5\.5\) \|/);
+  assert.match(fs.readFileSync(join(repo, "rig/template/CULTURE.md"), "utf8"), /\| Plan decomposition, acceptance criteria, architecture \| Opus 5\.5 `\[1m\]` \(`standard\.yaml`; the older templates keep Fable 5\.1\)/);
   // QA PR71: the README's full-stack row names the merge owner by the model the template pins (integ.codex: 6.1 Sol)
   const fsRow = fs.readFileSync(join(repo, "rig/template/README.md"), "utf8").split("\n").find((l) => l.startsWith("| `full-stack.yaml`"));
   const integ = members.find((x) => x.file === "full-stack.yaml" && x.pod === "integ");

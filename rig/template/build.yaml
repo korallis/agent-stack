@@ -2,7 +2,7 @@
 # Copy to <workspace>/rig/, replace @RIG@, @REPO@, @WT@, @AGENT_STACK@ (this repo), create one git worktree per seat, then:
 #   rig spec validate build.yaml  →  rig up build.yaml
 # Claude Code seats (incl. Kimi) reach models through CLIProxyAPI via ~/.config/agent-stack/env.sh; Codex seats via ~/.codex/config.toml.
-# Kimi seat: "kimi-k3[1m]" gives the 1M window. At most 4 implementers are busy at once; impl.astra is for escalations only.
+# Kimi seat: "kimi-k3-256k" (a 1M window re-sends up to 1M tokens a turn; agent-project-check FAILs [1m] outside leads and architects). At most 4 implementers are busy at once; impl.astra is for escalations only.
 version: "0.2"
 name: "@RIG@"
 summary: "Daily build team: plan approval, locked user-journey tests, routed implementation, hands-on QA, cross-family review, gated merge"
@@ -143,7 +143,7 @@ pods:
         agent_ref: "path:@AGENT_STACK@/rig/template/agents/reviewer"
         profile: default
         runtime: claude-code
-        model: "kimi-k3[1m]"
+        model: "kimi-k3-256k"
         cwd: "@WT@/review-kimi"
         restore_policy: resume_if_possible
     edges: []
