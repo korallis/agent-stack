@@ -867,7 +867,8 @@ the lead or a person. Send Jev evidence, not conclusions.
   don't use the proxy. A pick past the first family records why each earlier one was passed. Roles that one family
   holds in a team fall back to another role (`_role_fallback`: the lead's and architect's work goes to the Codex
   deputy). Work goes to another seat; a seat never switches model (that loses its cache).
-- **Review matrix:** `agent-dispatch review-plan` never picks the author's seat. It takes another family than the
+- **Review matrix:** `agent-dispatch review-plan --repo <local path> --branch <branch>` (the rig is the caller's own
+  unless `--rig` names another; `origin/agent/<seat>` names the same author as `agent/<seat>`) never picks the author's seat. It takes another family than the
   author's in the reviewer chain's order. The author's family reviews only when no other family has a free reviewer,
   and the handoff note says so. The note on the handed-off row records the author's family, the order, the choice and
   what was skipped.
