@@ -1,0 +1,13 @@
+{
+  "_doc": "Family fallback chain per role, most preferred first (Jev intake.specialist across all four families, 2026-10-02; rig/template/CULTURE.md 'Models and routing'). The dispatcher takes the first family with a running, free, available seat of the role (lib.js pickSeat): accounts eligible and not cooling on the seat's model (agent-proxy-status), or the native CLI not known to be out. Route work to another family's seat rather than switching a seat's model (that loses its cache). Reviewers also never take their author's family. _role_fallback: roles that one family holds in a team (the Claude lead and architect) hand their work to these roles' seats, in those roles' chains, when no seat of the role is free in any family (Claude out, 2026-10-02: the lead's rows go to the Codex deputy).",
+  "lead": ["claude", "codex"],
+  "deputy": ["codex", "claude"],
+  "architect": ["claude", "codex"],
+  "implementer": ["grok", "codex", "claude", "kimi"],
+  "test-author": ["grok", "codex", "claude", "kimi"],
+  "reviewer": ["grok", "kimi", "codex", "claude"],
+  "qa": ["claude", "codex", "grok", "kimi"],
+  "integrator": ["codex", "claude"],
+  "recovery": ["codex", "claude"],
+  "_role_fallback": {"lead": ["deputy"], "deputy": ["lead"], "architect": ["deputy", "lead"], "integrator": ["deputy"], "recovery": ["deputy"]}
+}

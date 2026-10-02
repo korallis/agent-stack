@@ -17,8 +17,8 @@ import { execFileSync } from "node:child_process";
 import { join } from "node:path";
 import { tmpdir } from "node:os";
 import { decide, decideBatch } from "../jev/lib/engine.js";
-import { rig, seats, pickSeat, eligibleFamilies, queueItems, lexicalTop, recordQuality, odb, normQ, normalizeRole } from "./lib.js";
-import { seatCandidates, nextStep, lockedTestsAuthor, FAMILIES } from "./pickseat.js";
+import { rig, seats, pickSeat, reviewerFor, eligibleFamilies, seatAvailable, ROLE_CHAIN, queueItems, lexicalTop, recordQuality, odb, normQ, normalizeRole } from "./lib.js";
+import { seatCandidates, nextStep, lockedTestsAuthor, familyFromName, FAMILIES } from "./pickseat.js";
 import { decideOrStub } from "./jevcall.js";
 
 const args = process.argv.slice(2);
@@ -65,7 +65,7 @@ async function intake() {
   // Role candidates = roles with real capacity right now (code), then Jev picks among them.
   const all = seats(rigName);
   const families = eligibleFamilies();
-  const roles = [...new Set(all.filter((s) => s.running && s.assigned === 0 && s.pending === 0 && families[s.family] !== 0 && ROLE_TEXT[s.role]).map((s) => s.role))];
+  const roles = [...new Set(all.filter((s) => s.running && s.assigned === 0 && s.pending === 0 && seatAvailable(s, families) && ROLE_TEXT[s.role]).map((s) => s.role))];
   let roleRec = null; let role = null;
   if (roles.length === 1) role = roles[0];
   else if (roles.length > 1) {
@@ -83,7 +83,8 @@ async function intake() {
   const duplicates = Object.entries(dups?.result?.duplicate || {}).filter(([, v]) => v === "yes").map(([k]) => k);
   const overlaps = Object.entries(dups?.result?.overlap || {}).filter(([, v]) => v === "yes").map(([k]) => k);
 
-  const pick = role ? pickSeat(all, role, { families }) : { seat: null };
+  // the role's family chain (WO90): the first family with a free, available seat; a later one is a recorded fallback
+  const pick = role ? pickSeat(all, role, { families, chain: ROLE_CHAIN[role] }) : { seat: null };
   let verdict = "dispatch";
   if (duplicates.length) verdict = "duplicate";
   else if (blockingGaps.length) verdict = "clarify";
@@ -92,7 +93,8 @@ async function intake() {
   else if (!pick.seat) verdict = "no_capacity";
 
   const plan = {
-    verdict, title, role, seat: pick.seat?.seat ?? null, seat_selection: { considered: pick.considered, in_flight: pick.inFlight, eligible_accounts: families },
+    verdict, title, role, seat: pick.seat?.seat ?? null, seat_selection: { considered: pick.considered, in_flight: pick.inFlight, eligible_accounts: families,
+      ...(pick.fallback ? { fallback: pick.fallback } : {}) },
     type: cls.result.type, area: cls.result.area ?? null, gaps, blocking_gaps: blockingGaps, suggested_paths: paths.result.paths,
     duplicates, overlaps, unmet_dependencies: unmet,
     decisions: { classify: brief(cls), requirements: brief(reqs), paths: brief(paths), ...(dups ? { duplicates: brief(dups) } : {}), ...(roleRec ? { specialist: brief(roleRec) } : { specialist: { decided_by: "code", result: { role }, note: "single role with capacity" } }) },
@@ -107,7 +109,8 @@ async function intake() {
     writeFileSync(f, `# ${title}\n\n${body}\n\n## Acceptance criteria\n${acceptance || "(none supplied — owner must propose and record in REQUIREMENTS.md)"}\n\n` +
       `## Dispatch notes (advisory)\n- type: ${plan.type}; area: ${plan.area ?? "-"}\n- suggested paths: ${JSON.stringify(plan.suggested_paths)}\n` +
       `- non-blocking gaps: ${gaps.join(", ") || "none"}\n- overlaps with: ${overlaps.join(", ") || "none"}\n` +
-      `- review: cross-family (${pick.seat.family === "claude" ? "Codex" : "Claude"} reviewer)\n`);
+      `- review: by a family other than ${pick.seat.family} (reviewer chain ${(ROLE_CHAIN.reviewer || []).filter((f) => f !== pick.seat.family).join(" > ")})\n` +
+      (pick.fallback ? `- seat: ${pick.seat.family} by fallback (${pick.fallback.skipped.map((x) => x.reason).join("; ")})\n` : ""));
     const res = rig(["queue", "create", "--destination", pick.seat.seat, "--body-file", f, "--summary", title,
       "--tags", [`type:${plan.type}`, plan.area ? `area:${plan.area}` : null, `role:${role}`, `family:${pick.seat.family}`].filter(Boolean).join(",")], { json: true });
     const item = normQ(res)?.id;
@@ -147,20 +150,25 @@ async function reviewPlan() {
   if (cands.length) batch.push({ id: "review.select_tests", input: { change, candidates: cands } });
   const [cc, st] = await decideBatch(batch, { caller });
   const selected = st ? Object.entries(st.result.run).filter(([, v]) => v !== "no").map(([k]) => k) : [];
-  const authorFamily = /codex/.test(branch) ? "codex" : "claude";
-  let reviewer = null;
-  if (rigName) reviewer = pickSeat(seats(rigName), "reviewer", { excludeFamily: authorFamily }).seat
-    || pickSeat(seats(rigName), "reviewer", {}).seat;  // same-family only when no cross-family reviewer is free
+  // Review matrix (WO90): the author's family is never the reviewer's while another family has a free seat; the order is
+  // the reviewer chain; the author's own seat is never a reviewer. Recorded in the plan and the handed-off row.
+  const authorSeat = branch.replace(/^agent\//, "");
+  const authorFamily = familyFromName(authorSeat) || (/codex/.test(branch) ? "codex" : "claude");
+  const chain = (ROLE_CHAIN.reviewer || FAMILIES).filter((f) => f !== authorFamily);
+  let reviewer = null, matrix = null;
+  if (rigName) ({ seat: reviewer, matrix } = reviewerFor(seats(rigName), authorSeat, authorFamily, eligibleFamilies()));
   const plan = {
     branch, files, specialist_reviews: Object.entries(cc.result.reviews).filter(([, v]) => v !== "no").map(([k, v]) => `${k}${v === "uncertain" ? "?" : ""}`),
     tests_to_run: selected, always_run: "full suite before merge (integration owner)",
-    reviewer: reviewer?.seat ?? null, cross_family: reviewer ? reviewer.family !== authorFamily : null,
+    reviewer: reviewer?.seat ?? null, cross_family: reviewer ? reviewer.family !== authorFamily : null, ...(matrix ? { reviewer_matrix: matrix } : {}),
     decisions: { change_class: brief(cc), ...(st ? { select_tests: brief(st) } : {}) },
     note: "Advisory. The reviewer's own reading of the diff and actual test results decide; this never approves a merge.",
   };
   if (has("--apply") && flag("--item") && reviewer) {
-    rig(["queue", "handoff", flag("--item"), "--to", reviewer.seat, "--note", "ready for cross-family review",
-      "--summary", `Review ${branch}`, "--body", `Review branch ${branch} in ${repo}.\nSuggested specialist reviews: ${plan.specialist_reviews.join(", ") || "none"}\nSuggested tests: ${selected.join(", ") || "full suite"}`], { json: true });
+    const why = `reviewer by matrix: author ${authorFamily}, order ${chain.join(" > ")}, chosen ${reviewer.family}`
+      + (matrix.skipped.length ? ` (skipped: ${matrix.skipped.map((x) => x.reason).join("; ")})` : "") + (matrix.same_family ? `; SAME family: ${matrix.same_family}` : "");
+    rig(["queue", "handoff", flag("--item"), "--to", reviewer.seat, "--note", why,
+      "--summary", `Review ${branch}`, "--body", `Review branch ${branch} in ${repo}.\nAuthor: ${authorSeat} (${authorFamily})\nSuggested specialist reviews: ${plan.specialist_reviews.join(", ") || "none"}\nSuggested tests: ${selected.join(", ") || "full suite"}`], { json: true });
     plan.applied = { handed_off_to: reviewer.seat };
   }
   out(plan);

@@ -569,8 +569,9 @@ command, or built by a substitution in a command that names no protected path, i
 ### Known limits (honest)
 
 - CLIProxyAPI answers `400 unknown provider for model …` when **no** account of a family is eligible; `agent-recover`
-  turns that into `POOL EXHAUSTED …` and escalates. Cooling (quota) accounts return 429 per the proxy's code (not exercised,
-  to avoid burning subscriptions).
+  turns that into `POOL EXHAUSTED …` and reassigns to another family's seat when one is free, else escalates. When every
+  credential for a model is cooling, the proxy answers 429 `all credentials for <model> are cooling down` (seen live
+  2026-10-02); see Reroute above.
 - An interrupted stream is **re-sent**, not continued: Codex retries the whole sampling request (observed: proxy restart
   mid-stream → retry 1/5 after 193 ms → success, no duplicate work). Claude Code likewise retries the request.
 - Codex reasoning effort is global (`high`); OpenRig 0.5.x cannot set it per seat under YOLO (#75).
@@ -848,6 +849,39 @@ the lead or a person. Send Jev evidence, not conclusions.
   shipping, all act band: a real rate-limit stall (a 429 with credentials cooling down) came back `rate_limited`
   (0.93, request `a1a04515`), a test run `progressing` (`fd6306b0`), a repeated failing build `looping`
   (`1190d376`), and a seat idle at its prompt holding work `stalled` (0.96, `0091b260`).
+- **Fallbacks (WO90):** every role has a family chain in `config/routing.json` (implementers and test authors grok >
+  codex > claude > kimi; reviewers grok > kimi > codex > claude; QA claude > codex > grok > kimi; lead, architect,
+  integrator and recovery claude/codex). Dispatch, `agent-recover` and `agent-reroute` take the first family with a running, free seat
+  the proxy can serve: an eligible account (enabled, active, under its limit, no credential-wide cooldown) that isn't
+  cooling on the seat's model. A model cooling on one account is still served by the others. Native grok/kimi seats
+  don't use the proxy. A pick past the first family records why each earlier one was passed. Roles that one family
+  holds in a team fall back to another role (`_role_fallback`: the lead's and architect's work goes to the Codex
+  deputy). Work goes to another seat; a seat never switches model (that loses its cache).
+- **Review matrix:** `agent-dispatch review-plan` never picks the author's seat. It takes another family than the
+  author's in the reviewer chain's order. The author's family reviews only when no other family has a free reviewer,
+  and the handoff note says so. The note on the handed-off row records the author's family, the order, the choice and
+  what was skipped.
+- **Reroute:** `agent-reroute` (timer, every 10 minutes, `--apply`) hands a row to the role's fallback seat, with an
+  audit note naming the reason, both seats and the row's original sender, when:
+  - it has been pending 20+ minutes on a seat that isn't running, can't be served, or is at its context wall (97%+);
+  - it is claimed on an idle seat the proxy can't serve. The proxy's 429 "all credentials for <model> are cooling
+    down" ends the turn, and nothing resumes it. On 2026-10-02 this held claimed rows still for 1h20.
+
+  The destination must be able to take the work now: idle, servable, below its context wall, with no open work. A
+  moved row keeps its work's independence, read from the row (`rig queue show --full`):
+  - a review never goes to its author's seat or family (`author:` / `author-family:` tags, or review-plan's
+    `Author: <seat> (<family>)` line);
+  - an implementation against locked tests never goes to the tests' family (`locked-tests:` tag, or a `Locked tests:
+    <seat> (<family>)` line).
+
+  When the row implies such a constraint but doesn't state it, or can't be read, the row is left for the lead;
+  `agent-recover`'s reassign does the same.
+  When the seat won't be served again for 30+ minutes (or nobody knows when), rows move after 5 minutes. A model is
+  served again when the first account clears both its credential cooldown and that model's. Each row moves at most once. Rows for a
+  human or the owner never move, and a row with no free seat anywhere is reported, not moved. A seat that is served
+  again, idle, still holding claimed rows gets one resume message naming them (retried next pass if the send fails). `agent-recover` classifies that 429 as
+  `rate_limited` in code. When every eligible account is cooling on the seat's model it reports `MODEL OUT` with the
+  time it's served again and offers reassign to another family instead of a retry.
 
 ### No advisor, for now
 
