@@ -65,6 +65,26 @@ export function quotaColor(t: Theme, a: Account, v: number | null): RGB {
   if (a.onCredits && !a.over && v >= 100) return t.info;
   return v >= 95 ? t.stuck : v >= 75 ? t.blocked : t.working;
 }
+const when = (iso: string, at: number) => {
+  const d = new Date(Date.parse(iso)), hm = d.toISOString().slice(11, 16);
+  return `${d.toISOString().slice(0, 10) === new Date(at).toISOString().slice(0, 10) ? "" : `${["Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat"][d.getUTCDay()]} `}${hm}Z`;
+};
+/** What a cooling account's timers say, from the proxy's cooldowns: a credential-wide cooldown gates the whole
+ *  account ("cooling until Sun 07:00Z (quota, whole account, in 2d)"); model timers only say when the FIRST model is
+ *  back ("3 models cooling, first back 14:10Z (quota, in 4m)"). Null without a timer, and for a disabled account:
+ *  a timer never promises it back. */
+export function coolingUntil(a: Account, at: number): string | null {
+  if (!a.cooling || !a.coolUntil || a.blocked) return null;
+  const until = Date.parse(a.coolUntil), left = until > at ? `in ${ago(until - at)}` : "due now";
+  if (a.coolScope === "credential") return `cooling until ${when(a.coolUntil, at)} (${[a.coolReason, "whole account", left].filter(Boolean).join(", ")})`;
+  const n = a.coolModels ?? 1;
+  return `${n} model${n === 1 ? "" : "s"} cooling, first back ${when(a.coolUntil, at)} (${[a.coolReason, left].filter(Boolean).join(", ")})`;
+}
+/** The same, in a few words for a title: "back Sun 07:00Z" (whole account) or "first model back 14:10Z". */
+export function coolingShort(a: Account, at: number): string | null {
+  if (!coolingUntil(a, at)) return null;
+  return `${a.coolScope === "credential" ? "back" : "first model back"} ${when(a.coolUntil!, at)}`;
+}
 /** An account's state word, its colour, and whether it can take work: over its limit, on credits, active, or
  *  cooling / its status. */
 export function accountState(t: Theme, a: Account): [string, RGB, boolean] {

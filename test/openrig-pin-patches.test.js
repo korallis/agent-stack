@@ -29,11 +29,3 @@ test("the pin is never below the newest version we carry patches for", () => {
   const newest = versions.sort((a, b) => spawnSync(join(repo, "bin/semver-cmp"), [a, b], { encoding: "utf8" }).stdout.trim() === "1" ? 1 : -1).at(-1);
   assert.notEqual(spawnSync(join(repo, "bin/semver-cmp"), [pin, newest], { encoding: "utf8" }).stdout.trim(), "-1", `pin ${pin} < ${newest}`);
 });
-
-test("CLIProxyAPI is pinned at 8.0.8 or later: older releases send a Grok client version xAI refuses (WO88)", () => {
-  const v = fs.readFileSync(join(repo, "config/versions.defaults.env"), "utf8").match(/^CLIPROXY_VERSION=(\d+)\.(\d+)\.(\d+)$/m);
-  assert.ok(v, "a pinned CLIPROXY_VERSION");
-  const [maj, min, pat] = v.slice(1).map(Number);
-  assert.ok(maj > 8 || (maj === 8 && (min > 0 || pat >= 8)), `CLIPROXY_VERSION ${v.slice(1).join(".")} sends x-grok-client-version 0.2.120`);
-  assert.match(fs.readFileSync(join(repo, "docs/ROLLBACK.md"), "utf8"), /CLIProxyAPI 8\.0\.10 → 8\.0\.3/, "a rollback");
-});

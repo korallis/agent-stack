@@ -24,9 +24,6 @@ loginctl disable-linger $USER    # only if nothing else needs linger
 `rm -rf ~/.config/agent-stack/secrets` last, after revoking the TypeSafe key in the console if desired.
 
 ## Partial rollbacks
-- **CLIProxyAPI 8.0.10 → 8.0.3:** `ln -sfn ~/.local/share/agent-stack/cliproxyapi/releases/8.0.3 ~/.local/share/agent-stack/cliproxyapi/current`,
-  then `systemctl --user restart cliproxyapi` (8.0.3 stays unpacked; same config file). Grok through the proxy fails again
-  on 8.0.3: it sends the outdated Grok client version xAI refuses.
 - **CLIProxyAPI 8.0.3 → 8.0.2:** `ln -sfn ~/.local/share/agent-stack/cliproxyapi/releases/8.0.2 ~/.local/share/agent-stack/cliproxyapi/current`,
   then `systemctl --user restart cliproxyapi` (8.0.2 is still unpacked; same config file).
 - **CLIProxyAPI 8.0.2 → 7.3.20:** download the v7.3.20 release asset, verify with `checksums.txt`, unpack to

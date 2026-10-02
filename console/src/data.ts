@@ -69,6 +69,18 @@ export function quotaPct(v: unknown, provider: string): number | null {
   if (!Number.isFinite(n)) return null;
   return Math.round(provider === "claude" ? n * 100 : n);
 }
+/** An account's cooldowns, read as the proxy defines them (cooldown_view.go): retry restrictions, not availability.
+ *  A credential-scope cooldown gates every model and wins (its latest time); otherwise the earliest model timer and
+ *  the number of distinct models cooling. */
+function coolingOf(cooldowns: unknown): Pick<Account, "coolScope" | "coolUntil" | "coolReason" | "coolModels"> {
+  const valid = (Array.isArray(cooldowns) ? cooldowns : []).filter((c: any) => typeof c?.retry_at === "string" && Number.isFinite(Date.parse(c.retry_at)));
+  const by = (xs: any[]) => [...xs].sort((a, b) => Date.parse(a.retry_at) - Date.parse(b.retry_at));
+  const credential = by(valid.filter((c: any) => c.scope === "credential")), models = by(valid.filter((c: any) => c.scope !== "credential"));
+  const pick = credential.length ? credential.at(-1) : models[0];
+  return { coolScope: credential.length ? "credential" : models.length ? "models" : null, coolUntil: pick?.retry_at ?? null,
+    coolReason: typeof pick?.reason === "string" ? pick.reason : null,
+    coolModels: new Set(models.map((c: any) => (typeof c.model_key === "string" && c.model_key ? c.model_key : c.retry_at))).size };
+}
 export function parseAccounts(text: string | null): Account[] {
   if (!text) return [];
   try {
@@ -76,6 +88,7 @@ export function parseAccounts(text: string | null): Account[] {
     return (Array.isArray(a) ? a : []).map((x: any) => ({ label: String(x.label), provider: String(x.provider ?? ""), status: String(x.status ?? "?"),
       short: quotaPct(x.short_window_used, String(x.provider ?? "")), weekly: quotaPct(x.weekly_used, String(x.provider ?? "")),
       cooling: x.status !== "active" || (Array.isArray(x.cooldowns) && x.cooldowns.length > 0), onCredits: x.on_credits === true,
+      ...coolingOf(x.cooldowns), blocked: x.disabled === true || x.status === "disabled",   // a timer never promises a disabled account back
       // the status tool's own verdict, which dispatch and recovery read; an older tool without it: a window above 100%
       over: typeof x.over_limit === "boolean" ? x.over_limit
         : x.on_credits !== true && [x.short_window_used, x.weekly_used].some((v) => (quotaPct(v, String(x.provider ?? "")) ?? 0) > 100) }));

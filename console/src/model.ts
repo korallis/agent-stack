@@ -14,7 +14,11 @@ export interface Gate { ts: string; decision: string; band: string }
 /** short / weekly: used percent of each window the provider reports (null: no such limit, e.g. Codex has no 5 h window
  *  since 2026-10); onCredits: a window is used up and the account carries on on credits, so it is not exhausted;
  *  over: past its limit, as agent-proxy-status decides it for dispatch and recovery (the console never second-guesses it). */
-export interface Account { label: string; provider: string; status: string; short: number | null; weekly: number | null; cooling: boolean; onCredits?: boolean; over?: boolean }
+export interface Account { label: string; provider: string; status: string; short: number | null; weekly: number | null; cooling: boolean; onCredits?: boolean; over?: boolean;
+  /** Its cooldowns (the proxy's retry restrictions, not overall availability). A credential-scope cooldown gates the
+   *  whole account and wins over model timers; otherwise the earliest model timer, with how many models are cooling.
+   *  `blocked`: disabled, so no timer promises it back ("unavailable" is how the proxy marks a cooldown itself). */
+  coolScope?: "credential" | "models" | null; coolUntil?: string | null; coolReason?: string | null; coolModels?: number; blocked?: boolean }
 export interface Heavy { cls: string; held: number; total: number; waiting: number }
 export interface Event { at: string; kind: string; rig: string | null; text: string; seat?: string | null }
 export interface Raw {
