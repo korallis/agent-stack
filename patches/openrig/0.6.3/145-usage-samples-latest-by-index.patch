@@ -1,0 +1,30 @@
+--- a/daemon/dist/domain/usage-samples-store.js
++++ b/daemon/dist/domain/usage-samples-store.js
+@@ -3,13 +3,17 @@
+     constructor(db) {
+         this.db = db;
+     }
++    // Patch 145: "the seat's latest row" is read in idx_usage_samples_seat_time order (seat_session, lane, captured_at,
++    // then rowid), not ORDER BY id: that sorted every row the seat ever wrote (a TEMP B-TREE) on each poll, ~35k rows
++    // for a busy seat and 2 s of blocked event loop per 30 s tick across ~90 seats. Rows are appended with
++    // captured_at = now, so the newest captured_at is the newest row; id breaks a same-millisecond tie.
+     /** Append the context-lane sample IFF it advanced past the seat's latest row. */
+     appendContextSample(s, capturedAt) {
+         const last = this.db
+             .prepare(`SELECT sampled_at, total_input_tokens, total_output_tokens, used_percentage
+          FROM usage_samples
+          WHERE lane = 'context' AND seat_session = ?
+-         ORDER BY id DESC LIMIT 1`)
++         ORDER BY captured_at DESC, id DESC LIMIT 1`)
+             .get(s.seatSession);
+         if (last &&
+             last.sampled_at === s.sampledAt &&
+@@ -32,7 +36,7 @@
+             .prepare(`SELECT sampled_at, window_used_percent, resets_at
+          FROM usage_samples
+          WHERE lane = 'provider_window' AND seat_session = ? AND window = ?
+-         ORDER BY id DESC LIMIT 1`)
++         ORDER BY captured_at DESC, id DESC LIMIT 1`)
+             .get(s.seatSession, s.window);
+         if (last &&
+             last.sampled_at === s.asOf &&

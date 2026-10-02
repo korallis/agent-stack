@@ -198,6 +198,15 @@ have=$(jq -r '.queue.pickupStallThresholdMinutes // empty' "$cfg" 2>/dev/null ||
 if [ -n "$have" ]; then ok "queue.pickup_stall_threshold_minutes = $have (kept)"
 elif [ $CHECK = 1 ]; then todo "queue.pickup_stall_threshold_minutes should be 480 (OpenRig's default of 3 min pages on busy seats)"
 else "$B/rig" config set queue.pickup_stall_threshold_minutes 480 >/dev/null 2>&1 && ok "queue.pickup_stall_threshold_minutes = 480 (set)" || todo "queue.pickup_stall_threshold_minutes = 480"; fi
+# usage_samples retention: 7 days, not OpenRig's 14. The table grows ~110k rows a day across ~90 seats; the daemon's own
+# boot and daily sweeps prune it in bounded batches that yield between them. `rig config` doesn't accept this key (the
+# daemon reads it from config.json), so it is written there directly, atomically; an existing value is kept.
+have=$(jq -r '.retention.usageSamplesDays // empty' "$cfg" 2>/dev/null || true)
+if [ -n "$have" ]; then ok "retention.usage_samples_days = $have (kept)"
+elif [ $CHECK = 1 ]; then todo "retention.usage_samples_days should be 7 (usage_samples grows ~110k rows a day)"
+elif [ -f "$cfg" ] && jq '.retention.usageSamplesDays = 7' "$cfg" > "$cfg.tmp.$$" && chmod --reference="$cfg" "$cfg.tmp.$$" && mv "$cfg.tmp.$$" "$cfg"; then
+  ok "retention.usage_samples_days = 7 (set)"
+else rm -f "$cfg.tmp.$$"; todo "retention.usage_samples_days = 7"; fi
 # OpenRig's own seat skills (mission-slice-sop, queue-handoff, compaction/continuity, ...). The rig specs name the
 # openrig-core plugin, but seats are launched without --plugin-dir, so they only get these as user-level skills.
 # Symlinks follow OpenRig upgrades.
