@@ -1,0 +1,31 @@
+--- a/daemon/dist/domain/gateway/slack/queue-access.js
++++ b/daemon/dist/domain/gateway/slack/queue-access.js
+@@ -84,13 +84,23 @@
+             const registry = (opts.loadHumanRegistry ?? (() => loadHumanRegistry()))();
+             if (!registry.ok)
+                 return [];
+-            const rows = queueRepo.list({ activeOnly: true, limit: 1000000 });
+-            const projected = rows.flatMap((row) => {
+-                const transition = queueRepo.transitionLog.latestOwnerNotificationForQitem(row.qitemId);
++            // Patch 147: the sweep (every 30 s) built the full row face, including the waiting view and recovery
++            // ladder, for EVERY active row and then kept the few with an unposted owner notification: 0.8-1.4 s
++            // event-loop stalls per sweep. Now only the active ids are read, the notification and receipt checks
++            // run first, and the full row is loaded only for a row that will be projected. Same rows, same order.
++            const ids = queueRepo.db
++                .prepare("SELECT qitem_id FROM queue_items WHERE state IN ('pending', 'in-progress', 'blocked') ORDER BY ts_created DESC")
++                .all()
++                .map((r) => r.qitem_id);
++            const projected = ids.flatMap((qitemId) => {
++                const transition = queueRepo.transitionLog.latestOwnerNotificationForQitem(qitemId);
+                 if (!transition)
+                     return [];
+-                const notificationKey = `${row.qitemId}:${transition.transitionId}`;
+-                if (queueRepo.transitionLog.hasOwnerNotificationReceipt(row.qitemId, notificationKey))
++                const notificationKey = `${qitemId}:${transition.transitionId}`;
++                if (queueRepo.transitionLog.hasOwnerNotificationReceipt(qitemId, notificationKey))
++                    return [];
++                const row = queueRepo.getById(qitemId);
++                if (!row)
+                     return [];
+                 const item = project(row, transition, registry.entities);
+                 return item ? [item] : [];
