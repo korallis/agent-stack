@@ -343,8 +343,10 @@ Details are in the `agent-stack` skill. What went wrong before: [docs/incidents/
 ### Where things are
 
 - Secrets (0600, never in git): `~/.config/agent-stack/secrets/{cliproxy.env,typesafe.env}`; OAuth tokens in `~/.cli-proxy-api/*.json`.
-- **Transcript capture:** every 15 seconds, 400 lines (`transcripts.poll_interval_seconds`, `transcripts.lines`; set by
-  `install.sh`). OpenRig's 2s/1000-line default across ~90 seats kept the daemon's event loop busy. `openrig-daemon-cycle`
+- **Transcript capture:** at most every 15 seconds, 400 lines (`transcripts.poll_interval_seconds`, `transcripts.lines`;
+  set by `install.sh`, which keeps a slower interval such as 60 and raises only a faster or missing one to 15). OpenRig's
+  2s/1000-line default across ~90 seats kept the daemon's event loop busy. Patch 144 reads all sessions due together
+  in a few batched `tmux` calls instead of one fork each. `openrig-daemon-cycle`
   starts the daemon without the `OPENRIG_TRANSCRIPTS_*` overrides that seats inherit from tmux.
 - **Daemon priority and health:** the daemon runs at `CPUWeight=1000` (10x a build or test) whether `openrig.service`
   or `openrig-daemon-cycle` started it. `openrig-health` probes `/healthz` 3 times (15s each, 10s apart). After a

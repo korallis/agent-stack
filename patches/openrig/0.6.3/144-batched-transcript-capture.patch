@@ -1,0 +1,134 @@
+--- a/daemon/dist/domain/transcript-rotation.js
++++ b/daemon/dist/domain/transcript-rotation.js
+@@ -36,6 +36,67 @@
+     return n;
+ }
+ const activeTimers = new Map();
++/** Patch 144: how long a capture request waits for others before one batched read. Ticks are aligned to the same
++ *  wall-clock boundaries (see startTranscriptRotation), so a short window gathers every session due that tick. */
++const CAPTURE_COALESCE_MS = 50;
++// Pending batched captures, one per (adapter, lines): sessionName -> resolvers waiting for its text.
++const pendingCaptures = new Map();
++/** Patch 144: capture one session's pane, sharing a batched read with every other session asking within
++ *  CAPTURE_COALESCE_MS. One fork of this (large) daemon per session per tick blocked its event loop: with ~90 seats,
++ *  spawn alone took a third of a 60 s CPU profile. An adapter without capturePanesContent (patch 142), a batch that
++ *  can't list tmux, or a session the batch left out falls back to the per-session capture, so a result is never
++ *  worse than before. Resolves to the pane text or null, as capturePaneContent does. */
++function captureCoalesced(tmuxAdapter, sessionName, lines) {
++    if (typeof tmuxAdapter.capturePanesContent !== "function")
++        return tmuxAdapter.capturePaneContent(sessionName, lines);
++    let byLines = pendingCaptures.get(tmuxAdapter);
++    if (!byLines) {
++        byLines = new Map();
++        pendingCaptures.set(tmuxAdapter, byLines);
++    }
++    let batch = byLines.get(lines);
++    if (!batch) {
++        batch = new Map();
++        byLines.set(lines, batch);
++        const flushTimer = setTimeout(() => {
++            byLines.delete(lines);
++            void flushCaptures(tmuxAdapter, lines, batch);
++        }, CAPTURE_COALESCE_MS);
++        if (typeof flushTimer.unref === "function")
++            flushTimer.unref();
++    }
++    return new Promise((resolve) => {
++        const waiters = batch.get(sessionName) ?? [];
++        waiters.push(resolve);
++        batch.set(sessionName, waiters);
++    });
++}
++async function flushCaptures(tmuxAdapter, lines, batch) {
++    let got = null;
++    try {
++        got = await tmuxAdapter.capturePanesContent([...batch.keys()], lines);
++    }
++    catch {
++        got = null;
++    }
++    await Promise.all([...batch].map(async ([sessionName, waiters]) => {
++        let text;
++        const entry = got?.get(sessionName);
++        if (entry) {
++            text = entry.text;
++        }
++        else {
++            try {
++                text = await tmuxAdapter.capturePaneContent(sessionName, lines);
++            }
++            catch {
++                text = null;
++            }
++        }
++        for (const resolve of waiters)
++            resolve(text);
++    }));
++}
+ // Shared across replacing starts: a stopped capture can still own a child.
+ // ponytail: bound overlap per session, leaving normal non-overlapping cost unchanged.
+ const capturingSessions = new Set();
+@@ -75,7 +136,7 @@
+             return;
+         capturingSessions.add(sessionName);
+         try {
+-            const content = await tmuxAdapter.capturePaneContent(sessionName, opts.lines);
++            const content = await captureCoalesced(tmuxAdapter, sessionName, opts.lines);
+             // Re-check AFTER the async capture: stop()/replacement may have run while we
+             // awaited. A dead session (null) is deliberately not recorded either way,
+             // so getIngestHealth falls back to a stale mtime for it.
+@@ -136,18 +197,33 @@
+         }
+     };
+     void tick();
+-    const timer = setInterval(tick, opts.pollIntervalMs);
+-    // Don't keep the daemon process alive solely on transcript timers.
+-    if (typeof timer.unref === "function")
+-        timer.unref();
+-    activeTimers.set(sessionName, timer);
++    // Patch 144: after the first tick, tick on wall-clock multiples of the interval, so every session is due at the
++    // same moment and captureCoalesced reads them in one batch instead of one fork each at scattered times.
++    const handle = { timeout: null, interval: null };
++    handle.timeout = setTimeout(() => {
++        handle.timeout = null;
++        void tick();
++        handle.interval = setInterval(tick, opts.pollIntervalMs);
++        // Don't keep the daemon process alive solely on transcript timers.
++        if (typeof handle.interval.unref === "function")
++            handle.interval.unref();
++    }, opts.pollIntervalMs - (Date.now() % opts.pollIntervalMs));
++    if (typeof handle.timeout.unref === "function")
++        handle.timeout.unref();
++    activeTimers.set(sessionName, handle);
++}
++function clearRotationHandle(handle) {
++    if (handle.timeout)
++        clearTimeout(handle.timeout);
++    if (handle.interval)
++        clearInterval(handle.interval);
+ }
+ /** Clear the rotation timer for a session. Safe to call when no timer
+  *  is registered. */
+ export function stopTranscriptRotation(sessionName) {
+-    const timer = activeTimers.get(sessionName);
+-    if (timer) {
+-        clearInterval(timer);
++    const handle = activeTimers.get(sessionName);
++    if (handle) {
++        clearRotationHandle(handle);
+         activeTimers.delete(sessionName);
+     }
+     // Drop the liveness record: once rotation stops, capture really has stopped,
+@@ -165,9 +241,10 @@
+ /** Test-only: clear all active rotators. Production code should not
+  *  call this; use stopTranscriptRotation for individual sessions. */
+ export function clearAllTranscriptRotationsForTest() {
+-    for (const timer of activeTimers.values())
+-        clearInterval(timer);
++    for (const handle of activeTimers.values())
++        clearRotationHandle(handle);
+     activeTimers.clear();
++    pendingCaptures.clear();
+     lastCaptureAtBySession.clear();
+     activeGeneration.clear();
+ }

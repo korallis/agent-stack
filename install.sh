@@ -183,10 +183,13 @@ if [ $CHECK = 0 ]; then
 fi
 "$S/bin/openrig-ensure" --check | sed 's/^/   /' || true   # WARN installed != pin; FAIL when local patches aren't all applied
 # Transcript capture defaults: every 15s, 400 lines. The shipped 2s/1000 lines across ~90 seats starved the daemon.
-for kv in "transcripts.poll_interval_seconds 15" "transcripts.lines 400"; do
+# The interval is a floor: a slower one set on purpose (e.g. 60) is kept, only a faster or missing one becomes 15.
+for kv in "transcripts.poll_interval_seconds 15 floor" "transcripts.lines 400 exact"; do
   set -- $kv
-  if [ "$(env -u OPENRIG_TRANSCRIPTS_LINES -u OPENRIG_TRANSCRIPTS_POLL_INTERVAL_SECONDS "$B/rig" config get "$1" 2>/dev/null)" = "$2" ]; then ok "$1 = $2"
-  elif [ $CHECK = 1 ]; then todo "$1 should be $2"; else "$B/rig" config set "$1" "$2" >/dev/null 2>&1 && ok "$1 = $2 (set)" || todo "$1 = $2"; fi
+  have=$(env -u OPENRIG_TRANSCRIPTS_LINES -u OPENRIG_TRANSCRIPTS_POLL_INTERVAL_SECONDS "$B/rig" config get "$1" 2>/dev/null || true)
+  if [ "$have" = "$2" ]; then ok "$1 = $2"
+  elif [ "$3" = floor ] && [[ "$have" =~ ^[0-9]+$ ]] && [ "$have" -ge "$2" ]; then ok "$1 = $have (kept; at least $2)"
+  elif [ $CHECK = 1 ]; then todo "$1 should be $([ "$3" = floor ] && echo "at least ")$2"; else "$B/rig" config set "$1" "$2" >/dev/null 2>&1 && ok "$1 = $2 (set)" || todo "$1 = $2"; fi
 done
 # Stuck-sweep pickup threshold: OpenRig's default (3 min) paged "unclaimed" on rows a busy seat picks up minutes later
 # (false positives, 2026-09-29). 480 min here; an existing value in config.json is kept, whatever it is.
