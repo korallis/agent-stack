@@ -291,8 +291,10 @@ with `agent-login` and the pool uses it straight away.
   - resumes its own session on restore (grok by the id it fixed at first start, kimi with `-c`; `--fresh` starts over).
   Limits of terminal seats on OpenRig 0.6.3: no context %, `set-model` is ignored (the model is in the command), they
   sit outside OpenRig's workflow role routing (queue rows and `rig send` work), no fork. `--dry-run` shows what a start
-  would write and run. Both CLIs need their own login (`grok login`, `kimi login`). `agent-refresh-guidance` leaves
-  terminal members alone: a native seat's worktree holds the project's own AGENTS.md, never OpenRig blocks.
+  would write and run. Both CLIs need their own login (`grok login`, `kimi login`). After a CULTURE.md or role
+  edit, `agent-refresh-guidance --apply` also brings native seats up to date: it regenerates their rules file with the
+  launcher's own `--dry-run` and tells an idle seat to re-read it (a busy one is listed as pending; run it again at idle,
+  or relaunch there). It never writes OpenRig blocks into the project's own AGENTS.md in a native seat's worktree.
   Adding native seats to a running rig: one `rig add <rigId> <pod> <member.yaml>` per seat (the member as in
   standard.yaml, with absolute `cwd` and `--culture`), after its worktree exists (`agent/<seat>` branch for `impl-*`,
   `.env.local` linked, dependencies installed); then add the members to the rig's spec file so a restore keeps them.

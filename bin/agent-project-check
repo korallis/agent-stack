@@ -569,7 +569,6 @@ if specs:
     d = yaml.safe_load(read(sp))
     cfile = ((d.get("managed_blocks") or {}).get("claude-code")) or "CLAUDE.md"
     noblocks, stale, noskills, startup_sizes = [], [], [], []
-    native_stale = []
     for pod in d.get("pods", []):
         for mem in pod.get("members", []):
             cwd, rt = mem.get("cwd"), mem.get("runtime")
@@ -583,11 +582,7 @@ if specs:
                 txt = read(os.path.join(cwd or "", NATIVE_FILE[nat["cli"]])) or ""
                 if "Managed by agent-native-seat" not in txt:
                     noblocks.append(f"{seat} ({NATIVE_FILE[nat['cli']]}: relaunch the seat; agent-native-seat writes it)"); continue
-                agents = nat["agents_dir"] or os.path.join(os.path.dirname(os.path.dirname(os.path.realpath(__file__))), "rig/template/agents")
-                role_md = read(os.path.join(agents, nat["role"] or "-", "guidance/role.md")) or ""
-                culture = read(os.path.join(W, "rig/CULTURE.md")) or ""
-                if any(x.strip() and x.strip() not in txt for x in (culture, role_md)):
-                    native_stale.append(f"{seat}/{NATIVE_FILE[nat['cli']]} (older than the rig's CULTURE.md or the {nat['role']} role: relaunch the seat)")
+                # staleness: agent-refresh-guidance regenerates it with the launcher and reports it (one source, below)
                 startup_sizes.append((seat, (len(txt) + 3) // 4))
                 continue
             f = os.path.join(cwd or "", "AGENTS.md" if rt == "codex" else cfile)
@@ -614,7 +609,6 @@ if specs:
         stale = [f"{c['seat']}/{c['file']} ({'; '.join(c['reasons'])})" for c in json.loads(rg.stdout)["changed"]]
     except (ValueError, KeyError, TypeError):
         stale = [f"agent-refresh-guidance {W} --json failed: {(rg.stderr or rg.stdout).strip()[-200:]}"]
-    stale += native_stale
     if not running:  # OpenRig writes instruction blocks and projects skills at launch
         noblocks, stale, noskills, startup_sizes = [], [], [], []
         rep("WARN", "seat instructions and skills not checked: the rig is not running (rig up, then re-check)")
