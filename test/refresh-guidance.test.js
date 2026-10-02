@@ -198,3 +198,23 @@ test("without PyYAML, or with an unparsable spec: native seats still skipped, ag
   assert.match(fs.readFileSync(join(WT, "impl-codex/AGENTS.md"), "utf8"), /culture v1/, "nothing written at all");
   assert.equal(fs.readFileSync(join(WT, "impl-grok-1/AGENTS.md"), "utf8"), nat);
 });
+
+// QA PR123 round 2: one terminal predicate on every parser path; quoted values count.
+test("terminal by agent_ref alone, or by a quoted runtime: skipped with PyYAML, without it, and on a parse error", () => {
+  const nat = "# native app notes\n";
+  for (const [label, args, extra] of [["parsed", [], ""], ["no PyYAML", ["-S"], ""], ["parse error", [], "bad: [\n"]]) {
+    setup(own + B("CULTURE.md", "culture v2") + "\n" + B("startup/context.md", "context v2"));
+    fs.writeFileSync(join(W, "rig/team.yaml"), fs.readFileSync(join(W, "rig/team.yaml"), "utf8") +
+      `  - id: impl\n    members:\n      - id: codex\n        runtime: codex\n        cwd: "${WT}/impl-codex"\n` +
+      `      - id: term-a\n        agent_ref: "builtin:terminal"\n        cwd: "${WT}/impl-term-a"\n` +
+      `      - id: term-b\n        runtime: 'terminal'\n        cwd: "${WT}/impl-term-b"\n` +
+      `      - {id: term-c, agent_ref: 'builtin:terminal', cwd: "${WT}/impl-term-c"}\n` + extra);
+    for (const d of ["impl-codex", "impl-term-a", "impl-term-b", "impl-term-c"]) fs.mkdirSync(join(WT, d), { recursive: true });
+    fs.writeFileSync(join(WT, "impl-codex/AGENTS.md"), "# app notes\n\n" + B("CULTURE.md", "culture v1"));
+    for (const d of ["impl-term-a", "impl-term-b", "impl-term-c"]) fs.writeFileSync(join(WT, d, "AGENTS.md"), nat);
+    const r = spawnSync("python3", [...args, join(repo, "bin/agent-refresh-guidance"), "P", "--apply"], { encoding: "utf8", env: { PATH: process.env.PATH, HOME: home } });
+    assert.equal(r.status, 0, `${label}: ${r.stderr}`);
+    for (const d of ["impl-term-a", "impl-term-b", "impl-term-c"]) assert.equal(fs.readFileSync(join(WT, d, "AGENTS.md"), "utf8"), nat, `${label}: ${d}`);
+    assert.match(fs.readFileSync(join(WT, "impl-codex/AGENTS.md"), "utf8"), /culture v2/, `${label}: the agent seat is refreshed`);
+  }
+});

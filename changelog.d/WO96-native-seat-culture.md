@@ -11,5 +11,6 @@
     sequences.
 - `agent-refresh-guidance` skips terminal members. It wanted to restore OpenRig blocks into the project's own
   AGENTS.md in a native seat's worktree. Without PyYAML, or when the spec doesn't parse, it reads the members line
-  by line and keeps the exclusion (`runtime: terminal`, `builtin:terminal`, `agent-native-seat`). If a `cwd` can't be
+  by line and keeps the exclusion. Both paths use one predicate: `runtime` terminal or `agent_ref` builtin:terminal,
+  quoted or not, or an `agent-native-seat` start. If a `cwd` can't be
   tied to a member, `--apply` writes nothing and says why.
