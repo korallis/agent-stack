@@ -470,3 +470,9 @@ Each entry links its changelog note. [CHANGELOG.md](CHANGELOG.md) has the releas
   comfortable letting agents use, and never give seats production or cloud-admin credentials.
 - **Quality comes from verification, not from the models.** The locked tests encode what "done" means, so read the
   feature list carefully before you approve it.
+
+## License
+
+agent-stack is licensed under the [Apache License 2.0](LICENSE). [NOTICE](NOTICE) lists the third-party material it
+includes: OpenRig patches and test fixtures (Apache-2.0) and skills adapted from pstack (MIT), each under its own
+licence.

@@ -2,6 +2,7 @@
   "name": "agent-stack-jev",
   "version": "0.1.0",
   "private": true,
+  "license": "Apache-2.0",
   "type": "module",
   "description": "Jev (TypeSafe System One) decision adapter for Claude Code / Codex / OpenRig workflows",
   "engines": {
