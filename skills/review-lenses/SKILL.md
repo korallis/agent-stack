@@ -51,6 +51,12 @@ tell, ask the author before reviewing. Every finding is judged against that inte
 - Anything on a hot path that now blocks: network calls, sync file access.
 - Only report what you can point at. No speculative micro-optimisation.
 
+List only problems you'd block the merge for. For each one, give the
+file and line, why it's wrong, and how to show it fails.
+
+Use the disposition buckets below when responding to findings already raised by another reviewer. They do not
+require a list of optional suggestions in a new review.
+
 ## Sort every finding
 
 - **Act on:** a real problem for correctness, security, data or maintainability. It blocks the PR.
@@ -58,7 +64,7 @@ tell, ask the author before reviewing. Every finding is judged against that inte
 - **Noted:** true but not actionable at this stage.
 - **Dismissed:** wrong, or missing context. Say why in one line.
 
-Each finding gives the lens, `file:line`, what goes wrong, and the fix or the question.
+Each finding gives the lens, `file:line`, what goes wrong, how to show it fails, and the fix or the question.
 
 ## Output
 
@@ -74,3 +80,6 @@ Adapted from the review rubric, code-quality lens and lead-judgment buckets of `
 licence; the licence text is in `LICENSE` beside this file. Changes: only the review panel. No model table, no subagent
 spawning, and no auto-applied fixes. Our reviewer seat of the other model family applies the lenses and posts the
 result on the PR.
+
+The merge-blocking prompt follows [Getting the most out of Opus 5.5](https://claude.dev/blog/getting-the-most-out-of-opus-5-5/).
+The implementer and test-author check paragraph follows [Building with Claude Sonnet 5.5](https://claude.dev/blog/building-with-claude-sonnet-5-5/).
