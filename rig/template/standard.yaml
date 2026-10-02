@@ -80,8 +80,8 @@ pods:
         cwd: "@WT@/impl-grok-1"
         startup:
           actions:
-            # agent-native-seat writes the culture and role, wires activity, and resumes its own session on restore
-            - {type: send_text, value: "agent-native-seat grok --role implementer --model grok-4.7-build-fast", phase: after_files, applies_on: [fresh_start, restore], idempotent: true}
+            # agent-native-seat writes the culture (passed explicitly: OpenRig doesn't give a seat its workspace) and role, wires activity, and resumes its own session on restore
+            - {type: send_text, value: "agent-native-seat grok --role implementer --model grok-4.7-build-fast --culture @W@/rig/CULTURE.md", phase: after_files, applies_on: [fresh_start, restore], idempotent: true}
       - id: grok-2
         agent_ref: "builtin:terminal"
         profile: none
@@ -89,8 +89,8 @@ pods:
         cwd: "@WT@/impl-grok-2"
         startup:
           actions:
-            # agent-native-seat writes the culture and role, wires activity, and resumes its own session on restore
-            - {type: send_text, value: "agent-native-seat grok --role implementer --model grok-4.7-build-fast", phase: after_files, applies_on: [fresh_start, restore], idempotent: true}
+            # agent-native-seat writes the culture (passed explicitly: OpenRig doesn't give a seat its workspace) and role, wires activity, and resumes its own session on restore
+            - {type: send_text, value: "agent-native-seat grok --role implementer --model grok-4.7-build-fast --culture @W@/rig/CULTURE.md", phase: after_files, applies_on: [fresh_start, restore], idempotent: true}
       - id: claude-ui
         agent_ref: "path:@AGENT_STACK@/rig/template/agents/implementer"
         profile: default
@@ -117,8 +117,8 @@ pods:
         cwd: "@WT@/tests-grok"
         startup:
           actions:
-            # agent-native-seat writes the culture and role, wires activity, and resumes its own session on restore
-            - {type: send_text, value: "agent-native-seat grok --role test-author --model grok-4.7-build-fast", phase: after_files, applies_on: [fresh_start, restore], idempotent: true}
+            # agent-native-seat writes the culture (passed explicitly: OpenRig doesn't give a seat its workspace) and role, wires activity, and resumes its own session on restore
+            - {type: send_text, value: "agent-native-seat grok --role test-author --model grok-4.7-build-fast --culture @W@/rig/CULTURE.md", phase: after_files, applies_on: [fresh_start, restore], idempotent: true}
       - id: codex
         agent_ref: "path:@AGENT_STACK@/rig/template/agents/test-author"
         profile: default
@@ -138,8 +138,8 @@ pods:
         cwd: "@WT@/review-grok"
         startup:
           actions:
-            # agent-native-seat writes the culture and role, wires activity, and resumes its own session on restore
-            - {type: send_text, value: "agent-native-seat grok --role reviewer --model grok-4.7", phase: after_files, applies_on: [fresh_start, restore], idempotent: true}
+            # agent-native-seat writes the culture (passed explicitly: OpenRig doesn't give a seat its workspace) and role, wires activity, and resumes its own session on restore
+            - {type: send_text, value: "agent-native-seat grok --role reviewer --model grok-4.7 --culture @W@/rig/CULTURE.md", phase: after_files, applies_on: [fresh_start, restore], idempotent: true}
       - id: kimi
         agent_ref: "builtin:terminal"
         profile: none
@@ -147,8 +147,8 @@ pods:
         cwd: "@WT@/review-kimi"
         startup:
           actions:
-            # agent-native-seat writes the culture and role, wires activity, and resumes its own session on restore
-            - {type: send_text, value: "agent-native-seat kimi --role reviewer --model kimi-code/k3-256k", phase: after_files, applies_on: [fresh_start, restore], idempotent: true}
+            # agent-native-seat writes the culture (passed explicitly: OpenRig doesn't give a seat its workspace) and role, wires activity, and resumes its own session on restore
+            - {type: send_text, value: "agent-native-seat kimi --role reviewer --model kimi-code/k3-256k --culture @W@/rig/CULTURE.md", phase: after_files, applies_on: [fresh_start, restore], idempotent: true}
       - id: codex
         agent_ref: "path:@AGENT_STACK@/rig/template/agents/reviewer"
         profile: default

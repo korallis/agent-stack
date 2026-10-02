@@ -148,3 +148,21 @@ test("project check warns on oversized startup instructions including role text"
   assert.equal(checkSize().level, "WARN", "role first-message text counts too");
 
 });
+
+// WO96: a native seat (a terminal member running agent-native-seat) has the project's own AGENTS.md in its worktree;
+// it must not get OpenRig blocks restored into it ("lost blocks restored"), and a plain shell isn't a seat either.
+test("terminal members (native seats, shells) are left alone: the project's own AGENTS.md in their worktree is never written", () => {
+  setup(own + B("CULTURE.md", "culture v2") + "\n" + B("startup/context.md", "context v2"));
+  const spec = fs.readFileSync(join(W, "rig/team.yaml"), "utf8") +
+    `  - id: impl\n    members:\n      - id: codex\n        runtime: codex\n        cwd: "${WT}/impl-codex"\n` +
+    `      - id: grok-1\n        runtime: terminal\n        cwd: "${WT}/impl-grok-1"\n        startup:\n          actions:\n            - {type: send_text, value: "agent-native-seat grok --role implementer"}\n`;
+  fs.writeFileSync(join(W, "rig/team.yaml"), spec);
+  fs.mkdirSync(join(WT, "impl-codex"), { recursive: true }); fs.mkdirSync(join(WT, "impl-grok-1"), { recursive: true });
+  fs.writeFileSync(join(WT, "impl-codex/AGENTS.md"), "# app notes\n\n" + B("CULTURE.md", "culture v2") + "\n" + B("startup/context.md", "context v2"));
+  fs.writeFileSync(join(WT, "impl-grok-1/AGENTS.md"), "# app notes\n");
+  const dry = run("--json");
+  assert.equal(dry.status, 0, dry.stderr);
+  assert.doesNotMatch(dry.stdout, /impl-grok-1/);
+  run("--apply");
+  assert.equal(fs.readFileSync(join(WT, "impl-grok-1/AGENTS.md"), "utf8"), "# app notes\n");
+});

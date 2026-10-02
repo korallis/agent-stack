@@ -34,7 +34,14 @@ else:
     W = f"{H}/Projects/{arg}-work"
 specs = sorted(glob.glob(f"{W}/rig/*.yaml"), key=lambda f: open(f).read().count("cwd:"), reverse=True)
 spec = open(specs[0]).read()
-cwds = re.findall(r'cwd:\s*"?([^"\n]+)"?', spec)
+# Agent seats only: a terminal member is a shell or a native seat (agent-native-seat writes that one's instructions
+# into the CLI's own rules file), and the project's own AGENTS.md in its worktree must not get OpenRig blocks (WO96).
+try:
+    import yaml
+    cwds = [m["cwd"] for p in (yaml.safe_load(spec) or {}).get("pods") or [] for m in p.get("members") or []
+            if m.get("cwd") and m.get("runtime") != "terminal"]
+except Exception:
+    cwds = re.findall(r'cwd:\s*"?([^"\n]+)"?', spec)
 claude_file = (re.search(r"managed_blocks:\s*\n\s*claude-code:\s*(\S+)", spec) or [0, "CLAUDE.md"])[1]
 # keyed by the path relative to the rig folder, as OpenRig names the blocks (CULTURE.md, startup/context.md)
 sources = {os.path.relpath(p, f"{W}/rig"): p for p in glob.glob(f"{W}/rig/*.md") + glob.glob(f"{W}/rig/startup/*.md")}

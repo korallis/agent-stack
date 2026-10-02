@@ -22,7 +22,7 @@ OpenRig 0.6.3 a terminal seat gets no instruction files, no activity signal and 
   - resumes its own session on restore: grok by the session id it fixed on the first start, kimi with -c.
 The CLI always runs in its never-prompt mode (grok --always-approve, kimi --auto), as every seat does.
 """
-import argparse, fcntl, hashlib, json, os, pty, re, select, signal, sys, termios, threading, time, tty, uuid
+import argparse, fcntl, hashlib, json, os, pty, re, select, shlex, signal, subprocess, sys, termios, threading, time, tty, uuid
 import urllib.error, urllib.request
 from pathlib import Path
 
@@ -64,14 +64,19 @@ def kimi_trust_key(root):
 
 
 def find_culture(explicit, cwd, env):
-    """The rig's CULTURE.md: --culture (must exist), else $OPENRIG_WORK_ROOT/rig/CULTURE.md (seats' worktrees usually sit
-    beside the workspace, not inside it), else the nearest <dir>/rig/CULTURE.md above the seat. None found: fail."""
+    """The rig's CULTURE.md: --culture (must exist), else $OPENRIG_WORK_ROOT/rig/CULTURE.md, else the workspace beside
+    the seat's worktree (agent-project-new's layout: <P>.worktrees/<seat> and <P>-work/rig/CULTURE.md; OpenRig doesn't
+    give a seat its workspace, WO96), else the nearest <dir>/rig/CULTURE.md above the seat. None found: fail."""
     if explicit:
         if not Path(explicit).is_file(): die(f"--culture {explicit}: no such file")
         return Path(explicit)
     tried = []
     if env.get("OPENRIG_WORK_ROOT"):
         tried.append(Path(env["OPENRIG_WORK_ROOT"]) / "rig/CULTURE.md")
+    for p in [Path(cwd), *Path(cwd).parents]:
+        if p.name.endswith(".worktrees") and p.name != ".worktrees":
+            tried.append(p.parent / f"{p.name[:-len('.worktrees')]}-work" / "rig/CULTURE.md")
+            break
     tried += [p / "rig/CULTURE.md" for p in [Path(cwd), *Path(cwd).parents]]
     found = next((p for p in tried if p.is_file()), None)
     if not found:
@@ -125,7 +130,10 @@ def plan(args, cwd, env):
     if args.cli == "grok":
         files[".grok/rules/openrig-seat.md"] = text
         node = env.get("OPENRIG_NODE_BIN") or "node"
-        hook = [{"hooks": [{"type": "command", "command": f"{node} {relay_path()}"}]}]
+        # through this launcher's hook mode: it notes the event for the idle keepalive, then hands the payload to the relay
+        cmd = " ".join(shlex.quote(x) for x in [sys.executable, str(Path(__file__).resolve()), "hook", "--state",
+                                                str(sdir / "last-hook.json"), "--", node, relay_path()])
+        hook = [{"hooks": [{"type": "command", "command": cmd}]}]
         files[".grok/hooks/openrig-activity.json"] = json.dumps({"hooks": {e: hook for e in HOOK_EVENTS}}, indent=2) + "\n"
         child_env.update(GROK_ENV)
         sid_file = sdir / "grok-session-id"
@@ -146,7 +154,8 @@ def plan(args, cwd, env):
         files[str(trust)] = json.dumps({"root": str(Path(cwd).resolve()), "trustedAt": int(time.time() * 1000)})
     ignore, visible = ignores(cwd, [p for p in files if not os.path.isabs(p)])
     files.update({g: IGNORE for g in ignore})
-    return {"cli": args.cli, "seat": seat, "role": args.role, "model": model, "cwd": str(cwd), "argv": argv,
+    hook_state = str(sdir / "last-hook.json") if args.cli == "grok" else None
+    return {"cli": args.cli, "hook_state": hook_state, "seat": seat, "role": args.role, "model": model, "cwd": str(cwd), "argv": argv,
             "env": child_env, "files": files, "state_dir": str(sdir), "state": state, "ignore": ignore,
             "visible_to_git": visible, "culture": str(culture) if culture else None}
 
@@ -215,9 +224,40 @@ def post(event, env, log=None):
     return t
 
 
-def run(argv, child_env, idle_s=2.0):
+IDLE_HOOKS = ("Stop", "SessionStart")
+
+
+def hook(argv):
+    """agent-native-seat hook --state FILE -- RELAY...: one grok hook. Notes the event's name (and nothing else of the
+    payload) in FILE for the idle keepalive, then gives the payload, unchanged, to OpenRig's relay; its exit code."""
+    state, relay = argv[argv.index("--state") + 1], argv[argv.index("--") + 1:]
+    data = sys.stdin.buffer.read()
+    try:
+        d = json.loads(data or b"{}")   # the field names OpenRig's relay accepts, in its order
+        event = next((d[k] for k in ("hookEvent", "hookEventName", "hook_event_name") if isinstance(d.get(k), str)), None)
+    except (ValueError, AttributeError): event = None
+    try:
+        tmp = f"{state}.{os.getpid()}"
+        Path(state).parent.mkdir(parents=True, exist_ok=True)
+        with open(tmp, "w") as f: json.dump({"event": event, "t": time.time()}, f)
+        os.replace(tmp, state)
+    except OSError: pass
+    return subprocess.run(relay, input=data).returncode if relay else 0
+
+
+def hook_idle(state):
+    """Is grok idle at its prompt, by its last hook (a finished turn, or a session that just started)?"""
+    try: return json.loads(Path(state).read_text()).get("event") in IDLE_HOOKS
+    except (OSError, ValueError): return False
+
+
+def run(argv, child_env, idle_s=2.0, hook_state=None):
     """The CLI under a pty: input passes through except tmux's extended-keys Ctrl+M (→ CR); output passes through, and
-    its progress sequences (OSC 9;4;N: 0 done, else busy) become activity events, Stop only after idle_s of quiet."""
+    its progress sequences (OSC 9;4;N: 0 done, else busy) become activity events, Stop only after idle_s of quiet.
+    While the CLI is idle it says so again every 2 minutes: OpenRig trusts a hook report for 5 minutes and has no screen
+    reader for terminal seats, so an idle native seat would otherwise read unknown and drop out of dispatch (WO96).
+    The first one goes 20 s after start, so a new seat is dispatchable without a turn. Idle: no progress sequence
+    running, and for grok (hook_state) its last hook a Stop or SessionStart."""
     env = dict(os.environ)
     log = env.get("AGENT_NATIVE_SEAT_LOG")
     pid, fd = pty.fork()
@@ -235,6 +275,8 @@ def run(argv, child_env, idle_s=2.0):
     old = termios.tcgetattr(0) if os.isatty(0) else None
     if old: tty.setraw(0)
     busy, tail, idle_since, keys, held_at = False, b"", None, CtrlM(), None
+    keep_s = float(env.get("AGENT_NATIVE_SEAT_KEEPALIVE_S", "120"))
+    next_idle = time.monotonic() + float(env.get("AGENT_NATIVE_SEAT_FIRST_IDLE_S", "20"))
     # how long a possible half sequence waits for the rest: seats have no human at the keys, so latency costs nothing
     hold_s = float(os.environ.get("AGENT_NATIVE_SEAT_KEY_HOLD_MS", "300")) / 1000
     try:
@@ -244,6 +286,9 @@ def run(argv, child_env, idle_s=2.0):
                 os.write(fd, keys.flush()); held_at = None
             if busy and idle_since is not None and time.monotonic() - idle_since >= idle_s:
                 busy, idle_since = False, None; post("Stop", env, log)
+            if time.monotonic() >= next_idle:
+                if not busy and (hook_state is None or hook_idle(hook_state)): post("idle", env, log)
+                next_idle = time.monotonic() + keep_s
             if fd in r:
                 try: data = os.read(fd, 65536)
                 except OSError: break
@@ -275,6 +320,8 @@ def run(argv, child_env, idle_s=2.0):
 
 
 def main():
+    if sys.argv[1:2] == ["hook"]:
+        return hook(sys.argv[2:])
     ap = argparse.ArgumentParser(prog="agent-native-seat", description=__doc__.split("\n\n")[0],
                                  formatter_class=argparse.RawDescriptionHelpFormatter)
     ap.add_argument("cli", choices=sorted(CLIS))
@@ -292,7 +339,7 @@ def main():
     if args.dry_run:
         print(json.dumps(p, indent=2)); return 0
     apply(p)
-    return run(p["argv"], p["env"], float(os.environ.get("AGENT_NATIVE_SEAT_IDLE_S", "2")))
+    return run(p["argv"], p["env"], float(os.environ.get("AGENT_NATIVE_SEAT_IDLE_S", "2")), p["hook_state"])
 
 
 if __name__ == "__main__":
