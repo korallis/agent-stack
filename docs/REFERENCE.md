@@ -590,8 +590,9 @@ unavailable. The fix: run `/model fable` once in that seat, accept, then relaunc
 ### Seat compaction (context size per turn)
 
 Every turn re-sends the seat's whole context, so a seat that never compacts burns quota fastest. Claude models report a
-1M window here (Sonnet 5.5 too, without `[1m]`) and Claude Code compacts only near it; Codex has no auto-compact limit
-unless one is set. Managed seats therefore compact earlier (WO88):
+1M window here (Sonnet 5.5 too, without `[1m]`) and Claude Code compacts only near it; Codex compacts at 90% of the
+model's context window by default (`auto_compact_token_limit` in Codex 0.160), which on a large window is still several
+hundred thousand tokens. Managed seats therefore compact earlier (WO88):
 - Claude Code: `system/env.sh` sets `CLAUDE_CODE_AUTO_COMPACT_WINDOW`, which Claude Code compacts against
   (min(model window, value)): 400000 for leads and architects (`coord-*`, `arch-*`), 200000 for every other seat.
   Measured with Claude Code's own `/context`: 1M → "/ 400k" (compacts at ~367k) and "/ 200k" (~167k). An explicit

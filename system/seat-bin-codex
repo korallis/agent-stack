@@ -90,9 +90,9 @@ chose = any(n in ("-a", "--ask-for-approval") or n in NO_PROMPT
             or (n in ("-c", "--config") and (v or "").split("=", 1)[0].strip() == "approval_policy") for n, v in options(args))
 if not chose:
     extra += ["-a", "never"]
-# Compact before a seat re-sends half its window every turn (WO88): Codex has no auto-compact limit by default, so a
-# busy seat ran to hundreds of thousands of tokens per turn. Leads and architects hold more context (300k), every
-# other seat 200k; AGENT_CODEX_AUTO_COMPACT_TOKENS overrides, and a caller's own -c model_auto_compact_token_limit wins.
+# Compact before a seat re-sends half its window every turn (WO88): by default Codex compacts at 90% of the model's
+# context window (Codex 0.160 ModelInfo::auto_compact_token_limit), still hundreds of thousands of tokens per turn on
+# a large window; a configured limit lowers it (Codex takes the smaller). Leads and architects 300k, every other seat 200k; AGENT_CODEX_AUTO_COMPACT_TOKENS overrides, and a caller's own -c model_auto_compact_token_limit wins.
 if not any(n in ("-c", "--config") and (v or "").split("=", 1)[0].strip() == "model_auto_compact_token_limit" for n, v in options(args)):
     seat = (os.environ.get("OPENRIG_SESSION_NAME") or "").split("@")[0]
     limit = os.environ.get("AGENT_CODEX_AUTO_COMPACT_TOKENS") or ("300000" if seat.startswith(("coord-", "arch-")) else "200000")

@@ -4,6 +4,6 @@
   - Claude Code seats: `CLAUDE_CODE_AUTO_COMPACT_WINDOW` 400000 for leads and architects, 200000 for every other seat
     (Claude models report 1M here, Sonnet 5.5 included). Measured with `/context`: compaction at ~367k and ~167k
     instead of ~967k.
-  - Codex seats: `model_auto_compact_token_limit` 300000 for leads and architects, 200000 for every other seat (Codex
-    had none).
+  - Codex seats: `model_auto_compact_token_limit` 300000 for leads and architects, 200000 for every other seat, earlier
+    than Codex's own default of 90% of the model's context window (Codex uses the smaller of the two).
   - Explicit values win; seats pick this up when they relaunch.

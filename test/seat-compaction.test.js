@@ -1,7 +1,8 @@
 // WO88: seats compact before every turn re-sends half a million tokens. Measured 2026-10-02: Claude models report a 1M
 // window here (Sonnet 5.5 too, without [1m]) and compact only near ~967k; with CLAUDE_CODE_AUTO_COMPACT_WINDOW=400000
 // Claude Code's own /context reads "27.5k / 400k" with a 33k autocompact buffer (compacts at ~367k), and with 200000
-// "27.6k / 200k" (~167k), for Opus and Sonnet alike. Codex has no auto-compact limit unless one is set.
+// "27.6k / 200k" (~167k), for Opus and Sonnet alike. Codex compacts at 90% of the model's window unless a lower limit
+// is configured (it takes the smaller).
 import { test } from "node:test";
 import assert from "node:assert/strict";
 import * as fs from "node:fs";
