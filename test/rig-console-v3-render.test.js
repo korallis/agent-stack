@@ -270,7 +270,7 @@ test('ETA uses calendar date and labelled pace; whole-project estimate stays vis
  s.teams[0].estimate=estimate;s.teams[0].eta=estimate.date;
  s.teams[0].projectEstimate={...estimate,date:'2026-10-23T00:00:00Z',remaining:20,scope:'whole project'};
  for(const [w,h] of [[160,50],[100,30]]){
-  const fleet=words(renderV3(s,w,h,state()));assert.match(fleet,/ETA ~Fri 9 Oct/);assert.doesNotMatch(fleet,/ETA 00:00/);if(w>=160)assert.match(fleet,/12 slices\/14d · 8 left/);
+  const fleet=words(renderV3(s,w,h,state()));assert.match(fleet,/ETA ~Fri 9 Oct/);assert.doesNotMatch(fleet,/ETA 00:00/);assert.match(fleet,/12 slices\/14d · 8 left/);
   const team=words(renderV3(s,w,h,state('team')));assert.match(team,/Whole project: ETA ~Fri 23 Oct/);assert.match(team,/14.days.*pace/);
  }
 });
