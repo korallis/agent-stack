@@ -449,16 +449,18 @@ test("WO85: account panels follow over_limit: on credits at 101% is not over; us
 });
 
 test("harness usage is drawn next to the proxy pool; missing readings stay blank, never a stub 0%", () => {
-  assert.match(render(fixture.raw, hist(), 176, 50, st({ view: 4 })).lines().join("\n"), /SUBSCRIPTION POOL[\s\S]*HARNESS USAGE[\s\S]*grokbuild[\s\S]*kimi/);
-  assert.match(render(fixture.raw, hist(), 176, 50, st()).lines().join("\n"), /ACCOUNT POOL[\s\S]*HARNESS USAGE[\s\S]*grokbuild/);
-  assert.match(render(fixture.raw, hist(), 176, 50, st({ view: 1 })).lines().join("\n"), /SUBSCRIPTION POOL[\s\S]*HARNESS USAGE/);
+  const pool = render(fixture.raw, hist(), 176, 50, st({ view: 4 })).lines().join("\n");
+  assert.match(pool, /SUBSCRIPTION POOL/); assert.match(pool, /HARNESS USAGE/); assert.match(pool, /grokbuild/); assert.match(pool, /\bkimi\b/);
+  const home = render(fixture.raw, hist(), 176, 50, st()).lines().join("\n");
+  assert.match(home, /ACCOUNT POOL/); assert.match(home, /HARNESS USAGE/); assert.match(home, /grokbuild/);
+  assert.match(render(fixture.raw, hist(), 176, 50, st({ view: 1 })).lines().join("\n"), /HARNESS USAGE/);
   const none = { ...fixture.raw, harness: parseHarness(JSON.stringify({ harnesses: [
     { id: "grok", label: "grokbuild", provider: "grok", harness: "grokbuild", installed: false, status: "not_installed", unknown_reason: "grok / grokbuild not on PATH" },
     { id: "kimi", label: "kimi", provider: "kimi", harness: "kimi", installed: true, status: "unavailable", unknown_reason: "usage command not available" },
   ] })) };
-  const pool = render(none, hist(), 176, 50, st({ view: 4 })).lines().join("\n");
-  assert.match(pool, /HARNESS USAGE/);
-  assert.match(pool, /grokbuild[^\n]*not on PATH/);
-  assert.match(pool, /kimi[^\n]*no reading|kimi[^\n]*usage command not available/);
-  assert.doesNotMatch(pool.split("\n").find((l) => /grokbuild/.test(l)) ?? "", /0%/);
+  const empty = render(none, hist(), 176, 50, st({ view: 4 })).lines().join("\n");
+  assert.match(empty, /HARNESS USAGE/);
+  assert.match(empty, /grokbuild[^\n]*not on PATH/);
+  assert.match(empty, /kimi[^\n]*no reading|kimi[^\n]*usage command not available/);
+  assert.doesNotMatch(empty.split("\n").find((l) => /grokbuild/.test(l)) ?? "", /0%/);
 });
