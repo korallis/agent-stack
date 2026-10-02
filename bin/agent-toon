@@ -1,0 +1,55 @@
+#!/usr/bin/env python3
+"""Encode JSON as TOON for agent reads. Machine consumers should keep JSON.
+
+Usage: agent-toon [--stats] [FILE|-]
+       rig ps --nodes --json | agent-toon
+       gh pr list --json number,title,state | agent-toon
+Requires the toon CLI installed by agent-stack. --stats writes estimates to stderr.
+"""
+import argparse
+import json
+import math
+import subprocess
+import sys
+from decimal import Decimal
+from pathlib import Path
+
+parser = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
+parser.add_argument("--stats", action="store_true")
+parser.add_argument("file", nargs="?", default="-")
+args = parser.parse_args()
+
+def integer(value):
+    number = int(value)
+    if abs(number) > 2**53 - 1:
+        raise ValueError("number exceeds the encoder's safe integer range; keep JSON")
+    return number
+
+
+def decimal(value):
+    exact = Decimal(value)
+    number = float(exact)
+    if not math.isfinite(number) or Decimal(str(number)) != exact:
+        raise ValueError("number would lose precision in the encoder; keep JSON")
+    return number
+
+
+def constant(value):
+    raise ValueError("non-finite number is not JSON; keep the original data")
+
+
+try:
+    source = sys.stdin.read() if args.file == "-" else Path(args.file).read_text(encoding="utf-8")
+    # The upstream encoder uses JSON.parse. Refuse precision loss before passing it any data.
+    json.loads(source, parse_int=integer, parse_float=decimal, parse_constant=constant)
+except (OSError, UnicodeError):
+    sys.exit("agent-toon: cannot read input as UTF-8 JSON")
+except json.JSONDecodeError:
+    sys.exit("agent-toon: invalid JSON input")
+except ValueError as error:
+    sys.exit(f"agent-toon: {error}")
+try:
+    result = subprocess.run(["toon", "--encode", *(["--stats"] if args.stats else []), "-"], input=source, text=True)
+    sys.exit(result.returncode if result.returncode >= 0 else 128 - result.returncode)
+except FileNotFoundError:
+    sys.exit("agent-toon: toon CLI missing; run ./install.sh --apply")

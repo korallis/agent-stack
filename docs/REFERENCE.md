@@ -187,6 +187,32 @@ window's length and currently has only a weekly one, so its 5h column is `-`. An
 has credits says `in use` under credits: it keeps working and stays eligible. Only an account past its limit (over
 100%, or a used-up Codex window with no credits) is left out of the `eligible` count.
 
+### Structured output for agent reads
+
+Use `agent-toon` to encode JSON from stdin or a file with the installed TOON CLI:
+
+```bash
+rig ps --nodes --json | agent-toon
+agent-toon --stats status.json
+```
+
+Inside a seat, `rig ps --nodes --toon` and `rig queue list --toon` request JSON and encode it after the command
+succeeds. `gh pr list --json number,title,state --toon` does the same for gh commands with `--json`.
+The flag is opt-in; normal commands and JSON keep their output. The filter refuses numbers that would lose
+precision in the JavaScript encoder, including integers beyond its safe range; retain JSON for those inputs. Failed commands keep their stdout, stderr and
+exit status. The rig wrapper rejects the flag on writes. Machine consumers should keep JSON.
+TOON savings depend on the data shape; flat repeated rows save more than nested or prose-heavy output.
+On one live sample (o200k_base), status used 502 JSON tokens versus 373 TOON tokens (25.7% fewer), and 30 public
+PR rows used 1342 versus 1057 (21.2% fewer). The nested queue sample grew from 1843 to 2079 (12.8% more).
+For queue triage, select the fields the task needs before encoding, or keep JSON. For example:
+
+```bash
+rig queue list --json | jq 'map({qitemId,state,priority,summary})' | agent-toon
+```
+
+This projection deliberately omits detail; use each qitem ID to retrieve the complete row when needed.
+
+
 ## Several projects at once
 
 Each project gets its own team, its own worktrees (`~/Projects/<Name>.worktrees/`) and its own OpenRig workspace
