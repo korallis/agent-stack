@@ -1,0 +1,125 @@
+#!/usr/bin/env python3
+"""agent-refresh-guidance-all [--json]: run `agent-refresh-guidance <workspace> --apply` for every RUNNING project rig.
+
+agent-refresh-guidance.timer runs this every 5 minutes, so a CULTURE, role or startup edit reaches running seats (managed
+blocks rewritten, native seats told to re-read when idle) without anyone re-running it by hand, and a busy native seat
+that was owed a re-read is told once it is idle. Near-free when nothing changed: a rig is skipped when the hash of its
+sources (rig/CULTURE.md, rig/startup/*, rig/*.yaml, the agent-stack role guidance and the native-seat launcher) matches
+the last applied run AND none of its seats is owed a native re-read (native-refresh-pending.json).
+A rig is a ~/Projects/<P>-work workspace whose rig spec names it; only rigs `rig ps` lists as running or partial are
+touched, never a stopped one, and nothing at all runs when rig ps can't be read. agent-refresh-guidance backs up only
+files it rewrites. One log line (stdout and the journal) per action: a rig refreshed, a seat told, a seat still owed.
+"""
+import glob, hashlib, json, os, re, subprocess, sys
+
+H = os.path.expanduser("~")
+PROJECTS = os.environ.get("AGENT_PROJECTS_DIR", f"{H}/Projects")
+STATE = os.environ.get("AGENT_STACK_STATE", f"{H}/.local/state/agent-stack")
+AGENT_STACK = os.environ.get("AGENT_STACK_DIR", os.path.dirname(os.path.dirname(os.path.realpath(__file__))))
+REFRESH = os.environ.get("AGENT_REFRESH_GUIDANCE", os.path.join(os.path.dirname(os.path.realpath(__file__)), "agent-refresh-guidance"))
+HASHES = os.path.join(STATE, "refresh-guidance-hashes.json")
+PENDING = os.path.join(STATE, "native-refresh-pending.json")
+JSON_OUT = "--json" in sys.argv
+
+
+def log(msg):
+    print(msg, flush=True)
+    subprocess.run(["logger", "-t", "agent-refresh-guidance", msg], check=False, capture_output=True)
+
+
+def running_rigs():
+    try:
+        r = subprocess.run(["rig", "ps"], capture_output=True, text=True, timeout=30)
+    except (OSError, subprocess.TimeoutExpired):
+        return None
+    if r.returncode != 0:
+        return None
+    out = set()
+    for ln in r.stdout.splitlines():
+        cols = ln.split()
+        if len(cols) >= 7 and cols[0] != "RIG" and cols[6] in ("running", "partial"):
+            out.add(cols[0])
+    return out
+
+
+def workspaces():
+    """{rig name: workspace} from ~/Projects/*-work/rig/*.yaml top-level `name:`."""
+    out = {}
+    for w in sorted(glob.glob(f"{PROJECTS}/*-work")):
+        for spec in sorted(glob.glob(f"{w}/rig/*.yaml")):
+            try:
+                m = re.search(r'^name:\s*["\']?([\w.-]+)["\']?\s*$', open(spec).read(), re.M)
+            except OSError:
+                continue
+            if m:
+                out.setdefault(m.group(1), w)
+                break
+    return out
+
+
+def source_hash(w):
+    h = hashlib.sha256()
+    files = [f"{w}/rig/CULTURE.md", *sorted(glob.glob(f"{w}/rig/startup/**", recursive=True)), *sorted(glob.glob(f"{w}/rig/*.yaml")),
+             *sorted(glob.glob(f"{AGENT_STACK}/rig/template/agents/*/guidance/*.md")), f"{AGENT_STACK}/bin/agent-native-seat"]
+    for f in files:
+        if os.path.isfile(f):
+            h.update(f.encode() + b"\0")
+            with open(f, "rb") as fh:
+                h.update(hashlib.sha256(fh.read()).digest())
+    return h.hexdigest()
+
+
+def owed(w):
+    try:
+        pending = json.load(open(PENDING))
+    except (OSError, ValueError):
+        return []
+    trees = os.path.realpath(f"{w[:-5]}.worktrees")
+    return sorted(k for k, v in pending.items() if os.path.realpath(str(v.get("path", ""))).startswith(trees + os.sep))
+
+
+def main():
+    rigs = running_rigs()
+    if rigs is None:
+        log("rig ps unreadable (daemon down?): nothing refreshed")
+        return 0
+    try:
+        seen = json.load(open(HASHES))
+    except (OSError, ValueError):
+        seen = {}
+    report, failed = [], False
+    for rig, w in sorted(workspaces().items()):
+        if rig not in rigs:
+            continue
+        digest, waiting = source_hash(w), owed(w)
+        if seen.get(rig) == digest and not waiting:
+            report.append({"rig": rig, "skipped": True})
+            continue
+        r = subprocess.run([REFRESH, w, "--apply", "--json"], capture_output=True, text=True, timeout=600)
+        try:
+            res = json.loads(r.stdout)
+        except ValueError:
+            failed = True
+            log(f"{rig}: agent-refresh-guidance failed (exit {r.returncode}): {(r.stderr or r.stdout).strip()[:200]}")
+            continue
+        changed, told, still = res.get("changed", []), res.get("native_notified", []), res.get("native_pending", [])
+        if changed:
+            log(f"{rig}: refreshed {len(changed)} instruction file(s): {', '.join(sorted({c.get('seat', '?') for c in changed}))}")
+        for s in told:
+            log(f"{rig}: told {s} to re-read its instructions")
+        for s in still:
+            log(f"{rig}: {s} still owed a re-read (busy; told when idle)")
+        seen[rig] = digest
+        report.append({"rig": rig, "changed": len(changed), "told": told, "pending": still})
+    os.makedirs(STATE, exist_ok=True)
+    tmp = HASHES + ".tmp"
+    with open(tmp, "w") as fh:
+        json.dump(seen, fh)
+    os.replace(tmp, HASHES)
+    if JSON_OUT:
+        print(json.dumps(report))
+    return 1 if failed else 0
+
+
+if __name__ == "__main__":
+    sys.exit(main())
