@@ -209,8 +209,12 @@ test("templates: Owner decisions are the owner's only, with a source; operator a
   assert.match(sec("Operator and lead rules"), /^- 2026-10-02: Never rebase or force-push a published PR branch \(no `gh pr update-branch --rebase`, no `git push --force` on a PR head\)\. To refresh a PR, merge main into it.*\(operator, 20:13Z\)$/m);
   assert.match(role("integrator"), /`gh pr update-branch <n>` \(a merge of main; never `--rebase`\)/);
   assert.match(role("integrator"), /merge announcements are refresh triggers: the author merges main into the PR; never a rebase or force-push/);
-  for (const f of ["rig/template/agents/integrator/guidance/role.md", "rig/template/project-sdlc.yaml", "rig/template/CULTURE.md"])
-    assert.doesNotMatch(fs.readFileSync(join(repo, f), "utf8"), /rebase triggers/, f);
+  assert.match(role("implementer"), /announces a merge that touches your files, merge main into your PR branch \(never rebase or force-push a published branch\) and re-run your proof/);
+  // no template text tells anyone to rebase a PR: every mention of rebasing is a prohibition or a repo merge method
+  const files = ["rig/template/CULTURE.md", "rig/template/project-sdlc.yaml", ...fs.readdirSync(join(repo, "rig/template/agents")).map((r) => `rig/template/agents/${r}/guidance/role.md`)]
+    .filter((f) => fs.existsSync(join(repo, f)));
+  for (const f of files) for (const line of fs.readFileSync(join(repo, f), "utf8").split("\n").filter((l) => /rebas/i.test(l)))
+    assert.match(line, /never (a )?(`--)?rebas|Never rebase|--squash\/--rebase only if that is the repo's convention/i, `${f}: ${line}`);
   // the owner's 18:29Z standing order, recorded as given
   assert.match(sec("Owner decisions"), /^- 2026-10-02: Speed without losing quality: nothing waits unless it must; parallelise independent work across free seats; ship each change as soon as its checks pass \(no batching\); route reviews and QA to any free eligible reviewer; every quality gate stays\. \(standing: every seat, every rig\) \(owner, Slack 18:29Z\)$/m);
 });
