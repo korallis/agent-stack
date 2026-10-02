@@ -7,6 +7,10 @@ import { FleetAdapter, snapshotFromRaw } from '../console/src/v3/adapter.ts';
 import { bindVerdict, progressFromExecution, prFromGithub } from '../console/src/v3/sources.ts';
 import { qrowFromItem } from '../console/src/model.ts';
 import { parseAccounts } from '../console/src/data.ts';
+import { cardText } from '../console/src/v3/wording.ts';
+import { wrap } from '../console/src/v3/draw.ts';
+import { renderV3 } from '../console/src/v3/render.ts';
+import { initialState } from '../console/src/v3/controller.ts';
 const at = Date.parse('2026-10-02T12:00:00Z');
 const row = (id, extra={}) => ({id,state:'pending',priority:'routine',source:'coord@alpha',destination:'builder@alpha',blockedOn:null,tags:[],created:new Date(at-1000).toISOString(),updated:new Date(at).toISOString(),summary:'Build a feature',...extra});
 const raw = (extra={}) => ({at,host:{id:'test'},daemon:{ok:true},rigs:[{id:'rig-a',name:'alpha',lifecycle:'running',seats:[]}],queue:[],attention:[],gates:[],accounts:[],heavy:[],events:[],refreshMs:5000,sources:{daemon:'ok'},...extra});
@@ -195,4 +199,26 @@ test('healthy headline says no decisions need the owner without claiming stale p
  const input=raw({rigs:[{id:'alpha',name:'alpha',seats:[{rig:'alpha',pod:'impl',name:'builder',session:'builder@alpha',kind:'agent',activity:'working',model:null,ctx:null,why:null}]}]});
  assert.equal(snapshotFromRaw(input).headline,'No decisions need you. alpha is on track.');
  assert.equal(snapshotFromRaw({...input,daemon:{ok:false,error:'offline'}}).headline,'Fleet data is stale.');
+});
+
+test('mission wrappers are removed before exact known identifiers, preserving subject tokens',()=>{
+ for(const wrapper of ['Mission — ', 'Mission: ']){
+  assert.equal(cardText(wrapper+'M0 — Repository housekeeping',['M0']),'Repository housekeeping');
+  assert.equal(cardText(wrapper+'M0 — ISO 27001 and Q4 reporting',['M0']),'ISO 27001 and Q4 reporting');
+ }
+ assert.equal(cardText('Mission — M01 — Identity (D-27)',['M0']),'M01 — Identity (D-27)');
+ assert.equal(cardText('Mission control for Q4'),'Mission control for Q4');
+});
+
+test('multiple missions leave room for the work clause and retain complete detail labels',()=>{
+ const labels=['Repository housekeeping and executable design references','Identity (D-27): app access','Booking journeys for ISO 27001 and Q4'];
+ const scope={name:'Example Portal',description:'Neutral project',milestone:labels.join(' · '),progress:null,eta:null,milestones:labels.map((label,i)=>({id:String(i),label,state:'active',detail:label,at:null})),activeMissions:labels.map((label,i)=>({id:'M'+i,label:'Mission — M'+i+' — '+label,status:'building'}))};
+ const s=snapshotFromRaw(raw({rigs:['alpha','beta','gamma','delta','epsilon'].map(name=>({id:name,name,seats:[]})),queue:[row('build',{state:'in-progress',summary:'Fix the date picker on mobile.'})]}),{projects:{alpha:scope}});
+ assert.match(s.teams[0].sentence,/^Repository housekeeping.*\+2 more: Fix the date picker on mobile\.$/);
+ assert.ok(s.teams[0].sentence.length<=80,s.teams[0].sentence);
+ assert.ok(wrap(s.teams[0].sentence,26).length<=3,'work clause fits the three-line fleet card');
+ assert.doesNotMatch(s.teams[0].sentence,/Mission|M0|Identity|ISO/);
+ assert.equal(s.teams[0].milestone,scope.milestone);assert.deepEqual(s.teams[0].milestones,scope.milestones);
+ const card=renderV3(s,160,50,initialState()).screen.lines().slice(27,30).map(line=>line.slice(4,30).trim()).join(' ');
+ assert.match(card,/date picker/,'the actual fleet card shows the task subject');
 });

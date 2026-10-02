@@ -3,6 +3,7 @@ export function cardText(value:string|null|undefined,identities:string[]=[]):str
   let text=(value??'').replace(/\s+/g,' ').trim();
   for(let pass=0;pass<5;pass++){
     const before=text;
+    text=text.replace(/^Mission\s*[:—–]\s*/i,'');
     for(const id of identities){
       const literal=id.replace(/[.*+?^${}()|[\]\\]/g,'\\$&');
       if(literal)text=text.replace(new RegExp(`^(?:Mission\\s+)?(?:\\[${literal}\\]|${literal})(?:\\s*[:—–|]\\s*|\\s+-\\s+)`,'i'),'');

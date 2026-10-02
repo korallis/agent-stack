@@ -254,3 +254,13 @@ test('capacity wording names providers and distinguishes observation from availa
  assert.doesNotMatch(text,/1 of 2 accounts available|1 of 2 accounts ready|reset in 1h/);
  const detail=words(renderV3(snapshot,160,50,state('capacity')));assert.ok(detail.includes('Observed 1 of 2 accounts'));assert.ok(detail.includes('63% of 5-hour limit used'));
 });
+
+test('missing provider usage and reset evidence stays explicit in fleet and capacity views',()=>{
+ const snapshot=fixture();snapshot.capacity=[{...snapshot.capacity[0],used:null,weekly:null,resetAt:null,cooldownUntil:null,credits:null,history:[]}];
+ for(const view of ['fleet','capacity']){
+  const text=words(renderV3(snapshot,160,50,state(view)));
+  assert.ok(text.includes('Usage not reported'),view);assert.ok(text.includes('Observed 0 of 1 account'),view);
+  assert.ok(text.includes('Reset time not reported'),view);
+  assert.doesNotMatch(text,/(?:^|\s)0%|resets in|reset due|cooldown ends|cooldown end due/);
+ }
+});
