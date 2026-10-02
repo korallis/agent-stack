@@ -1,0 +1,107 @@
+--- a/daemon/dist/domain/queue-recovery.js
++++ b/daemon/dist/domain/queue-recovery.js
+@@ -9,8 +9,67 @@
+ export function recoveryId(db, qitemId) {
+     return `qitem-recovery-${createHash("sha256").update(JSON.stringify([qitemId, lastMeaningfulTransition(db, qitemId)?.id ?? null, failedAttempt(db, qitemId)])).digest("hex").slice(0, 16)}`;
+ }
++// Patch 148: the lookup below scans every queue row's tags as JSON (~6 ms on a 15k-row queue), and a queue list ran it
++// once per returned row, so listing 200 active rows blocked the event loop for over a second. Inside
++// withRecoveryScope (one synchronous list call) the answers for every tag are built once, from the rows that carry a
++// `recovery-for:` tag at all, with the query's own match and order; outside a scope nothing changes.
++let recoveryScope = null;
++const ACTIVE_STATES = ["pending", "in-progress", "blocked"];
++export function withRecoveryScope(db, fn) {
++    if (recoveryScope)
++        return fn();
++    recoveryScope = { db, byTag: null };
++    try {
++        return fn();
++    }
++    finally {
++        recoveryScope = null;
++    }
++}
++// The query's ORDER BY: open states first, then ts_updated DESC (NULL last, as SQLite sorts it), then qitem_id DESC.
++function recoveryBefore(a, b) {
++    const ra = ACTIVE_STATES.includes(a.state) ? 0 : 1, rb = ACTIVE_STATES.includes(b.state) ? 0 : 1;
++    if (ra !== rb)
++        return ra < rb;
++    if (a.ts_updated !== b.ts_updated) {
++        if (a.ts_updated === null)
++            return false;
++        if (b.ts_updated === null)
++            return true;
++        return a.ts_updated > b.ts_updated;
++    }
++    return a.qitem_id > b.qitem_id;
++}
++function scopedRecoveryRow(db, tag) {
++    if (!recoveryScope || recoveryScope.db !== db)
++        return undefined;
++    if (!recoveryScope.byTag) {
++        const byTag = new Map();
++        // json_each yields an array's elements, an object's values, or a scalar itself; only a string can equal the tag.
++        const rows = db.prepare(`SELECT qitem_id, state, ts_updated, tags FROM queue_items
++      WHERE json_valid(tags) AND tags LIKE '%recovery-for:%'`).all();
++        for (const row of rows) {
++            let parsed;
++            try {
++                parsed = JSON.parse(row.tags);
++            }
++            catch {
++                continue;
++            }
++            const values = Array.isArray(parsed) ? parsed : parsed !== null && typeof parsed === "object" ? Object.values(parsed) : [parsed];
++            for (const value of new Set(values.filter((v) => typeof v === "string" && v.startsWith("recovery-for:")))) {
++                const best = byTag.get(value);
++                if (!best || recoveryBefore(row, best))
++                    byTag.set(value, { qitem_id: row.qitem_id, state: row.state, ts_updated: row.ts_updated });
++            }
++        }
++        recoveryScope.byTag = byTag;
++    }
++    return recoveryScope.byTag.get(tag) ?? null;
++}
+ export function findQueueRecovery(db, qitemId) {
+-    const row = db.prepare(`SELECT qitem_id, state, ts_updated FROM queue_items
++    const scoped = scopedRecoveryRow(db, recoveryTag(qitemId));
++    const row = scoped !== undefined ? scoped : db.prepare(`SELECT qitem_id, state, ts_updated FROM queue_items
+     WHERE json_valid(tags) AND EXISTS (SELECT 1 FROM json_each(tags) WHERE value = ?)
+     ORDER BY CASE WHEN state IN ('pending','in-progress','blocked') THEN 0 ELSE 1 END, ts_updated DESC, qitem_id DESC LIMIT 1`)
+         .get(recoveryTag(qitemId));
+--- a/daemon/dist/domain/queue-repository.js
++++ b/daemon/dist/domain/queue-repository.js
+@@ -1,4 +1,5 @@
+ import { readWakeLadderBackstop } from "./queue-wake-ladder.js";
++import { withRecoveryScope } from "./queue-recovery.js";
+ import { createHash } from "node:crypto";
+ import { loadHumanRegistry, resolveRegisteredHumanAddress } from "./gateway/human-registry.js";
+ import { resolveExternal } from "./gateway/external-admission.js";
+@@ -2331,7 +2332,8 @@
+         const rows = this.db
+             .prepare(`SELECT ${columns} FROM queue_items ${where} ORDER BY ${orderBy} LIMIT ?`)
+             .all(...params);
+-        const items = rows.map((r) => {
++        // Patch 148: one recovery lookup for the whole list instead of one table scan per row (queue-recovery.js).
++        const items = withRecoveryScope(this.db, () => rows.map((r) => {
+             const item = this.rowToItem(r, !opts?.compact);
+             const ledger = this.deliveryOutcomeFor(item.qitemId);
+             return {
+@@ -2339,7 +2341,7 @@
+                 deliveryOutcome: ledger?.outcome ?? null,
+                 ...(ledger && ledger.outcome !== "posted" ? { deliveryFailureDetail: ledger.detail } : {}),
+             };
+-        });
++        }));
+         return opts?.compact
+             ? items.map((item) => ({
+                 ...item,
+@@ -2445,7 +2447,7 @@
+       LIMIT ?
+     `;
+         const rows = this.db.prepare(sql).all(...params);
+-        return rows.map((r) => this.rowToItem(r));
++        return withRecoveryScope(this.db, () => rows.map((r) => this.rowToItem(r)));
+     }
+     /**
+      * Find qitems whose `closure_required_at` is past now. Used by watchdog;
