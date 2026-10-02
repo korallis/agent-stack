@@ -200,6 +200,13 @@ test("templates: Owner decisions are the owner's only, with a source; operator a
   // the owner's 18:06Z row doesn't say who overrides Jev; that restriction is the operator's rule
   assert.doesNotMatch(sec("Owner decisions"), /overrides a Jev result/);
   assert.match(sec("Operator and lead rules"), /^- 2026-10-02: Only the owner overrides a Jev result[^\n]*\(operator, 18:07Z\)$/m);
+  // reading a Jev result: only decided_by jev counts; anything else escalates to the operator
+  const jev = sec("Reading a Jev result");
+  assert.match(jev, /^Reading a Jev result \(operator rule, 2026-10-02 18:32Z\)/);
+  assert.match(jev, /Only `decided_by: jev` is Jev's decision\. A `fallback_model` answer is not, whatever its top-level band/);
+  assert.match(jev, /On `fallback_model`, review, uncertain or `none_fit`, change nothing and\s+escalate to the operator with the question, the options and the Jev record ids/);
+  // the owner's 18:29Z standing order, recorded as given
+  assert.match(sec("Owner decisions"), /^- 2026-10-02: Speed without losing quality: nothing waits unless it must; parallelise independent work across free seats; ship each change as soon as its checks pass \(no batching\); route reviews and QA to any free eligible reviewer; every quality gate stays\. \(standing: every seat, every rig\) \(owner, Slack 18:29Z\)$/m);
 });
 
 test("agent-project-check WARNs on an unsourced Owner decisions bullet and on one resting on docs/decisions/*", () => {

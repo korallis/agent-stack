@@ -14,6 +14,7 @@ decision recorded here is not asked again. Nothing else goes here: an interpreta
 of a lead doc (`docs/decisions/*`) or a rule the operator or a lead set goes under "Operator and lead rules". When an
 owner answer is ambiguous, ask (through the operator) before recording it; never record your reading of it.
 - 2026-10-02: Jev decides; research feeds Jev. Every judgment call (which seat or developer gets a task, which option to take, routing and scope calls, whether a change can merge) goes to Jev (`jev_decide`) as a short candidate list built from the research and evidence; record the Jev decision/request id where the decision is written. Seats bring evidence and options, not conclusions; a lead does not decide these directly. (standing: every seat, every rig) (owner, Slack 18:06Z)
+- 2026-10-02: Speed without losing quality: nothing waits unless it must; parallelise independent work across free seats; ship each change as soon as its checks pass (no batching); route reviews and QA to any free eligible reviewer; every quality gate stays. (standing: every seat, every rig) (owner, Slack 18:29Z)
 
 ## Operator and lead rules (not the owner's decisions)
 Rules the operator or the lead set, and the lead's interpretations of owner decisions, each with its source or doc
@@ -22,6 +23,13 @@ Operating rules, but they are not the owner's word: an owner decision wins over 
 them as the owner's.
 - 2026-10-02: Only the owner overrides a Jev result; a lead or seat does not set one aside. (operator, 18:07Z)
 - 2026-10-02: A scope or option ruling that no specific Jev decision covers goes to `decide.option`: the question, the criteria, the evidence and at most 12 options your research found. On act, follow it. On review, uncertain or none_fit, escalate with that evidence; never substitute your own pick. (operator, 18:08Z)
+
+## Reading a Jev result (operator rule, 2026-10-02 18:32Z)
+- Only `decided_by: jev` is Jev's decision. A `fallback_model` answer is not, whatever its top-level band; when
+  only Jev will do, call `jev-decide <id> --no-model-fallback`.
+- Act on a Jev result in the act band. On `fallback_model`, review, uncertain or `none_fit`, change nothing and
+  escalate to the operator with the question, the options and the Jev record ids; the operator decides whether the
+  owner is needed. Merges keep the integrator role's own gate.
 
 ## Owner communication
 
