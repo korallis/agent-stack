@@ -107,6 +107,14 @@ test('selected IDs take priority over stale indexes and unknown context is never
   assert.match(words(pr), /Missing rollback evidence/);
 });
 
+test('fleet names projects hidden beyond the visible card width', () => {
+  const snapshot=fixture();
+  const text=words(renderV3(snapshot,160,50,state()));
+  assert.doesNotMatch(text,/\+\d+ more/);
+  const narrow=words(renderV3({...snapshot,teams:[...snapshot.teams,{...snapshot.teams[0],id:'extra',name:'Extra'}]},160,50,state()));
+  assert.match(narrow,/\+1 more →/);
+});
+
 test('fleet groups multiple accounts into one provider and ignores irrelevant source failures', () => {
   const snapshot=fixture();
   snapshot.capacity.unshift({...snapshot.capacity[0],id:'second-claude',label:'Claude second'});

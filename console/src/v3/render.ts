@@ -72,8 +72,8 @@ export function renderV3(snapshot:Snapshot,w:number,h:number,state:ViewState):{s
       else txt(s,2,6,'No decisions need you · last answer not recorded',w-4,P.dim);
     }
     decisions.forEach((d,i)=>{const teamWidth=Math.min(20,Math.floor(w*.13)),rightWidth=12;txt(s,2,6+i,'●',2,P.red);txt(s,5,6+i,name(d.teamId),teamWidth,P.white);txt(s,6+teamWidth,6+i,d.question+(d.blocks?` · ${d.blocks}`:''),w-teamWidth-rightWidth-9,P.fg);txt(s,w-rightWidth-2,6+i,age(d.createdAt,snapshot.at),rightWidth,P.dim);hit(2,6+i,w-4,1,'task',d.id,'decision');});
-    label(s,2,10,w-4,'PROJECTS');
     const count=Math.max(1,Math.min(snapshot.teams.length,Math.floor((w-3)/29))),cardWidth=Math.floor((w-3)/count),cardH=compact?Math.max(11,h-20):23,bottom=11+cardH+1;
+    label(s,2,10,w-4,'PROJECTS',snapshot.teams.length>count?`+${snapshot.teams.length-count} more →`:'');
     let start=0;const selectedIndex=snapshot.teams.findIndex(t=>t.id===selectedTeam?.id);if(selectedIndex>=count)start=selectedIndex-count+1;
     const visible=snapshot.teams.slice(start,start+count);
     if(!visible.length)txt(s,2,12,'No teams available',w-4,P.dim);
