@@ -163,10 +163,10 @@ test('provider summary uses known same-window usage with coverage and weekly fal
     {...snapshot.capacity[1],id:'e',used:null,weekly:100},
   ];
   const text=words(renderV3(snapshot,160,50,state()));
-  assert.match(text,/40% 5h avg · 2\/3/);
-  assert.match(text,/90% weekly avg · 2\/2/);
+  assert.ok(text.includes('40% of 5-hour limit used on average'));assert.ok(text.includes('Observed 2 of 3 accounts'));
+  assert.ok(text.includes('90% of weekly limit used on average'));assert.ok(text.includes('Observed 2 of 2 accounts'));
   assert.doesNotMatch(text,/57%/);
-  assert.match(words(renderV3(snapshot,160,50,state('capacity'))),/weekly avg/);
+  assert.match(words(renderV3(snapshot,160,50,state('capacity'))),/weekly limit used/);
 });
 
 test('capacity displays observed credit amounts and cooldown separately from reset', () => {
@@ -211,7 +211,7 @@ test('quota text preserves over-limit readings while bars remain bounded', () =>
   const snapshot=fixture();snapshot.capacity=[{...snapshot.capacity[0],used:123,weekly:145}];
   const text=words(renderV3(snapshot,160,50,state('capacity')));
   assert.ok(text.includes('123%'));assert.ok(text.includes('145%'));
-  assert.ok(words(renderV3(snapshot,160,50,state())).includes('123% 5h avg'));
+  assert.ok(words(renderV3(snapshot,160,50,state())).includes('123% of 5-hour limit used'));
 });
 
 test('null detail identities respect bound parents instead of showing unrelated work', () => {
@@ -237,4 +237,20 @@ test('single-line detail keys expose every intermediate check at minimum size', 
 test('an idle agent does not spin merely because its task title names an active verb',()=>{
  const s=fixture();s.agents[0].activity='idle · Reviewing the delivery';
  assert.equal(words(renderV3(s,160,50,state('agent',{frame:0}))),words(renderV3(s,160,50,state('agent',{frame:1}))));
+});
+
+test('capacity wording names providers and distinguishes observation from availability',()=>{
+ const snapshot=fixture();snapshot.capacity=[
+  {...snapshot.capacity[0],id:'one',provider:'claude',used:63,weekly:70,cooldownUntil:new Date(at+3600000).toISOString(),resetAt:null},
+  {...snapshot.capacity[0],id:'two',provider:'claude',used:null,weekly:null,status:'waiting',resetAt:null},
+  {...snapshot.capacity[1],provider:'codex',used:null,weekly:82,credits:'Using credits',resetAt:null},
+  {...snapshot.capacity[2],provider:'xai',used:42},
+  {...snapshot.capacity[3],provider:'kimi-ai',used:34},
+ ];
+ const text=words(renderV3(snapshot,160,50,state()));
+ for(const name of ['Claude','Codex','Grok','Kimi'])assert.ok(text.includes(name));
+ assert.ok(text.includes('63% of 5-hour limit used'));assert.ok(text.includes('Observed 1 of 2 accounts'));
+ assert.ok(text.includes('82% of weekly limit used'));assert.ok(text.includes('Using credits'));assert.match(text,/cooldown ends in 1h/);
+ assert.doesNotMatch(text,/1 of 2 accounts available|1 of 2 accounts ready|reset in 1h/);
+ const detail=words(renderV3(snapshot,160,50,state('capacity')));assert.ok(detail.includes('Observed 1 of 2 accounts'));assert.ok(detail.includes('63% of 5-hour limit used'));
 });

@@ -381,7 +381,8 @@ local fleet. The previous console remains available only with `--legacy`, for ex
 - **Evidence stays explicit.** Missing progress, ETA, context, history or gate evidence stays unknown or unavailable.
   A missing value is not zero, a pass, or a prediction. Progress labels identify the recorded measure; operations
   teams use an OPS status card. Charts use recorded samples. Capacity averages compare the same usage window
-  (5-hour or weekly), show account coverage, and keep cooldown separate from quota reset.
+  (5-hour or weekly). “Observed 2 of 5 accounts” counts accounts with usage readings, not accounts ready to run.
+  Cooldown and quota reset times remain separately labeled.
 - **Portable terminal output.** Truecolor, 256-colour, 16-colour and `NO_COLOR` output; at least 100×30 cells,
   preferably 160×50. Resize profiles that open at 80×24 (including some Windows Terminal defaults). The stack runs
   on Linux; the display uses terminal cells and standard escape sequences.

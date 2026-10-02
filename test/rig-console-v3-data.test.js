@@ -171,3 +171,28 @@ test('PR refresh failures retain historical gates per PR and cannot be erased by
   const recovered=adapter.snapshot().prs.find(p=>p.number===1);assert.equal(recovered.freshness,'fresh');assert.equal(recovered.verdict,'HOLD');assert.equal(recovered.observedAt,new Date(cache.raw.at).toISOString());assert.equal(recovered.refreshError,null);assert.equal(recovered.historicalGate,undefined);assert.equal(adapter.snapshot().sources.github,'ok');
  }finally{adapter.stop();server.closeAllConnections();await new Promise(r=>server.close(r));}
 });
+
+test('fleet headline includes decisions and other on-track project names',()=>{
+ const seat=rig=>({rig,pod:'impl',name:'builder',session:`builder@${rig}`,kind:'agent',activity:'working',model:null,ctx:null,why:null});
+ const s=snapshotFromRaw(raw({rigs:['alpha','beta','gamma'].map(name=>({id:name,name,seats:[seat(name)]})),queue:[row('decision',{destination:'owner@external',humanIntent:'decision'}),row('beta-work',{source:'lead@beta',destination:'builder@beta',state:'in-progress'})]}));
+ assert.match(s.headline,/1 decision needs you/);assert.match(s.headline,/beta.*gamma.*on track/i);assert.doesNotMatch(s.headline.split('. ').at(-1),/alpha/);
+});
+
+test('card text removes queue wrappers and IDs without removing meaningful human wording',()=>{
+ const scope={name:'Example Portal',description:'Neutral project',milestone:'M03 — Booking journeys',progress:null,eta:null,milestones:[],activeMissions:[{id:'M03',label:'M03 — Booking journeys',status:'building'}]};
+ const s=snapshotFromRaw(raw({queue:[row('qitem-20261002120000-abcdef12',{state:'in-progress',summary:'Queue row qitem-20261002120000-abcdef12: T035 — Review row-level access for ISO 27001 and Q4 reporting.'})]}),{projects:{alpha:scope}});
+ assert.equal(s.teams[0].sentence,'Booking journeys: Review row-level access for ISO 27001 and Q4 reporting.');
+ assert.equal(s.tasks[0].title,'Queue row qitem-20261002120000-abcdef12: T035 — Review row-level access for ISO 27001 and Q4 reporting.','detail titles retain the authored text');
+});
+
+test('planned-wait card copy explains resumption without internal queue vocabulary',()=>{
+ const scope={name:'Example Portal',description:'Neutral project',milestone:'Booking journeys',progress:null,eta:null,milestones:[],activeMissions:[{id:'booking',label:'Booking journeys',status:'building'}]};
+ const s=snapshotFromRaw(raw({queue:[row('park',{state:'blocked',waiting:{nextBackstop:{mechanism:'watchdog:later',dueAt:new Date(at+60000).toISOString()}}})]}),{projects:{alpha:scope}});
+ assert.match(s.teams[0].sentence,/Booking journeys:.*scheduled to resume/i);assert.doesNotMatch(s.teams[0].sentence,/parked|wake|qitem|row/i);assert.equal(s.teams[0].status,'waiting');
+});
+
+test('healthy headline says no decisions need the owner without claiming stale projects are on track',()=>{
+ const input=raw({rigs:[{id:'alpha',name:'alpha',seats:[{rig:'alpha',pod:'impl',name:'builder',session:'builder@alpha',kind:'agent',activity:'working',model:null,ctx:null,why:null}]}]});
+ assert.equal(snapshotFromRaw(input).headline,'No decisions need you. alpha is on track.');
+ assert.equal(snapshotFromRaw({...input,daemon:{ok:false,error:'offline'}}).headline,'Fleet data is stale.');
+});
