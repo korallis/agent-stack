@@ -45,9 +45,14 @@ health before the witness starts. A failed deploy parks this slice with a wake; 
 
 Mark anything you couldn't confirm, and say where you looked.
 
+Video (owner rule 2026-10-02): record the whole end-to-end check as a screen video (.mp4/.webm), e.g. a Playwright
+context with `recordVideo` (agent-stack `guidance/coordination.md`), and keep it with the proof (`rig proof add --media
+<file>`). Witness on staging with test data; if real client data would show on screen, stop and ask the owner (through
+the lead) before recording. On a PASS this video is the owner's proof: run `agent-video-fit <video>` (it prints the
+path of a copy under 50 MiB, re-encoding only if needed) and give that path to the lead with the result.
 Evidence: screenshots or video per step, stored where the project allows. Sensitive or client data never goes into git,
 PRs or the queue; the repo record holds counts, IDs, pass/fail and redacted regions only.
-For the owner: on a PASS, save the one screenshot or the journey video that shows the wave working under
+For the owner: on a PASS, save the witness video (above) that shows the wave working under
 `$HOME/.cache/<rig>-tmp/<seat>/proof/` (never `/tmp` or a repo) and give its absolute path to the lead with the result;
 the lead sends it to the owner as `--evidence-ref` on an update row (CULTURE "Visual proof for the owner"). It must
 show demo or fictional data only: no secrets, tokens or real client data. The Playwright MCP's own files (its
@@ -56,5 +61,7 @@ copy it into the slice's proof dir with `rig proof add --media <file>`.
 
 ## Proof contract
 - [ ] `docs/witnesses/<wave id>.md`: deployed commit, witness agent + model, per-step result, evidence pointers.
+- [ ] A screen video of the end-to-end check, attached with `rig proof add --media`, and its fitted path (under 50 MiB)
+      given to the lead for the owner.
 - [ ] The wave's rows in the status ledger read `agent-witnessed (YYYY-MM-DD, by <agent>, <model>)`.
 - [ ] Every failed step became a fix slice (or a recorded owner decision) before the witness is repeated.

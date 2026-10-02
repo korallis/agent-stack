@@ -327,6 +327,10 @@ Details are in the `agent-stack` skill. What went wrong before: [docs/incidents/
 
 ## Staying up to date
 
+- **Witness video for the owner:** when a task is done (merged and witnessed), the lead sends the owner the witness's
+  screen video as an FYI row with `--evidence-ref`. `agent-video-fit VIDEO [OUT]` prints a path under 50 MiB: the file
+  itself when it already fits, otherwise an H.264 `.mp4` copy at most 1280 px wide with the bitrate set from its
+  duration (ffmpeg). The original is never changed; exit 1 when it can't fit (trim the video).
 - **OpenRig** never upgrades by itself: running seats would be interrupted. A weekly check (`openrig-update`) tells
   the upgrade owner when a newer release is out. The upgrade is an operator-run window
   ([docs/UPGRADE.md](UPGRADE.md)): `openrig-upgrade <version>` installs it and applies this setup's local patches

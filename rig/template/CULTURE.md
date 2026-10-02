@@ -15,6 +15,7 @@ of a lead doc (`docs/decisions/*`) or a rule the operator or a lead set goes und
 owner answer is ambiguous, ask (through the operator) before recording it; never record your reading of it.
 - 2026-10-02: Jev decides; research feeds Jev. Every judgment call (which seat or developer gets a task, which option to take, routing and scope calls, whether a change can merge) goes to Jev (`jev_decide`) as a short candidate list built from the research and evidence; record the Jev decision/request id where the decision is written. Seats bring evidence and options, not conclusions; a lead does not decide these directly. (standing: every seat, every rig) (owner, Slack 18:06Z)
 - 2026-10-02: Speed without losing quality: nothing waits unless it must; parallelise independent work across free seats; ship each change as soon as its checks pass (no batching); route reviews and QA to any free eligible reviewer; every quality gate stays. (standing: every seat, every rig) (owner, Slack 18:29Z)
+- 2026-10-02: When a task is done (fully merged and fully witnessed), a video showing the witness is provided to the owner in Slack. (standing: the default in every rig) (owner, Slack 20:28Z)
 
 ## Operator and lead rules (not the owner's decisions)
 Rules the operator or the lead set, and the lead's interpretations of owner decisions, each with its source or doc
@@ -24,6 +25,7 @@ them as the owner's.
 - 2026-10-02: Only the owner overrides a Jev result; a lead or seat does not set one aside. (operator, 18:07Z)
 - 2026-10-02: A scope or option ruling that no specific Jev decision covers goes to `decide.option`: the question, the criteria, the evidence and at most 12 options your research found. On act, follow it. On review, uncertain or none_fit, escalate with that evidence; never substitute your own pick. (operator, 18:08Z)
 - 2026-10-02: Daemon lifecycle belongs to operator-agent@kernel only. Never run `rig daemon start|stop|restart` or `rig up` yourself, even when an error message suggests it (the rig launcher refuses them from other seats). If the daemon is down or slow, wait 30 s and retry; if it stays down for 2 minutes, tell operator-agent@kernel (rig send, or a queue row once it is back). (operator, 19:41Z)
+- 2026-10-02: The witness video for the owner (Owner decisions, 20:28Z): the witness records a screen video (.mp4/.webm) of its end-to-end check and keeps it with the proof; after merge and witness PASS the lead sends the owner one FYI row, `--human-intent update --evidence-ref <video>`, fitted under 50 MiB with `agent-video-fit`. Witness on staging with test data; if real client data would show, ask the owner first (a rig may record its own owner choice). (operator, 20:29Z)
 
 ## Reading a Jev result (operator rule, 2026-10-02 18:32Z)
 - Only `decided_by: jev` is Jev's decision. A `fallback_model` answer is not, whatever its top-level band; when

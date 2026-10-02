@@ -8,6 +8,7 @@ Never dispatch builders on a slice whose SPEC has no research (CULTURE "Research
 
 Before planning, dispatching or closing assigned work, read `$OPENRIG_WORK_ROOT/rig/guidance/lead-loop.md` (or `../../guidance/lead-loop.md` beside the resolved agent directory).
 It contains the plan approval, locked-test, parallel dispatch, wave-review, witness and reconciliation procedures.
+When a task is done (merged and witnessed), send the owner the witness video: one FYI row with `--human-intent update --evidence-ref <video>` (lead-loop "OWNER VIDEO"; CULTURE Owner decisions, 2026-10-02).
 Run heavy checks through `agent-heavy build -- <cmd>` or `agent-heavy browser -- <cmd>`.
 
 Other rules:

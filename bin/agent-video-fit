@@ -1,0 +1,31 @@
+#!/usr/bin/env bash
+# agent-video-fit VIDEO [OUT]: make a witness or proof video fit the owner's Slack thread (at most 50 MiB).
+# A .mp4/.webm/.mov at or under the limit is printed as is. A bigger one is re-encoded with ffmpeg to H.264 .mp4 at most
+# 1280 px wide, with the bitrate set from its duration so the file lands under the limit (retried at a lower rate if
+# it doesn't); the result is written next to it as <name>.fit.mp4 (or OUT) and its path printed. Exit 1 when the
+# video can't be fitted, ffmpeg is missing, or the input isn't a readable video. The original is never changed.
+# AGENT_VIDEO_FIT_MAX_BYTES overrides the limit (tests).
+set -euo pipefail
+max=${AGENT_VIDEO_FIT_MAX_BYTES:-52428800}
+in=${1:-}; out=${2:-}
+die() { echo "agent-video-fit: $*" >&2; exit 1; }
+[ -n "$in" ] || die "usage: agent-video-fit VIDEO [OUT]"
+[ -f "$in" ] && [ -r "$in" ] || die "not a readable file: $in"
+case "${in,,}" in *.mp4|*.webm|*.mov) ;; *) die "not a video (.mp4, .webm or .mov): $in" ;; esac
+size=$(stat -c %s "$in")
+if [ "$size" -le "$max" ]; then readlink -f "$in"; exit 0; fi
+command -v ffmpeg >/dev/null && command -v ffprobe >/dev/null || die "ffmpeg/ffprobe not installed; can't shrink a $((size / 1048576)) MiB video"
+dur=$(ffprobe -v error -show_entries format=duration -of default=nw=1:nk=1 "$in" 2>/dev/null || true)
+[[ $dur =~ ^[0-9]+(\.[0-9]+)?$ ]] && awk "BEGIN{exit !($dur > 0)}" || die "can't read the video's duration: $in"
+[ -n "$out" ] || out="${in%.*}.fit.mp4"
+[ "$(readlink -f "$out")" != "$(readlink -f "$in")" ] || die "OUT must differ from the input"
+tmp="$out.tmp.$$.mp4"; trap 'rm -f "$tmp"' EXIT
+# 90% of the limit, then 70% and 50% if the encoder overshoots; audio (if any) at 64 kb/s
+for share in 90 70 50; do
+  kbps=$(awk "BEGIN{v=int($max*8*$share/100/$dur/1000)-64; print (v<50?50:v)}")
+  ffmpeg -nostdin -loglevel error -y -i "$in" -vf "scale='min(1280,iw)':-2" -c:v libx264 -preset veryfast \
+    -b:v "${kbps}k" -maxrate "${kbps}k" -bufsize "$((kbps * 2))k" -pix_fmt yuv420p -c:a aac -b:a 64k -movflags +faststart "$tmp" \
+    || die "ffmpeg failed on $in"
+  if [ "$(stat -c %s "$tmp")" -le "$max" ]; then mv "$tmp" "$out"; readlink -f "$out"; exit 0; fi
+done
+die "couldn't fit $in under $((max / 1048576)) MiB (${dur}s long); trim it to the journey that matters"
