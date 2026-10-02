@@ -35,6 +35,15 @@ if [ -n "${OPENRIG_NODE_ID:-}" ]; then
     esac
     unset _claude_seat
   fi
+  # Compaction (WO88): Claude models have a 1M window here (Sonnet 5.5 too, without [1m]) and compact only near it, so
+  # every turn re-sent up to ~1M tokens. Compact relative to a smaller window: leads and architects 400k (they hold
+  # the backlog), every other seat 200k. An explicit value wins.
+  if [ -z "${CLAUDE_CODE_AUTO_COMPACT_WINDOW:-}" ]; then
+    case "${OPENRIG_SESSION_NAME%%@*}" in
+      coord-*|arch-*) export CLAUDE_CODE_AUTO_COMPACT_WINDOW=400000 ;;
+      *) export CLAUDE_CODE_AUTO_COMPACT_WINDOW=200000 ;;
+    esac
+  fi
   # Search/log-reading subagents use Sonnet by default. Explicit subagent model choices still win (no FORCE).
   export CLAUDE_CODE_SUBAGENT_MODEL="${CLAUDE_CODE_SUBAGENT_MODEL:-sonnet}"
 fi
