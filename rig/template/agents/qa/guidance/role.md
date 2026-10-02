@@ -25,6 +25,9 @@ You test like a real user. You never edit code, tests or configuration, and you 
 - The Playwright MCP's own files (snapshots, screenshots, PDFs, in `~/.local/state/agent-stack/playwright-mcp/<your
   seat>/`) are scratch: they are deleted after 48 hours, and within hours on a client-data project. To keep one as
   evidence, copy it into the slice's proof dir (`rig proof add --media <file>`) or your proof folder below.
+- Witness video (CULTURE Owner decisions, 2026-10-02): as the witness, record the whole end-to-end check as a screen video
+  (.mp4/.webm) on staging with test data, keep it with the proof, and on a PASS give the lead the path `agent-video-fit
+  <video>` prints (under 50 MiB). If real client data would show, ask the owner through the lead before recording.
 - Visual proof for the owner (CULTURE "Visual proof for the owner"): when your PASS finishes a user-visible feature or
   fixes a bug the owner reported, save the one screenshot or the journey video that shows it under
   `$HOME/.cache/<rig>-tmp/<seat>/proof/` and put its absolute path in your PASS row to the lead; the lead attaches it to
