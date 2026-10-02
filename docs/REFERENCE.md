@@ -273,12 +273,14 @@ with `agent-login` and the pool uses it straight away.
   `agent-native-seat grok --role implementer` or `agent-native-seat kimi --role reviewer` (`--model`, default
   grok-4.7-build-fast / kimi-code/k3-256k; a `[1m]` model is refused). At each start it:
   - writes the rig's CULTURE.md and the role's guidance where the CLI reads project rules (grok `.grok/rules/`, kimi
-    `.kimi-code/AGENTS.md`; excluded from git in that worktree), never over the project's own AGENTS.md;
+    `.kimi-code/AGENTS.md`), never over the project's own AGENTS.md, kept out of git by a `.gitignore` in the directory
+    the launcher creates (that worktree only). The culture is `--culture`, else `$OPENRIG_WORK_ROOT/rig/CULTURE.md`,
+    else the nearest one above the seat; none found stops the start (`--no-culture` opts out);
   - grok: adds hooks that call OpenRig's activity relay, and keeps it from loading `~/.claude` hooks, MCP servers,
     skills and rules and from auto-updating; kimi: pre-trusts the folder (it exits on an untrusted one) and turns off
     its auto-update;
   - runs the CLI never-prompt (`--always-approve` / `--auto`) under a pty that turns tmux's extended-keys Ctrl+M
-    (OpenRig's submit) into Enter, which kimi needs (mvschwarz/openrig#496), and reports busy/idle from the CLI's
+    (OpenRig's submit) into Enter, also when it arrives split across writes, which kimi needs (mvschwarz/openrig#496), and reports busy/idle from the CLI's
     progress sequences, so `rig send --wait-for-idle` and the activity views work;
   - resumes its own session on restore (grok by the id it fixed at first start, kimi with `-c`; `--fresh` starts over).
   Limits of terminal seats on OpenRig 0.6.3: no context %, `set-model` is ignored (the model is in the command), they

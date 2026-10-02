@@ -8,8 +8,10 @@
 OpenRig hosts these as `runtime: terminal` members whose startup action runs this command in the seat's worktree. On
 OpenRig 0.6.3 a terminal seat gets no instruction files, no activity signal and no managed resume, so this command:
   - writes the seat's instructions where the CLI reads project rules, never over the project's own AGENTS.md:
-    grok `.grok/rules/openrig-seat.md`, kimi `.kimi-code/AGENTS.md` (both excluded from git in this worktree). The text
-    is the rig's CULTURE.md (--culture, default <workspace>/rig/CULTURE.md) and the role's guidance/role.md;
+    grok `.grok/rules/openrig-seat.md`, kimi `.kimi-code/AGENTS.md`, kept out of git by a `.gitignore` in the directory
+    the launcher creates (this worktree only). The text is the rig's CULTURE.md (--culture, else
+    $OPENRIG_WORK_ROOT/rig/CULTURE.md, else the nearest one above the seat; none found is an error) and the role's
+    guidance/role.md;
   - grok: Claude-compatible hooks in `.grok/hooks/openrig-activity.json` that call OpenRig's own activity relay, so the
     daemon sees busy/idle (`rig send --wait-for-idle` works); the CLI is kept from loading ~/.claude settings, hooks,
     MCP servers, skills and rules (they belong to the Claude seats), and from auto-updating;
@@ -61,6 +63,22 @@ def kimi_trust_key(root):
     return f"wd_{slug}_{hashlib.sha256(norm.encode()).hexdigest()[:12]}"
 
 
+def find_culture(explicit, cwd, env):
+    """The rig's CULTURE.md: --culture (must exist), else $OPENRIG_WORK_ROOT/rig/CULTURE.md (seats' worktrees usually sit
+    beside the workspace, not inside it), else the nearest <dir>/rig/CULTURE.md above the seat. None found: fail."""
+    if explicit:
+        if not Path(explicit).is_file(): die(f"--culture {explicit}: no such file")
+        return Path(explicit)
+    tried = []
+    if env.get("OPENRIG_WORK_ROOT"):
+        tried.append(Path(env["OPENRIG_WORK_ROOT"]) / "rig/CULTURE.md")
+    tried += [p / "rig/CULTURE.md" for p in [Path(cwd), *Path(cwd).parents]]
+    found = next((p for p in tried if p.is_file()), None)
+    if not found:
+        die("no rig CULTURE.md: pass --culture <file>, set OPENRIG_WORK_ROOT, or --no-culture to start without one")
+    return found
+
+
 def instructions(role, culture, agents_dir):
     parts = ["<!-- Managed by agent-native-seat: regenerated at every start; edit the rig's CULTURE.md or the role's "
              "guidance instead. -->",
@@ -76,31 +94,30 @@ def instructions(role, culture, agents_dir):
     return "\n\n".join(parts).rstrip() + "\n"
 
 
-def exclude(cwd, paths):
-    """Keep the seat's own files out of git status, in this worktree only (never the project's .gitignore)."""
-    git = Path(cwd) / ".git"
-    if git.is_file():   # a linked worktree: .git names the real git dir
-        m = re.match(r"gitdir:\s*(.+)", git.read_text().strip())
-        git = (Path(cwd) / m.group(1)).resolve() if m else None
-    if not git or not git.is_dir():
-        return None
-    info = git / "info" / "exclude"
-    info.parent.mkdir(parents=True, exist_ok=True)
-    have = info.read_text().splitlines() if info.exists() else []
-    add = [p for p in paths if p not in have]
-    if add:
-        with info.open("a") as f:
-            f.write("".join(f"{p}\n" for p in add))
-    return str(info)
+IGNORE = "# agent-native-seat: this seat's own files, never committed\n*\n"
+
+
+def ignores(cwd, rel_files):
+    """Keep the seat's files out of git without touching the project's ignore rules or other worktrees: a `.gitignore`
+    of `*` in the topmost directory each file needs that is the launcher's own (it doesn't exist yet, or already holds
+    this marker). A file whose directories all belong to the project gets none and is reported."""
+    places, visible = set(), []
+    for rel in rel_files:
+        parts, own = Path(rel).parts[:-1], None
+        for i in range(1, len(parts) + 1):
+            d = Path(cwd, *parts[:i])
+            gi = d / ".gitignore"
+            if not d.exists() or (gi.is_file() and gi.read_text() == IGNORE):
+                own = Path(*parts[:i]) / ".gitignore"; break
+        (places.add(str(own)) if own else visible.append(rel))
+    return sorted(places), visible
 
 
 def plan(args, cwd, env):
     """Everything this start writes and runs. Pure apart from reading files and the saved session id."""
     seat = env.get("OPENRIG_SESSION_NAME") or f"{args.cli}-{Path(cwd).name}"
     sdir = state_dir(seat)
-    workspace = Path(cwd)
-    culture = Path(args.culture) if args.culture else next((p / "rig/CULTURE.md" for p in [workspace, *workspace.parents]
-                                                            if (p / "rig/CULTURE.md").is_file()), None)
+    culture = None if args.no_culture else find_culture(args.culture, cwd, env)
     agents_dir = Path(args.agents_dir or Path(__file__).resolve().parent.parent / "rig/template/agents")
     text = instructions(args.role, culture, agents_dir)
     model = args.model or CLIS[args.cli]["model"]
@@ -127,9 +144,11 @@ def plan(args, cwd, env):
         argv = ["kimi", "--auto", "-m", model, *(["-c"] if started else [])]
         state = {"kimi-started": "1"}
         files[str(trust)] = json.dumps({"root": str(Path(cwd).resolve()), "trustedAt": int(time.time() * 1000)})
+    ignore, visible = ignores(cwd, [p for p in files if not os.path.isabs(p)])
+    files.update({g: IGNORE for g in ignore})
     return {"cli": args.cli, "seat": seat, "role": args.role, "model": model, "cwd": str(cwd), "argv": argv,
-            "env": child_env, "files": files, "state_dir": str(sdir), "state": state,
-            "exclude": [p for p in files if not os.path.isabs(p)], "culture": str(culture) if culture else None}
+            "env": child_env, "files": files, "state_dir": str(sdir), "state": state, "ignore": ignore,
+            "visible_to_git": visible, "culture": str(culture) if culture else None}
 
 
 def apply(p):
@@ -138,10 +157,38 @@ def apply(p):
         path.parent.mkdir(parents=True, exist_ok=True)
         if not path.exists() or path.read_text() != text:
             path.write_text(text)
-    exclude(p["cwd"], sorted({r.split("/")[0] + "/" for r in p["exclude"]}))
+    if p["visible_to_git"]:
+        print(f"agent-native-seat: in the project's own directories, so not ignored by git: {', '.join(p['visible_to_git'])}", file=sys.stderr)
     sdir = Path(p["state_dir"]); sdir.mkdir(parents=True, exist_ok=True)
     for name, value in p["state"].items():
         (sdir / name).write_text(value + "\n")
+
+
+PROGRESS_HEAD = b"\x1b]9;4;"
+
+
+def progress_prefix(data):
+    """The longest end of `data` that could still grow into a progress sequence (a prefix of ESC ] 9 ; 4 ;), else b""."""
+    return next((data[-n:] for n in range(min(len(data), len(PROGRESS_HEAD)), 0, -1) if PROGRESS_HEAD.startswith(data[-n:])), b"")
+
+
+class CtrlM:
+    """tmux's extended-keys Ctrl+M → CR, across any chunk boundary: a tail that could still become a Ctrl+M sequence is
+    held (never more than one sequence long) and released unchanged if the next bytes don't complete it, or after a
+    short wait (300 ms; a lone Esc still reaches the CLI)."""
+    def __init__(self):
+        self.held = b""
+    def feed(self, data):
+        data = self.held + data
+        for seq in CTRL_M:
+            data = data.replace(seq, b"\r")
+        cut = next((n for n in range(min(len(data), max(map(len, CTRL_M)) - 1), 0, -1)
+                    if any(seq.startswith(data[-n:]) for seq in CTRL_M)), 0)
+        self.held = data[len(data) - cut:] if cut else b""
+        return data[:len(data) - cut] if cut else data
+    def flush(self):
+        out, self.held = self.held, b""
+        return out
 
 
 def post(event, env, log=None):
@@ -187,10 +234,14 @@ def run(argv, child_env, idle_s=2.0):
     signal.signal(signal.SIGWINCH, winch); winch()
     old = termios.tcgetattr(0) if os.isatty(0) else None
     if old: tty.setraw(0)
-    busy, tail, idle_since = False, b"", None
+    busy, tail, idle_since, keys, held_at = False, b"", None, CtrlM(), None
+    # how long a possible half sequence waits for the rest: seats have no human at the keys, so latency costs nothing
+    hold_s = float(os.environ.get("AGENT_NATIVE_SEAT_KEY_HOLD_MS", "300")) / 1000
     try:
         while True:
-            r, _, _ = select.select([0, fd], [], [], 0.25)
+            r, _, _ = select.select([0, fd], [], [], 0.05 if keys.held else 0.25)
+            if keys.held and 0 not in r and held_at is not None and time.monotonic() - held_at >= hold_s:
+                os.write(fd, keys.flush()); held_at = None
             if busy and idle_since is not None and time.monotonic() - idle_since >= idle_s:
                 busy, idle_since = False, None; post("Stop", env, log)
             if fd in r:
@@ -198,18 +249,23 @@ def run(argv, child_env, idle_s=2.0):
                 except OSError: break
                 if not data: break
                 os.write(1, data)
-                for m in PROGRESS.finditer(tail + data):
+                scan, done_at = tail + data, 0
+                for m in PROGRESS.finditer(scan):
+                    done_at = m.end()
                     if m.group(1) != b"0":
                         idle_since = None
                         if not busy: busy = True; post("active", env, log)
                     elif busy and idle_since is None:
                         idle_since = time.monotonic()
-                tail = data[-16:]
+                tail = progress_prefix(scan[done_at:])   # only an unfinished sequence carries over, never a parsed one
             if 0 in r:
                 data = os.read(0, 65536)
-                if not data: break
-                for seq in CTRL_M: data = data.replace(seq, b"\r")
-                os.write(fd, data)
+                if not data:
+                    if keys.held: os.write(fd, keys.flush())
+                    break
+                out = keys.feed(data)
+                held_at = time.monotonic() if keys.held else None
+                if out: os.write(fd, out)
     finally:
         if old: termios.tcsetattr(0, termios.TCSADRAIN, old)
         last = post("SessionEnd", env, log)
@@ -225,6 +281,7 @@ def main():
     ap.add_argument("--role", required=True, help="a role under rig/template/agents (implementer, reviewer, test-author, …)")
     ap.add_argument("--model", help="model for the CLI (default: grok-4.7-build-fast / kimi-code/k3-256k)")
     ap.add_argument("--culture", help="the rig's CULTURE.md (default: the nearest <dir>/rig/CULTURE.md above the seat)")
+    ap.add_argument("--no-culture", action="store_true", help="start without the rig's culture (not for project seats)")
     ap.add_argument("--agents-dir", help=argparse.SUPPRESS)
     ap.add_argument("--fresh", action="store_true", help="start a new session instead of resuming the seat's own")
     ap.add_argument("--dry-run", action="store_true", help="print what it would write and run, as JSON; change nothing")

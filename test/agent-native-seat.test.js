@@ -32,6 +32,9 @@ import os, sys, json, time, tty
 tty.setraw(0)   # as a real TUI does: keys arrive as typed, CR stays CR
 out = os.environ["FAKE_OUT"]
 with open(out, "w") as f: json.dump({"argv": sys.argv[1:], "env": {k: v for k, v in os.environ.items() if k.startswith(("GROK_", "KIMI_", "TERM_PROGRAM"))}}, f)
+if os.environ.get("FAKE_MODE") == "burst":   # busy and done in one write, quiet past the debounce, then plain output
+    sys.stdout.write("\\x1b]9;4;3\\x07\\x1b]9;4;0\\x07"); sys.stdout.flush(); time.sleep(0.8)
+    sys.stdout.write("."); sys.stdout.flush(); time.sleep(0.2); sys.exit(0)
 sys.stdout.write("\\x1b]9;4;3\\x07working"); sys.stdout.flush()
 import select
 got, deadline = b"", time.time() + 5   # never hang the suite: give up after 5 s without an Enter
@@ -65,7 +68,8 @@ test("grok: instructions beside the project's AGENTS.md, OpenRig's activity rela
   assert.equal(hooks.Stop[0].hooks[0].command, "node /opt/relay.cjs");
   for (const k of ["HOOKS", "MCPS", "SKILLS", "AGENTS", "RULES"]) assert.equal(p.env[`GROK_CLAUDE_${k}_ENABLED`], "false", k);
   assert.equal(p.env.GROK_DISABLE_AUTOUPDATER, "1");
-  assert.deepEqual(p.exclude.sort(), [".grok/hooks/openrig-activity.json", ".grok/rules/openrig-seat.md"]);
+  assert.deepEqual(p.ignore, [".grok/.gitignore"], "one ignore file, in the directory the launcher creates");
+  assert.match(p.files[".grok/.gitignore"], /^# agent-native-seat[^\n]*\n\*\n$/);
   assert.equal(dry("grok", wt, ["--model", "grok-4.7"]).argv[2], "grok-4.7");
 });
 
@@ -120,7 +124,6 @@ test("a real start: files written and excluded from git, Ctrl+M from tmux reache
     }
     assert.ok(fs.existsSync(join(wt, ".grok/rules/openrig-seat.md")) && fs.existsSync(join(wt, ".grok/hooks/openrig-activity.json")));
     assert.equal(fs.readFileSync(join(wt, "AGENTS.md"), "utf8"), "# The app's own agent notes\n", "the project's file is untouched");
-    assert.match(fs.readFileSync(join(wt, ".git/info/exclude"), "utf8"), /^\.grok\/$/m);
     assert.equal(spawnSync("git", ["status", "--porcelain"], { cwd: wt, encoding: "utf8" }).stdout.includes(".grok"), false);
     // the restart resumes the session it fixed
     const first = seen.argv[seen.argv.indexOf("-s") + 1];
@@ -144,3 +147,72 @@ test("outside a seat it reports nothing, and a kimi restart continues its sessio
   assert.ok(fs.readdirSync(join(root, "kh", "workspace-trust")).length === 1, "trusted");
   assert.deepEqual(dry("kimi", wt, [], { KIMI_CODE_HOME: join(root, "kh") }).argv.at(-1), "-c");
 });
+
+// QA PR116 (P1): seats' worktrees usually sit beside the workspace (<app>.worktrees/<seat>, <app>-work/rig/CULTURE.md)
+test("the culture comes from --culture, else $OPENRIG_WORK_ROOT, else above the seat; none, or a missing --culture, is an error", () => {
+  const ws = join(root, "app-work"), wt = join(root, "app.worktrees", "impl-grok-1");
+  fs.mkdirSync(join(ws, "rig"), { recursive: true }); fs.writeFileSync(join(ws, "rig/CULTURE.md"), "# Work-root culture\n");
+  fs.mkdirSync(wt, { recursive: true }); spawnSync("git", ["init", "-q", wt]);
+  const p = dry("grok", wt, [], { OPENRIG_WORK_ROOT: ws });
+  assert.equal(p.culture, join(ws, "rig/CULTURE.md")); assert.match(p.files[".grok/rules/openrig-seat.md"], /# Work-root culture/);
+  const none = spawnSync("python3", [tool, "grok", "--role", "implementer", "--dry-run"], { cwd: wt, encoding: "utf8", env: env({}) });
+  assert.equal(none.status, 2); assert.match(none.stderr, /no rig CULTURE\.md: pass --culture/);
+  const missing = spawnSync("python3", [tool, "grok", "--role", "implementer", "--culture", join(root, "nope.md"), "--dry-run"], { cwd: wt, encoding: "utf8", env: env({ OPENRIG_WORK_ROOT: ws }) });
+  assert.equal(missing.status, 2); assert.match(missing.stderr, /--culture .*nope\.md: no such file/);
+  assert.equal(dry("grok", wt, ["--no-culture"]).culture, null, "an explicit opt-out");
+});
+
+// QA PR116 (P2): a linked worktree (git worktree add) — its own git dir's info/exclude is not read by git
+test("a linked worktree: the seat's files stay out of git status there, without hiding anything in the main worktree", async () => {
+  const main = join(root, "repo-main"); fs.mkdirSync(main, { recursive: true });
+  spawnSync("git", ["init", "-q", main]); fs.writeFileSync(join(main, "a.txt"), "a");
+  spawnSync("git", ["-C", main, "-c", "user.email=t@example.invalid", "-c", "user.name=t", "add", "-A"]);
+  spawnSync("git", ["-C", main, "-c", "user.email=t@example.invalid", "-c", "user.name=t", "commit", "-qm", "init"]);
+  const wt = join(root, "repo.worktrees", "impl-kimi-1");
+  assert.equal(spawnSync("git", ["-C", main, "worktree", "add", "-q", wt]).status, 0);
+  fakeCli(join(root, "bin"), "kimi");
+  const child = spawn("python3", [tool, "kimi", "--role", "reviewer", "--culture", join(root, "g1/rig/CULTURE.md")], { cwd: wt, env: env({ FAKE_OUT: join(root, "lw.json"), KIMI_CODE_HOME: join(root, "kh2") }) });
+  child.stdout.resume(); await new Promise((r) => setTimeout(r, 400)); child.stdin.write("go\r");
+  assert.equal(await new Promise((r) => child.on("exit", r)), 0);
+  assert.ok(fs.existsSync(join(wt, ".kimi-code/AGENTS.md")));
+  assert.equal(spawnSync("git", ["status", "--porcelain"], { cwd: wt, encoding: "utf8" }).stdout, "", "nothing new shows in the linked worktree");
+  fs.mkdirSync(join(main, ".kimi-code"), { recursive: true }); fs.writeFileSync(join(main, ".kimi-code/notes.md"), "mine");
+  assert.match(spawnSync("git", ["status", "--porcelain"], { cwd: main, encoding: "utf8" }).stdout, /\?\? \.kimi-code\//, "the main worktree's own .kimi-code is not hidden");
+  // a directory the project already owns gets no ignore file: the launcher reports the file as visible instead
+  const owned = join(root, "owned"); fs.mkdirSync(join(owned, ".grok/rules"), { recursive: true }); spawnSync("git", ["init", "-q", owned]);
+  const p = dry("grok", owned, ["--culture", join(root, "g1/rig/CULTURE.md")]);
+  assert.deepEqual([p.ignore, p.visible_to_git], [[".grok/hooks/.gitignore"], [".grok/rules/openrig-seat.md"]]);
+});
+
+// QA PR116 (P2): tmux may write a Ctrl+M sequence in more than one chunk
+test("Ctrl+M split across writes still arrives as Enter; a lone Esc and other keys pass through unchanged", async () => {
+  const { wt } = workspace("split");
+  fakeCli(join(root, "bin"), "grok");
+  for (const [label, parts, want] of [["CSI u", ["x\x1b[109;", "5u"], "x\r"], ["modifyOtherKeys", ["y\x1b[27;5;", "13~"], "y\r"],
+      ["byte by byte", [..."z\x1b[109;5u"], "z\r"], ["lone Esc then Enter", ["\x1b", "\x1b[A", "\r"], "\x1b\x1b[A\r"]]) {
+    const out = join(root, `split-${label.replace(/\W+/g, "-")}.json`);
+    const child = spawn("python3", [tool, "grok", "--role", "implementer"], { cwd: wt, env: env({ FAKE_OUT: out, AGENT_STACK_STATE: join(root, `st-${label.length}`) }) });
+    child.stdout.resume(); await new Promise((r) => setTimeout(r, 400));
+    for (const part of parts) { child.stdin.write(part); await new Promise((r) => setTimeout(r, 120)); }
+    assert.equal(await new Promise((r) => child.on("exit", r)), 0, label);
+    assert.equal(fs.readFileSync(out + ".stdin", "latin1"), want, label);
+  }
+});
+
+// QA PR116 (P2): a progress sequence already acted on is never counted again when ordinary output follows
+test("progress: each sequence counts once; plain output after a finished turn is not a new turn", async () => {
+  const { wt } = workspace("burst");
+  fakeCli(join(root, "bin"), "grok");
+  const posts = [];
+  const server = http.createServer((req, res) => { let b = ""; req.on("data", (d) => (b += d)); req.on("end", () => { posts.push(JSON.parse(b).hookEvent); res.end("{}"); }); });
+  await new Promise((r) => server.listen(0, "127.0.0.1", r));
+  try {
+    const child = spawn("python3", [tool, "grok", "--role", "implementer"], { cwd: wt, env: env({ FAKE_OUT: join(root, "burst.json"), FAKE_MODE: "burst",
+      OPENRIG_URL: `http://127.0.0.1:${server.address().port}`, OPENRIG_SESSION_NAME: "impl-grok-1@demo", OPENRIG_ACTIVITY_HOOK_TOKEN: "tok", AGENT_NATIVE_SEAT_IDLE_S: "0.3" }) });
+    child.stdout.resume();
+    assert.equal(await new Promise((r) => child.on("exit", r)), 0);
+    await new Promise((r) => setTimeout(r, 300));
+    assert.deepEqual(posts, ["active", "Stop", "SessionEnd"]);
+  } finally { server.close(); }
+});
+
