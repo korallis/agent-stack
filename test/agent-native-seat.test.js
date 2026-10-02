@@ -241,26 +241,44 @@ test("hook mode: notes only the event's name, then hands the payload unchanged t
 test("idle keepalive: an idle seat re-reports idle (first soon after start, then on an interval); a busy grok, by its last hook, does not", async () => {
   const { wt } = workspace("keep");
   fs.mkdirSync(join(root, "kbin"), { recursive: true });
-  fs.writeFileSync(join(root, "kbin", "grok"), "#!/bin/sh\nsleep 2\n", { mode: 0o755 });
-  fs.writeFileSync(join(root, "kbin", "kimi"), "#!/bin/sh\nsleep 2\n", { mode: 0o755 });
-  const run = async (cli, lastHook) => {
+  // the CLI stays up until the test has seen enough (no fixed lifetime: a loaded CI runner starts Python slowly)
+  fs.writeFileSync(join(root, "kbin", "grok"), "#!/bin/sh\nexec sleep 60\n", { mode: 0o755 });
+  fs.writeFileSync(join(root, "kbin", "kimi"), "#!/bin/sh\nexec sleep 60\n", { mode: 0o755 });
+  // want: resolve once that many idle reports arrived (20 s deadline); null: watch a window that is eight keepalive
+  // intervals long, in which an idle seat would have reported several times, and count
+  const run = async (cli, lastHook, want = null) => {
     const posts = [], st = join(root, `kst-${cli}-${lastHook}`);
     const seatDir = join(st, "native-seats", `impl-${cli}-1@demo`);
     if (lastHook) { fs.mkdirSync(seatDir, { recursive: true }); fs.writeFileSync(join(seatDir, "last-hook.json"), JSON.stringify({ event: lastHook, t: 0 })); }
-    const server = http.createServer((req, res) => { let b = ""; req.on("data", (d) => (b += d)); req.on("end", () => { posts.push(JSON.parse(b).hookEvent); res.end("{}"); }); });
+    let enough; const reached = new Promise((r) => (enough = r));
+    const server = http.createServer((req, res) => { let b = ""; req.on("data", (d) => (b += d)); req.on("end", () => {
+      posts.push(JSON.parse(b).hookEvent); res.end("{}");
+      if (want && posts.filter((p) => p === "idle").length >= want) enough();
+    }); });
     await new Promise((r) => server.listen(0, "127.0.0.1", r));
+    const child = spawn("python3", [tool, cli, "--role", "implementer", "--culture", join(root, "keep/rig/CULTURE.md")], { cwd: wt, detached: true,
+      env: { ...env({ AGENT_STACK_STATE: st, KIMI_CODE_HOME: join(root, "kkh") }), PATH: `${join(root, "kbin")}:/usr/bin:/bin`, OPENRIG_URL: `http://127.0.0.1:${server.address().port}`,
+        OPENRIG_SESSION_NAME: `impl-${cli}-1@demo`, OPENRIG_ACTIVITY_HOOK_TOKEN: "tok", AGENT_NATIVE_SEAT_FIRST_IDLE_S: "0.3", AGENT_NATIVE_SEAT_KEEPALIVE_S: "0.3" } });
+    child.stdout.resume(); child.stderr.resume();
+    const exited = new Promise((r) => child.on("exit", r));
     try {
-      const child = spawn("python3", [tool, cli, "--role", "implementer", "--culture", join(root, "keep/rig/CULTURE.md")], { cwd: wt,
-        env: { ...env({ AGENT_STACK_STATE: st, KIMI_CODE_HOME: join(root, "kkh") }), PATH: `${join(root, "kbin")}:/usr/bin:/bin`, OPENRIG_URL: `http://127.0.0.1:${server.address().port}`,
-          OPENRIG_SESSION_NAME: `impl-${cli}-1@demo`, OPENRIG_ACTIVITY_HOOK_TOKEN: "tok", AGENT_NATIVE_SEAT_FIRST_IDLE_S: "0.3", AGENT_NATIVE_SEAT_KEEPALIVE_S: "0.6" } });
-      child.stdout.resume(); child.stderr.resume();
-      await new Promise((r) => child.on("exit", r)); await new Promise((r) => setTimeout(r, 300));
+      let timer;
+      await Promise.race([want ? reached : new Promise((r) => setTimeout(r, 2500)), new Promise((r) => (timer = setTimeout(r, 20000))), exited]);
+      clearTimeout(timer);
       return posts.filter((p) => p === "idle").length;
-    } finally { server.close(); }
+    } finally {
+      try { process.kill(-child.pid, "SIGTERM"); } catch {}
+      await Promise.race([exited, new Promise((r) => setTimeout(r, 3000))]);
+      server.close();
+    }
   };
-  assert.ok(await run("grok", "Stop") >= 3, "grok idle after a turn: idle at 0.3 s, 0.9 s, 1.5 s");
-  assert.ok(await run("grok", "SessionStart") >= 3, "a fresh grok session is idle at its prompt");
+  assert.ok(await run("grok", "Stop", 3) >= 3, "grok idle after a turn: idle soon after start, then on every interval");
+  assert.ok(await run("grok", "SessionStart", 3) >= 3, "a fresh grok session is idle at its prompt");
   assert.equal(await run("grok", "UserPromptSubmit"), 0, "grok mid-turn: no idle");
   assert.equal(await run("grok", null), 0, "grok before any hook: not known, nothing said");
-  assert.ok(await run("kimi", null) >= 3, "kimi: idle while no progress sequence runs");
+  assert.ok(await run("kimi", null, 3) >= 3, "kimi: idle while no progress sequence runs");
+  // grok's own spellings (seen live, WO96): snake_case as well as PascalCase
+  assert.ok(await run("grok", "session_start", 3) >= 3, "grok's session_start");
+  assert.ok(await run("grok", "stop", 3) >= 3, "grok's stop");
+  assert.equal(await run("grok", "pre_tool_use"), 0, "grok's pre_tool_use is a turn");
 });
