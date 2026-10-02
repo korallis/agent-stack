@@ -1,0 +1,7 @@
+[Unit]
+Description=Observe token-limit failures every minute
+[Timer]
+OnBootSec=1min
+OnUnitActiveSec=1min
+[Install]
+WantedBy=timers.target
