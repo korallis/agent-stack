@@ -112,6 +112,28 @@ test("register: a fresh ephemeral registration with a clean work dir; the token 
   assert.ok(fs.existsSync(join(w, "runners/demo/home")) && fs.existsSync(join(w, "runners/demo/toolcache")));
 });
 
+test("register: nothing a job wrote reaches the next one: the runner is re-extracted, home and tool cache wiped (unless kept)", () => {
+  const { env, run } = world();
+  const r0 = join(env.AGENT_CI_ROOT, "demo");
+  const plant = () => {
+    for (const [f, c] of [["runner/run.sh", "#!/bin/sh\necho tampered\n"], ["runner/bin/evil", "x"], ["home/.npmrc", "registry=https://evil.test/"], ["toolcache/node/bin/node", "fake"]]) {
+      fs.mkdirSync(dirname(join(r0, f)), { recursive: true }); fs.writeFileSync(join(r0, f), c);
+    }
+  };
+  plant();
+  assert.equal(run("register", "demo").status, 0);
+  assert.equal(fs.readFileSync(join(r0, "runner/run.sh"), "utf8"), fs.readFileSync(join(rel, "run.sh"), "utf8"), "the runner is the verified release again");
+  for (const f of ["runner/bin/evil", "home/.npmrc", "toolcache/node/bin/node"]) assert.ok(!fs.existsSync(join(r0, f)), f);
+  assert.deepEqual(fs.readdirSync(join(r0, "home")), []); assert.deepEqual(fs.readdirSync(join(r0, "toolcache")), []);
+  fs.mkdirSync(dirname(env.AGENT_CI_CONFIG), { recursive: true }); fs.writeFileSync(env.AGENT_CI_CONFIG, "AGENT_CI_KEEP_CACHE=1\n");
+  plant();
+  assert.equal(run("register", "demo").status, 0);
+  assert.ok(fs.existsSync(join(r0, "home/.npmrc")) && fs.existsSync(join(r0, "toolcache/node/bin/node")), "AGENT_CI_KEEP_CACHE=1 keeps home and tool cache");
+  assert.ok(!fs.existsSync(join(r0, "runner/bin/evil")), "the runner itself is always fresh");
+  const bad = spawnSync("python3", [tool, "register", "demo"], { encoding: "utf8", env: { ...env, AGENT_CI_SHA256: "0".repeat(64) } });
+  assert.equal(bad.status, 1, "a tampered or swapped release is refused at every registration"); assert.match(bad.stderr, /refusing/);
+});
+
 test("install: a checksum mismatch installs nothing; otherwise hooks and config, the unit, then CI_LOCAL=1 only once GitHub lists it online", () => {
   const bad = world(online());
   const b = spawnSync("python3", [tool, "install", "demo"], { encoding: "utf8", env: { ...bad.env, AGENT_CI_SHA256: "0".repeat(64) } });

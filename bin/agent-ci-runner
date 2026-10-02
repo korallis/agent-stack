@@ -51,6 +51,8 @@ AGENT_CI_MAX_JOBS=2
 AGENT_CI_MAX_LOAD_PER_CPU=1.0
 AGENT_CI_MIN_MEM_GB=6
 AGENT_CI_GATE_WAIT_S=900
+# 1 keeps each runner's home and tool cache between jobs (faster; a same-repo PR job could leave files a later job uses)
+AGENT_CI_KEEP_CACHE=0
 """
 
 
@@ -145,16 +147,36 @@ def run_config(repo, args, tok):
     return r.returncode, tail
 
 
-def cmd_register(repo):
+def config_value(name, default):
+    if CONFIG.is_file():
+        m = re.search(rf"^{name}=([0-9.]+)$", CONFIG.read_text(), re.M)
+        if m:
+            return m.group(1)
+    return default
+
+
+def extract_runner(repo):
+    tarball = fetch_runner()  # verified before anything is replaced
     d = runner_dir(repo)
-    if not (d / "config.sh").is_file():
-        die(f"{d} has no runner; run agent-ci-runner install {repo}")
+    shutil.rmtree(d, ignore_errors=True)
+    d.mkdir(parents=True)
+    with tarfile.open(tarball) as t:
+        t.extractall(d, filter="tar")
+    (d / ".agent-ci-version").write_text(VERSION + "\n")
+
+
+def cmd_register(repo):
+    if not runner_dir(repo).is_dir():
+        die(f"{runner_dir(repo)} has no runner; run agent-ci-runner install {repo}")
     (STATE / "slots" / repo).unlink(missing_ok=True)  # a (re)start means the previous job is over
-    shutil.rmtree(d / "_work", ignore_errors=True)
-    for f in (".runner", ".credentials", ".credentials_rsaparams"):
-        (d / f).unlink(missing_ok=True)
-    (ROOT / repo / "home").mkdir(parents=True, exist_ok=True)
-    (ROOT / repo / "toolcache").mkdir(parents=True, exist_ok=True)
+    # Nothing a job wrote may reach the next one: the job can write its whole runner directory, so the runner itself
+    # is re-extracted from the checksum-verified release (with a fresh _work), and its home and tool cache are wiped,
+    # unless AGENT_CI_KEEP_CACHE=1 keeps those two (faster; a same-repo PR job could then leave files a later job uses).
+    extract_runner(repo)
+    for sub in ("home", "toolcache"):
+        if config_value("AGENT_CI_KEEP_CACHE", "0") != "1":
+            shutil.rmtree(ROOT / repo / sub, ignore_errors=True)
+        (ROOT / repo / sub).mkdir(parents=True, exist_ok=True)
     rc, tail = run_config(repo, ["--unattended", "--ephemeral", "--replace", "--disableupdate",
                                  "--url", f"https://github.com/{OWNER}/{repo}", "--name", f"{HOST}-{repo}",
                                  "--labels", LABEL, "--work", "_work"], token(repo, "registration"))
@@ -213,14 +235,7 @@ def cmd_install(repo, dry):
         print(f"would install runner {VERSION} into {d}, start {unit(repo)} (sandboxed, agent-heavy.slice), "
               f"wait for {HOST}-{repo} online, then set {VAR}=1 on {OWNER}/{repo}")
         return
-    tarball = fetch_runner()
-    marker = d / ".agent-ci-version"
-    if not marker.is_file() or marker.read_text().strip() != VERSION:
-        shutil.rmtree(d, ignore_errors=True)
-        d.mkdir(parents=True)
-        with tarfile.open(tarball) as t:
-            t.extractall(d, filter="tar")
-        marker.write_text(VERSION + "\n")
+    extract_runner(repo)
     install_hooks()
     (STATE / f"{repo}.paused").unlink(missing_ok=True)
     systemctl("daemon-reload")
