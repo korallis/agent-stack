@@ -72,8 +72,8 @@ def options(args):
         elif a.startswith("-") and len(a) > 1:
             name = a[:2]
             if name in VALUE_OPTS:
-                if len(a) > 2:
-                    yield name, a[2:]
+                if len(a) > 2:   # attached: -cKEY=V, and -c=KEY=V, which Codex accepts too
+                    yield name, a[3:] if a[2] == "=" else a[2:]
                 elif i < len(args):
                     yield name, args[i]
                     i += 1

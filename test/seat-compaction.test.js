@@ -50,6 +50,13 @@ test("Codex seats: an auto-compact limit (300k leads/architects, 200k otherwise)
   assert.deepEqual(limits(resumed), ["200000"]);
   assert.ok(resumed.indexOf("model_auto_compact_token_limit=200000") < resumed.indexOf("resume"), "a global option, before the subcommand");
   assert.deepEqual(limits(launch({ OPENRIG_SESSION_NAME: "impl-codex-1@app" }, "-c", "model_auto_compact_token_limit=150000")), ["150000"], "never duplicated");
+  // every spelling Codex accepts counts as the caller's own (QA PR117: -c=KEY=V)
+  for (const spelled of [["-cmodel_auto_compact_token_limit=150000"], ["-c=model_auto_compact_token_limit=150000"], ["--config", "model_auto_compact_token_limit=150000"], ["--config=model_auto_compact_token_limit=150000"]]) {
+    const argv = launch({ OPENRIG_SESSION_NAME: "impl-codex-1@app" }, ...spelled);
+    assert.equal(argv.filter((a) => /model_auto_compact_token_limit=200000/.test(a)).length, 0, spelled.join(" "));
+  }
+  // the same parser decides the approval default: -c=approval_policy=... is the caller's choice too
+  assert.ok(!launch({}, "-c=approval_policy=on-request").includes("never"), "-c=approval_policy is kept, no -a never added");
   assert.deepEqual(limits(launch({ OPENRIG_SESSION_NAME: "impl-codex-1@app", AGENT_CODEX_AUTO_COMPACT_TOKENS: "250000" })), ["250000"]);
   assert.deepEqual(limits(launch({ OPENRIG_SESSION_NAME: "impl-codex-1@app", AGENT_CODEX_AUTO_COMPACT_TOKENS: "lots" })), [], "a non-number sets nothing");
 });
