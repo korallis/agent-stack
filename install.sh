@@ -134,10 +134,18 @@ if [ $CHECK = 0 ]; then
   mkdir -p "$HOME/.claude"; [ -f "$HOME/.claude/settings.json" ] || echo '{}' > "$HOME/.claude/settings.json"
   # Claude never asks for permission: seats already get --dangerously-skip-permissions from builtin:yolo; this makes it the
   # default for every Claude session too, and skipDangerousModePermissionPrompt stops the bypass warning from exiting seats.
-  tmp=$(mktemp); jq -s '.[0] * {skipDangerousModePermissionPrompt: true, permissions: ((.[0].permissions // {}) + {defaultMode: "bypassPermissions"})}' "$HOME/.claude/settings.json" > "$tmp" && mv "$tmp" "$HOME/.claude/settings.json"
+  # Claude Code 2.1.287: false pauses flagged turns instead of silently switching to an older model.
+  tmp=$(mktemp)
+  if jq -s '.[0] * {switchModelsOnFlag: false, skipDangerousModePermissionPrompt: true, permissions: ((.[0].permissions // {}) + {defaultMode: "bypassPermissions"})}' "$HOME/.claude/settings.json" > "$tmp"; then
+    if cmp -s "$tmp" "$HOME/.claude/settings.json"; then rm -f "$tmp"; else
+      backup "$HOME/.claude/settings.json"; mv "$tmp" "$HOME/.claude/settings.json"
+    fi
+  else rm -f "$tmp"; exit 1; fi
 fi
 if jq -e '.skipDangerousModePermissionPrompt == true and .permissions.defaultMode == "bypassPermissions"' "$HOME/.claude/settings.json" >/dev/null 2>&1; then
   ok "~/.claude/settings.json: bypassPermissions + skipDangerousModePermissionPrompt"; else todo "~/.claude/settings.json: bypassPermissions + skipDangerousModePermissionPrompt"; fi
+if jq -e '.switchModelsOnFlag == false' "$HOME/.claude/settings.json" >/dev/null 2>&1; then
+  ok "~/.claude/settings.json: switchModelsOnFlag = false"; else todo "~/.claude/settings.json: switchModelsOnFlag should be false"; fi
 # Credential read guard: seats never stop for permission, so a PreToolUse hook (Claude: Bash|Read|Grep; Codex: Bash,
 # trusted by hash) refuses a command or read that would print a credential file into the transcript. Local extra
 # paths: one glob per line in $C/credguard-read-paths. Claude sessions pick it up live; Codex seats at next launch.

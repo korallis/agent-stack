@@ -373,6 +373,10 @@ Details are in the `agent-stack` skill. What went wrong before: [docs/incidents/
     config (backup first).
   - `~/.claude/settings.json` sets `permissions.defaultMode = "bypassPermissions"` for every Claude session.
     `skipDangerousModePermissionPrompt` stops the bypass warning dialog from exiting seats.
+  - `~/.claude/settings.json` sets `switchModelsOnFlag = false` (Claude Code 2.1.287). A flagged turn pauses
+    instead of silently continuing on an older model. `/config` calls this choice "Ask each time" under
+    "Switch models when a message is flagged". This is a shared user default; project or command-line settings can
+    override it. It does not disable model safeguards. The install backs up changed settings and preserves other keys.
   - Verify on a new machine or project with `agent-never-prompt-check [--rig <rig> --spec <rig.yaml>]`
     (`agent-project-check` runs it too). Relaunch Codex seats that report FAIL.
 - **Jev:** MCP server `jev` registered at user scope in both harnesses (runs outside the Codex sandbox); `TYPESAFE_API_KEY`
