@@ -2,7 +2,10 @@
 # openrig-ensure [--check]: install.sh's OpenRig step. NEVER downgrades.
 #   - OpenRig missing, or the pin (OPENRIG_VERSION, config/versions*.env) NEWER than the installed one: openrig-upgrade <pin>
 #   - the installed one NEWER than the pin: kept, and the pin follows it (config/versions.env), with a note
-#   - equal: nothing
+#   - equal: nothing to install
+#   In the last two cases the installed version's local patches are applied (openrig-apply-patches, which skips the
+#   applied ones): a patch added for a version already installed reached it only by hand before (WO94, patch 143). A
+#   newly applied patch loads at the daemon's next start; this never restarts it.
 # A stale pin once downgraded 0.6.1 to 0.5.17 against a database 0.6.1 had migrated, unpatched (2026-09-30).
 #   --check  report only: "ok" or "WARN" when installed != pin, "FAIL" when the installed version's local patches are
 #            not all applied (openrig-apply-patches --check); exit 1 on FAIL. Changes nothing.
@@ -39,3 +42,8 @@ elif ver_gt "$have" "$pin"; then
 else
   echo "OpenRig $have (= pin)"
 fi
+out=$("$S/bin/openrig-apply-patches" "$PKG" 2>&1); echo "$out"
+case "$out" in
+  *"patches: applied none;"*) ;;
+  *"patches: applied "*) echo "note: the newly applied OpenRig patches load at the daemon's next start: cycle it at a quiet moment (openrig-daemon-cycle)" ;;
+esac
