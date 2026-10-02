@@ -216,7 +216,7 @@ test("D: the ~/.local/bin/rig launcher install.sh writes sends create through th
 test("D: CULTURE, the agent-stack skill and the kernel operator's guidance say: always give a human row a short subject", () => {
   const repo = join(dirname(helper), "..");
   const flat = (p) => fs.readFileSync(join(repo, p), "utf8").replace(/\s+/g, " ");
-  assert.match(flat("rig/template/CULTURE.md"), /Every row to a human \(the owner, any `\*@external`\) gets a short subject: `--summary/);
+  assert.match(flat("rig/template/guidance/coordination.md"), /Every row to a human \(the owner, any `\*@external`\) gets a short subject: `--summary/);
   assert.match(flat("skills/agent-stack/SKILL.md"), /every row to a human \(`\*@external`\) gets a short `--summary`/);
   assert.match(flat("system/operator-guidance"), /Give every row to a human \(`\*@external`\) a short subject: `--summary/);
 });

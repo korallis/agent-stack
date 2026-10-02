@@ -7,6 +7,7 @@ improves every repo's rig the next time it launches.
 | File | What it is |
 |---|---|
 | `agents/<role>/` | lead, deputy, architect, test-author, implementer, qa, reviewer, integrator (merge owner), recovery |
+| `guidance/*.md` | procedures loaded when the role needs them; copy beside CULTURE.md |
 | `CULTURE.md` | shared team rules (copy into each rig folder and append that repo's specifics) |
 | `core.yaml` | 4 seats: Claude lead, Codex implementer, Codex reviewer, Claude merge owner |
 | `team.yaml` | 24 seats: balanced 12 Claude + 12 Codex |
@@ -49,6 +50,7 @@ git worktree add --detach $WT/integ-claude main
 # 3. rig folder
 mkdir -p $W/rig; cd $W/rig
 cp ~/Projects/agent-stack/rig/template/{core.yaml,CULTURE.md,merge-sweep.watchdog.yaml} .
+cp -r ~/Projects/agent-stack/rig/template/guidance .
 sed -i "s#@RIG@#$RIG#g; s#@REPO@#$R#g; s#@WT@#$WT#g; s#@AGENT_STACK@#$HOME/Projects/agent-stack#g; s#@MERGE_SEAT@#integ-claude#g; s#@LEAD_SEAT@#coord-lead-claude#g" core.yaml merge-sweep.watchdog.yaml   # or build.yaml / team.yaml / fallback-codex.yaml
 #    append a "<Repo> specifics" section to CULTURE.md (status names, Jev procedure, commit identity)
 rig spec validate core.yaml && rig up core.yaml

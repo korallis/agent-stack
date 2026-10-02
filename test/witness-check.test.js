@@ -97,7 +97,7 @@ test("templates require agent-heavy for heavy runs and forbid pattern pkill", ()
   const rules = culture.split(/^## /m).find(s => s.startsWith("Operating rules"));
   assert.match(rules, /`agent-heavy build -- <cmd>`/);
   assert.match(rules, /`agent-heavy browser -- <cmd>`/);
-  assert.match(rules, /Never `pkill -f`\/`killall` by a pattern/);
+  assert.match(rules, /no pattern-based killall or pkill/);
   const agents = fs.readFileSync(join(repo, "starter-kit/AGENTS.md"), "utf8");
   for (const cmd of ["agent-heavy build -- npm test", "agent-heavy browser -- npx playwright test"]) assert.ok(agents.includes(cmd), cmd);
   assert.doesNotMatch(agents, /`npx playwright test`/, "no bare playwright run left in How to run");
@@ -111,10 +111,10 @@ test("templates require agent-heavy for heavy runs and forbid pattern pkill", ()
 // WO25 A: research -> plan -> implement is the template default.
 test("templates carry Research, plan, implement: the CULTURE section and the four role lines", () => {
   const culture = fs.readFileSync(join(repo, "rig/template/CULTURE.md"), "utf8");
-  const sec = culture.split(/^## /m).find((s) => s.startsWith("Research, plan, implement (binding)"));
+  const sec = culture.split(/^## /m).find((s) => s.startsWith("Research, plan, implement"));
   assert.ok(sec, "section present");
-  assert.ok(culture.indexOf("## Research, plan, implement") < culture.indexOf("## Done means a person could use it"), "before Done means");
-  assert.match(sec, /Record both under `## Research` and `## Plan` in the slice's PROGRESS\.md before the first code commit/);
+  assert.ok(culture.indexOf("## Research, plan, implement") < culture.indexOf("Prove user-facing work"), "before Done means");
+  assert.match(sec, /Before code,[\s\S]*Record `## Research`[\s\S]*`## Plan`[\s\S]*slice PROGRESS\.md/);
   const role = (r) => fs.readFileSync(join(repo, `rig/template/agents/${r}/guidance/role.md`), "utf8");
   assert.match(role("implementer"), /`## Research` .* and `## Plan` .* into the slice's PROGRESS\.md/s);
   assert.match(role("implementer"), /writing-plans → test-driven-development/, "Superpowers line kept as the plan tool");
@@ -143,9 +143,9 @@ test("agent-project-check WARNs when the rig's CULTURE.md lacks Research, plan, 
 const WORKFLOW = ["bug-review-board", "verification-guide", "blast-radius", "review-lenses", "unslop", "technical-writing"];
 test("templates carry the Workflow skills: the CULTURE section names each skill; every role names its skills and says when", () => {
   const culture = fs.readFileSync(join(repo, "rig/template/CULTURE.md"), "utf8");
-  const sec = culture.split(/^## /m).find((s) => s.startsWith("Workflow skills (binding)"));
+  const sec = culture.split(/^## /m).find((s) => s.startsWith("Workflow skills"));
   assert.ok(sec, "section present");
-  assert.ok(culture.indexOf("## Workflow skills") < culture.indexOf("## Done means a person could use it"));
+  assert.ok(culture.indexOf("## Workflow skills") < culture.indexOf("Prove user-facing work"));
   for (const n of WORKFLOW) assert.match(sec, new RegExp("`" + n + "`"), n);
   const expect = { qa: ["bug-review-board", "verification-guide", "unslop"], reviewer: ["review-lenses", "blast-radius", "unslop"],
     integrator: ["blast-radius", "bug-review-board"], architect: ["verification-guide", "technical-writing"],
@@ -192,7 +192,7 @@ test("templates: Owner decisions are the owner's only, with a source; operator a
   assert.match(sec("Owner decisions"), /When an\s+owner answer is ambiguous, ask \(through the operator\) before recording it/);
   assert.ok(sec("Operator and lead rules (not the owner's decisions)"), "the separate section exists");
   assert.ok(culture.indexOf("## Owner decisions") < culture.indexOf("## Operator and lead rules") && culture.indexOf("## Operator and lead rules") < culture.indexOf("## Operating rules"));
-  assert.match(sec("Workflow skills"), /A Jev HOLD in ANY band \(act, review or\s+uncertain\) blocks the merge unless the owner waives it[\s\S]*the\s+confirm path applies only to a Jev MERGE below the act bar, never to a HOLD/);
+  assert.match(fs.readFileSync(join(repo, "rig/template/guidance/delivery.md"), "utf8"), /A Jev HOLD in ANY band \(act, review or\s+uncertain\) blocks the merge unless the owner waives it[\s\S]*the\s+confirm path applies only to a Jev MERGE below the act bar, never to a HOLD/);
   const role = (r) => fs.readFileSync(join(repo, `rig/template/agents/${r}/guidance/role.md`), "utf8");
   assert.match(role("lead"), /"Owner decisions" holds ONLY the owner's own decisions[\s\S]*Never write your interpretation[\s\S]*ask \(through the operator\) before recording/);
   assert.match(role("integrator"), /Jev chose HOLD in ANY band \(act, review or uncertain\)[\s\S]*an operator or lead rule never overrides a HOLD/);

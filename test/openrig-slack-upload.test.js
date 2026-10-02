@@ -290,7 +290,7 @@ test("live check refuses a group/world-readable env file, a relative or non-atta
 test("141 is carried for the pin and documented; agents are told how to attach proof", () => {
   const readme = fs.readFileSync(join(repo, "patches/openrig/README.md"), "utf8");
   assert.match(readme, /\| `141-slack-upload-encoding-and-video` \| \*\*kept/);
-  const culture = fs.readFileSync(join(repo, "rig/template/CULTURE.md"), "utf8");
+  const culture = fs.readFileSync(join(repo, "rig/template/guidance/coordination.md"), "utf8");
   assert.match(culture, /--evidence-ref <absolute path/); assert.match(culture, /\.mp4/);
   assert.match(culture, /never in `\/tmp`/);
 });

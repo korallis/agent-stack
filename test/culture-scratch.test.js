@@ -11,9 +11,9 @@ import { fileURLToPath } from "node:url";
 const repo = join(dirname(fileURLToPath(import.meta.url)), "..");
 
 test("CULTURE.md's TMPDIR example parses; each job gets its own dir under ~/.cache/<rig>-tmp/<seat> and removes only that", () => {
-  const culture = fs.readFileSync(join(repo, "rig/template/CULTURE.md"), "utf8");
+  const culture = fs.readFileSync(join(repo, "rig/template/guidance/host-operations.md"), "utf8");
   const example = (culture.match(/`(s=\$\{OPENRIG_SESSION_NAME[^`]*)`/) || [])[1];
-  assert.ok(example, "the example is in CULTURE.md");
+  assert.ok(example, "the example is in host-operations.md");
   assert.equal(spawnSync("bash", ["-n", "-c", example]).status, 0, "bash -n");
   const home = fs.mkdtempSync(join(os.tmpdir(), "culture-")), root = join(home, ".cache/shop-tmp/impl-claude");
   try {

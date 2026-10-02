@@ -122,3 +122,29 @@ test("an explicit workspace path is checked, not ~/Projects/<name>-work (QA PR50
   const row = rows.find((x) => x.check.startsWith("seat instructions carry the current CULTURE.md and startup files"));
   assert.equal(row.level, "WARN"); assert.match(row.detail, /coord-lead\/CLAUDE\.local\.md \(CULTURE\.md out of date; startup\/context\.md out of date\)/);
 });
+
+
+test("project check warns on oversized startup instructions including role text", () => {
+  setup(own + B("CULTURE.md", "culture v2") + B("startup/context.md", "context v2"));
+  fs.writeFileSync(join(W, "project.yaml"), "kind: project\n");
+  const bin = join(home, "size-bin"); fs.mkdirSync(bin, { recursive: true });
+  fs.writeFileSync(join(bin, "rig"), `#!/bin/sh\nif [ "$1" = ps ]; then echo '[{"name":"p","status":"running"}]'; fi\n`, { mode: 0o755 });
+  const checkSize = () => {
+    const r = spawnSync("python3", [join(repo, "bin/agent-project-check"), "P", "--json"], {
+      encoding: "utf8", env: { HOME: home, PATH: `${bin}:${process.env.PATH}`, OPENRIG_URL: "http://127.0.0.1:9", AGENT_OWNER_ADDRESS: "owner@external" } });
+    const row = JSON.parse(r.stdout).find(x => x.check.startsWith("seat startup instructions"));
+    assert.ok(row, "size check exists"); return row;
+  };
+  assert.equal(checkSize().level, "OK");
+  fs.appendFileSync(join(WT, "coord-lead/CLAUDE.local.md"), "x".repeat(24001));
+  const oversized = checkSize();
+  assert.equal(oversized.level, "WARN"); assert.match(oversized.detail, /coord-lead/);
+  setup(own + B("CULTURE.md", "culture v2") + B("startup/context.md", "context v2"));
+  const role = join(home, "role"); fs.mkdirSync(join(role, "guidance"), { recursive: true });
+  fs.writeFileSync(join(role, "agent.yaml"), "profiles: {}\n");
+  fs.writeFileSync(join(role, "guidance/role.md"), "x".repeat(24001));
+  const spec = join(W, "rig/team.yaml");
+  fs.writeFileSync(spec, fs.readFileSync(spec, "utf8").replace("      - id: lead", `      - id: lead\n        agent_ref: path:${role}`));
+  assert.equal(checkSize().level, "WARN", "role first-message text counts too");
+
+});
