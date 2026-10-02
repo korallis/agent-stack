@@ -147,3 +147,25 @@ test("native grok and kimi seats pass the instruction check with launcher-writte
   const old = await checkAll(seatSpec, [], { setup: (home, W) => { culture(W); launch(home, W); write(join(W, "rig/CULTURE.md"), "# Culture\nA newer rule.\n"); } });
   assert.match(stale(old)?.detail ?? "", /impl-grok-1\/\.grok\/rules\/openrig-seat\.md \(older than the rig's CULTURE\.md or the implementer role: relaunch the seat\)/);
 });
+
+// QA PR118 P1: the roster's own seats, through the real dispatch consumer (seats() over `rig ps --nodes`, WO90).
+test("dispatch sees standard.yaml's seats: the five native seats with their families, reviewers across three families", async () => {
+  const yaml = fs.readFileSync(join(repo, "rig/template/standard.yaml"), "utf8");
+  const nodes = members(yaml).map(([pod, id, runtime, model]) => ({ logicalId: `${pod}.${id}`, canonicalSessionName: `${pod}-${id}@t`, runtime,
+    model, lifecycleState: "running", sessionStatus: "running", agentActivity: { state: "idle" }, assignedWorkCount: 0, pendingWorkCount: 0 }));
+  const bin = fs.mkdtempSync(join(root, "ps-"));
+  write(join(bin, "rig"), `#!/bin/sh\ncat "${join(bin, "nodes.json")}"\n`, 0o755); write(join(bin, "nodes.json"), JSON.stringify(nodes));
+  process.env.AGENT_STACK_STATE ??= fs.mkdtempSync(join(root, "state-"));
+  const { seats, eligibleFamilies, pickSeat, reviewerFor, ROLE_CHAIN } = await import("../orchestration/lib.js");
+  const { seatCandidates } = await import("../orchestration/pickseat.js");
+  const old = process.env.PATH; let all;
+  try { process.env.PATH = `${bin}:${old}`; all = seats("t"); } finally { process.env.PATH = old; }
+  assert.equal(all.length, 16, "every seat of the roster is a dispatch seat");
+  assert.deepEqual(all.filter((s) => s.native).map((s) => `${s.seat}:${s.family}`),
+    ["impl-grok-1@t:grok", "impl-grok-2@t:grok", "tests-grok@t:grok", "review-grok@t:grok", "review-kimi@t:kimi"]);
+  const fam = eligibleFamilies([{ provider: "claude", status: "active" }, { provider: "codex", status: "active" }]);
+  assert.equal(pickSeat(all, "implementer", { families: fam, chain: ROLE_CHAIN.implementer }).seat.family, "grok");
+  assert.ok(!seatCandidates(all, "implementer", fam, "grok").some((c) => /grok/.test(c.id)), "grok-authored locked tests: no grok implementer");
+  assert.equal(reviewerFor(all, "impl-grok-1", "grok", fam).seat.seat, "review-kimi@t");
+  assert.equal(reviewerFor(all, "impl-codex", "codex", fam).seat.seat, "review-grok@t");
+});
