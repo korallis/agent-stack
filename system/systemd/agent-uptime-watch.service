@@ -1,0 +1,9 @@
+[Unit]
+Description=Alert project recovery seats about unhealthy staging or production
+After=openrig.service network-online.target
+[Service]
+Type=oneshot
+Environment=PATH=%h/.local/bin:%h/.local/share/mise/shims:/usr/local/bin:/usr/bin:/bin
+Environment=OPENRIG_SESSION_NAME=uptime-watch@agent-stack
+ExecStart=%h/.local/bin/agent-uptime-watch
+TimeoutStartSec=5min
