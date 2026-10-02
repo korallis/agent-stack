@@ -14,8 +14,8 @@ wire_api = "responses"
 requires_openai_auth = false
 supports_websockets = true
 model_catalog_url = "http://127.0.0.1:8317/v1/models"
-request_max_retries = 4
-stream_max_retries = 5
+request_max_retries = 12
+stream_max_retries = 12
 stream_idle_timeout_ms = 300000
 
 [model_providers.cliproxyapi.auth]

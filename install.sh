@@ -131,6 +131,9 @@ if grep -qF '.config/agent-stack/env.sh' "$HOME/.bashrc" 2>/dev/null; then ok "~
 if [ -s "$HOME/.codex/config.toml" ]; then ok "$HOME/.codex/config.toml (kept; Codex adds machine-specific trust entries. Compare with system/codex/config.toml)"
   # Never prompt, even in a kept config: set the two top-level keys in place (backup first); --check only reports.
   if msg=$("$S/system/codex-never-prompt" $([ $CHECK = 1 ] && echo --check) "$HOME/.codex/config.toml"); then ok "$msg"; else todo "$msg"; fi
+  # Retries to the local proxy at 12 or more, never lowered (seats gave up on seconds-long 429 bursts at 4/5); the
+  # pool-*.config.toml profiles layer on top of this file and inherit it.
+  if msg=$("$S/system/codex-retries" $([ $CHECK = 1 ] && echo --check) "$HOME/.codex/config.toml"); then ok "$msg"; else todo "$msg"; fi
 elif [ $CHECK = 1 ]; then todo "$HOME/.codex/config.toml"; else place "$S/system/codex/config.toml" "$HOME/.codex/config.toml" 600; fi
 for p in pool-deep pool-impl pool-review; do place "$S/system/codex/$p.config.toml" "$HOME/.codex/$p.config.toml" 600; done
 if [ $CHECK = 0 ]; then
