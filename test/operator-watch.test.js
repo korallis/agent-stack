@@ -14,7 +14,7 @@ function python(code) {
 test('silent operator: wake after 15min, escalate 15min after wake; activity clears episode',()=>{
  const got=python(`
 s={}; now=2000000000
-node={'sessionStatus':'running','agentActivity':{'state':'idle','sampledAt':datetime.datetime.fromtimestamp(now,datetime.timezone.utc).isoformat()},'lastActivity':'same'}
+node={'sessionStatus':'running','agentActivity':{'state':'idle','sampledAt':datetime.datetime.fromtimestamp(now,datetime.timezone.utc).isoformat()},'lastActivityAt':'same'}
 rows=[{'qitemId':'old','state':'pending','tsCreated':datetime.datetime.fromtimestamp(now-3600,datetime.timezone.utc).isoformat()}]
 def step(t):
  node['agentActivity']['sampledAt']=datetime.datetime.fromtimestamp(t,datetime.timezone.utc).isoformat()
@@ -32,13 +32,13 @@ test('recent rows, unknown/stale activity and output movement never trigger a wa
 now=2000000000
 stamp=lambda t: datetime.datetime.fromtimestamp(t,datetime.timezone.utc).isoformat()
 row={'qitemId':'x','state':'pending','tsCreated':stamp(now-3600)}
-node={'sessionStatus':'running','agentActivity':{'state':'idle','sampledAt':stamp(now)},'lastActivity':'A'}
+node={'sessionStatus':'running','agentActivity':{'state':'idle','sampledAt':stamp(now)},'lastActivityAt':'A'}
 ans=[]
 for change in ['stale','unknown','moving','recent','empty']:
  s={'inactiveSince':now-1800,'lastActivity':'A'}; n=json.loads(json.dumps(node)); rows=[dict(row)]
  if change=='stale': n['agentActivity']['sampledAt']=stamp(now-121)
  if change=='unknown': n['agentActivity']['state']='unknown'
- if change=='moving': n['lastActivity']='B'
+ if change=='moving': n['lastActivityAt']='B'
  if change=='recent': rows[0]['tsCreated']=stamp(now-899)
  if change=='empty': rows=[]
  ans.append(m['observe'](s,n,rows,now))
@@ -53,7 +53,7 @@ test('real CLI uses fixtures, failed wake is attempted once, escalation is durab
 import json,sys,os,datetime
 with open(os.environ['CALLS'],'a') as f:f.write(json.dumps(sys.argv[1:])+'\\n')
 a=sys.argv[1:]; now=datetime.datetime.now(datetime.timezone.utc)
-if a[0]=='ps': print(json.dumps({'entries':[{'canonicalSessionName':'operator@test','sessionStatus':'running','agentActivity':{'state':'idle','sampledAt':now.isoformat()},'lastActivity':'A'}]}))
+if a[0]=='ps': print(json.dumps({'entries':[{'canonicalSessionName':'operator@test','sessionStatus':'running','agentActivity':{'state':'idle','sampledAt':now.isoformat()},'lastActivityAt':'A'}]}))
 elif a[:2]==['queue','list']: print(json.dumps([{'qitemId':'old','state':'pending','tsCreated':(now-datetime.timedelta(hours=1)).isoformat()}]))
 elif a[0]=='send': sys.exit(1)
 elif a[:2]==['queue','create']: print('{}')
@@ -74,4 +74,18 @@ else: sys.exit(2)
   const create=argv.filter(a=>a[0]==='queue'&&a[1]==='create'); assert.equal(create.length,1);
   assert.ok(create[0].includes('--body-file')); assert.ok(create[0].includes('--id'));
  } finally {rmSync(root,{recursive:true,force:true});}
+});
+
+test('a short completed turn resets both wake and escalation using the full node API field',()=>{
+ assert.deepEqual(python(`
+now=2000000000
+stamp=lambda t: datetime.datetime.fromtimestamp(t,datetime.timezone.utc).isoformat()
+n={'sessionStatus':'running','agentActivity':{'state':'idle','sampledAt':stamp(now)},'lastActivityAt':stamp(now-5)}
+r=[{'state':'pending','tsCreated':stamp(now-3600)}]
+ans=[]
+for woke in [False,True]:
+ s={'inactiveSince':now-1900,'lastActivity':None}
+ if woke:s['wakeAt']=now-1000
+ ans.append([m['observe'](s,n,r,now),s.get('wakeAt'),s['inactiveSince']])
+print(json.dumps(ans))`),[['observe',null,2000000000],['observe',null,2000000000]]);
 });

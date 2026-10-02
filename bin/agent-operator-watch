@@ -38,7 +38,11 @@ def observe(state, node, rows, now):
     if not stopped and activity.get('state') == 'running':
         state.clear()
         return 'active'
-    last = node.get('lastActivity')
+    # Full node inventory uses lastActivityAt; compact output calls it lastActivity.
+    if not stopped and 'lastActivityAt' not in node:
+        state.clear()
+        return 'unknown'
+    last = node.get('lastActivityAt')
     if state.get('lastActivity') != last or state.get('inactiveSince', now) > now:
         state.clear()
     state.setdefault('inactiveSince', now)
