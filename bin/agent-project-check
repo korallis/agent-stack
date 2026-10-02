@@ -592,6 +592,14 @@ rep("OK" if "OpenRig MANAGED BLOCK" in hook else "FAIL", "repo pre-commit hook r
     "install system/git-hooks/pre-commit" if "OpenRig MANAGED BLOCK" not in hook else "")
 
 # ---- 5. machine: seat skills + seat tools -------------------------------------------------------------
+projection = os.path.join(os.path.dirname(os.path.dirname(os.path.realpath(__file__))), "system/skills-project")
+projected = run([projection, "--json"], capture_output=True, text=True)
+try:
+    skill_rows = json.loads(projected.stdout)
+except (ValueError, TypeError):
+    skill_rows = []
+rep("OK" if projected.returncode == 0 and skill_rows else "FAIL", "all harnesses see the installed skill catalog",
+    "; ".join(r["detail"] for r in skill_rows if not r["ok"]) or ("" if skill_rows else "skills-project did not return a catalog"))
 for d in (f"{HOME}/.claude/skills", f"{HOME}/.agents/skills"):
     have = all(os.path.exists(f"{d}/{s}/SKILL.md") for s in ("mission-slice-sop", "queue-handoff", "openrig-project-setup"))
     rep("OK" if have else "FAIL", f"{d}: mission-slice-sop, queue-handoff, openrig-project-setup (run ./install.sh --apply)")
