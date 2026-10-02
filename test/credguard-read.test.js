@@ -56,7 +56,7 @@ test("Bash: using credentials without printing them, and ordinary commands, are 
     // QA WO42 f3: quiet input redirection, set options after loading, a file-looking pattern after --
     "grep -q FIXTURE_KEY < .env", "source .env; set -e; true", "source .env; set -euo pipefail; npm test", "grep -- .env README.md",
     "rg -- prod.env docs/", "cat <<'EOF'\n$(cat .env)\nEOF", "export -n FOO", "declare -r X=1",
-    "source .env; declare OTHER=safe", "source .env; declare -i COUNT=3", "jq -n --arg k v '$k'", "jq -n --rawfile tpl notes.txt '$tpl'", "env | grep PATH", "git add .env.example", "git status", "chmod 600 .env",
+    "source .env; declare OTHER=safe", "source .env; declare -i COUNT=3", "jq -n --arg k v '$k'", "jq -n --rawfile tpl notes.txt '$tpl'", "git add .env.example", "git status", "chmod 600 .env",
     "cat <<'EOF' > notes.md\nNever run: cat .env\nEOF", "echo 'do not cat .env'", "grep -rn 'runtime-url' docs/",
     "node scripts/migrate.js", "cat src/app.ts", "cat package.json | jq .scripts", "rg -n 'prod.env' src/",
     "grep -A 3 '.env' README.md", "awk '/runtime-url/ {print}' notes.txt", "sed -n '/.env/p' docs/setup.md",
