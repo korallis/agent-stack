@@ -1,0 +1,8 @@
+[Unit]
+Description=Hand work waiting on a seat that can't take it (dead, out of quota, at its context wall) to the role's fallback seat
+After=openrig.service
+[Service]
+Type=oneshot
+Environment=PATH=%h/.local/bin:%h/.local/share/mise/shims:/usr/local/bin:/usr/bin:/bin
+Environment=OPENRIG_SESSION_NAME=agent-reroute@agent-stack
+ExecStart=%h/.local/bin/agent-reroute --apply

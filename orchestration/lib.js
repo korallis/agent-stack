@@ -2,7 +2,7 @@
 // dependencies, ownership, budgets). Semantic judgments are delegated to jev/lib/engine.js.
 import { execFileSync } from "node:child_process";
 import { DatabaseSync } from "node:sqlite";
-import { mkdirSync } from "node:fs";
+import { mkdirSync, readFileSync } from "node:fs";
 import { join } from "node:path";
 import { STATE_DIR } from "../jev/lib/store.js";
 
@@ -38,17 +38,22 @@ export function seatInfo(node) {
   const [pod, member] = node.logicalId.split(".");
   let role = Object.hasOwn(POD_ROLE, pod) ? POD_ROLE[pod] : undefined;
   if (pod === "coord") role = member.startsWith("lead") ? "lead" : "deputy";
-  // Kimi seats run on the Claude Code runtime with a Kimi model (rig/template/fallback-codex.yaml: tests.kimi, review.kimi):
-  // their member id says so. A family is the model's, not the runtime's.
-  const family = /^kimi/.test(member || "") ? "kimi" : node.runtime === "codex" ? "codex" : "claude";
-  return { seat: node.canonicalSessionName, pod, member, role, family, runtime: node.runtime,
+  // Kimi seats run on the Claude Code runtime with a Kimi model (rig/template/fallback-codex.yaml: tests.kimi, review.kimi),
+  // or natively (a terminal member running agent-native-seat, rig/template/standard.yaml): their member id says so, as
+  // it does for native Grok seats. A family is the model's, not the runtime's; `native` says the CLI is its own.
+  const native = node.runtime === "terminal";
+  const family = /^grok/.test(member || "") ? "grok" : /^kimi/.test(member || "") ? "kimi" : node.runtime === "codex" ? "codex" : "claude";
+  return { seat: node.canonicalSessionName, pod, member, role, family, native, runtime: node.runtime, model: node.model ?? null,
     running: node.lifecycleState === "running" && node.sessionStatus === "running",
-    idle: node.agentActivity?.state === "idle", assigned: node.assignedWorkCount ?? 0, pending: node.pendingWorkCount ?? 0 };
+    idle: node.agentActivity?.state === "idle", assigned: node.assignedWorkCount ?? 0, pending: node.pendingWorkCount ?? 0,
+    context: typeof node.contextUsage?.usedPercentage === "number" ? node.contextUsage.usedPercentage : null };
 }
 
 export function seats(rigName) {
   const nodes = rig(["ps", "--nodes", "--rig", rigName], { json: true });
-  return (Array.isArray(nodes) ? nodes : nodes.nodes || []).filter((n) => n.runtime !== "terminal").map(seatInfo);
+  // Terminal nodes are plain shells, except native agent seats (agent-native-seat: member grok* / kimi*), which take work.
+  return (Array.isArray(nodes) ? nodes : nodes.nodes || [])
+    .filter((n) => n.runtime !== "terminal" || /^(grok|kimi)/.test(String(n.logicalId || "").split(".")[1] || "")).map(seatInfo);
 }
 
 // One account can take work: enabled, available, active, and not past its quota limit (agent-proxy-status's over_limit:
@@ -56,17 +61,64 @@ export function seats(rigName) {
 // credits is not over (WO85)). Absent over_limit (an older status tool) counts as not over.
 export const accountEligible = (r) => !r.disabled && !r.unavailable && r.status === "active" && r.over_limit !== true;
 
-// Account availability from the proxy (never estimated by a model).
-export function eligibleFamilies() {
+// The proxy's provider names, as seat families (agent-proxy-status reports Kimi as "kimi-ai", Grok as "xai").
+export const PROVIDER_FAMILY = { claude: "claude", codex: "codex", kimi: "kimi", "kimi-ai": "kimi", xai: "grok" };
+const bareModel = (m) => String(m || "").replace(/\[1m\]$/, "");
+
+// Account availability from the proxy (never estimated by a model): eligible accounts per family. Two details ride on
+// the result, not enumerable (so callers that read the counts are unchanged): `_models`, per family, the models every
+// eligible account is cooling on (a credential-wide cooldown makes the account ineligible outright); and `_native`, the
+// native CLIs' state (null: unknown, never a block).
+export function eligibleFamilies(rows = null) {
   try {
-    const rows = JSON.parse(execFileSync("agent-proxy-status", ["--json"], { encoding: "utf8", timeout: 20_000 }));
-    const fam = { claude: 0, codex: 0 };
-    // every provider seen starts at 0 (a family whose accounts are all down is unavailable, not unknown: kimi too)
-    for (const r of rows) { fam[r.provider] ??= 0; if (accountEligible(r)) fam[r.provider] += 1; }
+    rows ??= JSON.parse(execFileSync("agent-proxy-status", ["--json"], { encoding: "utf8", timeout: 20_000 }));
+    const fam = { claude: 0, codex: 0 }, cooling = {}, back = {};
+    const at = (c) => (c?.retry_at ? Date.parse(c.retry_at) : NaN);
+    for (const r of rows) {
+      const f = PROVIDER_FAMILY[r.provider] ?? r.provider;
+      fam[f] ??= 0;   // every provider seen starts at 0 (all accounts down is unavailable, not unknown)
+      const cds = Array.isArray(r.cooldowns) ? r.cooldowns.filter((c) => !c?.retry_at || at(c) > Date.now()) : [];
+      const cred = cds.filter((c) => c?.scope === "credential");
+      if (!accountEligible(r) || cred.length) {
+        // when this account is back: the end of its credential cooldown; over a quota limit or in error, unknown
+        const t = accountEligible(r) ? Math.max(...cred.map(at)) : NaN;
+        (back[f] ??= []).push(Number.isFinite(t) ? t : null);
+        continue;
+      }
+      fam[f] += 1;
+      (cooling[f] ??= []).push(new Map(cds.filter((c) => c?.model_key).map((c) => [bareModel(c.model_key), Number.isFinite(at(c)) ? at(c) : null])));
+    }
+    // a model is out for a family when EVERY eligible account of it is cooling on that model; it is back at the first
+    // of those cooldowns to end (null: not known)
+    const models = {}, until = {};
+    for (const [f, maps] of Object.entries(cooling)) {
+      models[f] = [...maps[0].keys()].filter((m) => maps.every((x) => x.has(m)));
+      for (const m of models[f]) { const ts = maps.map((x) => x.get(m)); (until[f] ??= {})[m] = ts.includes(null) ? null : Math.min(...ts); }
+    }
+    for (const [f, ts] of Object.entries(back)) if (fam[f] === 0) (until[f] ??= {})["*"] = ts.includes(null) ? null : Math.min(...ts);
+    Object.defineProperty(fam, "_models", { value: models });
+    Object.defineProperty(fam, "_until", { value: until });
+    Object.defineProperty(fam, "_native", { value: { grok: null, kimi: null } });
     return fam;
   } catch {
     return { claude: null, codex: null }; // unknown ≠ zero: do not block dispatch on a status-tool failure
   }
+}
+
+// Can this seat take work now? Native seats run their own CLI (the proxy's accounts don't apply); a proxy seat needs an
+// eligible account of its family that isn't cooling on its model. Unknown (null/undefined) never blocks.
+export function seatAvailable(s, families = {}) {
+  if (s.native) return families._native?.[s.family] !== false;
+  if (families[s.family] === 0) return false;
+  return !(s.model && (families._models?.[s.family] || []).includes(bareModel(s.model)));
+}
+
+// When a seat the proxy can't serve now can be served again: ms since the epoch, null when not known (an account over
+// its quota limit reports no reset here), undefined when it isn't out.
+export function servableAt(s, families = {}) {
+  if (s.native || seatAvailable(s, families)) return undefined;
+  const u = families._until?.[s.family] || {};
+  return families[s.family] === 0 ? u["*"] ?? null : u[bareModel(s.model)] ?? null;
 }
 
 // OpenRig queue JSON is camelCase (qitemId, destinationSession, ...); normalise once here.
@@ -107,19 +159,74 @@ export function qualityScore(seat) {
   return (q.completed + 1) / (q.completed + q.returned + q.failed + 2);
 }
 
-// Pick a concrete seat for a role: capacity + availability + balance + demonstrated quality. Pure code.
-export function pickSeat(all, role, { preferFamily = null, excludeFamily = null, families = eligibleFamilies() } = {}) {
+// The family fallback chain per role (config/routing.json; Jev, 2026-10-02).
+const ROUTING = JSON.parse(readFileSync(new URL("../config/routing.json", import.meta.url), "utf8"));
+export const ROLE_CHAIN = Object.fromEntries(Object.entries(ROUTING).filter(([k]) => !k.startsWith("_")));
+// Roles held by one family in a team (the Claude lead, the Claude architect): when no seat of the role is free in any
+// family, the work goes to the next role here (a Codex deputy), in that role's own chain.
+export const ROLE_FALLBACK = ROUTING._role_fallback || {};
+
+// Why a family has no seat to give for a role right now (for the fallback record): none, all out, or all busy.
+export function familyGap(all, role, family, families) {
+  const mine = all.filter((s) => s.role === role && s.family === family);
+  if (!mine.length) return `no ${family} ${role} seat`;
+  const live = mine.filter((s) => s.running);
+  if (!live.length) return `${family} ${role} seats not running`;
+  const ok = live.filter((s) => seatAvailable(s, families));
+  if (!ok.length) {
+    const cool = live.map((s) => s.model).filter((m) => m && (families._models?.[family] || []).includes(bareModel(m)));
+    return families[family] === 0 ? `${family}: no eligible account` : cool.length ? `${family}: accounts cooling on ${[...new Set(cool)].join(", ")}`
+      : `${family}: the native CLI is out`;
+  }
+  return `${family} ${role} seats all busy`;
+}
+
+// Pick a concrete seat for a role: capacity + availability + balance + demonstrated quality. Pure code. With `chain` (a
+// role's family order, ROLE_CHAIN), the first family that has a seat wins, and `fallback` says why the earlier ones didn't.
+export function pickSeat(all, role, { preferFamily = null, excludeFamily = null, families = eligibleFamilies(), chain = null } = {}) {
   const inFlight = { claude: 0, codex: 0 };
-  for (const s of all) inFlight[s.family] += s.assigned;
+  for (const s of all) inFlight[s.family] = (inFlight[s.family] ?? 0) + s.assigned;
+  const excluded = new Set([excludeFamily].flat().filter(Boolean));
   const pool = all.filter((s) => s.role === role && s.running && s.assigned === 0 && s.pending === 0
-    && s.family !== excludeFamily && families[s.family] !== 0);
+    && !excluded.has(s.family) && seatAvailable(s, families));
+  const rank = (f) => { const i = chain ? chain.indexOf(f) : 0; return i < 0 ? 99 : i; };
   pool.sort((a, b) =>
-    (preferFamily ? (b.family === preferFamily) - (a.family === preferFamily) : 0)
+    rank(a.family) - rank(b.family)
+    || (preferFamily ? (b.family === preferFamily) - (a.family === preferFamily) : 0)
     || inFlight[a.family] - inFlight[b.family]
     || qualityScore(b.seat) - qualityScore(a.seat)
     || (b.idle - a.idle)
     || a.seat.localeCompare(b.seat));
-  return { seat: pool[0] || null, considered: pool.map((s) => s.seat), inFlight, families };
+  const seat = pool[0] || null;
+  const skipped = chain && seat ? chain.slice(0, chain.indexOf(seat.family)).filter((f) => !excluded.has(f))
+    .map((f) => ({ family: f, reason: familyGap(all, role, f, families) })) : [];
+  return { seat, considered: pool.map((s) => s.seat), inFlight, families,
+    ...(skipped.length ? { fallback: { to: seat.family, skipped } } : {}) };
+}
+
+// A seat for a role's work: the role's chain first, then its fallback roles (ROLE_FALLBACK) in theirs. `as` names the
+// role that took it when that isn't the role asked for.
+export function pickFor(all, role, { families = eligibleFamilies(), excludeFamily = null } = {}) {
+  const tried = [];
+  for (const r of [role, ...(ROLE_FALLBACK[role] || [])]) {
+    const p = pickSeat(all, r, { families, excludeFamily, chain: ROLE_CHAIN[r] || null });
+    if (p.seat) return { ...p, ...(r !== role ? { as: r, tried } : {}) };
+    tried.push(r);
+  }
+  return { seat: null, tried };
+}
+
+// The review matrix (WO90), pure: never the author's own seat; another family than the author's, in the reviewer
+// chain's order; the author's family only when no other family has a free reviewer, and then said so.
+export function reviewerFor(all, authorSeat, authorFamily, families, chain = ROLE_CHAIN.reviewer || []) {
+  const order = chain.filter((f) => f !== authorFamily);
+  const pool = all.filter((s) => s.seat !== authorSeat && !s.seat.startsWith(`${authorSeat}@`));
+  const cross = pickSeat(pool, "reviewer", { excludeFamily: authorFamily, chain: order, families });
+  const same = cross.seat ? null : pickSeat(pool, "reviewer", { families });
+  const seat = cross.seat || same?.seat || null;
+  return { seat, matrix: { author_family: authorFamily, order, chosen: seat?.family ?? null,
+    skipped: cross.seat ? (cross.fallback?.skipped || []) : order.map((f) => ({ family: f, reason: familyGap(pool, "reviewer", f, families) })),
+    ...(same?.seat ? { same_family: "no other family had a free reviewer" } : {}) } };
 }
 
 // Crude lexical prefilter so Jev only sees a focused candidate set (≤ n).

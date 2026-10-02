@@ -74,6 +74,7 @@ seat is stuck. Code gathers the facts and sets the bar; anything Jev isn't sure 
 agent-dispatch pick-seat --rig shop --role implementer --task "03-login: sign-in form and session"
 agent-merge-evidence 42 --mission m01-accounts --slice 03-login --deploy "merges deploy to production" --decide
 agent-stuck-check --rig shop --dry-run
+agent-reroute --rig shop
 ```
 
 Why these models, and how the decisions are checked: [docs/REFERENCE.md](docs/REFERENCE.md#models-and-decisions).

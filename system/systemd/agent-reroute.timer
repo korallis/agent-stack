@@ -1,0 +1,7 @@
+[Unit]
+Description=Reroute work stuck on unavailable seats every 10 minutes (rows pending 20+ minutes)
+[Timer]
+OnBootSec=12min
+OnUnitActiveSec=10min
+[Install]
+WantedBy=timers.target

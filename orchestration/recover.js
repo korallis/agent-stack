@@ -11,8 +11,8 @@ import { execFileSync } from "node:child_process";
 import { realpathSync } from "node:fs";
 import { pathToFileURL } from "node:url";
 import { join } from "node:path";
-import { decide } from "../jev/lib/engine.js";
-import { rig, seats, pickSeat, odb, lexicalTop, recordQuality, normQ, accountEligible } from "./lib.js";
+import { decideOrStub as decide } from "./jevcall.js";   // AGENT_JEV_STUB in tests: never the live Jev
+import { rig, seats, pickFor, odb, lexicalTop, recordQuality, normQ, accountEligible, eligibleFamilies, seatAvailable, servableAt } from "./lib.js";
 
 const args = process.argv.slice(2);
 const flag = (n, d) => { const i = args.indexOf(n); return i >= 0 ? args[i + 1] : d; };
@@ -55,6 +55,9 @@ export const RULES = [
   ["auth_expired", /\b401\b|unauthori[sz]ed|token (has )?expired|invalid[_ ]api[_ ]key|please run \/login/i],
   ["quota_exhausted", /usage[_ ]limit[_ ]reached|usage limit has been reached|weekly limit|quota (exceeded|exhausted)/i],
   ["upstream_unavailable", /\b529\b|overloaded_error/i],
+  // CLIProxyAPI's 429 when every credential it has for the model is in a cooldown (2026-10-02: the turn just ends, and the
+  // seat sits idle until the cooldown does; agent-reroute moves its claimed rows).
+  ["rate_limited", /all credentials for \S+ are cooling down/i],
   ["merge_conflict", /CONFLICT \(content\)|Automatic merge failed/],
   ["context_overflow", /prompt is too long|context_length_exceeded|maximum context length/i],
   // CLIProxyAPI's wording when a model has NO eligible credential left (all disabled/removed).
@@ -70,7 +73,7 @@ export function poolCheck() {
     for (const fam of ["claude", "codex"]) {
       const rs = rows.filter((r) => r.provider === fam);
       const ok = rs.filter(accountEligible);
-      const resets = rs.flatMap((r) => (r.cooldowns || []).map((c) => c.until || c.next_retry_after)).filter(Boolean).sort();
+      const resets = rs.flatMap((r) => (r.cooldowns || []).map((c) => c.retry_at || c.until || c.next_retry_after)).filter(Boolean).sort();
       out[fam] = { eligible: ok.length, total: rs.length, soonest_reset: resets[0] || null };
     }
     return out;
@@ -105,7 +108,7 @@ export function permittedActions(cls, band, { item, seat, owner, caller: who, ri
       const allowed = [owner, ...rigSeats.filter((s) => ["lead", "integrator"].includes(s.role)).map((s) => s.seat)];
       if (!allowed.includes(who)) { reasons.reassign = `caller ${who} does not own the item (owner ${owner}) and is not lead/integration`; return false; }
       const me = rigSeats.find((s) => s.seat === seat);
-      if (!me || !pickSeat(rigSeats.filter((s) => s.seat !== seat), me.role).seat) { reasons.reassign = "no idle seat with the same role"; return false; }
+      if (!me || !pickFor(rigSeats.filter((s) => s.seat !== seat), me.role).seat) { reasons.reassign = "no idle seat with the same role (or its fallback role)"; return false; }
     }
     if (a === "repair" && !REPAIR_HINT[cls]) return false;
     return true;
@@ -131,12 +134,21 @@ async function main() {
   let pool = null;
   if (["quota_exhausted", "rate_limited", "auth_expired", "upstream_unavailable"].includes(cls.result.class)) {
     pool = poolCheck();
-    const fam = rigSeats.find((s) => s.seat === seat)?.family;
-    if (fam && pool[fam]?.eligible === 0) {
-      // Clear, deterministic report: nothing to retry or reassign within this family.
-      perm.actions = ["escalate"];
-      perm.reasons.pool = `POOL EXHAUSTED: ${fam} has 0/${pool[fam].total} eligible accounts` +
-        (pool[fam].soonest_reset ? `; soonest reset ${pool[fam].soonest_reset}` : "") + ". Needs the user (re-auth or wait); no paid fallback exists.";
+    const me = rigSeats.find((s) => s.seat === seat), fam = me?.family;
+    // the family has no eligible account, or every eligible one is cooling on this seat's model (WO90: how the
+    // 2026-10-02 Claude stall looked: accounts active, each cooling on the model)
+    const families = fam && pool[fam]?.eligible !== 0 && me?.model ? eligibleFamilies() : null;
+    const modelOut = families && !seatAvailable(me, families);
+    if (fam && (pool[fam]?.eligible === 0 || modelOut)) {
+      // Nothing to retry within this family. Another family's seat of the same role (the role's chain, then its
+      // fallback roles, WO90) can take the work; only when none is free does it need the user.
+      const other = item && me ? pickFor(rigSeats.filter((s) => s.seat !== seat), me.role, { excludeFamily: fam }).seat : null;
+      perm.actions = other && perm.actions.includes("reassign") ? ["reassign", "escalate"] : ["escalate"];
+      const back = modelOut ? servableAt(me, families) : null;
+      perm.reasons.pool = (modelOut ? `MODEL OUT: every eligible ${fam} account is cooling on ${me.model}` + (back ? `; served again ${new Date(back).toISOString()}` : "")
+        : `POOL EXHAUSTED: ${fam} has 0/${pool[fam].total} eligible accounts` + (pool[fam].soonest_reset ? `; soonest reset ${pool[fam].soonest_reset}` : "")) +
+        (other ? `. A ${other.family} ${other.role} seat (${other.seat}) can take the work.` : ". No other family has a free seat: needs the user (re-auth or wait).");
+      if (modelOut) pool.model_out = { family: fam, model: me.model, back: back ? new Date(back).toISOString() : null };
     }
   }
 
@@ -167,7 +179,8 @@ async function main() {
     else if (action === "repair") rig(["send", seat, `[recovery] ${cls.result.class}: ${REPAIR_HINT[cls.result.class]}`]);
     else if (action === "reassign") {
       const me = rigSeats.find((s) => s.seat === seat);
-      const to = pickSeat(rigSeats.filter((s) => s.seat !== seat), me.role).seat;
+      const pool0 = report.pool && me && (report.pool[me.family]?.eligible === 0 || report.pool.model_out);   // the family is out: another family
+      const to = pickFor(rigSeats.filter((s) => s.seat !== seat), me.role, pool0 ? { excludeFamily: me.family } : {}).seat;
       rig(["queue", "handoff", item, "--to", to.seat, "--note", `recovery reassign from ${seat}: ${cls.result.class}`], { json: true });
       recordQuality(seat, "failed");
       report.reassigned_to = to.seat;
