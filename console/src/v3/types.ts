@@ -1,8 +1,9 @@
+import type {EtaEstimate} from './eta.ts';
 /** Renderer-neutral adapter contract. No daemon, filesystem or terminal objects. */
 export type Status = 'ok' | 'waiting' | 'blocked' | 'unknown';
 export type View = 'fleet' | 'team' | 'agent' | 'task' | 'pr' | 'capacity';
 export interface Step { id: string; label: string; state: 'done' | 'active' | 'waiting' | 'blocked' | 'unknown'; at: string | null; detail: string }
-export interface Team { id: string; name: string; description: string; status: Status; reason: string; sentence: string; milestone: string | null; progress: number | null; progressLabel?:string|null; kind?:'project'|'operations'; eta: string | null; milestones: Step[]; agentIds: string[]; taskIds: string[]; merges: {day:string;count:number}[] | null }
+export interface Team { id: string; name: string; description: string; status: Status; reason: string; sentence: string; milestone: string | null; progress: number | null; progressLabel?:string|null; kind?:'project'|'operations'; eta: string | null; estimate?:EtaEstimate; projectEstimate?:EtaEstimate; milestones: Step[]; agentIds: string[]; taskIds: string[]; merges: {day:string;count:number}[] | null }
 export interface Agent { id:string; teamId:string; name:string; model:string|null; status:Status; activity:string; taskId:string|null; context:number|null; contextHistory:number[]; tail:string|null; tailAt:number|null; history:Step[] }
 export interface Task { id:string; teamId:string|null; title:string; body?:string|null; status:Status; agentId:string|null; prId:string|null; acceptance:string|null; steps:Step[]; createdAt:string|null; updatedAt:string|null }
 export interface PullRequest { id:string; teamId:string|null; title:string; url:string; number:number; state:string; additions:number|null; deletions:number|null; files:number|null; checks:Step[]; reviews:Step[]; verdict:'ACT'|'HOLD'|'WAIT'|'UNKNOWN'; band:string|null; reason:string|null; signals:{name:string;value:string}[]; at:string|null; observedAt?:string|null; freshness?:'fresh'|'stale'; refreshError?:string|null; historicalGate?:{verdict:'ACT'|'HOLD'|'WAIT'|'UNKNOWN';reason:string|null;observedAt:string|null} }

@@ -382,7 +382,8 @@ local fleet. The previous console remains available only with `--legacy`, for ex
   A missing value is not zero, a pass, or a prediction. Progress labels identify the recorded measure; operations
   teams use an OPS status card. Charts use recorded samples. Capacity averages compare the same usage window
   (5-hour or weekly). “Observed 2 of 5 accounts” counts accounts with usage readings, not accounts ready to run.
-  Cooldown and quota reset times remain separately labeled.
+  Cooldown and quota reset times remain separately labeled. Account status lines name blocked/waiting accounts and their own recorded timers; elapsed timers do not prove recovery.
+- **ETAs are estimates.** Dates use remaining work and verified completions in the same slice/feature scope as the ring. The last 14 calendar days are normalized to Monday–Friday working days (UTC, no holidays), including zero-output days. Fewer than three dated completions explains the missing estimate. Team view includes whole-project scope and source; local integration history can lag the remote. Empirical pace ranges appear only when the observed distribution supports them. Unknown history is never zero work or a promised date.
 - **Portable terminal output.** Truecolor, 256-colour, 16-colour and `NO_COLOR` output; at least 100×30 cells,
   preferably 160×50. Resize profiles that open at 80×24 (including some Windows Terminal defaults). The stack runs
   on Linux; the display uses terminal cells and standard escape sequences.

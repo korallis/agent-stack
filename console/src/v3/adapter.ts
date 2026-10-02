@@ -3,6 +3,7 @@ import path from 'node:path';
 import os from 'node:os';
 import { createHash } from 'node:crypto';
 import {readProjectScopes, type ProjectScope} from './project-sources.ts';
+import {collectMergeCompletions, type MergeCompletionResult} from './merge-completions.ts';
 import {cardText} from './wording.ts';
 import { Cache, type Options } from '../data.ts';
 import { classify, qrowFromItem, type Raw, type QRow } from '../model.ts';
@@ -68,7 +69,7 @@ export function snapshotFromRaw(input:Raw,supplements:Supplements={},history:Mea
   const clause=needs?'Waiting for your decision.':blocking?reason:held&&!gateProgress?'A change needs attention before it can merge.':current?cardText(short(current.summary,170),[current.id])||'Work is moving.':waits.length?cardText(short(waits.find(r=>/witness/i.test(r.summary??''))?.summary,150))||(waits.every(r=>liveWake(r,raw.at))?'Work is scheduled to resume.':'Waiting for the next dependency or assignment.'):inFlight.length?`${inFlight.length===1?'One change is':`${inFlight.length} changes are`} in review.`:focus?reason:ops?(t.name==='kernel'?'Keeping the fleet running.':'Building and maintaining the agent tooling.'):reason;
   const cleanClause=cardText(clause)||'Activity not reported',prefix=focus&&cleanClause.toLowerCase().startsWith(focus.toLowerCase()+':')?'':focus?focus+': ':'';
   const punctuated=cleanClause+(/[.!?]$/.test(cleanClause)?'':'.'),sentence=missions.length>1?`${punctuated} ${focus}.`:prefix+punctuated;
-  const progress=scope?{milestone:scope.milestone,progress:scope.progress,eta:scope.eta,milestones:scope.milestones}:supplements.progress?.[t.id]??{};
+  const progress=scope?{milestone:scope.milestone,progress:scope.progress,eta:scope.eta,estimate:scope.estimate,projectEstimate:scope.projectEstimate,milestones:scope.milestones}:supplements.progress?.[t.id]??{};
   return {id:t.id,name,description:ops?(t.name==='kernel'?'Fleet operations and human coordination.':'Builds and maintains the agent tooling.'):scope?.description??'',kind:ops?'operations' as const:'project' as const,status:state,reason,sentence,milestone:null,progress:null,eta:null,milestones:[],...(!ops?progress:{}),progressLabel:!ops?scope?.progressLabel??null:null,agentIds:aa.map(a=>a.id),taskIds:tt.map(q=>q.id),merges:supplements.merges?.[t.id]??null};
  });
  const stale=!raw.daemon.ok;
@@ -86,9 +87,10 @@ export function snapshotFromRaw(input:Raw,supplements:Supplements={},history:Mea
  return {version:1,at:raw.at,source:'OpenRig fleet',stale,sources,headline,teams,agents,tasks,prs,capacity,decisions,lastDecision:supplements.lastDecision??null,events:raw.events.slice(0,60).map((e,i)=>({id:`${e.at}:${i}`,at:e.at,teamId:rigs.find(t=>t.name===e.rig)?.id??null,text:e.text,status:(e.kind==='BLOCKED'?'blocked':e.kind==='DOWN'?'waiting':'ok') as Status}))};
 }
 type CacheLike=Pick<Cache,'raw'|'onChange'|'start'|'stop'|'soon'|'setSeat'|'setView'>;
-export interface FleetOptions extends Options {history?:string|null;cacheFile?:string|null;cache?:CacheLike;run?:Run;projectsRoot?:string|null;ownerAddress?:string}
+export interface FleetOptions extends Options {history?:string|null;cacheFile?:string|null;cache?:CacheLike;run?:Run;projectsRoot?:string|null;queueDb?:string|null;ownerAddress?:string}
 export class FleetAdapter implements Adapter {
  private cache:CacheLike;private current:Snapshot;private supplements:Supplements={details:{},progress:{},merges:{},sources:{},transitions:{}};
+ private completionCache=new Map<string,{at:number;result:MergeCompletionResult}>();
  private measurements:Measurements={capacity:{},context:{}};private onChange=()=>{};private stopped=false;private started=false;private enriching=false;private again=false;private selected:{teamId?:string|null;agentId?:string|null;taskId?:string|null;prId?:string|null}={};
  private file:string|null;private writtenAt=0;private lastEnrich=0;private ac=new AbortController();private opt:FleetOptions;private observed=0;private live=false;private observedSnapshot=false;private attempts=new Map<string,number>();private repoCache=new Map<string,string|null>();private ownerResolved=false;private ownerStarted=false;
  constructor(opt:FleetOptions) {
@@ -129,7 +131,15 @@ export class FleetAdapter implements Adapter {
   try {
    const raw=this.cache.raw,all=[...raw.queue,...raw.attention,...(raw.done??[])];
    if(this.due('projects',120000)&&this.opt.projectsRoot!==null){
-    this.supplements.projects=await readProjectScopes(this.opt.projectsRoot??path.join(os.homedir(),'Projects'),raw.rigs.map(r=>r.name),run);
+    this.supplements.projects=await readProjectScopes(this.opt.projectsRoot??path.join(os.homedir(),'Projects'),raw.rigs.map(r=>r.name),run,raw.at,{completionResolver:async(project,now)=>{
+     if(this.stopped||this.opt.queueDb===null||!project.repo||!project.units.some(u=>u.done))return {};
+     const key=JSON.stringify([project.projectId,project.repo]),prior=this.completionCache.get(key);
+     let result:MergeCompletionResult;
+     if(prior&&now-prior.at<300000)result=prior.result;
+     else{result=await collectMergeCompletions({dbPath:this.opt.queueDb??path.join(os.homedir(),'.openrig','openrig.sqlite'),projects:[{...project,repo:project.repo}],run,now});this.completionCache.set(key,{at:now,result});}
+     this.supplements.sources![`progress:merges:${project.projectId}`]=result.unavailableProjects[project.projectId]?'unavailable: '+result.unavailableProjects[project.projectId]:'latest mapped merged PRs; refreshed at most every 5 minutes';
+     return result.evidence;
+    }});
     for(const team of raw.rigs){const p=this.supplements.projects[team.name];if(p)this.supplements.sources![`progress:${team.id}`]=p.source;}
    }
    if(this.due('waiting',30000)&&raw.queue.some(r=>r.state==='blocked')){

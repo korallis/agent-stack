@@ -264,3 +264,25 @@ test('missing provider usage and reset evidence stays explicit in fleet and capa
   assert.doesNotMatch(text,/(?:^|\s)0%|resets in|reset due|cooldown ends|cooldown end due/);
  }
 });
+
+test('ETA uses calendar date and labelled pace; whole-project estimate stays visible on Team',()=>{
+ const s=fixture(),estimate={date:'2026-10-09T00:00:00Z',earliest:'2026-10-08T00:00:00Z',latest:'2026-10-12T00:00:00Z',remaining:8,completions:12,unit:'slices',windowDays:14,scope:'active mission',reason:null,source:'Dated completion records',workingDays:10,rate:1.2};
+ s.teams[0].estimate=estimate;s.teams[0].eta=estimate.date;
+ s.teams[0].projectEstimate={...estimate,date:'2026-10-23T00:00:00Z',remaining:20,scope:'whole project'};
+ for(const [w,h] of [[160,50],[100,30]]){
+  const fleet=words(renderV3(s,w,h,state()));assert.match(fleet,/ETA ~Fri 9 Oct/);assert.doesNotMatch(fleet,/ETA 00:00/);if(w>=160)assert.match(fleet,/12 slices\/14d · 8 left/);
+  const team=words(renderV3(s,w,h,state('team')));assert.match(team,/Whole project: ETA ~Fri 23 Oct/);assert.match(team,/14.days.*pace/);
+ }
+});
+
+test('ETA with insufficient dated history explains why instead of an unknown or invented date',()=>{
+ const s=fixture();s.teams[0].estimate={date:null,earliest:null,latest:null,remaining:8,completions:2,unit:'slices',windowDays:14,scope:'active mission',reason:'Too few completed slices to estimate (2 in 14 days)',source:'Dated completion records',workingDays:10,rate:null};
+ const team=words(renderV3(s,160,50,state('team')));assert.match(team,/Too few completed slices to estimate/);assert.doesNotMatch(team,/ETA unknown|ETA ~/);
+ const fleet=words(renderV3(s,160,50,state()));assert.match(fleet,/too few completed slices/i);
+});
+
+
+test('capacity names unavailable accounts and distinguishes reset from cooldown',()=>{
+ const s=fixture();s.capacity=[{...s.capacity[0],label:'Primary',status:'blocked',reason:'Disabled',resetAt:null},{...s.capacity[1],label:'Secondary',status:'waiting',reason:'Cooling',resetAt:new Date(at+7200000).toISOString(),cooldownUntil:new Date(at+3600000).toISOString()}];
+ const detail=words(renderV3(s,160,50,state('capacity')));assert.match(detail,/Primary/);assert.match(detail,/reset unknown/);assert.match(detail,/Secondary/);assert.match(detail,/cooldown ends in 1h/);assert.doesNotMatch(detail,/2 accounts available/);
+});

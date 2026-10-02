@@ -20,7 +20,7 @@
       "sentence": "Payments & refunds: reviewing a feature that needs a rebase.",
       "milestone": "Payments & refunds",
       "progress": 68,
-      "eta": "2026-10-02T15:52:00.000Z",
+      "eta": "2026-10-09",
       "milestones": [
         {
           "id": "M1",
@@ -125,7 +125,35 @@
           "day": "2026-10-02",
           "count": 9
         }
-      ]
+      ],
+      "estimate": {
+        "date": "2026-10-09",
+        "earliest": null,
+        "latest": null,
+        "remaining": 8,
+        "completions": 12,
+        "unit": "slices",
+        "windowDays": 14,
+        "scope": "active mission",
+        "reason": null,
+        "source": "Invented dated completion records",
+        "workingDays": 10,
+        "rate": 1.2
+      },
+      "projectEstimate": {
+        "date": "2026-11-06T00:00:00Z",
+        "earliest": null,
+        "latest": null,
+        "remaining": 30,
+        "completions": 12,
+        "unit": "slices",
+        "windowDays": 14,
+        "scope": "whole project",
+        "reason": null,
+        "source": "Invented dated completion records",
+        "workingDays": 10,
+        "rate": 1.2
+      }
     },
     {
       "id": "beacon",
@@ -136,7 +164,7 @@
       "sentence": "Intake & triage: waiting for your retention decision.",
       "milestone": "Intake & triage",
       "progress": 61,
-      "eta": "2026-10-02T16:12:00.000Z",
+      "eta": null,
       "milestones": [
         {
           "id": "M1",
@@ -241,7 +269,35 @@
           "day": "2026-10-02",
           "count": 9
         }
-      ]
+      ],
+      "estimate": {
+        "date": null,
+        "earliest": null,
+        "latest": null,
+        "remaining": 11,
+        "completions": 2,
+        "unit": "slices",
+        "windowDays": 14,
+        "scope": "active mission",
+        "reason": "Too few completed slices to estimate (2 in 14 days)",
+        "source": "Invented dated completion records",
+        "workingDays": 10,
+        "rate": null
+      },
+      "projectEstimate": {
+        "date": null,
+        "earliest": null,
+        "latest": null,
+        "remaining": 30,
+        "completions": 2,
+        "unit": "slices",
+        "windowDays": 14,
+        "scope": "whole project",
+        "reason": "Too few completed slices to estimate (2 in 14 days)",
+        "source": "Invented dated completion records",
+        "workingDays": 10,
+        "rate": null
+      }
     },
     {
       "id": "cobalt",
@@ -252,7 +308,7 @@
       "sentence": "Booking: waiting for staging before the witness resumes.",
       "milestone": "Booking",
       "progress": 43,
-      "eta": "2026-10-02T16:32:00.000Z",
+      "eta": "2026-10-15",
       "milestones": [
         {
           "id": "M1",
@@ -357,7 +413,35 @@
           "day": "2026-10-02",
           "count": 9
         }
-      ]
+      ],
+      "estimate": {
+        "date": "2026-10-15",
+        "earliest": null,
+        "latest": null,
+        "remaining": 14,
+        "completions": 12,
+        "unit": "slices",
+        "windowDays": 14,
+        "scope": "active mission",
+        "reason": null,
+        "source": "Invented dated completion records",
+        "workingDays": 10,
+        "rate": 1.2
+      },
+      "projectEstimate": {
+        "date": "2026-11-06T00:00:00Z",
+        "earliest": null,
+        "latest": null,
+        "remaining": 30,
+        "completions": 12,
+        "unit": "slices",
+        "windowDays": 14,
+        "scope": "whole project",
+        "reason": null,
+        "source": "Invented dated completion records",
+        "workingDays": 10,
+        "rate": 1.2
+      }
     },
     {
       "id": "factory",
@@ -368,7 +452,7 @@
       "sentence": "Reroute & fallbacks: checking the merge gate.",
       "milestone": "Reroute & fallbacks",
       "progress": 57,
-      "eta": "2026-10-02T16:52:00.000Z",
+      "eta": "2026-10-19",
       "milestones": [
         {
           "id": "M1",
@@ -473,7 +557,35 @@
           "day": "2026-10-02",
           "count": 9
         }
-      ]
+      ],
+      "estimate": {
+        "date": "2026-10-19",
+        "earliest": null,
+        "latest": null,
+        "remaining": 17,
+        "completions": 12,
+        "unit": "slices",
+        "windowDays": 14,
+        "scope": "active mission",
+        "reason": null,
+        "source": "Invented dated completion records",
+        "workingDays": 10,
+        "rate": 1.2
+      },
+      "projectEstimate": {
+        "date": "2026-11-06T00:00:00Z",
+        "earliest": null,
+        "latest": null,
+        "remaining": 30,
+        "completions": 12,
+        "unit": "slices",
+        "windowDays": 14,
+        "scope": "whole project",
+        "reason": null,
+        "source": "Invented dated completion records",
+        "workingDays": 10,
+        "rate": 1.2
+      }
     },
     {
       "id": "kernel",
@@ -589,7 +701,8 @@
           "day": "2026-10-02",
           "count": 9
         }
-      ]
+      ],
+      "kind": "operations"
     }
   ],
   "agents": [
@@ -3307,14 +3420,14 @@
     {
       "id": "claude",
       "provider": "Claude",
-      "label": "Claude",
+      "label": "Account 1",
       "used": 75,
       "weekly": 48,
       "resetAt": null,
       "cooldownUntil": "2026-10-02T15:29:00.000Z",
       "credits": null,
       "status": "waiting",
-      "reason": "One account cooling; another remains available",
+      "reason": "Rate limited",
       "history": [
         {
           "at": 1790925720000,
@@ -3385,7 +3498,7 @@
     {
       "id": "codex",
       "provider": "Codex",
-      "label": "Codex",
+      "label": "Account 1",
       "used": 40,
       "weekly": 36,
       "resetAt": null,
@@ -3463,7 +3576,7 @@
     {
       "id": "grok",
       "provider": "Grok",
-      "label": "Grok",
+      "label": "Account 1",
       "used": 31,
       "weekly": 22,
       "resetAt": "2026-10-02T15:43:00.000Z",
@@ -3541,7 +3654,7 @@
     {
       "id": "kimi",
       "provider": "Kimi",
-      "label": "Kimi",
+      "label": "Account 1",
       "used": 44,
       "weekly": 39,
       "resetAt": "2026-10-02T16:57:00.000Z",
