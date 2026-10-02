@@ -1,5 +1,10 @@
 #!/usr/bin/env python3
-"""Wake an inactive operator once, then queue an advisor after another 15 minutes."""
+"""Wake an inactive operator once, then queue an advisor after another 15 minutes.
+
+Before a wake it asks the proxy (agent-servable) whether the operator's model can be served. While it can't (every
+credential cooling on it, 2026-10-02), a wake would only end in the same 429, so the wake is held; when the model is
+served again the operator gets one resume message, and if the hold lasts 30 minutes the owner gets one FYI row. It
+never switches a model or an account. An unreadable proxy status holds nothing."""
 import argparse
 import datetime
 import fcntl
@@ -12,6 +17,16 @@ import tempfile
 import time
 
 DELAY = 15 * 60
+OWNER_FYI_AFTER = 30 * 60
+
+
+def reset(state):
+    """Start a new inactivity episode. A hold for an unservable model (cooling) outlives episodes: every 429 turn changes
+    the operator's terminal activity, and the hold must still reach its resume and its owner FYI."""
+    cooling = state.get('cooling')
+    state.clear()
+    if cooling:
+        state['cooling'] = cooling
 
 
 def epoch(value):
@@ -22,36 +37,45 @@ def epoch(value):
         return None
 
 
-def observe(state, node, rows, now):
-    """Return an action and advance observations. Action receipts belong to the caller."""
+def observe(state, node, rows, now, served=None):
+    """Return an action and advance observations. Action receipts belong to the caller. served: can the operator's
+    model be served now (True/False), or None when not known."""
     pending = [r for r in rows if r.get('state') == 'pending']
     if not pending:
-        state.clear()
+        state.clear()   # nothing waits: no hold, no resume
         return 'clear'
     activity = node.get('agentActivity') or {}
     sampled = epoch(activity.get('sampledAt'))
     stopped = node.get('sessionStatus') in ('stopped', 'not-found', 'exited')
     if not stopped and (node.get('sessionStatus') != 'running' or sampled is None
                         or not 0 <= now - sampled <= 120 or activity.get('state') not in ('idle', 'running')):
-        state.clear()
+        reset(state)
         return 'unknown'
     if not stopped and activity.get('state') == 'running':
-        state.clear()
+        state.clear()   # working again: whatever held it is over
         return 'active'
     # Full node inventory uses lastActivityAt; compact output calls it lastActivity.
     if not stopped and 'lastActivityAt' not in node:
-        state.clear()
+        reset(state)
         return 'unknown'
     last = node.get('lastActivityAt')
     if state.get('lastActivity') != last or state.get('inactiveSince', now) > now:
-        state.clear()
+        reset(state)
     state.setdefault('inactiveSince', now)
     state['lastActivity'] = last
+    cooling = state.get('cooling')
+    if cooling and served is True:
+        return 'resume'   # the caller clears the hold once the message is out
+    if cooling and served is False and now - cooling['since'] >= OWNER_FYI_AFTER and not cooling.get('ownerNotified'):
+        return 'notify-owner'
     aged = [r for r in pending if (at := epoch(r.get('tsUpdated') or r.get('tsCreated'))) is not None
             and now - at >= DELAY]
     if not aged or now - state['inactiveSince'] < DELAY:
         return 'observe'
     if 'wakeAt' not in state:
+        if served is False:
+            state.setdefault('cooling', {'since': now})
+            return 'hold'
         return 'wake'
     if now - state['wakeAt'] >= DELAY and not state.get('escalated'):
         return 'escalate'
@@ -67,6 +91,16 @@ def read_json(args):
     if res.returncode:
         raise ValueError('rig read failed: ' + ' '.join(args[:2]))
     return json.loads(res.stdout)
+
+
+def servability(node):
+    """agent-servable on the operator's node: {servable, family, model, back}; None when it can't say."""
+    try:
+        res = subprocess.run(['agent-servable'], input=json.dumps(node), text=True, capture_output=True, timeout=60)
+        info = json.loads(res.stdout) if res.returncode == 0 else None
+    except (OSError, ValueError, subprocess.TimeoutExpired):
+        return None
+    return info if isinstance(info, dict) and info.get('servable') in (True, False) else None
 
 
 def rows_from(data):
@@ -116,19 +150,61 @@ def main():
     rows = rows_from(read_json(['queue', 'list', '-A', '--destination', args.operator,
                                '--state', 'pending', '--limit', '1000']))
     now = time.time()
-    action = observe(state, nodes[0], rows, now)
+    # the proxy is asked only when work waits: before a wake, and while a hold is open
+    info = servability(nodes[0]) if any(r.get('state') == 'pending' for r in rows) else None
+    action = observe(state, nodes[0], rows, now, info['servable'] if info else None)
     report = {'operator': args.operator, 'action': action, 'dryRun': args.dry_run}
+    if info and info['servable'] is False:
+        report['model'] = {k: info.get(k) for k in ('family', 'model', 'back')}
     if args.dry_run:
         print(json.dumps(report))
         return 0
     save(args.state, state)
     if action == 'wake':
-        # At most one attempt in an episode, even if the transport reply is lost. Escalation remains armed.
+        # At most one attempt in an episode, even if the transport reply is lost. Escalation remains armed. A wake sent
+        # while a hold was open (the proxy couldn't be read) ends the hold: no second message later.
         state['wakeAt'] = now
+        state.pop('cooling', None)
         save(args.state, state)
         res = command(['send', args.operator,
                        'Operator watchdog: pending rows have waited over 15 minutes without activity. Check your queue.'])
         report['delivered'] = res.returncode == 0
+    elif action == 'resume':
+        pending = ', '.join(sorted(str(r['qitemId']) for r in rows if r.get('state') == 'pending' and r.get('qitemId'))[:20])
+        res = command(['send', args.operator, 'Operator watchdog: your model is served again (the proxy\'s cooldown ended). '
+                       f'Pending rows waited while it was out: {pending}. Resume your queue.'])
+        report['delivered'] = res.returncode == 0
+        if res.returncode == 0:
+            # the resume counts as the episode's wake: escalation follows if the operator still doesn't move
+            state.pop('cooling', None)
+            state['wakeAt'] = now
+            save(args.state, state)
+    elif action == 'notify-owner':
+        owner = subprocess.run([str(Path(os.path.realpath(__file__)).parent / 'agent-owner-address')],
+                               text=True, capture_output=True, timeout=60).stdout.strip() or 'owner@external'
+        cooling = state['cooling']
+        since = datetime.datetime.fromtimestamp(cooling['since'], datetime.timezone.utc).isoformat(timespec='minutes')
+        model = (info or {}).get('model') or 'its model'
+        back = (info or {}).get('back')
+        evidence = args.state.parent / 'operator-watch-cooling.json'
+        save(evidence, {'operator': args.operator, 'family': (info or {}).get('family'), 'model': model,
+                        'heldSince': since, 'back': back})
+        key = hashlib.sha256(f'{args.operator}:{cooling["since"]}'.encode()).hexdigest()[:24]
+        body = (f'FYI: {args.operator} has had pending work while its model ({model}) could not be served since {since} UTC: '
+                'every proxy credential for it is cooling down, so its turns end in a 429. '
+                + (f'The proxy expects it back at {back}. ' if back else 'The proxy gives no time it will be back. ')
+                + 'The watchdog is holding its wake and will send one resume when the model is served again. '
+                'It has not switched any model or account. Nothing is needed from you unless you want to act.')
+        with tempfile.NamedTemporaryFile(mode='w', dir=args.state.parent) as out:
+            out.write(body)
+            out.flush()
+            res = command(['queue', 'create', '--destination', owner, '--human-intent', 'update',
+                           '--summary', f'{args.operator}: model out for 30+ minutes (wake held)', '--id', f'operator-watch-cooling-{key}',
+                           '--evidence-ref', str(evidence), '--body-file', out.name, '--tags', 'operator-watch', '--json'])
+        report['delivered'] = res.returncode == 0
+        if res.returncode == 0:
+            cooling['ownerNotified'] = True
+            save(args.state, state)
     elif action == 'escalate':
         key = hashlib.sha256(f'{args.operator}:{state["wakeAt"]}'.encode()).hexdigest()[:24]
         pending = ', '.join(sorted(str(r['qitemId']) for r in rows if r.get('qitemId'))[:20])
