@@ -1,0 +1,34 @@
+--- a/dist/daemon-lifecycle.js
++++ b/dist/daemon-lifecycle.js
+@@ -9,11 +9,21 @@
+ export function getDaemonUrl(status) {
+     return `http://${status.host ?? DEFAULT_HOST}:${status.port}`;
+ }
++/** Patch 146: a seat (OPENRIG_SESSION_NAME set) is told to wait, not to start the daemon. Daemon lifecycle belongs to
++ *  the operator; a seat that followed the start advice during an operator's daemon cycle started a second daemon in
++ *  its own terminal's scope (2026-10-02). Outside a seat, and for the operator seat (AGENT_OPERATOR_SEAT, default
++ *  operator-agent@kernel, as rig-lifecycle-guard), the advice is unchanged. */
++function seatLifecycleAdvice(action) {
++    const seat = process.env.OPENRIG_SESSION_NAME;
++    return seat && seat !== (process.env.AGENT_OPERATOR_SEAT || "operator-agent@kernel")
++        ? "Don't start it yourself: daemon lifecycle belongs to the operator. Wait 30 s and retry; if it stays down for 2 minutes, tell the operator."
++        : action;
++}
+ export function daemonNotRunningError() {
+     return {
+         fact: "Daemon not running.",
+         consequence: "This command needs a running daemon.",
+-        action: "Run 'rig up' (it auto-starts the daemon), or 'rig daemon start'.",
++        action: seatLifecycleAdvice("Run 'rig up' (it auto-starts the daemon), or 'rig daemon start'."),
+     };
+ }
+ /**
+@@ -32,7 +42,7 @@
+     return {
+         fact: "Daemon did not respond — it may be busy or stopped (state not confirmed).",
+         consequence: "This command needs a responsive daemon; the outcome of proceeding would be indeterminate.",
+-        action: "Re-check with 'rig daemon status'. If it is confirmed stopped, run 'rig up' or 'rig daemon start'.",
++        action: seatLifecycleAdvice("Re-check with 'rig daemon status'. If it is confirmed stopped, run 'rig up' or 'rig daemon start'."),
+     };
+ }
+ /** B8-1b — THE precheck chokepoint: returns true when the daemon is running+healthy;
