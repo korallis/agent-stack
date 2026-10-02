@@ -168,7 +168,7 @@ async function reviewPlan() {
     const why = `reviewer by matrix: author ${authorFamily}, order ${chain.join(" > ")}, chosen ${reviewer.family}`
       + (matrix.skipped.length ? ` (skipped: ${matrix.skipped.map((x) => x.reason).join("; ")})` : "") + (matrix.same_family ? `; SAME family: ${matrix.same_family}` : "");
     rig(["queue", "handoff", flag("--item"), "--to", reviewer.seat, "--note", why,
-      "--summary", `Review ${branch}`, "--body", `Review branch ${branch} in ${repo}.\nSuggested specialist reviews: ${plan.specialist_reviews.join(", ") || "none"}\nSuggested tests: ${selected.join(", ") || "full suite"}`], { json: true });
+      "--summary", `Review ${branch}`, "--body", `Review branch ${branch} in ${repo}.\nAuthor: ${authorSeat} (${authorFamily})\nSuggested specialist reviews: ${plan.specialist_reviews.join(", ") || "none"}\nSuggested tests: ${selected.join(", ") || "full suite"}`], { json: true });
     plan.applied = { handed_off_to: reviewer.seat };
   }
   out(plan);

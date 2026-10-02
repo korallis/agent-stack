@@ -82,7 +82,7 @@ test("reroute: rows waiting 20+ min on a dead, out-of-quota, cooling or context-
   const fam = eligibleFamilies([acct("claude", { cooldowns: [cool("claude-opus-5-5")] }), acct("codex"), acct("kimi-ai", { over_limit: true })]);
   const row = (id, dest, mins, o = {}) => ({ id, state: "pending", destination: dest, tags: [], updated: ago(mins), ...o });
   const rows = [
-    row("q-dead", "impl-grok-1@app", 30), row("q-wall", "impl-claude-ui@app", 25), row("q-kimi-out", "review-kimi@app", 40),
+    row("q-dead", "impl-grok-1@app", 30), row("q-wall", "impl-claude-ui@app", 25), row("q-kimi-out", "review-kimi@app", 40, { body: "Review branch agent/impl-grok-1 in app.\nAuthor: impl-grok-1 (grok)" }),
     row("q-cooling", "qa-claude@app", 21), row("q-young", "impl-grok-1@app", 5), row("q-human", "human@app", 90),
     row("q-owner", "impl-grok-1@app", 90, { tags: ["owner-decision"] }), row("q-claimed", "impl-grok-1@app", 90, { state: "in-progress" }),
     row("q-done-before", "impl-grok-1@app", 90), row("q-fine", "impl-codex@app", 90)];
@@ -113,7 +113,8 @@ test("wiring: install.sh installs agent-reroute and enables its timer; the timer
   assert.match(d, /"--note", why/, "the matrix is recorded in the handed-off row");
   const r = fs.readFileSync(join(repo, "orchestration/recover.js"), "utf8");
   assert.match(r, /A \$\{other\.family\} \$\{other\.role\} seat \(\$\{other\.seat\}\) can take the work/);
-  assert.match(r, /pickFor\(rigSeats\.filter\(\(s\) => s\.seat !== seat\), me\.role, \{ excludeFamily: fam \}\)/);
+  assert.match(r, /pickForWork\(rigSeats\.filter\(\(s\) => s\.seat !== seat\), me\.role, row, \{ families: eligibleFamilies\(\), excludeFamily: fam \}\)/);
+  assert.match(d, /Author: \$\{authorSeat\} \(\$\{authorFamily\}\)/, "review rows say who wrote the work, so a reroute keeps the matrix");
   assert.doesNotMatch(r, /no paid fallback exists/);
 });
 
@@ -176,16 +177,18 @@ test("agent-recover reads the proxy's cooling-down 429 as rate limited; role fal
 
 // End to end, both CLIs on the stall: a fake `rig` (records every call) and a fake agent-proxy-status; Jev stubbed.
 import { spawnSync } from "node:child_process";
-function cli(script, args, { nodes, rows, proxy, state, jev = {}, caller = "agent-reroute@app" }) {
+function cli(script, args, { nodes, rows, proxy, state, jev = {}, caller = "agent-reroute@app", show = null, failSend = false }) {
   const dir = fs.mkdtempSync(join(process.env.AGENT_STACK_STATE, "e2e-")), calls = join(dir, "calls.log");
   const w = (n, s) => fs.writeFileSync(join(dir, n), s, { mode: 0o755 });
   w("rig", `#!/bin/sh\necho "rig $*" >> "${calls}"\ncase "$*" in\n  "ps --json") echo '[{"name":"app"}]' ;;\n` +
     `  "ps --nodes --rig app --json") cat "${join(dir, "nodes.json")}" ;;\n  "queue list -A --state pending,in-progress"*) cat "${join(dir, "rows.json")}" ;;\n` +
-    `  "queue list -A --state in-progress"*) cat "${join(dir, "left.json")}" ;;\n  "queue show "*) echo '{"qitemId":"q-1","destinationSession":"coord-lead-claude@app","state":"in-progress"}' ;;\n` +
-    `  "queue handoff"*) echo '{"qitemId":"q-new"}' ;;\nesac\n`);
+    `  "queue list -A --state in-progress"*) cat "${join(dir, "left.json")}" ;;\n  "queue show "*) cat "${join(dir, "show.json")}" ;;\n` +
+    `  "queue handoff"*) echo '{"qitemId":"q-new"}' ;;\n  "send "*) [ -f "${join(dir, "fail-send")}" ] && exit 1 ;;\nesac\nexit 0\n`);
   w("agent-proxy-status", `#!/bin/sh\ncat "${join(dir, "proxy.json")}"\n`);
   w("nodes.json", JSON.stringify(nodes)); w("rows.json", JSON.stringify(rows)); w("proxy.json", JSON.stringify(proxy));
   w("left.json", JSON.stringify(rows.filter((r) => r.state === "in-progress"))); w("jev.json", JSON.stringify(jev));
+  w("show.json", JSON.stringify(show ?? { qitemId: "q-1", destinationSession: "coord-lead-claude@app", state: "in-progress", body: "", tags: [] }));
+  if (failSend) w("fail-send", "");
   const r = spawnSync(process.execPath, [join(repo, "orchestration", script), ...args], { encoding: "utf8",
     env: { PATH: `${dir}:${process.env.PATH}`, HOME: dir, AGENT_STACK_STATE: state, AGENT_JEV_STUB: join(dir, "jev.json"), OPENRIG_SESSION_NAME: caller } });
   assert.equal(r.status, 0, r.stderr);
@@ -253,4 +256,91 @@ test("seats() over standard-shaped nodes: native grok/kimi seats take work, a pl
   // grok-authored work: the kimi reviewer (chain grok > kimi > codex), never review-grok
   assert.equal(reviewerFor(all, "impl-grok-1", "grok", fam).seat.seat, "review-kimi@app");
   assert.equal(reviewerFor(all, "impl-codex", "codex", fam).seat.seat, "review-grok@app");
+});
+
+// QA PR119 P1: a moved row keeps the independence its work carries.
+test("reroute keeps a review's author family and an implementation's locked-test family; a constraint it can't read goes to the lead", () => {
+  const now = Date.now(), ago = new Date(now - 60 * 60e3).toISOString();
+  const row = (dest, o = {}) => ({ id: "q", state: "pending", destination: dest, updated: ago, tags: [], ...o });
+  const rev = [node("review.codex", "codex", { model: "gpt-6.1-sol" }), node("review.grok", "terminal"), node("review.kimi", "terminal")].map(seatInfo);
+  const codexOut = eligibleFamilies([acct("codex", { over_limit: true })]);
+  // QA's case: a grok author's review, its codex reviewer out: kimi (the matrix), never grok
+  const qa = plan([row("review-codex@app", { body: "Review branch agent/impl-grok-1. Author family: grok; cross-family review required.", tags: ["role:reviewer", "author-family:grok"] })], rev, codexOut, { now });
+  assert.equal(qa[0].to, "review-kimi@app"); assert.match(qa[0].note, /review of grok work/);
+  // review-plan's own body line is enough, and so is the tag alone
+  assert.equal(plan([row("review-codex@app", { body: "Review branch agent/impl-grok-1 in app.\nAuthor: impl-grok-1 (grok)" })], rev, codexOut, { now })[0].to, "review-kimi@app");
+  assert.equal(plan([row("review-codex@app", { tags: ["author-family:grok"] })], rev, codexOut, { now })[0].to, "review-kimi@app");
+  // only the author's family free: not moved (a same-family review is never an automatic move)
+  const onlyGrok = [rev[0], rev[1], seatInfo(node("review.kimi", "terminal", { busy: true }))];
+  assert.deepEqual(plan([row("review-codex@app", { tags: ["author-family:grok"] })], onlyGrok, codexOut, { now }).map((m) => [m.to, m.note]),
+    [[null, "no free reviewer outside the author's family (grok)"]]);
+  // no author on the row: the lead decides
+  assert.deepEqual(plan([row("review-codex@app", { body: "Please review this." })], rev, codexOut, { now }).map((m) => [m.to, m.note]),
+    [[null, "left for the lead: a review whose author's family isn't on the row"]]);
+  // the list elides the text: it's loaded; unreadable, the lead decides
+  const elided = row("review-codex@app", { elided: ["body", "summary"], body: "" });
+  assert.equal(plan([elided], rev, codexOut, { now, load: () => ({ body: "Author: impl-grok-1 (grok)" }) })[0].to, "review-kimi@app");
+  assert.match(plan([elided], rev, codexOut, { now, load: () => null })[0].note, /^left for the lead: the row's text couldn't be read/);
+
+  // implementation against locked tests by codex: never a codex implementer, even first in the free pool
+  const impl = [node("impl.claude", "claude-code", { model: "claude-opus-5-5" }), node("impl.codex", "codex", { model: "gpt-6.1-sol" }),
+    node("impl.kimi", "claude-code", { model: "kimi-k3-256k" })].map(seatInfo);
+  const claudeOut = eligibleFamilies([acct("claude", { over_limit: true }), acct("codex"), acct("kimi-ai")]);
+  const locked = plan([row("impl-claude@app", { body: "Build 03-login.\nLocked tests: tests-codex-1 (codex) #41" })], impl, claudeOut, { now });
+  assert.equal(locked[0].to, "impl-kimi@app"); assert.match(locked[0].note, /not codex: locked tests/);
+  assert.equal(plan([row("impl-claude@app", { tags: ["locked-tests:codex"] })], impl, claudeOut, { now })[0].to, "impl-kimi@app");
+  assert.equal(plan([row("impl-claude@app", { body: "Build 03-login." })], impl, claudeOut, { now })[0].to, "impl-codex@app", "no locked tests named: no constraint");
+  assert.match(plan([row("impl-claude@app", { body: "Make the locked tests pass." })], impl, claudeOut, { now })[0].note,
+    /^left for the lead: the row names locked tests but not their family/);
+});
+
+// QA PR119 P2: a destination must be able to take the work now.
+test("reroute destinations: idle and below the context wall; a healthy later family beats a blocked earlier one", () => {
+  const now = Date.now(), ago = new Date(now - 60 * 60e3).toISOString();
+  const fam = eligibleFamilies([acct("claude", { over_limit: true }), acct("codex")]);
+  const at = (o) => [node("impl.claude", "claude-code", { model: "claude-opus-5-5" }), node("impl.grok", "terminal", o), node("impl.codex", "codex", { model: "gpt-6.1-sol" })].map(seatInfo);
+  const r = [{ id: "q", state: "pending", destination: "impl-claude@app", updated: ago, tags: [] }];
+  assert.equal(plan(r, at({ ctx: 99 }), fam, { now })[0].to, "impl-codex@app", "grok at 99%");
+  assert.match(plan(r, at({ ctx: 99 }), fam, { now })[0].note, /grok implementer seats at their context wall/);
+  assert.equal(plan(r, at({ working: true }), fam, { now })[0].to, "impl-codex@app", "grok busy on something the queue doesn't show");
+  assert.equal(plan(r, at({}), fam, { now })[0].to, "impl-grok@app", "grok free: first in the chain");
+});
+
+// QA PR119 P2: a model is back when any account clears both its credential and its model cooldown.
+test("servableAt: the earliest account to clear both cooldowns, a credential-cooling account included; unknown stays unknown", () => {
+  const now = Date.now(), cd = (min, scope = "model") => ({ scope, model_key: "claude-opus-5-5", retry_at: new Date(now + min * 60e3).toISOString() });
+  const seat = seatInfo(node("qa.claude", "claude-code", { model: "claude-opus-5-5" }));
+  const min = (fam) => Math.round((servableAt(seat, fam) - now) / 60e3);
+  assert.equal(min(eligibleFamilies([acct("claude", { cooldowns: [cd(300)] }), acct("claude", { cooldowns: [cd(2, "credential")] })])), 2, "QA's case");
+  assert.equal(min(eligibleFamilies([acct("claude", { cooldowns: [cd(300)] }), acct("claude", { cooldowns: [cd(2, "credential"), cd(90)] })])), 90, "both must clear");
+  assert.equal(servableAt(seat, eligibleFamilies([acct("claude", { cooldowns: [cd(300)] }), acct("claude", { cooldowns: [{ scope: "credential", reason: "x" }] })])), null,
+    "a credential cooldown with no end: unknown");
+  assert.equal(min(eligibleFamilies([acct("claude", { cooldowns: [cd(300)] }), acct("claude", { over_limit: true })])), 300, "over a limit adds nothing");
+});
+
+// QA PR119 P2: a resume that didn't go out is retried, not forgotten.
+test("agent-reroute: a failed resume send is reported unsent and retried next pass", () => {
+  const state = fs.mkdtempSync(join(process.env.AGENT_STACK_STATE, "nudge-")), ago = (m) => new Date(Date.now() - m * 60e3).toISOString();
+  const held = [{ qitemId: "held", state: "in-progress", destinationSession: "coord-lead-claude@app", sourceSession: "operator@app", tags: [], tsUpdated: ago(1) }];
+  const lead = [node("coord.lead-claude", "claude-code", { model: "claude-opus-5-5" })];
+  cli("reroute.js", ["--apply"], { nodes: lead, rows: held, proxy: [acct("claude", { over_limit: true })], state });
+  const fail = cli("reroute.js", ["--apply"], { nodes: lead, rows: held, proxy: [acct("claude")], state, failSend: true });
+  assert.deepEqual(fail.out.resumes.map((n) => [n.seat, n.sent, n.error]), [["coord-lead-claude@app", false, "rig send failed: will retry next pass"]]);
+  const next = cli("reroute.js", ["--apply"], { nodes: lead, rows: held, proxy: [acct("claude")], state });
+  assert.deepEqual(next.out.resumes.map((n) => [n.seat, n.sent]), [["coord-lead-claude@app", true]]);
+  assert.deepEqual(cli("reroute.js", ["--apply"], { nodes: lead, rows: held, proxy: [acct("claude")], state }).out.resumes, [], "then forgotten");
+});
+
+test("agent-recover --apply keeps the row's constraint: a grok-authored review isn't reassigned to the grok reviewer; the lead is told why", () => {
+  const state = fs.mkdtempSync(join(process.env.AGENT_STACK_STATE, "rec2-"));
+  const nodes = [node("coord.lead-claude", "claude-code", { model: "claude-opus-5-5" }), node("review.codex", "codex", { model: "gpt-6.1-sol" }), node("review.grok", "terminal")];
+  const { out, calls } = cli("recover.js", ["--rig", "app", "--seat", "review-codex@app", "--item", "q-r", "--apply", "--error", "API Error: 429 all credentials for gpt-6.1-sol are cooling down"], {
+    nodes, rows: [], state, caller: "review-codex@app",
+    proxy: [acct("codex", { cooldowns: [{ scope: "model", model_key: "gpt-6.1-sol", retry_at: new Date(Date.now() + 5 * 3600e3).toISOString() }] })],
+    show: { qitemId: "q-r", destinationSession: "review-codex@app", state: "in-progress", body: "Review branch agent/impl-grok-1 in app.\nAuthor: impl-grok-1 (grok)", tags: [] },
+    jev: { "recovery.select_action": { decided_by: "jev", band: "act", result: { action: "retry" } } } });
+  assert.deepEqual(out.permitted, ["escalate"], "the only other reviewer is the author's family: nothing to reassign to");
+  assert.match(out.excluded.pool, /^MODEL OUT: every eligible codex account is cooling on gpt-6\.1-sol.*No other family has a free seat/);
+  assert.doesNotMatch(calls, /queue handoff/);
+  assert.match(calls, /rig queue show q-r --full --json/);
 });

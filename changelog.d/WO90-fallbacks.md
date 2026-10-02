@@ -12,7 +12,11 @@
     cooling down" ends the turn. This held Claude seats still for 1h20 on 2026-10-02.
 
   Rows move after 5 minutes when the cooldown is long. Each row moves at most once, never to a human, with an audit
-  note. Seats served again get one resume message for the claimed rows they still hold.
+  note. Destinations must be idle, servable and below their context wall. A moved row keeps its work's independence:
+  a review stays away from its author's family, and an implementation from its locked tests' family. A row that
+  implies a constraint it doesn't state goes to the lead (`agent-recover` too). Seats served again get one resume
+  message for the claimed rows they still hold, retried if the send fails. review-plan now writes the author on the
+  review row.
 
 ### Fixed
 - The proxy reports Kimi as `kimi-ai`. Kimi never counted as out of accounts, and pick-seat ignored grok.

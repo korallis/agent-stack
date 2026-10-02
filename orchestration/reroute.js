@@ -17,9 +17,10 @@
 // gets one resume message. Without --apply it only reports. Runs every 10 minutes (agent-reroute.timer, --apply).
 import { realpathSync } from "node:fs";
 import { pathToFileURL } from "node:url";
-import { rig, seats, pickFor, eligibleFamilies, seatAvailable, servableAt, familyGap, odb } from "./lib.js";
+import { rig, seats, eligibleFamilies, seatAvailable, servableAt, familyGap, odb, CONTEXT_WALL } from "./lib.js";
+import { pickForWork } from "./pickseat.js";
 
-export const CONTEXT_WALL = 97;
+export { CONTEXT_WALL };
 const HUMAN = /^human@|^owner@/;
 const FAST_MIN = 5, LONG_OUT_MS = 30 * 60_000;
 
@@ -40,7 +41,9 @@ function unserved(seat, families, now, minutes) {
 }
 
 // Pure: the moves for one rig's active rows. rows: [{ id, state, destination, source, tags, updated }]; now: ms.
-export function plan(rows, all, families, { minutes = 20, now = Date.now(), moved = new Set() } = {}) {
+// load(row): the full row ({ body, summary, tags }) when the list elided its text (rig queue list does), or null when
+// unreadable. Reviews and implementations need it for their constraint; without it they're left for the lead.
+export function plan(rows, all, families, { minutes = 20, now = Date.now(), moved = new Set(), load = null } = {}) {
   const out = [];
   const taken = new Set();   // one row per free seat in a single pass
   for (const r of rows) {
@@ -56,10 +59,20 @@ export function plan(rows, all, families, { minutes = 20, now = Date.now(), move
     if (!why) continue;
     const claimed = r.state === "in-progress" ? `claimed and idle: ${seat.seat}'s last turn ended on the proxy's 429; ` : "";
     if (!seat?.role) { out.push({ id: r.id, from: r.destination, why, to: null, note: "no role known for this seat: left for the lead" }); continue; }
-    const pick = pickFor(all.filter((s) => s.seat !== seat.seat && !taken.has(s.seat)), seat.role, { families });
-    if (!pick.seat) { out.push({ id: r.id, from: r.destination, why, to: null, note: `no free ${[seat.role, ...pick.tried.slice(1)].join(" or ")} seat in any family` }); continue; }
+    // the destination: idle, servable, below its wall, with no open work; and the row's own constraint kept (a review's
+    // author family, the locked tests' family), or the row is left for the lead
+    let full = r;
+    if (["reviewer", "implementer"].includes(seat.role) && (r.elided || []).includes("body")) {
+      const got = load ? load(r) : null;
+      if (!got) { out.push({ id: r.id, from: r.destination, why, to: null, note: "left for the lead: the row's text couldn't be read to keep its review or locked-test constraint" }); continue; }
+      full = { ...r, ...got };
+    }
+    const pick = pickForWork(all.filter((s) => s.seat !== seat.seat && !taken.has(s.seat)), seat.role, full, { families });
+    if (!pick.seat) { out.push({ id: r.id, from: r.destination, why, to: null, note: pick.why }); continue; }
     taken.add(pick.seat.seat);
-    const via = [pick.as ? `as ${pick.as}: no free ${seat.role} seat` : null, pick.fallback ? `fallback: ${pick.fallback.skipped.map((x) => x.reason).join("; ")}` : null].filter(Boolean);
+    const via = [pick.as ? `as ${pick.as}: no free ${seat.role} seat` : null, pick.fallback ? `fallback: ${pick.fallback.skipped.map((x) => x.reason).join("; ")}` : null,
+      pick.constraint?.review ? `review of ${pick.constraint.review.family} work${pick.matrix?.skipped?.length ? `, skipped: ${pick.matrix.skipped.map((x) => x.reason).join("; ")}` : ""}` : null,
+      pick.constraint?.exclude ? `not ${pick.constraint.exclude}: locked tests` : null].filter(Boolean);
     out.push({ id: r.id, state: r.state, from: r.destination, why, to: pick.seat.seat, family: pick.seat.family, waited_min: Math.round(age),
       note: `rerouted by agent-reroute after ${Math.round(age)} min: ${claimed}${why}; ${r.destination} -> ${pick.seat.seat} (${[pick.seat.family, ...via].join(", ")})` +
         (out0 ? `; served again ${out0.back ? new Date(out0.back).toISOString() : "at an unknown time"}` : "") +
@@ -102,8 +115,14 @@ async function main() {
     const all = seats(rigName);
     const q = rig(["queue", "list", "-A", "--state", "pending,in-progress", "--limit", "1000"], { json: true, allowFail: true });
     const rows = (Array.isArray(q) ? q : q?.items || []).map((x) => ({ id: x.qitemId, state: x.state, destination: x.destinationSession,
-      source: x.sourceSession, tags: x.tags, updated: x.tsUpdated, created: x.tsCreated })).filter((r) => String(r.destination || "").endsWith(`@${rigName}`));
-    for (const m of plan(rows, all, families, { minutes, moved })) {
+      source: x.sourceSession, tags: x.tags, updated: x.tsUpdated, created: x.tsCreated, body: x.body, summary: x.summary,
+      elided: x.fieldsElided || [] })).filter((r) => String(r.destination || "").endsWith(`@${rigName}`));
+    const load = (r) => {
+      const f = rig(["queue", "show", r.id, "--full"], { json: true, allowFail: true });
+      const rec = f?.item || f?.qitem || f;
+      return rec && typeof rec.body === "string" ? { body: rec.body, summary: rec.summary, tags: rec.tags ?? r.tags } : null;
+    };
+    for (const m of plan(rows, all, families, { minutes, moved, load })) {
       if (apply && m.to) {
         rig(["queue", "handoff", m.id, "--to", m.to, "--note", m.note], { json: true });
         db.prepare("INSERT OR IGNORE INTO reroutes VALUES (?,?,?,?,?)").run(m.id, Date.now(), m.from, m.to, m.why);
@@ -114,14 +133,19 @@ async function main() {
     const left = apply ? rig(["queue", "list", "-A", "--state", "in-progress", "--limit", "1000"], { json: true, allowFail: true }) : q;
     const leftRows = (Array.isArray(left) ? left : left?.items || []).map((x) => ({ id: x.qitemId, state: x.state, destination: x.destinationSession }));
     const r = resumes(leftRows, all, families, new Set([...wasOut].filter((s) => s.endsWith(`@${rigName}`))));
+    const failed = new Set();
     for (const n of r.resume) {
-      if (apply) { rig(["send", n.seat, n.text], { allowFail: true }); n.sent = true; }
+      if (apply) {
+        // a send that failed keeps the seat remembered, so the next pass tries again (rig() is null on a failure)
+        n.sent = rig(["send", n.seat, n.text], { allowFail: true }) !== null;
+        if (!n.sent) { n.error = "rig send failed: will retry next pass"; failed.add(n.seat); }
+      }
       nudges.push({ rig: rigName, ...n });
     }
     if (apply) {
       for (const s of r.out) db.prepare("INSERT OR IGNORE INTO reroute_unserved VALUES (?, ?)").run(s, Date.now());
-      // served again: nudged above, or already working again or holding nothing; either way, forget it
-      for (const s of wasOut) if (s.endsWith(`@${rigName}`) && !r.out.includes(s)) db.prepare("DELETE FROM reroute_unserved WHERE seat = ?").run(s);
+      // served again: nudged above, or working again or holding nothing; forget it, unless the nudge didn't go out
+      for (const s of wasOut) if (s.endsWith(`@${rigName}`) && !r.out.includes(s) && !failed.has(s)) db.prepare("DELETE FROM reroute_unserved WHERE seat = ?").run(s);
     }
   }
   console.log(JSON.stringify({ minutes, applied: apply, moves: report, resumes: nudges }, null, 2));

@@ -13,6 +13,7 @@ import { pathToFileURL } from "node:url";
 import { join } from "node:path";
 import { decideOrStub as decide } from "./jevcall.js";   // AGENT_JEV_STUB in tests: never the live Jev
 import { rig, seats, pickFor, odb, lexicalTop, recordQuality, normQ, accountEligible, eligibleFamilies, seatAvailable, servableAt } from "./lib.js";
+import { pickForWork } from "./pickseat.js";
 
 const args = process.argv.slice(2);
 const flag = (n, d) => { const i = args.indexOf(n); return i >= 0 ? args[i + 1] : d; };
@@ -121,10 +122,11 @@ async function main() {
   const rigName = flag("--rig"); const seat = flag("--seat"); const item = flag("--item"); const error = flag("--error");
   if (!rigName || !seat || !error) throw new Error("--rig, --seat and --error are required");
   const rigSeats = seats(rigName);
-  let owner = seat;
+  let owner = seat, row = null;
   if (item) {
-    const q = rig(["queue", "show", item], { json: true, allowFail: true });
-    owner = normQ(q)?.destination || seat;
+    // the full row: its text carries the work's constraint (a review's author, the locked tests' family)
+    row = rig(["queue", "show", item, "--full"], { json: true, allowFail: true });
+    owner = normQ(row)?.destination || seat;
   }
   const teamDir = flag("--team-dir");
   const ruled = ruleClass(error);
@@ -142,7 +144,7 @@ async function main() {
     if (fam && (pool[fam]?.eligible === 0 || modelOut)) {
       // Nothing to retry within this family. Another family's seat of the same role (the role's chain, then its
       // fallback roles, WO90) can take the work; only when none is free does it need the user.
-      const other = item && me ? pickFor(rigSeats.filter((s) => s.seat !== seat), me.role, { excludeFamily: fam }).seat : null;
+      const other = item && me && row ? pickForWork(rigSeats.filter((s) => s.seat !== seat), me.role, row, { families: eligibleFamilies(), excludeFamily: fam }).seat : null;
       perm.actions = other && perm.actions.includes("reassign") ? ["reassign", "escalate"] : ["escalate"];
       const back = modelOut ? servableAt(me, families) : null;
       perm.reasons.pool = (modelOut ? `MODEL OUT: every eligible ${fam} account is cooling on ${me.model}` + (back ? `; served again ${new Date(back).toISOString()}` : "")
@@ -180,10 +182,17 @@ async function main() {
     else if (action === "reassign") {
       const me = rigSeats.find((s) => s.seat === seat);
       const pool0 = report.pool && me && (report.pool[me.family]?.eligible === 0 || report.pool.model_out);   // the family is out: another family
-      const to = pickFor(rigSeats.filter((s) => s.seat !== seat), me.role, pool0 ? { excludeFamily: me.family } : {}).seat;
-      rig(["queue", "handoff", item, "--to", to.seat, "--note", `recovery reassign from ${seat}: ${cls.result.class}`], { json: true });
-      recordQuality(seat, "failed");
-      report.reassigned_to = to.seat;
+      // the row's own constraint holds (rowConstraint); unknown or unmet, the lead decides instead
+      const w = row ? pickForWork(rigSeats.filter((s) => s.seat !== seat), me.role, row, { families: eligibleFamilies(), ...(pool0 ? { excludeFamily: me.family } : {}) })
+        : { seat: null, why: `the row ${item} couldn't be read` };
+      if (w.seat) {
+        rig(["queue", "handoff", item, "--to", w.seat.seat, "--note", `recovery reassign from ${seat}: ${cls.result.class}`], { json: true });
+        recordQuality(seat, "failed");
+        report.reassigned_to = w.seat.seat;
+      } else {
+        report.reassign_refused = w.why;
+        if (lead && lead !== seat) rig(["send", lead, `[recovery] ${seat}${item ? ` (${item})` : ""}: ${cls.result.class}; not reassigned: ${w.why}. ${error.slice(0, 160)}`]);
+      }
     } else if (action === "reauthenticate") {
       if (lead) rig(["send", lead, `[recovery] ${seat}: upstream auth expired. The USER must run: agent-login <claude|codex> <label> (see agent-proxy-status). Seat should wait.`]);
     } else if (lead && lead !== seat) {

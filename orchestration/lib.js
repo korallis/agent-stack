@@ -72,30 +72,36 @@ const bareModel = (m) => String(m || "").replace(/\[1m\]$/, "");
 export function eligibleFamilies(rows = null) {
   try {
     rows ??= JSON.parse(execFileSync("agent-proxy-status", ["--json"], { encoding: "utf8", timeout: 20_000 }));
-    const fam = { claude: 0, codex: 0 }, cooling = {}, back = {};
+    const fam = { claude: 0, codex: 0 }, cooling = {}, ready = {};
     const at = (c) => (c?.retry_at ? Date.parse(c.retry_at) : NaN);
+    const end = (cs) => (cs.length ? (cs.every((c) => Number.isFinite(at(c))) ? Math.max(...cs.map(at)) : null) : 0);   // 0: none; null: unknown
     for (const r of rows) {
       const f = PROVIDER_FAMILY[r.provider] ?? r.provider;
       fam[f] ??= 0;   // every provider seen starts at 0 (all accounts down is unavailable, not unknown)
       const cds = Array.isArray(r.cooldowns) ? r.cooldowns.filter((c) => !c?.retry_at || at(c) > Date.now()) : [];
-      const cred = cds.filter((c) => c?.scope === "credential");
-      if (!accountEligible(r) || cred.length) {
-        // when this account is back: the end of its credential cooldown; over a quota limit or in error, unknown
-        const t = accountEligible(r) ? Math.max(...cred.map(at)) : NaN;
-        (back[f] ??= []).push(Number.isFinite(t) ? t : null);
-        continue;
+      const cred = cds.filter((c) => c?.scope === "credential"), models = new Map();
+      for (const c of cds.filter((c) => c?.scope !== "credential" && c?.model_key)) {
+        const m = bareModel(c.model_key); models.set(m, [...(models.get(m) || []), c]);
       }
+      // When this account can serve: a model, once its credential and that model's cooldowns have both ended (null:
+      // not known); an account over its quota limit, in error or disabled reports no reset here, so it adds nothing.
+      if (accountEligible(r)) (ready[f] ??= []).push({ cred: end(cred), models });
+      if (!accountEligible(r) || cred.length) continue;
       fam[f] += 1;
-      (cooling[f] ??= []).push(new Map(cds.filter((c) => c?.model_key).map((c) => [bareModel(c.model_key), Number.isFinite(at(c)) ? at(c) : null])));
+      (cooling[f] ??= []).push(models);
     }
-    // a model is out for a family when EVERY eligible account of it is cooling on that model; it is back at the first
-    // of those cooldowns to end (null: not known)
+    // a model is out for a family when EVERY eligible account of it is cooling on that model; it can be served again at
+    // the earliest time any account clears both its credential cooldown and that model's (null if any is unknown)
+    const soonest = (accts, m) => {
+      const ts = accts.map((a) => { const mm = m === "*" ? 0 : end(a.models.get(m) || []); return a.cred === null || mm === null ? null : Math.max(a.cred, mm); });
+      return !ts.length || ts.includes(null) ? null : Math.min(...ts);
+    };
     const models = {}, until = {};
     for (const [f, maps] of Object.entries(cooling)) {
       models[f] = [...maps[0].keys()].filter((m) => maps.every((x) => x.has(m)));
-      for (const m of models[f]) { const ts = maps.map((x) => x.get(m)); (until[f] ??= {})[m] = ts.includes(null) ? null : Math.min(...ts); }
+      for (const m of models[f]) (until[f] ??= {})[m] = soonest(ready[f] || [], m);
     }
-    for (const [f, ts] of Object.entries(back)) if (fam[f] === 0) (until[f] ??= {})["*"] = ts.includes(null) ? null : Math.min(...ts);
+    for (const f of Object.keys(fam)) if (fam[f] === 0) (until[f] ??= {})["*"] = soonest(ready[f] || [], "*");
     Object.defineProperty(fam, "_models", { value: models });
     Object.defineProperty(fam, "_until", { value: until });
     Object.defineProperty(fam, "_native", { value: { grok: null, kimi: null } });
@@ -178,17 +184,22 @@ export function familyGap(all, role, family, families) {
     return families[family] === 0 ? `${family}: no eligible account` : cool.length ? `${family}: accounts cooling on ${[...new Set(cool)].join(", ")}`
       : `${family}: the native CLI is out`;
   }
+  if (live.every((s) => s.context >= CONTEXT_WALL)) return `${family} ${role} seats at their context wall`;
   return `${family} ${role} seats all busy`;
 }
 
+// A seat at or past this share of its context window takes no new work (it's about to compact or stall).
+export const CONTEXT_WALL = 97;
+
 // Pick a concrete seat for a role: capacity + availability + balance + demonstrated quality. Pure code. With `chain` (a
 // role's family order, ROLE_CHAIN), the first family that has a seat wins, and `fallback` says why the earlier ones didn't.
-export function pickSeat(all, role, { preferFamily = null, excludeFamily = null, families = eligibleFamilies(), chain = null } = {}) {
+// `idle`: only seats observed idle (a move of existing work: a seat busy on something the queue doesn't show can't take it).
+export function pickSeat(all, role, { preferFamily = null, excludeFamily = null, families = eligibleFamilies(), chain = null, idle = false } = {}) {
   const inFlight = { claude: 0, codex: 0 };
   for (const s of all) inFlight[s.family] = (inFlight[s.family] ?? 0) + s.assigned;
   const excluded = new Set([excludeFamily].flat().filter(Boolean));
   const pool = all.filter((s) => s.role === role && s.running && s.assigned === 0 && s.pending === 0
-    && !excluded.has(s.family) && seatAvailable(s, families));
+    && !excluded.has(s.family) && seatAvailable(s, families) && !(s.context >= CONTEXT_WALL) && (!idle || s.idle));
   const rank = (f) => { const i = chain ? chain.indexOf(f) : 0; return i < 0 ? 99 : i; };
   pool.sort((a, b) =>
     rank(a.family) - rank(b.family)
@@ -206,10 +217,10 @@ export function pickSeat(all, role, { preferFamily = null, excludeFamily = null,
 
 // A seat for a role's work: the role's chain first, then its fallback roles (ROLE_FALLBACK) in theirs. `as` names the
 // role that took it when that isn't the role asked for.
-export function pickFor(all, role, { families = eligibleFamilies(), excludeFamily = null } = {}) {
+export function pickFor(all, role, { families = eligibleFamilies(), excludeFamily = null, idle = false } = {}) {
   const tried = [];
   for (const r of [role, ...(ROLE_FALLBACK[role] || [])]) {
-    const p = pickSeat(all, r, { families, excludeFamily, chain: ROLE_CHAIN[r] || null });
+    const p = pickSeat(all, r, { families, excludeFamily, idle, chain: ROLE_CHAIN[r] || null });
     if (p.seat) return { ...p, ...(r !== role ? { as: r, tried } : {}) };
     tried.push(r);
   }
@@ -218,11 +229,11 @@ export function pickFor(all, role, { families = eligibleFamilies(), excludeFamil
 
 // The review matrix (WO90), pure: never the author's own seat; another family than the author's, in the reviewer
 // chain's order; the author's family only when no other family has a free reviewer, and then said so.
-export function reviewerFor(all, authorSeat, authorFamily, families, chain = ROLE_CHAIN.reviewer || []) {
+export function reviewerFor(all, authorSeat, authorFamily, families, chain = ROLE_CHAIN.reviewer || [], { idle = false } = {}) {
   const order = chain.filter((f) => f !== authorFamily);
-  const pool = all.filter((s) => s.seat !== authorSeat && !s.seat.startsWith(`${authorSeat}@`));
-  const cross = pickSeat(pool, "reviewer", { excludeFamily: authorFamily, chain: order, families });
-  const same = cross.seat ? null : pickSeat(pool, "reviewer", { families });
+  const pool = all.filter((s) => !authorSeat || (s.seat !== authorSeat && !s.seat.startsWith(`${authorSeat}@`)));
+  const cross = pickSeat(pool, "reviewer", { excludeFamily: authorFamily, chain: order, families, idle });
+  const same = cross.seat ? null : pickSeat(pool, "reviewer", { families, idle });
   const seat = cross.seat || same?.seat || null;
   return { seat, matrix: { author_family: authorFamily, order, chosen: seat?.family ?? null,
     skipped: cross.seat ? (cross.fallback?.skipped || []) : order.map((f) => ({ family: f, reason: familyGap(pool, "reviewer", f, families) })),

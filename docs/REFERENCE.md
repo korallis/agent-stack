@@ -867,9 +867,19 @@ the lead or a person. Send Jev evidence, not conclusions.
   - it is claimed on an idle seat the proxy can't serve. The proxy's 429 "all credentials for <model> are cooling
     down" ends the turn, and nothing resumes it. On 2026-10-02 this held claimed rows still for 1h20.
 
-  When the seat won't be served again for 30+ minutes (or nobody knows when), rows move after 5 minutes. Each row moves at most once. Rows for a
+  The destination must be able to take the work now: idle, servable, below its context wall, with no open work. A
+  moved row keeps its work's independence, read from the row (`rig queue show --full`):
+  - a review never goes to its author's seat or family (`author:` / `author-family:` tags, or review-plan's
+    `Author: <seat> (<family>)` line);
+  - an implementation against locked tests never goes to the tests' family (`locked-tests:` tag, or a `Locked tests:
+    <seat> (<family>)` line).
+
+  When the row implies such a constraint but doesn't state it, or can't be read, the row is left for the lead;
+  `agent-recover`'s reassign does the same.
+  When the seat won't be served again for 30+ minutes (or nobody knows when), rows move after 5 minutes. A model is
+  served again when the first account clears both its credential cooldown and that model's. Each row moves at most once. Rows for a
   human or the owner never move, and a row with no free seat anywhere is reported, not moved. A seat that is served
-  again, idle, still holding claimed rows gets one resume message naming them. `agent-recover` classifies that 429 as
+  again, idle, still holding claimed rows gets one resume message naming them (retried next pass if the send fails). `agent-recover` classifies that 429 as
   `rate_limited` in code. When every eligible account is cooling on the seat's model it reports `MODEL OUT` with the
   time it's served again and offers reassign to another family instead of a retry.
 
