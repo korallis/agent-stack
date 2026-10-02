@@ -5,7 +5,7 @@ import {readBounded, type Run} from './sources.ts';
 import type {Step} from './types.ts';
 import {cardText} from './wording.ts';
 import {estimateEta, featureUnits, readFeatureHistory, type EtaEstimate, type EtaUnit} from './eta.ts';
-export interface ProjectScope {projectId:string;root:string;repo:string|null;name:string;description:string;milestone:string|null;progress:number|null;progressLabel:string;source:string;eta:string|null;estimate?:EtaEstimate;projectEstimate?:EtaEstimate;milestones:Step[];activeMissions:{id:string;label:string;status:string}[];nativeAgents?:Record<string,{cwd:string;model:string|null}>}
+export interface ProjectScope {projectId:string;root:string;repo:string|null;name:string;description:string;milestone:string|null;progress:number|null;progressLabel:string;source:string;eta:string|null;estimate?:EtaEstimate;projectEstimate?:EtaEstimate;phaseEstimate?:EtaEstimate;milestones:Step[];activeMissions:{id:string;label:string;status:string}[];stageCounts?:{witnessed:number;merged:number;review:number;notStarted:number;total:number};nativeAgents?:Record<string,{cwd:string;model:string|null}>}
 const scalarValue=(v:string):string|null=>{
  const text=v.trim();if(/^[&*!\[{]/.test(text))return null;
  if(text.startsWith('"')){try{return JSON.parse(text);}catch{return null;}}
@@ -97,7 +97,7 @@ export async function readProjectScopes(projectsRoot:string,rigNames:string[],ru
   const missions=missionDirs.slice(0,80).map(id=>{const dir=path.join(missionsRoot,id),text=read(path.join(dir,'mission.yaml')),status=manifestScalar(text,['metadata','status'])??'unknown';return {id,dir,text,status,label:cardText(heading(read(path.join(dir,'SPEC.md')))??manifestScalar(text,['metadata','name'])??id,[id])};});
   const building=missions.filter(m=>m.status==='building');const active=building.length?building:missions.filter(m=>m.status==='active'||m.status==='in-progress');
   const activeMissions=active.map(({id,label,status})=>({id,label,status}));let total=0,done=0,unknown=0,valid=inventoryComplete&&active.length>0;
-  const milestones:Step[]=[],activeUnits:EtaUnit[]=[],projectUnits:EtaUnit[]=[],completionUnits:CompletionUnit[]=[],evidenceSources=new Set<string>();let activeComplete=inventoryComplete&&active.length>0,projectComplete=inventoryComplete&&missions.length>0;
+  const milestones:Step[]=[],stageCounts={witnessed:0,merged:0,review:0,notStarted:0,total:0},activeUnits:EtaUnit[]=[],projectUnits:EtaUnit[]=[],completionUnits:CompletionUnit[]=[],evidenceSources=new Set<string>();let activeComplete=inventoryComplete&&active.length>0,projectComplete=inventoryComplete&&missions.length>0;
   for(const m of missions){const membership=members(m.text),isActive=active.includes(m);if(!membership.valid){projectComplete=false;if(isActive){valid=false;activeComplete=false;}}
    for(const ref of membership.refs){const file=inside(m.dir,ref);if(!file){projectComplete=false;if(isActive){valid=false;activeComplete=false;}continue;}
     const slice=read(file),sliceDir=path.dirname(file),specRef=manifestScalar(slice,['composition','slice_markdown','spec'])??'SPEC.md',specFile=inside(sliceDir,specRef),sliceSpec=specFile?read(specFile):'',matter=frontmatter(sliceSpec);
@@ -106,10 +106,10 @@ export async function readProjectScopes(projectsRoot:string,rigNames:string[],ru
     const id=manifestScalar(slice,['metadata','id'])??path.basename(sliceDir),unitId=`${m.id}/${id}`;
     // Creation, verification, migration, file mtimes and queue closure are not completion dates.
     const explicit=['completed_at','completedAt','done_at','doneAt','completed_date','completion_date'].map(key=>manifestScalar(slice,['metadata',key])??manifestScalar(matter,[key])).find(Boolean)??null;
-    const evidence=options.completionEvidence?.[`${projectId}/${unitId}`];if(state==='done'&&evidence&&!explicit)evidenceSources.add(evidence.source);
+    const evidence=options.completionEvidence?.[`${projectId}/${unitId}`];if(evidence&&!explicit)evidenceSources.add(evidence.source);
     const unit={id:unitId,done:state==='done',completedAt:state==='done'?(explicit??evidence?.at??null):null};projectUnits.push(unit);
     completionUnits.push({id:unitId,missionId:m.id,missionDirectory:m.id,missionAliases:[m.id,manifestScalar(m.text,['metadata','id'])??m.id],sliceId:id,sliceDirectory:path.basename(sliceDir),done:unit.done});
-    if(isActive){total++;if(state==='done')done++;if(!state)unknown++;activeUnits.push(unit);
+    if(isActive){total++;stageCounts.total++;if(state==='done'){done++;stageCounts.witnessed++;}else if(state==='merged'){stageCounts.merged++;}else if(['review','in-review'].includes(state??'')){stageCounts.review++;}else{stageCounts.notStarted++;}if(!state)unknown++;activeUnits.push(unit);
      milestones.push({id:unitId,label:heading(sliceSpec)??id,state:state==='done'?'done':['building','in-progress','review','in-review'].includes(state??'')?'active':state?'waiting':'unknown',at:null,detail:`${m.label} · authored status: ${state??'unknown'}`});
     }
    }
@@ -141,6 +141,7 @@ export async function readProjectScopes(projectsRoot:string,rigNames:string[],ru
     }
    }catch{}
   }
+  const phaseEstimate=estimate;
   const milestone=active.length===1?active[0].label:active.length?`${active.slice(0,3).map(m=>m.label).join(' · ')}${active.length>3?` +${active.length-3} active`:''}`:null;
   for(const binding of bindings){
    const nativeAgents:Record<string,{cwd:string;model:string|null}>={};let files:string[]=[];try{files=fs.readdirSync(path.join(rigDir,'native')).filter(n=>n.endsWith('.yaml')).slice(0,100);}catch{}
@@ -149,7 +150,7 @@ export async function readProjectScopes(projectsRoot:string,rigNames:string[],ru
     if(!launch||!cwd||!path.isAbsolute(cwd))continue;const model=launch[2].match(/--model(?:=|\s+)([^\s"']+)/)?.[1]??null;
     nativeAgents[`${file.slice(0,-5)}@${binding.rig}`]={cwd,model};
    }
-   out[binding.rig]={projectId,root,repo:binding.repo,name,description,milestone,progress,progressLabel,source,eta:estimate.date,estimate,projectEstimate,milestones,activeMissions,nativeAgents};
+   out[binding.rig]={projectId,root,repo:binding.repo,name,description,milestone,progress,progressLabel,source,eta:estimate.date,estimate,projectEstimate,phaseEstimate,milestones,stageCounts,activeMissions,nativeAgents};
   }
  }
  return out;
