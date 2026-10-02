@@ -258,6 +258,10 @@ if [ $CHECK = 0 ]; then
   claude mcp get Neon >/dev/null 2>&1 || claude mcp add --scope user --transport http Neon https://mcp.neon.tech/mcp >/dev/null
   "$S/bin/playwright-browsers" >/dev/null || todo "playwright chromium for @playwright/mcp@$PW_MCP"
 fi
+# Project the complete installed catalog after repo, OpenRig, plugin and Neon installation.
+# Includes release-matched Herdr instructions and the native Grok/Kimi user roots.
+while IFS= read -r line; do case "$line" in "ok "*) ok "${line#ok }" ;; *) todo "$line" ;; esac
+done < <("$S/system/skills-project" $([ $CHECK = 0 ] && echo --apply) 2>&1 || true)
 # Claude Code and Codex write their own state (~/.claude.json, ~/.codex/) the first time they run in a HOME, so --check
 # asks them only where they have run before (a later run changes nothing; measured).
 asks() { [ $CHECK = 0 ] || [ -e "$1" ]; }

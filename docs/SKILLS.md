@@ -17,3 +17,35 @@ with `--check`) prints one line per source and WARNs on anything missing.
 | `neon`, `neon-postgres`, `neon-postgres-branches`, `neon-postgres-egress-optimizer` | the Neon CLI | Claude and Codex | `neon skills --global` | no |
 | Claude.ai account-synced skills (`pdf`, `docx`, `pptx`, `xlsx`, `brand-guidelines`, `morning`, `import-memory`, …) | the Claude.ai account (`~/.claude/skills/synced/`) | Claude sessions signed in to that account | nothing: they come with the Claude login | no |
 | `omarchy`, `diagnose-crash` | the host OS (Omarchy, `/usr/share/omarchy`) | Claude and Codex on Omarchy machines | nothing: host-specific | no |
+
+## The same catalog on every harness
+
+`install.sh` runs `system/skills-project` after installing the skill sources. The helper collects user skills,
+including grouped account skills, Codex system skills, OpenRig core and shared role skills, and installed user plugin skills. Existing shared user choices
+win duplicate names. Distinct versions of the same skill name are not separate catalog entries. Native plugins
+continue to work through their own harness; the shared catalog exposes their Markdown skills to the other harnesses.
+
+The helper projects the catalog to these user roots:
+
+| Harness | Skill directory |
+|---|---|
+| Claude Code | `$CLAUDE_CONFIG_DIR/skills`, default `~/.claude/skills` |
+| Codex | `~/.agents/skills` |
+| Native Grok | `~/.grok/skills` |
+| Native Kimi Code | `$KIMI_CODE_HOME/skills`, default `~/.kimi-code/skills` |
+
+Grok and Kimi also read `.agents/skills`. Kimi Code's current branded root is `.kimi-code`, not the legacy `.kimi`.
+Project role skills still use OpenRig's existing projection. The shared role catalog is also available globally;
+this helper changes user-level availability, not which procedures a role loads at startup.
+
+Herdr's [agent-skill guide](https://herdr.dev/docs/agent-skill/) recommends `herdr --skill` for the installed release.
+The installer saves that output under its local skill state and links it as `herdr` for all four harnesses. It does
+not fetch the website's latest version. The skill's `HERDR_ENV=1` guard remains intact. Installing this skill does
+not install Herdr's per-agent integrations; those are separate hooks/plugins managed by `herdr integration`.
+
+`system/skills-project` and `agent-project-check` report missing or conflicting skills. The helper's default is
+read-only; `--apply` creates missing links, updates its own links after source upgrades, and removes only its
+unchanged links when a source leaves the catalog. Managed links never count as user source choices. Different existing user skills are preserved
+and reported for reconciliation. Identical existing Markdown is accepted without replacing its directory.
+The helper refuses to guess between multiple cached versions of an enabled Codex plugin. Resolve the active cache
+version before retrying. No authenticated harness is launched by this check.
