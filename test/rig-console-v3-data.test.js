@@ -8,7 +8,6 @@ import { bindVerdict, progressFromExecution, prFromGithub } from '../console/src
 import { qrowFromItem } from '../console/src/model.ts';
 import { parseAccounts } from '../console/src/data.ts';
 import { cardText } from '../console/src/v3/wording.ts';
-import { wrap } from '../console/src/v3/draw.ts';
 import { renderV3 } from '../console/src/v3/render.ts';
 import { initialState } from '../console/src/v3/controller.ts';
 const at = Date.parse('2026-10-02T12:00:00Z');
@@ -211,14 +210,15 @@ test('mission wrappers are removed before exact known identifiers, preserving su
 });
 
 test('multiple missions leave room for the work clause and retain complete detail labels',()=>{
- const labels=['Repository housekeeping and executable design references','Identity (D-27): app access','Booking journeys for ISO 27001 and Q4'];
+ const labels=['Repository housekeeping and executable design references','Identity (D-27): app access','Booking journeys for ISO 27001 and Q4','Reporting improvements'];
  const scope={name:'Example Portal',description:'Neutral project',milestone:labels.join(' · '),progress:null,eta:null,milestones:labels.map((label,i)=>({id:String(i),label,state:'active',detail:label,at:null})),activeMissions:labels.map((label,i)=>({id:'M'+i,label:'Mission — M'+i+' — '+label,status:'building'}))};
  const s=snapshotFromRaw(raw({rigs:['alpha','beta','gamma','delta','epsilon'].map(name=>({id:name,name,seats:[]})),queue:[row('build',{state:'in-progress',summary:'Fix the date picker on mobile.'})]}),{projects:{alpha:scope}});
- assert.match(s.teams[0].sentence,/^Repository housekeeping.*\+2 more: Fix the date picker on mobile\.$/);
+ for(const [width,height,top,bottom,right] of [[100,30,18,20,31],[160,50,27,30,30]]){
+  const card=renderV3(s,width,height,initialState()).screen.lines().slice(top,bottom).map(line=>line.slice(4,right).trim()).join(' ');
+  assert.match(card,/date picker/,`the actual ${width}x${height} fleet card shows the task subject`);
+ }
+ assert.match(s.teams[0].sentence,/^Fix the date picker on mobile\. Repository housekeeping.*\+3 more\.$/);
  assert.ok(s.teams[0].sentence.length<=80,s.teams[0].sentence);
- assert.ok(wrap(s.teams[0].sentence,26).length<=3,'work clause fits the three-line fleet card');
  assert.doesNotMatch(s.teams[0].sentence,/Mission|M0|Identity|ISO/);
  assert.equal(s.teams[0].milestone,scope.milestone);assert.deepEqual(s.teams[0].milestones,scope.milestones);
- const card=renderV3(s,160,50,initialState()).screen.lines().slice(27,30).map(line=>line.slice(4,30).trim()).join(' ');
- assert.match(card,/date picker/,'the actual fleet card shows the task subject');
 });
