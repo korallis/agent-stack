@@ -37,8 +37,11 @@ of individual sources. Event and reset timestamps are ISO strings; capacity hist
 The OpenRig adapter joins cached daemon state with selected queue details and transitions, recorded project progress,
 `agent-proxy-status` measurements, GitHub read commands and local Jev records. Enrichment is bounded and happens in the
 background. Project discovery maps `project.yaml` and rig identity to active missions. Progress labels distinguish
-project feature evidence from marked-done slice statuses; neither silently becomes witnessed proof, and ETA remains
-unknown without a supported derivation. The current-head GitHub `jev-merge` status is the primary gate source, with
+project feature evidence from marked-done slice statuses; neither silently becomes witnessed proof, and ETA uses only supported completion evidence. Optional `estimate` and `projectEstimate` objects preserve dates/ranges, remaining units, observed completion count, pace window, unit, scope, reason, source and working-day rate. The legacy `eta` field retains the central date.
+
+Feature estimates compare pinned first-parent feature states, excluding initial imports and duplicate or reopened identities. Slice estimates use explicit completion dates or actual merged PRs mapped to exact project/mission/slice identities; the latter is labelled as a latest-mapped-merge approximation, not a witnessed completion time. The ring and forecast share the same inventory and unit. A project-feature ring stays project-scoped when no feature-to-mission mapping exists. Fewer than three dated completions, ambiguous scope and truncated history produce an explanation rather than a date. Forecasts normalize the last 14 calendar days to UTC Monday–Friday working days without holidays. A daily p25–p75 pace range is descriptive, not a confidence interval; zero-output days remain in the sample.
+
+The current-head GitHub `jev-merge` status is the primary gate source, with
 exactly bound local records as supplemental evidence. Repository merge charts require an unambiguous team attribution. Terminal content comes from the cache's
 selected transcript tail. The adapter may persist its own cache and measurements; it does not change fleet work.
 

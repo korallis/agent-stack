@@ -4,7 +4,8 @@ import path from 'node:path';
 import {readBounded, type Run} from './sources.ts';
 import type {Step} from './types.ts';
 import {cardText} from './wording.ts';
-export interface ProjectScope {projectId:string;root:string;repo:string|null;name:string;description:string;milestone:string|null;progress:number|null;progressLabel:string;source:string;eta:null;milestones:Step[];activeMissions:{id:string;label:string;status:string}[];nativeAgents?:Record<string,{cwd:string;model:string|null}>}
+import {estimateEta, featureUnits, readFeatureHistory, type EtaEstimate, type EtaUnit} from './eta.ts';
+export interface ProjectScope {projectId:string;root:string;repo:string|null;name:string;description:string;milestone:string|null;progress:number|null;progressLabel:string;source:string;eta:string|null;estimate?:EtaEstimate;projectEstimate?:EtaEstimate;milestones:Step[];activeMissions:{id:string;label:string;status:string}[];nativeAgents?:Record<string,{cwd:string;model:string|null}>}
 const scalarValue=(v:string):string|null=>{
  const text=v.trim();if(/^[&*!\[{]/.test(text))return null;
  if(text.startsWith('"')){try{return JSON.parse(text);}catch{return null;}}
@@ -53,7 +54,7 @@ function members(text:string):{refs:string[];valid:boolean} {
   else if(pair[1]==='active'){if(!/^(true|false)(?:\s+#.*)?$/.test(pair[2].trim()))return invalid();current.active=value==='true';}
   else if(!/^\d+$/.test(value))return invalid();
  }
- if(refs.some(r=>r.ref===null))return invalid();
+ if(refs.some(r=>r.ref===null)||new Set(refs.filter(r=>r.active).map(r=>r.ref)).size!==refs.filter(r=>r.active).length)return invalid();
  return {refs:[...new Set(refs.filter(r=>r.active).map(r=>r.ref!))],valid:true};
 }
 function inside(root:string,ref:string):string|null {
@@ -64,17 +65,23 @@ function inside(root:string,ref:string):string|null {
 const heading=(text:string)=>text.replace(/^---\r?\n[\s\S]*?\r?\n---\r?\n/,'').match(/^#\s+(.+)$/m)?.[1]?.trim()??null;
 const frontmatter=(text:string)=>text.match(/^---\r?\n([\s\S]*?)\r?\n---(?:\r?\n|$)/)?.[1]??'';
 const listDirs=(dir:string,limit:number)=>{try{return fs.readdirSync(dir,{withFileTypes:true}).filter(e=>e.isDirectory()).slice(0,limit).map(e=>e.name).sort((a,b)=>a.localeCompare(b,undefined,{numeric:true}));}catch{return [];}};
-function authoredPurpose(project:string,spec:string,culture:string,readme:string):string {
+function authoredPurpose(project:string,spec:string,culture:string,readme:string,plan:string):string {
  const explicit=manifestScalar(project,['metadata','description'])??manifestScalar(project,['metadata','purpose'])??manifestScalar(project,['description']);if(explicit)return explicit.slice(0,180);
  const intentSection=culture.match(/^##\s+(?:Purpose|Intent|Mission)\s*\n+([^#][\s\S]*?)(?=\n\n|\n##|$)/im)?.[1]?.trim();if(intentSection)return intentSection.replace(/\s+/g,' ').slice(0,180);
  const specifics=culture.match(/^##[^\n]* specifics\n([\s\S]*?)(?=\n##|$)/im)?.[1]?.replace(/\s+/g,' ');
  const purpose=specifics?.match(/^- Repo:.*?\)\.\s*(.+?)(?:\s+Binding rules:| - |$)/)?.[1];if(purpose)return purpose.slice(0,180);
  const readmeTitle=heading(readme);if(readmeTitle?.includes(' — '))return readmeTitle.split(' — ').slice(1).join(' — ').slice(0,180);
- const intent=manifestScalar(frontmatter(spec),['intent']);return intent&&!/Organize this project's durable work/.test(intent)?intent.replace(/\s+/g,' ').slice(0,180):'Project purpose not available.';
+ const intent=manifestScalar(frontmatter(spec),['intent']);if(intent&&!/Organize this project's durable work/.test(intent))return intent.replace(/\s+/g,' ').slice(0,180);
+ const intro=readme.replace(/^---\r?\n[\s\S]*?\r?\n---\r?\n/,'').match(/^# [^\n]+\n+([^#`<\n][^\n]*(?:\n[^\n#`<]+)*)(?=\n\n|$)/)?.[1]?.trim();
+ const outcome=plan.match(/^##\s+The outcome\s*\n+([\s\S]*?)(?=\n##|$)/im)?.[1]?.trim();
+ return (intro??outcome)?.replace(/\s+/g,' ').slice(0,180)||'Project purpose not available.';
 }
-export async function readProjectScopes(projectsRoot:string,rigNames:string[],run:Run):Promise<Record<string,ProjectScope>> {
- const out:Record<string,ProjectScope>={};let reads=0;
- const read=(file:string)=>++reads<=2400?readBounded(file,256<<10)??'':'';
+export interface CompletionEvidence {at:string;source:string}
+export interface CompletionUnit {id:string;missionId:string;missionDirectory:string;missionAliases:string[];sliceId:string;sliceDirectory:string;done:boolean}
+export interface ProjectReadOptions {completionEvidence?:Record<string,CompletionEvidence>;completionResolver?:(project:{projectId:string;repo:string|null;units:CompletionUnit[]},now:number)=>Promise<Record<string,CompletionEvidence>>}
+export async function readProjectScopes(projectsRoot:string,rigNames:string[],run:Run,now=Date.now(),options:ProjectReadOptions={}):Promise<Record<string,ProjectScope>> {
+ const out:Record<string,ProjectScope>={};let reads=0,exhausted=false;
+ const read=(file:string)=>{if(++reads>2400){exhausted=true;return '';}return readBounded(file,256<<10)??'';};
  for(const directory of listDirs(projectsRoot,200).filter(n=>n.endsWith('-work'))){
   const root=path.join(projectsRoot,directory),project=read(path.join(root,'project.yaml'));const projectId=manifestScalar(project,['metadata','id']);if(!projectId)continue;
   const bindings:{rig:string;repo:string|null}[]=[];const rigDir=path.join(root,'rig');
@@ -84,24 +91,56 @@ export async function readProjectScopes(projectsRoot:string,rigNames:string[],ru
   const spec=read(path.join(root,'SPEC.md')),culture=read(path.join(root,'rig','CULTURE.md')),base=directory.slice(0,-5);
   const name=manifestScalar(project,['metadata','name'])??manifestScalar(project,['metadata','displayName'])??base;
   const repo=bindings[0].repo;const readme=repo?read(path.join(repo,'README.md')):'';
-  const description=authoredPurpose(project,spec,culture,readme);
+  const description=authoredPurpose(project,spec,culture,readme,repo?read(path.join(repo,'docs','PLAN.md')):'');
   const missionsRef=manifestScalar(project,['missions','root'])??'missions',missionsRoot=inside(root,missionsRef);if(!missionsRoot)continue;
-  const missions=listDirs(missionsRoot,80).map(id=>{const dir=path.join(missionsRoot,id),text=read(path.join(dir,'mission.yaml')),status=manifestScalar(text,['metadata','status'])??'unknown';return {id,dir,text,status,label:cardText(heading(read(path.join(dir,'SPEC.md')))??manifestScalar(text,['metadata','name'])??id,[id])};});
+  const missionDirs=listDirs(missionsRoot,81),inventoryComplete=missionDirs.length<=80;
+  const missions=missionDirs.slice(0,80).map(id=>{const dir=path.join(missionsRoot,id),text=read(path.join(dir,'mission.yaml')),status=manifestScalar(text,['metadata','status'])??'unknown';return {id,dir,text,status,label:cardText(heading(read(path.join(dir,'SPEC.md')))??manifestScalar(text,['metadata','name'])??id,[id])};});
   const building=missions.filter(m=>m.status==='building');const active=building.length?building:missions.filter(m=>m.status==='active'||m.status==='in-progress');
-  const activeMissions=active.map(({id,label,status})=>({id,label,status}));let total=0,done=0,unknown=0,valid=active.length>0;
-  const milestones:Step[]=[];
-  for(const m of active){const membership=members(m.text);if(!membership.valid)valid=false;
-   for(const ref of membership.refs){const file=inside(m.dir,ref);if(!file){valid=false;continue;}total++;
-    const slice=read(file),sliceDir=path.dirname(file),specRef=manifestScalar(slice,['composition','slice_markdown','spec'])??'SPEC.md',specFile=inside(sliceDir,specRef),sliceSpec=specFile?read(specFile):'';
-    const state=manifestScalar(slice,['metadata','status'])??manifestScalar(frontmatter(sliceSpec),['status']);if(state==='done')done++;if(!state)unknown++;
-    const id=manifestScalar(slice,['metadata','id'])??path.basename(sliceDir);
-    milestones.push({id:`${m.id}/${id}`,label:heading(sliceSpec)??id,state:state==='done'?'done':['building','in-progress','review','in-review'].includes(state??'')?'active':state?'waiting':'unknown',at:null,detail:`${m.label} · authored status: ${state??'unknown'}`});
+  const activeMissions=active.map(({id,label,status})=>({id,label,status}));let total=0,done=0,unknown=0,valid=inventoryComplete&&active.length>0;
+  const milestones:Step[]=[],activeUnits:EtaUnit[]=[],projectUnits:EtaUnit[]=[],completionUnits:CompletionUnit[]=[],evidenceSources=new Set<string>();let activeComplete=inventoryComplete&&active.length>0,projectComplete=inventoryComplete&&missions.length>0;
+  for(const m of missions){const membership=members(m.text),isActive=active.includes(m);if(!membership.valid){projectComplete=false;if(isActive){valid=false;activeComplete=false;}}
+   for(const ref of membership.refs){const file=inside(m.dir,ref);if(!file){projectComplete=false;if(isActive){valid=false;activeComplete=false;}continue;}
+    const slice=read(file),sliceDir=path.dirname(file),specRef=manifestScalar(slice,['composition','slice_markdown','spec'])??'SPEC.md',specFile=inside(sliceDir,specRef),sliceSpec=specFile?read(specFile):'',matter=frontmatter(sliceSpec);
+    const state=manifestScalar(slice,['metadata','status'])??manifestScalar(matter,['status']);
+    if(!state){projectComplete=false;if(isActive)activeComplete=false;}
+    const id=manifestScalar(slice,['metadata','id'])??path.basename(sliceDir),unitId=`${m.id}/${id}`;
+    // Creation, verification, migration, file mtimes and queue closure are not completion dates.
+    const explicit=['completed_at','completedAt','done_at','doneAt','completed_date','completion_date'].map(key=>manifestScalar(slice,['metadata',key])??manifestScalar(matter,[key])).find(Boolean)??null;
+    const evidence=options.completionEvidence?.[`${projectId}/${unitId}`];if(state==='done'&&evidence&&!explicit)evidenceSources.add(evidence.source);
+    const unit={id:unitId,done:state==='done',completedAt:state==='done'?(explicit??evidence?.at??null):null};projectUnits.push(unit);
+    completionUnits.push({id:unitId,missionId:m.id,missionDirectory:m.id,missionAliases:[m.id,manifestScalar(m.text,['metadata','id'])??m.id],sliceId:id,sliceDirectory:path.basename(sliceDir),done:unit.done});
+    if(isActive){total++;if(state==='done')done++;if(!state)unknown++;activeUnits.push(unit);
+     milestones.push({id:unitId,label:heading(sliceSpec)??id,state:state==='done'?'done':['building','in-progress','review','in-review'].includes(state??'')?'active':state?'waiting':'unknown',at:null,detail:`${m.label} · authored status: ${state??'unknown'}`});
+    }
    }
   }
+  if(options.completionResolver&&repo){
+   try{const evidence=await options.completionResolver({projectId,repo,units:completionUnits},now);
+    for(const unit of projectUnits){const item=evidence[`${projectId}/${unit.id}`];if(unit.done&&!unit.completedAt&&item){unit.completedAt=item.at;evidenceSources.add(item.source);}}
+   }catch{evidenceSources.add('Mapped merge evidence unavailable');}
+  }
+  valid=valid&&!exhausted;
   let progress=valid&&total?Math.round(done/total*100):null;
-  let source=`Local mission and slice manifests read ${new Date().toISOString()}`;
+  let source=`Local mission and slice manifests read ${new Date(now).toISOString()}`;
   let progressLabel=valid&&total?`${done}/${total} slices marked done${unknown?` · ${unknown} statuses unknown`:''} · ${active.length>1?'active missions':'active mission'}`:'Slice progress unavailable';
-  if(repo){const text=await run('git',['-C',repo,'show','origin/main:features.json'],4000);try{const value=JSON.parse(text??'null'),features=Array.isArray(value)?value:value?.features;if(Array.isArray(features)&&features.length&&features.every(f=>f&&typeof f.passes==='boolean')){const passing=features.filter(f=>f.passes).length;progress=Math.round(passing/features.length*100);progressLabel=`${passing}/${features.length} project features pass · origin/main`;const revision=(await run('git',['-C',repo,'rev-parse','origin/main'],3000))?.trim();source=`Local origin/main${revision&&/^[0-9a-f]{40,64}$/i.test(revision)?'@'+revision:''}; remote freshness unknown; read ${new Date().toISOString()}`;}}catch{}}
+  const completionSource=['Explicit slice completion dates',...evidenceSources,'14 calendar days, normalized to UTC Monday–Friday; no holidays'].join('; ');
+  let estimate=estimateEta({units:activeUnits,unit:'slices',scope:active.length===1?`Mission: ${active[0].label}`:`Active missions (${active.length})`,source:completionSource,now,valid:activeComplete&&!exhausted,reason:'Complete active-mission slice inventory unavailable'});
+  let projectEstimate=estimateEta({units:projectUnits,unit:'slices',scope:'All authored project slices',source:completionSource,now,valid:projectComplete&&!exhausted,reason:'Complete project slice inventory unavailable'});
+  if(repo){
+   const revision=(await run('git',['-C',repo,'rev-parse','origin/main'],3000))?.trim(),pinned=revision&&/^[0-9a-f]{40,64}$/i.test(revision)?revision:null;
+   const text=await run('git',['-C',repo,'show',`${pinned??'origin/main'}:features.json`],4000);
+   try{const value=JSON.parse(text??'null'),features=Array.isArray(value)?value:value?.features;
+    if(Array.isArray(features)&&features.length&&features.every(f=>f&&typeof f.passes==='boolean')){
+     const passing=features.filter(f=>f.passes).length;progress=Math.round(passing/features.length*100);progressLabel=`${passing}/${features.length} project features pass · origin/main`;
+     source=`Local origin/main${pinned?'@'+pinned:''}; remote freshness unknown; read ${new Date(now).toISOString()}`;
+     const records=featureUnits(value),history=records&&pinned?await readFeatureHistory(repo,pinned,records,run,now):null;
+     // The feature ring is project-wide. Without an authored feature-to-mission
+     // mapping its forecast must never be presented as a milestone forecast.
+     estimate=estimateEta({units:history?.units??[],unit:'features',scope:'All project features',source:history?.source??source,now,valid:!!history&&!history.reason,reason:history?.reason??'Pinned feature identities and completion history unavailable'});
+     projectEstimate=estimate;
+    }
+   }catch{}
+  }
   const milestone=active.length===1?active[0].label:active.length?`${active.slice(0,3).map(m=>m.label).join(' · ')}${active.length>3?` +${active.length-3} active`:''}`:null;
   for(const binding of bindings){
    const nativeAgents:Record<string,{cwd:string;model:string|null}>={};let files:string[]=[];try{files=fs.readdirSync(path.join(rigDir,'native')).filter(n=>n.endsWith('.yaml')).slice(0,100);}catch{}
@@ -110,7 +149,7 @@ export async function readProjectScopes(projectsRoot:string,rigNames:string[],ru
     if(!launch||!cwd||!path.isAbsolute(cwd))continue;const model=launch[2].match(/--model(?:=|\s+)([^\s"']+)/)?.[1]??null;
     nativeAgents[`${file.slice(0,-5)}@${binding.rig}`]={cwd,model};
    }
-   out[binding.rig]={projectId,root,repo:binding.repo,name,description,milestone,progress,progressLabel,source,eta:null,milestones,activeMissions,nativeAgents};
+   out[binding.rig]={projectId,root,repo:binding.repo,name,description,milestone,progress,progressLabel,source,eta:estimate.date,estimate,projectEstimate,milestones,activeMissions,nativeAgents};
   }
  }
  return out;
