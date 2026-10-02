@@ -2,8 +2,8 @@
 // numbered views (lazygit), the live ticker and the footer of keys for the focused view (k9s).
 import type { RGB, Screen } from "../term.ts";
 import type { Theme } from "../theme.ts";
-import { brief, type Account, type Fleet, type Raw } from "../model.ts";
-import { ago, fit } from "../draw.ts";
+import { brief, type Account, type Fleet, type Harness, type HarnessStatus, type Raw } from "../model.ts";
+import { ago, fit, meter, panel, rpad } from "../draw.ts";
 
 export interface Ctx { s: Screen; t: Theme; raw: Raw; f: Fleet; frame: number; view: number; rigFocus: number; seatFocus: [number, number]; note: string | null;
   riverFocus?: [number, number]; journey?: string | null;
@@ -71,6 +71,56 @@ export function accountState(t: Theme, a: Account): [string, RGB, boolean] {
   if (a.over) return ["○ over", t.stuck, false];
   if (a.status === "active" && !a.cooling) return a.onCredits ? ["● on credits", t.info, true] : ["● active", t.working, true];
   return [a.cooling ? "○ cooling" : `○ ${a.status}`, t.blocked, false];
+}
+export function providerAbbrev(provider: string): string {
+  if (provider === "claude") return "cl";
+  if (provider === "codex") return "cx";
+  if (provider === "grok") return "gx";
+  if (provider === "kimi" || provider === "kimi-ai") return "km";
+  return provider.slice(0, 2) || "??";
+}
+export function harnessQuotaColor(t: Theme, v: number | null): RGB {
+  if (v === null) return t.faint;
+  return v >= 95 ? t.stuck : v >= 75 ? t.blocked : t.working;
+}
+export function harnessState(t: Theme, h: Harness): [string, RGB] {
+  const status: HarnessStatus = h.status;
+  switch (status) {
+    case "ok": return ["● ok", t.working];
+    case "not_installed": return ["○ not installed", t.faint];
+    case "unavailable": return ["○ no reading", t.blocked];
+    default: {
+      const _x: never = status;
+      return [`○ ${_x}`, t.dim];
+    }
+  }
+}
+/** Grok / Kimi quota from agent-harness-status, drawn next to the proxy pool. */
+export function drawHarnessPanel(c: Ctx, x: number, y: number, w: number, h: number, color?: RGB): void {
+  const { s, t, raw } = c;
+  const rows = raw.harness ?? [];
+  panel(s, t, x, y, w, h, "HARNESS USAGE", { color: color ?? t.border, right: w >= 52 ? "grokbuild / kimi · not the proxy" : undefined });
+  if (h < 3) return;
+  if (!rows.length) {
+    s.put(x + 2, y + 1, fit(raw.sources.harness === "ok" ? "no harness readings" : "harness status unavailable", w - 4), { fg: t.faint });
+    return;
+  }
+  const mw = Math.max(4, Math.floor((w - 48) / 2));
+  rows.slice(0, h - 2).forEach((a, i) => {
+    const yy = y + 1 + i, [word, wc] = harnessState(t, a);
+    const col = (v: number | null) => harnessQuotaColor(t, v);
+    s.put(x + 2, yy, fit(a.label, 10), { fg: t.text });
+    s.put(x + 13, yy, fit(providerAbbrev(a.provider), 4), { fg: t.dim });
+    if (a.short === null && a.weekly === null) {
+      s.put(x + 18, yy, fit(a.unknownReason ?? word, w - 20), { fg: wc });
+      return;
+    }
+    meter(s, t, x + 18, yy, mw, a.short === null ? null : a.short / 100, col(a.short));
+    s.put(x + 19 + mw, yy, rpad(a.short === null ? "—" : `${a.short}%`, 4), { fg: col(a.short) });
+    meter(s, t, x + 25 + mw, yy, mw, a.weekly === null ? null : a.weekly / 100, col(a.weekly));
+    s.put(x + 26 + 2 * mw, yy, rpad(a.weekly === null ? "—" : `${a.weekly}%`, 4), { fg: col(a.weekly) });
+    s.put(x + 32 + 2 * mw, yy, fit(word, Math.max(0, w - 34 - 2 * mw)), { fg: wc });
+  });
 }
 
 export function kindColor(t: Theme, kind: string) {

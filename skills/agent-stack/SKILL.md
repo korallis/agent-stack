@@ -37,6 +37,7 @@ semantic judgments, and **ordinary code** does arithmetic, scheduling, permissio
 | `agent-stuck-check [--rig R] [--dry-run]` | every 10 min: warns a rig's lead when a seat holding work looks looping, rate-limited or stalled (`seat.stuck`); never acts |
 | `agent-skills-check` | one line per skill source (ours, OpenRig core and role skills, plugins, Neon, TypeSafe for Codex); the full list with sources: docs/SKILLS.md |
 | `agent-proxy-status [--recent N]` | pool health per account; routing log |
+| `agent-harness-status [--json]` | grokbuild and kimi quota from those CLIs (not the proxy); missing CLI or empty usage = no percent |
 | `jev-decide list` / `jev-decide <id> --json '{…}'` / MCP tool `jev_decide` | direct Jev decisions |
 
 ## Wiring a project the OpenRig way (checklist — each item was missed once)

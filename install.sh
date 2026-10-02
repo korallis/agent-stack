@@ -116,6 +116,7 @@ if [ $CHECK = 0 ] || mise where "node@$NODE_FOR_JEV" >/dev/null 2>&1; then
   launcher agent-merge-evidence "$NODE_FOR_JEV" "$S/orchestration/merge-evidence.js"
   launcher agent-stuck-check "$NODE_FOR_JEV" "$S/orchestration/stuck.js"
   launcher rig-console "$NODE_FOR_JEV" "$S/console/src/main.ts"
+  launcher agent-harness-status "$NODE_FOR_JEV" "$S/harness/status.js"
 fi
 if [ -d "$S/jev/node_modules" ]; then ok "jev dependencies"; elif [ $CHECK = 1 ]; then todo "jev npm ci"; else
   (cd "$S/jev" && PATH="$(mise where "node@$NODE_FOR_JEV")/bin:$PATH" npm ci --silent) && ok "jev dependencies installed"; fi
@@ -263,6 +264,10 @@ if asks "$HOME/.codex"; then codex plugin list 2>/dev/null | grep -q "superpower
 else todo "Codex has not run in this HOME yet (no ~/.codex): its plugins can't be checked without it writing there"; fi
 command -v toon >/dev/null && ok "toon CLI" || todo "toon CLI"
 command -v neon >/dev/null && ok "Neon CLI + skills" || todo "Neon CLI (npm i -g neon; then neon login)"
+if command -v grok >/dev/null || command -v grokbuild >/dev/null; then ok "Grok Build CLI (grok / grokbuild) for harness quota"
+else todo "Grok Build CLI (grok or grokbuild) for harness quota: install from xAI, then grok login"; fi
+if command -v kimi >/dev/null; then ok "Kimi Code CLI for harness quota"
+else todo "Kimi Code CLI (npm i -g @moonshot-ai/kimi-code; kimi login) for harness quota; agent-login kimi only adds a proxy seat"; fi
 
 step "Owner address (the human seats message)"
 own=$("$S/bin/agent-owner-address" --source 2>/dev/null || echo "owner@external (default)"); addr=${own%% *}
@@ -294,6 +299,11 @@ cat <<EOF
    3. Pool your subscriptions, one per account, each in a private browser window:
         agent-login claude claude-a     agent-login codex codex-a     agent-login kimi kimi-a
    4. Paste your TypeSafe key into $SEC/typesafe.env (Jev), then: openrig-daemon-cycle
-   5. Start a project: see starter-kit/README.md
+   5. Optional harness quota (separate from the proxy; agent-harness-status reads these CLIs):
+        Grok Build: install the grok CLI from xAI so grok or grokbuild is on PATH, then grok login.
+        Kimi Code:  npm i -g @moonshot-ai/kimi-code && kimi login
+        agent-login kimi only adds a CLIProxyAPI seat. It does not install the Kimi CLI or report quota.
+        Older grok / kimi builds have no usage --json: the console then shows "no reading", never a made-up percent.
+   6. Start a project: see starter-kit/README.md
    Re-run ./install.sh --check at any time to see what is missing.
 EOF

@@ -13,7 +13,7 @@ const src = (f) => import(join(repo, "console/src", f));
 const { Screen, frame, dump, detectDepth, to256, to16 } = await src("term.ts");
 const { bigNumber, braille, fit, sparkline } = await src("draw.ts");
 const { seatFromNode, derive, eventLine, isHuman, classify } = await src("model.ts");
-const { Cache, parseHeavy, parseAccounts, parseGates, MIN_INTERVAL } = await src("data.ts");
+const { Cache, parseHeavy, parseAccounts, parseHarness, parseGates, MIN_INTERVAL } = await src("data.ts");
 const { History } = await src("history.ts");
 const { render, parseArgs } = await src("main.ts");
 const await_grid = await src("views/matrix.ts");
@@ -117,6 +117,14 @@ test("sources: agent-heavy status (with or without the queue), the account pool,
     { label: "kimi-a", provider: "kimi-ai", status: "active", short_window_used: null, weekly_used: null }]));
   assert.deepEqual(a.map((x) => [x.label, x.short, x.weekly, x.cooling]), [["codex-a", 100, 0, true], ["claude-a", 29, 79, false], ["claude-b", 101, 85, false], ["kimi-a", null, null, false]]);
   assert.deepEqual(parseAccounts("not json"), []);
+  const h = parseHarness(JSON.stringify({ harnesses: [
+    { id: "grok", label: "grokbuild", provider: "grok", harness: "grokbuild", installed: true, status: "ok", short_window_pct: 34, weekly_pct: 12 },
+    { id: "kimi", label: "kimi", provider: "kimi", harness: "kimi", installed: false, status: "not_installed", unknown_reason: "kimi not on PATH" },
+  ] }));
+  assert.deepEqual(h.map((x) => [x.label, x.provider, x.short, x.weekly, x.status, x.unknownReason]),
+    [["grokbuild", "grok", 34, 12, "ok", null], ["kimi", "kimi", null, null, "not_installed", "kimi not on PATH"]]);
+  assert.deepEqual(parseHarness(null), []);
+  assert.deepEqual(parseHarness("not json"), []);
   const g = parseGates([JSON.stringify({ ts: "2026-10-01T10:00:00Z", decision: "review.merge_gate", band: "act", result: { decision: "merge" }, caller: "integ@x" }),
     JSON.stringify({ ts: "2026-10-01T10:01:00Z", decision: "review.merge_gate", band: "uncertain", result: { decision: "hold" }, caller: "diagnosis:qa" }),
     JSON.stringify({ ts: "2026-10-01T10:01:30Z", decision: "review.merge_gate", band: "act", result: { decision: "merge" }, caller: "operator@kernel diagnosis pr#61 helper-old (not a merge gate)" }),
@@ -150,7 +158,7 @@ test("cache: one read of every daemon source, never the per-seat capture options
     assert.deepEqual(d.seen.map((x) => x.url), ["/healthz", "/api/rigs/summary", "/api/rigs/R1/nodes", "/api/queue/list?compact=1&state=pending,in-progress,blocked&limit=5000",
       "/api/queue/list?compact=1&attention=1&limit=200", "/api/queue/recent-transitions?scope=instance&limit=40"]);
     assert.ok(d.seen.every((x) => !/full=true|refresh=true/.test(x.url)), "no tmux capture asked of the daemon");
-    assert.deepEqual(ran, ["agent-proxy-status --json", "agent-heavy status"], "local sources, by name: never tmux");
+    assert.deepEqual(ran, ["agent-proxy-status --json", "agent-harness-status --json", "agent-heavy status"], "local sources, by name: never tmux");
     assert.equal(c.raw.rigs.length, 1); assert.equal(c.raw.rigs[0].seats[0].activity, "working"); assert.equal(c.raw.queue[0].blockedOn, "qitem-x");
     assert.equal(c.raw.daemon.ok, true); assert.equal(c.raw.host.id, "host-stub");
   } finally { c.stop(); d.close(); }
@@ -343,7 +351,7 @@ test("CLI: --once draws one frame from the fixture; strict arguments; the fixtur
 test("CLI: a live --once frame against a stub daemon runs no tmux (a tmux on PATH would record the call)", async () => {
   const d = await stubDaemon(), bin = join(scratch, "bin"), log = join(scratch, "tmux.log");
   fs.mkdirSync(bin, { recursive: true });
-  for (const t of ["tmux", "agent-proxy-status", "agent-heavy"]) fs.writeFileSync(join(bin, t), `#!/bin/sh\necho "${t} $*" >> ${log}\n`, { mode: 0o755 });
+  for (const t of ["tmux", "agent-proxy-status", "agent-harness-status", "agent-heavy"]) fs.writeFileSync(join(bin, t), `#!/bin/sh\necho "${t} $*" >> ${log}\n`, { mode: 0o755 });
   try {
     const r = await new Promise((res) => {
       const p = spawn(process.execPath, [join(repo, "console/src/main.ts"), "--once", "--size", "120x40", "--color", "0", "--url", d.url],
@@ -354,7 +362,7 @@ test("CLI: a live --once frame against a stub daemon runs no tmux (a tmux on PAT
     assert.match(plain(r.out), /alpha/);
     const calls = fs.existsSync(log) ? fs.readFileSync(log, "utf8") : "";
     assert.doesNotMatch(calls, /^tmux/m, "never tmux");
-    assert.match(calls, /^agent-proxy-status --json$/m); assert.match(calls, /^agent-heavy status$/m);
+    assert.match(calls, /^agent-proxy-status --json$/m); assert.match(calls, /^agent-harness-status --json$/m); assert.match(calls, /^agent-heavy status$/m);
     assert.ok(fs.existsSync(join(scratch, "state/rig-console/history.json")), "the first sample is kept");
   } finally { d.close(); }
 });
@@ -362,6 +370,7 @@ test("CLI: a live --once frame against a stub daemon runs no tmux (a tmux on PAT
 test("install.sh installs rig-console as a launcher on the pinned Node, like the other Node tools", () => {
   const install = fs.readFileSync(join(repo, "install.sh"), "utf8");
   assert.match(install, /launcher rig-console "\$NODE_FOR_JEV" "\$S\/console\/src\/main\.ts"/);
+  assert.match(install, /launcher agent-harness-status "\$NODE_FOR_JEV" "\$S\/harness\/status\.js"/);
 });
 
 test("Home at short heights: the work-in-flight strip never runs into the ticker, the key hints or the status line", () => {
@@ -437,4 +446,19 @@ test("WO85: account panels follow over_limit: on credits at 101% is not over; us
   const m = render(raw, hist(), 176, 50, st({ view: 1 })), ml = m.lines(), my = ml.findIndex((l) => l.includes("nocred100"));
   const dot = ml[my].lastIndexOf("○");
   assert.ok(dot > 0 && same(m.cells[my * m.w + dot], t.stuck), "matrix: a hollow red dot for the over account");
+});
+
+test("harness usage is drawn next to the proxy pool; missing readings stay blank, never a stub 0%", () => {
+  assert.match(render(fixture.raw, hist(), 176, 50, st({ view: 4 })).lines().join("\n"), /SUBSCRIPTION POOL[\s\S]*HARNESS USAGE[\s\S]*grokbuild[\s\S]*kimi/);
+  assert.match(render(fixture.raw, hist(), 176, 50, st()).lines().join("\n"), /ACCOUNT POOL[\s\S]*HARNESS USAGE[\s\S]*grokbuild/);
+  assert.match(render(fixture.raw, hist(), 176, 50, st({ view: 1 })).lines().join("\n"), /SUBSCRIPTION POOL[\s\S]*HARNESS USAGE/);
+  const none = { ...fixture.raw, harness: parseHarness(JSON.stringify({ harnesses: [
+    { id: "grok", label: "grokbuild", provider: "grok", harness: "grokbuild", installed: false, status: "not_installed", unknown_reason: "grok / grokbuild not on PATH" },
+    { id: "kimi", label: "kimi", provider: "kimi", harness: "kimi", installed: true, status: "unavailable", unknown_reason: "usage command not available" },
+  ] })) };
+  const pool = render(none, hist(), 176, 50, st({ view: 4 })).lines().join("\n");
+  assert.match(pool, /HARNESS USAGE/);
+  assert.match(pool, /grokbuild[^\n]*not on PATH/);
+  assert.match(pool, /kimi[^\n]*no reading|kimi[^\n]*usage command not available/);
+  assert.doesNotMatch(pool.split("\n").find((l) => /grokbuild/.test(l)) ?? "", /0%/);
 });

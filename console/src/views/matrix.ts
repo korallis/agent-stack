@@ -7,7 +7,7 @@ import { braille, fit, meter, panel, rpad } from "../draw.ts";
 import { podsOf, natural, POD_ORDER, type Seat } from "../model.ts";
 import type { History } from "../history.ts";
 import { ctxShade } from "../theme.ts";
-import { accountState, footer, header, kindColor, quotaColor, since, ticker, type Ctx } from "./chrome.ts";
+import { accountState, drawHarnessPanel, footer, header, kindColor, quotaColor, since, ticker, type Ctx } from "./chrome.ts";
 import { DOT, dotColor } from "./home.ts";
 
 export interface Grid { pods: { pod: string; width: number }[]; rows: { rig: string; compact: boolean; cells: (Seat | null)[] }[] }
@@ -147,12 +147,15 @@ export function matrix(c: Ctx, hist: History): void {
     const heavy = raw.heavy.map((h) => `${h.cls} ${h.held}/${h.total}${h.waiting ? ` +${h.waiting}` : ""}`).join("  ");
     s.put(3, y + mh - 3, "AGENT-HEAVY", { fg: t.dim }); s.put(3, y + mh - 2, fit(heavy || "—", lw - 5), { fg: t.text });
   }
-  // ── account pool (right) ──
+  // ── account pool + harness usage (right) ──
   if (showRight) {
     const rx = s.w - 1 - rw;
-    panel(s, t, rx, y, rw, mh, "SUBSCRIPTION POOL");
+    const harN = (raw.harness ?? []).length;
+    const harH = mh >= 10 ? Math.min(Math.max(4, harN + 2), Math.max(4, Math.floor(mh * 0.4))) : 0;
+    const accH = mh - harH;
+    panel(s, t, rx, y, rw, accH, "SUBSCRIPTION POOL");
     s.put(rx + 2, y + 1, fit("ACCOUNT", 10) + "  5H   WEEK", { fg: t.faint });
-    raw.accounts.slice(0, Math.floor((mh - 3) / 2)).forEach((a, i) => {
+    raw.accounts.slice(0, Math.floor((accH - 3) / 2)).forEach((a, i) => {
       const ay = y + 2 + i * 2, [, okc, ok] = accountState(t, a), pct = (v: number | null) => rpad(v === null ? "—" : `${v}%`, 4);
       const col = (v: number | null) => quotaColor(t, a, v);
       s.put(rx + 2, ay, fit(a.label, 10), { fg: t.text });
@@ -163,6 +166,7 @@ export function matrix(c: Ctx, hist: History): void {
       meter(s, t, rx + 2, ay + 1, rw - 4, bind === null ? null : bind / 100, col(bind));
     });
     if (!raw.accounts.length) s.put(rx + 2, y + 1, "proxy status unavailable", { fg: t.faint });
+    if (harH >= 4) drawHarnessPanel(c, rx, y + accH, rw, harH);
   }
 
   // ── below the grid: context pressure, queue by rig, event tape ──

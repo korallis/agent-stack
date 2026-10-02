@@ -25,7 +25,7 @@ export function stripAnsi(text: string): string {
     .replace(/[ \t]+\n/g, "\n")
     .replace(/\n{3,}/g, "\n\n");
 }
-//   - local sources (gate log, account pool, heavy slots, host) on their own slower clocks;
+//   - local sources (gate log, account pool, harness quota, heavy slots, host) on their own slower clocks;
 //   - the ticker: the queue's recent transitions (a bounded read, with the queue tier) and queue creations from the
 //     live-only /api/queue/sse, whose events also pull the next queue read forward (never sooner than 2 s after the
 //     last). No cursor and no replay: it works on a quiet fleet as on a busy one (QA PR86).
@@ -34,7 +34,7 @@ import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
 import { execFile } from "node:child_process";
-import { eventLine, journey, qrowFromItem, seatFromNode, transitionLine, type Account, type Event, type Gate, type Heavy, type Raw, type Rig } from "./model.ts";
+import { eventLine, journey, qrowFromItem, seatFromNode, transitionLine, type Account, type Event, type Gate, type Harness, type HarnessStatus, type Heavy, type Raw, type Rig } from "./model.ts";
 
 export interface Options {
   url: string; interval: number; procDir?: string; jevLog?: string | null; timeoutMs?: number;
@@ -68,6 +68,32 @@ export function quotaPct(v: unknown, provider: string): number | null {
   const n = typeof v === "number" ? v : typeof v === "string" && v.trim() !== "" ? Number(v) : NaN;
   if (!Number.isFinite(n)) return null;
   return Math.round(provider === "claude" ? n * 100 : n);
+}
+/** A used percent the harness CLI already scaled (0–100). Never the proxy's Anthropic fractions. */
+export function harnessPct(v: unknown): number | null {
+  const n = typeof v === "number" ? v : typeof v === "string" && v.trim() !== "" ? Number(v) : NaN;
+  return Number.isFinite(n) ? Math.round(n) : null;
+}
+function harnessStatus(v: unknown): HarnessStatus {
+  return v === "ok" || v === "not_installed" || v === "unavailable" ? v : "unavailable";
+}
+export function parseHarness(text: string | null): Harness[] {
+  if (!text) return [];
+  try {
+    const d = JSON.parse(text);
+    const rows = Array.isArray(d) ? d : Array.isArray(d.harnesses) ? d.harnesses : [];
+    return rows.map((x: any) => ({
+      id: String(x.id ?? x.label ?? ""),
+      label: String(x.label ?? x.id ?? ""),
+      provider: String(x.provider ?? ""),
+      harness: String(x.harness ?? x.id ?? ""),
+      installed: x.installed === true,
+      status: harnessStatus(x.status),
+      short: harnessPct(x.short_window_pct ?? x.short_window_used),
+      weekly: harnessPct(x.weekly_pct ?? x.weekly_used),
+      unknownReason: x.unknown_reason == null || x.unknown_reason === "" ? null : String(x.unknown_reason),
+    }));
+  } catch { return []; }
 }
 export function parseAccounts(text: string | null): Account[] {
   if (!text) return [];
@@ -131,7 +157,7 @@ export class Cache {
     this.raw = {
       at: this.now(), host: { id: os.hostname(), cores: os.cpus().length, load: [0, 0, 0], memUsedGB: 0, memTotalGB: 0 },
       daemon: { ok: false, latencyMs: null, version: null, cpuPct: null, loopUtil: null, error: "connecting" },
-      rigs: [], queue: [], attention: [], gates: [], accounts: [], heavy: [], events: [], refreshMs: this.interval, sources: {},
+      rigs: [], queue: [], attention: [], gates: [], accounts: [], harness: [], heavy: [], events: [], refreshMs: this.interval, sources: {},
     };
   }
   private now() { return this.opt.now ? this.opt.now() : Date.now(); }
@@ -240,7 +266,8 @@ export class Cache {
       this.raw.host.load = l; this.raw.host.memTotalGB = kb("MemTotal") / 1048576; this.raw.host.memUsedGB = (kb("MemTotal") - kb("MemAvailable")) / 1048576;
     } catch { /* not Linux */ }
     if (this.due("accounts", 30_000)) { const a = parseAccounts(await run("agent-proxy-status", ["--json"], 5000)); this.raw.accounts = a; this.raw.sources.accounts = a.length ? "ok" : "unavailable"; }
-    if (this.due("heavy", 10_000)) { const h = parseHeavy(await run("agent-heavy", ["status"], 5000)); this.raw.heavy = h; this.raw.sources.heavy = h.length ? "ok" : "unavailable"; }
+    if (this.due("harness", 30_000)) { const h = parseHarness(await run("agent-harness-status", ["--json"], 8000)); this.raw.harness = h; this.raw.sources.harness = h.length ? "ok" : "unavailable"; }
+    if (this.due("heavy", 10_000)) { const hv = parseHeavy(await run("agent-heavy", ["status"], 5000)); this.raw.heavy = hv; this.raw.sources.heavy = hv.length ? "ok" : "unavailable"; }
     if (this.opt.jevLog && this.due("gates", 10_000)) this.readGates(this.opt.jevLog);
     const today = new Date(this.now()).toISOString().slice(0, 10);
     this.raw.gates = this.gates = this.gates.filter((g) => g.ts.startsWith(today));

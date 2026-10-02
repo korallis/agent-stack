@@ -5,7 +5,8 @@
 //   rig-console --once [--size WxH] [--fixture FILE] [--view ...]     one frame to stdout, then exit
 //
 // Data: the daemon's HTTP API (rigs, nodes, queue, owner attention, healthz) and its live event stream, plus local
-// read-only sources: the Jev decision log, `agent-proxy-status --json`, `agent-heavy status`, /proc. One cache, one
+// read-only sources: the Jev decision log, `agent-proxy-status --json`, `agent-harness-status --json`,
+// `agent-heavy status`, /proc. One cache, one
 // timer (default 5 s, never under 2 s, backing off when the daemon is slow). It changes nothing and never runs tmux.
 // --fixture draws a saved snapshot instead (the neutral demo: console/fixtures/demo.json).
 // History for the 24 h graphs: $AGENT_STACK_STATE/rig-console/history.json (default ~/.local/state/agent-stack).
@@ -86,7 +87,7 @@ export function render(raw: Raw, hist: History, w: number, h: number, st: ViewSt
       "2  Seat Matrix: every seat, CTX shading, 24 h telemetry, account pool",
       "3  River: slices flowing through the stages per rig; ⏎ on a chip opens its journey ([ ] next slice)",
       "4  Focus: what needs the owner (answered in Slack), fleet pulse, live timeline, progress",
-      "5  Pool & System: 24 h graphs, the account pool, system health",
+      "5  Pool & System: 24 h graphs, the account pool, harness usage, system health",
       "⏎ on a seat (matrix) or a timeline item (focus) opens the seat: work, context, history, live tail",
       "Tab  next pane   e  expand / collapse it   j k  select or scroll in it",
       ":    command: home matrix river focus pool · seat <name> · rig <name> · slice <id> · stuck <min> · theme <name> · q",

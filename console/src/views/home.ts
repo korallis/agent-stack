@@ -5,7 +5,7 @@ import type { RGB } from "../term.ts";
 import { bigNumber, bigWidth, braille, fit, meter, panel, rpad, sparkline } from "../draw.ts";
 import { brief, podsOf, natural, type Activity, type Seat } from "../model.ts";
 import type { History } from "../history.ts";
-import { accountState, footer, header, kindColor, quotaColor, since, ticker, type Ctx } from "./chrome.ts";
+import { accountState, drawHarnessPanel, footer, header, kindColor, providerAbbrev, quotaColor, since, ticker, type Ctx } from "./chrome.ts";
 
 export const DOT: Record<Activity, string> = { working: "●", idle: "○", stuck: "◆", unknown: "?", detached: "·", stopped: "·" };
 export function dotColor(c: Ctx, a: Activity): RGB {
@@ -156,7 +156,9 @@ export function home(c: Ctx, hist: History): void {
     });
     ly += oh;
     const room = bottom - ly;
-    const accH = Math.min(raw.accounts.length + 2, Math.max(0, room - 5));
+    const harN = (raw.harness ?? []).length;
+    const wantHar = Math.min(Math.max(3, harN + 2), 6);
+    const accH = Math.min(raw.accounts.length + 2, Math.max(0, room - wantHar - 5));
     if (accH >= 3) {
       const onCredits = raw.accounts.filter((a) => a.onCredits).length;
       panel(s, t, 1, ly, lw, accH, "ACCOUNT POOL", { right: onCredits ? undefined : "local proxy · 5h window / weekly" });
@@ -164,7 +166,7 @@ export function home(c: Ctx, hist: History): void {
       raw.accounts.slice(0, accH - 2).forEach((a, i) => {
         const yy = ly + 1 + i, mw = Math.max(6, Math.floor((lw - 50) / 2));
         s.put(3, yy, fit(a.label, 10), { fg: t.text });
-        s.put(14, yy, a.provider === "claude" ? "cl" : a.provider === "codex" ? "cx" : a.provider === "kimi" ? "km" : fit(a.provider, 2), { fg: t.dim });
+        s.put(14, yy, providerAbbrev(a.provider), { fg: t.dim });
         s.put(17, yy, "5h", { fg: t.faint });
         const col = (v: number | null) => quotaColor(t, a, v);
         meter(s, t, 20, yy, mw, a.short === null ? null : a.short / 100, col(a.short));
@@ -176,6 +178,11 @@ export function home(c: Ctx, hist: History): void {
         s.put(37 + 2 * mw, yy, fit(word, lw - 38 - 2 * mw), { fg: wc });
       });
       ly += accH;
+    }
+    const harH = Math.min(wantHar, Math.max(0, bottom - ly - 3));
+    if (harH >= 3) {
+      drawHarnessPanel(c, 1, ly, lw, harH);
+      ly += harH;
     }
     const sysH = Math.min(5, bottom - ly);
     if (sysH >= 3) {
