@@ -176,7 +176,7 @@ if [ $DRY = 0 ]; then
   done
   mkdir -p "$W/rig/startup"
   [ -f "$W/rig/startup/context.md" ] || sed "s#@REPO@#$R#g; s#@WT@#$WT#g; s#@TRUNK@#$TRUNK#g" "$AS/rig/template/startup/context.md" > "$W/rig/startup/context.md"
-  sed -i "s#@RIG@#$RIG#g; s#@REPO@#$R#g; s#@WT@#$WT#g; s#@AGENT_STACK@#$AS#g; s#@LEAD_SEAT@#$LEAD#g; s#@MERGE_SEAT@#$MERGE#g" \
+  sed -i "s#@RIG@#$RIG#g; s#@REPO@#$R#g; s#@WT@#$WT#g; s#@W@#$W#g; s#@AGENT_STACK@#$AS#g; s#@LEAD_SEAT@#$LEAD#g; s#@MERGE_SEAT@#$MERGE#g" \
     "$W/rig/$TEAM.yaml" "$W/rig/merge-sweep.watchdog.yaml" "$W/rig/daily-summary.watchdog.yaml"
   grep -q "^## $P specifics" "$W/rig/CULTURE.md" || printf '\n## %s specifics\n- Trunk: `%s`. Branch from origin/%s; every PR targets %s.\n- (status names, commit identity, repo procedures; the owner'"'"'s own decisions go in "Owner decisions" above, with their source)\n' "$P" "$TRUNK" "$TRUNK" "$TRUNK" >> "$W/rig/CULTURE.md"
 fi

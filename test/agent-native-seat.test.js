@@ -65,7 +65,9 @@ test("grok: instructions beside the project's AGENTS.md, OpenRig's activity rela
   assert.ok(!("AGENTS.md" in p.files), "the project's AGENTS.md is never written");
   const hooks = JSON.parse(p.files[".grok/hooks/openrig-activity.json"]).hooks;
   assert.deepEqual(Object.keys(hooks), ["SessionStart", "UserPromptSubmit", "PreToolUse", "Stop", "Notification"]);
-  assert.equal(hooks.Stop[0].hooks[0].command, "node /opt/relay.cjs");
+  const cmd = hooks.Stop[0].hooks[0].command;
+  assert.match(cmd, /^\S*python3\S* \S+\/bin\/agent-native-seat hook --state \S+\/native-seats\/impl-grok-1@demo\/last-hook\.json -- node \/opt\/relay\.cjs$/,
+    "through the launcher's hook mode (the idle keepalive), then OpenRig's relay");
   for (const k of ["HOOKS", "MCPS", "SKILLS", "AGENTS", "RULES"]) assert.equal(p.env[`GROK_CLAUDE_${k}_ENABLED`], "false", k);
   assert.equal(p.env.GROK_DISABLE_AUTOUPDATER, "1");
   assert.deepEqual(p.ignore, [".grok/.gitignore"], "one ignore file, in the directory the launcher creates");
@@ -149,13 +151,16 @@ test("outside a seat it reports nothing, and a kimi restart continues its sessio
 });
 
 // QA PR116 (P1): seats' worktrees usually sit beside the workspace (<app>.worktrees/<seat>, <app>-work/rig/CULTURE.md)
-test("the culture comes from --culture, else $OPENRIG_WORK_ROOT, else above the seat; none, or a missing --culture, is an error", () => {
+test("the culture comes from --culture, else $OPENRIG_WORK_ROOT, else the workspace beside the worktrees, else above the seat; none, or a missing --culture, is an error", () => {
   const ws = join(root, "app-work"), wt = join(root, "app.worktrees", "impl-grok-1");
   fs.mkdirSync(join(ws, "rig"), { recursive: true }); fs.writeFileSync(join(ws, "rig/CULTURE.md"), "# Work-root culture\n");
   fs.mkdirSync(wt, { recursive: true }); spawnSync("git", ["init", "-q", wt]);
   const p = dry("grok", wt, [], { OPENRIG_WORK_ROOT: ws });
   assert.equal(p.culture, join(ws, "rig/CULTURE.md")); assert.match(p.files[".grok/rules/openrig-seat.md"], /# Work-root culture/);
-  const none = spawnSync("python3", [tool, "grok", "--role", "implementer", "--dry-run"], { cwd: wt, encoding: "utf8", env: env({}) });
+  // OpenRig gives a seat no work root (WO96): agent-project-new's layout, <P>.worktrees/<seat> beside <P>-work, is enough
+  assert.equal(dry("grok", wt, []).culture, join(ws, "rig/CULTURE.md"));
+  const lone = join(root, "lone.worktrees", "impl-grok-1"); fs.mkdirSync(lone, { recursive: true }); spawnSync("git", ["init", "-q", lone]);
+  const none = spawnSync("python3", [tool, "grok", "--role", "implementer", "--dry-run"], { cwd: lone, encoding: "utf8", env: env({}) });
   assert.equal(none.status, 2); assert.match(none.stderr, /no rig CULTURE\.md: pass --culture/);
   const missing = spawnSync("python3", [tool, "grok", "--role", "implementer", "--culture", join(root, "nope.md"), "--dry-run"], { cwd: wt, encoding: "utf8", env: env({ OPENRIG_WORK_ROOT: ws }) });
   assert.equal(missing.status, 2); assert.match(missing.stderr, /--culture .*nope\.md: no such file/);
@@ -216,3 +221,46 @@ test("progress: each sequence counts once; plain output after a finished turn is
   } finally { server.close(); }
 });
 
+
+// WO96: OpenRig trusts a hook report for 5 minutes and has no screen reader for terminal seats, so an idle native seat
+// read "unknown" and dropped out of dispatch (pick-seat lists observed-idle seats only).
+test("hook mode: notes only the event's name, then hands the payload unchanged to the relay, with its exit code", () => {
+  const state = join(root, "hk", "last-hook.json"), got = join(root, "hk-relay.bin");
+  fs.mkdirSync(join(root, "hk"), { recursive: true });
+  const relay = join(root, "hk-relay.sh"); fs.writeFileSync(relay, `#!/bin/sh\ncat > ${got}\nexit 3\n`, { mode: 0o755 });
+  const payload = JSON.stringify({ hook_event_name: "Stop", prompt: "private text", session_id: "s1" });
+  const r = spawnSync("python3", [tool, "hook", "--state", state, "--", relay], { input: payload, encoding: "utf8" });
+  assert.equal(r.status, 3);
+  assert.equal(fs.readFileSync(got, "utf8"), payload);
+  const noted = JSON.parse(fs.readFileSync(state, "utf8"));
+  assert.deepEqual(Object.keys(noted).sort(), ["event", "t"]); assert.equal(noted.event, "Stop");
+  assert.equal(spawnSync("python3", [tool, "hook", "--state", state, "--", relay], { input: "not json", encoding: "utf8" }).status, 3, "a bad payload still reaches the relay");
+  assert.equal(JSON.parse(fs.readFileSync(state, "utf8")).event, null);
+});
+
+test("idle keepalive: an idle seat re-reports idle (first soon after start, then on an interval); a busy grok, by its last hook, does not", async () => {
+  const { wt } = workspace("keep");
+  fs.mkdirSync(join(root, "kbin"), { recursive: true });
+  fs.writeFileSync(join(root, "kbin", "grok"), "#!/bin/sh\nsleep 2\n", { mode: 0o755 });
+  fs.writeFileSync(join(root, "kbin", "kimi"), "#!/bin/sh\nsleep 2\n", { mode: 0o755 });
+  const run = async (cli, lastHook) => {
+    const posts = [], st = join(root, `kst-${cli}-${lastHook}`);
+    const seatDir = join(st, "native-seats", `impl-${cli}-1@demo`);
+    if (lastHook) { fs.mkdirSync(seatDir, { recursive: true }); fs.writeFileSync(join(seatDir, "last-hook.json"), JSON.stringify({ event: lastHook, t: 0 })); }
+    const server = http.createServer((req, res) => { let b = ""; req.on("data", (d) => (b += d)); req.on("end", () => { posts.push(JSON.parse(b).hookEvent); res.end("{}"); }); });
+    await new Promise((r) => server.listen(0, "127.0.0.1", r));
+    try {
+      const child = spawn("python3", [tool, cli, "--role", "implementer", "--culture", join(root, "keep/rig/CULTURE.md")], { cwd: wt,
+        env: { ...env({ AGENT_STACK_STATE: st, KIMI_CODE_HOME: join(root, "kkh") }), PATH: `${join(root, "kbin")}:/usr/bin:/bin`, OPENRIG_URL: `http://127.0.0.1:${server.address().port}`,
+          OPENRIG_SESSION_NAME: `impl-${cli}-1@demo`, OPENRIG_ACTIVITY_HOOK_TOKEN: "tok", AGENT_NATIVE_SEAT_FIRST_IDLE_S: "0.3", AGENT_NATIVE_SEAT_KEEPALIVE_S: "0.6" } });
+      child.stdout.resume(); child.stderr.resume();
+      await new Promise((r) => child.on("exit", r)); await new Promise((r) => setTimeout(r, 300));
+      return posts.filter((p) => p === "idle").length;
+    } finally { server.close(); }
+  };
+  assert.ok(await run("grok", "Stop") >= 3, "grok idle after a turn: idle at 0.3 s, 0.9 s, 1.5 s");
+  assert.ok(await run("grok", "SessionStart") >= 3, "a fresh grok session is idle at its prompt");
+  assert.equal(await run("grok", "UserPromptSubmit"), 0, "grok mid-turn: no idle");
+  assert.equal(await run("grok", null), 0, "grok before any hook: not known, nothing said");
+  assert.ok(await run("kimi", null) >= 3, "kimi: idle while no progress sequence runs");
+});

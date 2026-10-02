@@ -35,7 +35,8 @@ test("standard.yaml: 16 seats, four families, 1M windows only for the lead and t
   const native = ms.filter((m) => m[2] === "terminal");
   assert.deepEqual(native.map((m) => `${m[0]}-${m[1]}`), ["impl-grok-1", "impl-grok-2", "tests-grok", "review-grok", "review-kimi"]);
   for (const [pod, id, , , start] of native) {
-    const [, cli, role, model] = start.match(/^agent-native-seat (grok|kimi) --role (\S+) --model (\S+)$/) ?? [];
+    // the culture passed explicitly: OpenRig gives a seat no work root, and seat worktrees sit outside the workspace (WO96)
+    const [, cli, role, model] = start.match(/^agent-native-seat (grok|kimi) --role (\S+) --model (\S+) --culture @W@\/rig\/CULTURE\.md$/) ?? [];
     assert.ok(cli && fs.existsSync(join(repo, "rig/template/agents", role, "guidance/role.md")), `${pod}-${id}: ${start}`);
     assert.ok(cli === "grok" ? /^grok-4\.7/.test(model) : model === "kimi-code/k3-256k", model);
   }
@@ -168,4 +169,13 @@ test("dispatch sees standard.yaml's seats: the five native seats with their fami
   assert.ok(!seatCandidates(all, "implementer", fam, "grok").some((c) => /grok/.test(c.id)), "grok-authored locked tests: no grok implementer");
   assert.equal(reviewerFor(all, "impl-grok-1", "grok", fam).seat.seat, "review-kimi@t");
   assert.equal(reviewerFor(all, "impl-codex", "codex", fam).seat.seat, "review-grok@t");
+});
+
+test("agent-project-new fills every placeholder standard.yaml uses (including @W@, the workspace for --culture)", () => {
+  const used = new Set(fs.readFileSync(join(repo, "rig/template/standard.yaml"), "utf8").match(/@[A-Z_]+@/g));
+  const sed = fs.readFileSync(join(repo, "bin/agent-project-new"), "utf8").match(/sed -i "(s#@[^"]+)"\s*\\\s*\n\s*"\$W\/rig\/\$TEAM\.yaml"/);
+  assert.ok(sed, "the team spec's sed");
+  const filled = new Set(sed[1].match(/@[A-Z_]+@/g));
+  assert.deepEqual([...used].filter((p) => !filled.has(p)), []);
+  assert.ok(used.has("@W@"));
 });

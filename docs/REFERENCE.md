@@ -274,18 +274,28 @@ with `agent-login` and the pool uses it straight away.
   grok-4.7-build-fast / kimi-code/k3-256k; a `[1m]` model is refused). At each start it:
   - writes the rig's CULTURE.md and the role's guidance where the CLI reads project rules (grok `.grok/rules/`, kimi
     `.kimi-code/AGENTS.md`), never over the project's own AGENTS.md, kept out of git by a `.gitignore` in the directory
-    the launcher creates (that worktree only). The culture is `--culture`, else `$OPENRIG_WORK_ROOT/rig/CULTURE.md`,
-    else the nearest one above the seat; none found stops the start (`--no-culture` opts out);
+    the launcher creates (that worktree only). The culture is `--culture` (standard.yaml passes
+    `--culture <workspace>/rig/CULTURE.md`: OpenRig gives a seat neither its workspace nor `OPENRIG_WORK_ROOT`), else
+    `$OPENRIG_WORK_ROOT/rig/CULTURE.md`, else `<P>-work/rig/CULTURE.md` beside a `<P>.worktrees/<seat>` worktree, else
+    the nearest one above the seat; none found stops the start (`--no-culture` opts out);
   - grok: adds hooks that call OpenRig's activity relay, and keeps it from loading `~/.claude` hooks, MCP servers,
     skills and rules and from auto-updating; kimi: pre-trusts the folder (it exits on an untrusted one) and turns off
     its auto-update;
   - runs the CLI never-prompt (`--always-approve` / `--auto`) under a pty that turns tmux's extended-keys Ctrl+M
     (OpenRig's submit) into Enter, also when it arrives split across writes, which kimi needs (mvschwarz/openrig#496), and reports busy/idle from the CLI's
-    progress sequences, so `rig send --wait-for-idle` and the activity views work;
+    progress sequences, so `rig send --wait-for-idle` and the activity views work. While the CLI is idle it says so
+    again every 2 minutes (first 20 s after start): OpenRig trusts a hook report for 5 minutes and reads terminal seats'
+    screens not at all, so an idle native seat would turn "unknown" and drop out of `agent-dispatch pick-seat`, which
+    lists observed-idle seats only. Grok's hooks go through the launcher (`agent-native-seat hook`), which notes only the
+    event's name for this, then pass the payload unchanged to OpenRig's relay;
   - resumes its own session on restore (grok by the id it fixed at first start, kimi with `-c`; `--fresh` starts over).
   Limits of terminal seats on OpenRig 0.6.3: no context %, `set-model` is ignored (the model is in the command), they
   sit outside OpenRig's workflow role routing (queue rows and `rig send` work), no fork. `--dry-run` shows what a start
-  would write and run. Both CLIs need their own login (`grok login`, `kimi login`).
+  would write and run. Both CLIs need their own login (`grok login`, `kimi login`). `agent-refresh-guidance` leaves
+  terminal members alone: a native seat's worktree holds the project's own AGENTS.md, never OpenRig blocks.
+  Adding native seats to a running rig: one `rig add <rigId> <pod> <member.yaml>` per seat (the member as in
+  standard.yaml, with absolute `cwd` and `--culture`), after its worktree exists (`agent/<seat>` branch for `impl-*`,
+  `.env.local` linked, dependencies installed); then add the members to the rig's spec file so a restore keeps them.
 - **Relaunch a seat only when it is idle.** Codex: `C-u`, `/quit`, Enter. Claude: `/exit`. Then
   `rig launch <rigId> <pod.member>` (the rig ID, not its name). Check that it resumed its own conversation (Codex
   `resume <thread>`, Claude `--resume <session-id>` on its command line).

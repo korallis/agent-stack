@@ -34,7 +34,45 @@ else:
     W = f"{H}/Projects/{arg}-work"
 specs = sorted(glob.glob(f"{W}/rig/*.yaml"), key=lambda f: open(f).read().count("cwd:"), reverse=True)
 spec = open(specs[0]).read()
-cwds = re.findall(r'cwd:\s*"?([^"\n]+)"?', spec)
+# Agent seats only: a terminal member is a shell or a native seat (agent-native-seat writes that one's instructions
+# into the CLI's own rules file), and the project's own AGENTS.md in its worktree must not get OpenRig blocks (WO96).
+# Without a YAML parser (or when the spec doesn't parse) the members are read line by line, terminal marks included;
+# a cwd that can't be tied to a member means --apply writes nothing (QA PR123).
+def members_by_text(text):
+    out, cur, ind = [], None, None
+    for ln in text.splitlines():
+        flow = re.match(r"^\s*-\s+\{\s*id:.*\}\s*$", ln)
+        if flow:
+            b = ln; cw = re.search(r'cwd:\s*"?([^",}]+)"?', b)
+            out.append({"cwd": cw.group(1).strip() if cw else None, "text": b}); cur = None; continue
+        m = re.match(r"^(\s*)-\s+id:", ln)
+        if m:
+            cur = {"cwd": None, "text": ln}; out.append(cur); ind = len(m.group(1)); continue
+        if cur is not None:
+            lead = len(ln) - len(ln.lstrip())
+            if ln.strip() and lead <= ind:
+                cur = None; continue
+            cur["text"] += "\n" + ln
+            k = re.match(r'^\s*cwd:\s*"?([^"\n#]+?)"?\s*(#.*)?$', ln)
+            if k: cur["cwd"] = k.group(1).strip()
+    return [m for m in out if m["cwd"]]
+def is_terminal(runtime, agent_ref, text):
+    """One predicate for both parser paths: a terminal member by its runtime, its agent_ref, or a native launcher."""
+    return runtime == "terminal" or agent_ref == "builtin:terminal" or "agent-native-seat" in (text or "")
+def field(text, key):   # a member's own scalar, quoted or not, block or flow style
+    m = re.search(rf"(?:^|[{{,\s]){key}:\s*(['\"]?)([^'\",}}\s#]+)\1", text, re.M)
+    return m.group(2) if m else None
+try:
+    import yaml
+    cwds = [m["cwd"] for p in (yaml.safe_load(spec) or {}).get("pods") or [] for m in p.get("members") or []
+            if m.get("cwd") and not is_terminal(m.get("runtime"), m.get("agent_ref"), json.dumps(m.get("startup") or ""))]
+except Exception:
+    members = members_by_text(spec)
+    every = re.findall(r'cwd:\s*"?([^"\n,}]+)"?', spec)
+    if APPLY and sorted(c.strip() for c in every) != sorted(m["cwd"] for m in members):
+        sys.exit("agent-refresh-guidance: can't tell each seat's runtime in the rig spec (no YAML parser, or it doesn't "
+                 "parse), so a native seat could get OpenRig blocks: nothing written. Fix the spec or install PyYAML.")
+    cwds = [m["cwd"] for m in members if not is_terminal(field(m["text"], "runtime"), field(m["text"], "agent_ref"), m["text"])]
 claude_file = (re.search(r"managed_blocks:\s*\n\s*claude-code:\s*(\S+)", spec) or [0, "CLAUDE.md"])[1]
 # keyed by the path relative to the rig folder, as OpenRig names the blocks (CULTURE.md, startup/context.md)
 sources = {os.path.relpath(p, f"{W}/rig"): p for p in glob.glob(f"{W}/rig/*.md") + glob.glob(f"{W}/rig/startup/*.md")}
