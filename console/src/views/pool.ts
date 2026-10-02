@@ -4,7 +4,7 @@ import type { RGB } from "../term.ts";
 import { braille, fit, panel, rpad } from "../draw.ts";
 import { gradient } from "../theme.ts";
 import type { History } from "../history.ts";
-import { accountState, footer, header, ticker, type Ctx } from "./chrome.ts";
+import { accountState, coolingUntil, footer, header, ticker, type Ctx } from "./chrome.ts";
 
 export const POOL_PANES = ["working", "queue", "gate", "accounts", "system"];
 
@@ -62,6 +62,10 @@ export function poolPane(c: Ctx, hist: History, pane: string, x: number, y: numb
       s.put(x + w - 2 - [...r].length, y, r, { fg: t.info, bold: true });
       if (h - 3 > raw.accounts.length) s.put(x + 2, y + h - 2, fit(`● ${credits.length} of ${raw.accounts.length} accounts on credits (a cost signal): ${credits.map((a) => a.label).join(", ")}`, w - 4), { fg: t.info, bold: true });
     }
+    // when each cooling account comes back (the proxy's retry time and reason), on the lines below the rows
+    const back = raw.accounts.map((a) => [a, coolingUntil(a, raw.at)] as const).filter(([, u]) => u);
+    const free = h - 3 - raw.accounts.length - (credits.length ? 1 : 0);
+    back.slice(0, Math.max(0, free)).forEach(([a, u], i) => s.put(x + 2, y + 2 + raw.accounts.length + i, fit(`○ ${a.label} ${u}`, w - 4), { fg: t.blocked }));
     const mw = Math.max(6, Math.floor((w - 48) / 2));
     s.put(x + 2, y + 1, fit("ACCOUNT    PROV  5 H" + " ".repeat(mw + 2) + "WEEK", w - 4), { fg: t.faint });
     raw.accounts.slice(0, h - 3).forEach((a, i) => {

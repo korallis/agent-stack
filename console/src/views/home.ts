@@ -5,7 +5,7 @@ import type { RGB } from "../term.ts";
 import { bigNumber, bigWidth, braille, fit, meter, panel, rpad, sparkline } from "../draw.ts";
 import { brief, podsOf, natural, type Activity, type Seat } from "../model.ts";
 import type { History } from "../history.ts";
-import { accountState, footer, header, kindColor, quotaColor, since, ticker, type Ctx } from "./chrome.ts";
+import { accountState, coolingShort, coolingUntil, footer, header, kindColor, quotaColor, since, ticker, type Ctx } from "./chrome.ts";
 
 export const DOT: Record<Activity, string> = { working: "●", idle: "○", stuck: "◆", unknown: "?", detached: "·", stopped: "·" };
 export function dotColor(c: Ctx, a: Activity): RGB {
@@ -159,8 +159,13 @@ export function home(c: Ctx, hist: History): void {
     const accH = Math.min(raw.accounts.length + 2, Math.max(0, room - 5));
     if (accH >= 3) {
       const onCredits = raw.accounts.filter((a) => a.onCredits).length;
-      panel(s, t, 1, ly, lw, accH, "ACCOUNT POOL", { right: onCredits ? undefined : "local proxy · 5h window / weekly" });
-      if (onCredits) { const r = ` ● ${onCredits} on credits `; s.put(1 + lw - 2 - [...r].length, ly, r, { fg: t.info, bold: true }); }
+      // the next cooling account to come back, in the title (the Pool view lists each)
+      const next = raw.accounts.filter((a) => coolingUntil(a, raw.at)).sort((a, b) => Date.parse(a.coolUntil!) - Date.parse(b.coolUntil!))[0];
+      const nextNote = next ? ` ○ ${next.label} ${coolingShort(next, raw.at)} ` : "";
+      panel(s, t, 1, ly, lw, accH, "ACCOUNT POOL", { right: onCredits || next ? undefined : "local proxy · 5h window / weekly" });
+      let rx = 1 + lw - 2;
+      if (onCredits) { const r = ` ● ${onCredits} on credits `; rx -= [...r].length; s.put(rx, ly, r, { fg: t.info, bold: true }); }
+      if (next && rx - [...nextNote].length > 18) { rx -= [...nextNote].length; s.put(rx, ly, nextNote, { fg: t.blocked }); }
       raw.accounts.slice(0, accH - 2).forEach((a, i) => {
         const yy = ly + 1 + i, mw = Math.max(6, Math.floor((lw - 50) / 2));
         s.put(3, yy, fit(a.label, 10), { fg: t.text });

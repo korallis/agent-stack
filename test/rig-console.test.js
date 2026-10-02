@@ -438,3 +438,46 @@ test("WO85: account panels follow over_limit: on credits at 101% is not over; us
   const dot = ml[my].lastIndexOf("○");
   assert.ok(dot > 0 && same(m.cells[my * m.w + dot], t.stuck), "matrix: a hollow red dot for the over account");
 });
+
+// WO88: a cooling account says what its timers mean, from the proxy's cooldowns (retry restrictions, not
+// availability): a credential-wide cooldown gates the whole account and wins; model timers only say when the FIRST
+// model is back; a disabled account is never promised back (QA PR103). An old build showed "0% but cooling".
+test("cooling accounts: the whole-account gate wins, model timers say 'first model back', disabled is never back", async () => {
+  const { coolingUntil, coolingShort } = await src("views/chrome.ts");
+  const model = (m, at, reason = "quota") => ({ scope: "model", model_key: m, reason, retry_at: at, http_status: 429 });
+  const a = parseAccounts(JSON.stringify([
+    // the live shape: one quota cooldown per model, all until the weekly reset (a Sunday)
+    { label: "claude-c", provider: "claude", status: "active", cooldowns: ["claude-fable-5-1", "claude-opus-5-5", "claude-sonnet-5-5"].map((m, i) => model(m, `2026-10-04T07:00:${String(20 - i).padStart(2, "0")}.000Z`)) },
+    // QA: a credential quota gate plus a short model timer: the gate wins, and it's one model, not two
+    { label: "qa-a", provider: "codex", status: "active", cooldowns: [{ scope: "credential", reason: "quota", retry_at: "2026-10-04T07:00:00Z" }, model("gpt-6-sol", "2026-10-01T14:10:00Z", "transient")] },
+    // QA: disabled, with a model timer: never "back"
+    { label: "qa-d", provider: "codex", status: "active", disabled: true, cooldowns: [model("gpt-6-sol", "2026-10-01T20:00:00Z")] },
+    { label: "codex-b", provider: "codex", status: "active", cooldowns: [model("gpt-6-sol", "2026-10-01T20:00:07Z"), { reason: "x", retry_at: "not a time" }] },
+    { label: "codex-a", provider: "codex", status: "active", cooldowns: [] }]));
+  assert.deepEqual(a.map((x) => [x.label, x.cooling, x.coolScope, x.coolUntil, x.coolReason, x.coolModels, x.blocked]), [
+    ["claude-c", true, "models", "2026-10-04T07:00:18.000Z", "quota", 3, false],
+    ["qa-a", true, "credential", "2026-10-04T07:00:00Z", "quota", 1, false],
+    ["qa-d", true, "models", "2026-10-01T20:00:00Z", "quota", 1, true],
+    ["codex-b", true, "models", "2026-10-01T20:00:07Z", "quota", 1, false],
+    ["codex-a", false, null, null, null, 0, false]]);
+  const at = Date.parse("2026-10-01T14:06:00Z");
+  assert.equal(coolingUntil(a[0], at), "3 models cooling, first back Sun 07:00Z (quota, in 2d)");
+  assert.equal(coolingUntil(a[1], at), "cooling until Sun 07:00Z (quota, whole account, in 2d)", "the credential gate, not the 14:10Z model timer");
+  assert.equal(coolingUntil(a[2], at), null, "disabled: no promise");
+  assert.equal(coolingUntil(a[3], at), "1 model cooling, first back 20:00Z (quota, in 5h54m)", "the same UTC day: no weekday");
+  assert.equal(coolingUntil(a[4], at), null);
+  assert.deepEqual([coolingShort(a[1], at), coolingShort(a[3], at), coolingShort(a[2], at)], ["back Sun 07:00Z", "first model back 20:00Z", null]);
+  const raw = { ...fixture.raw, at, accounts: a };
+  const pool = render(raw, hist(), 176, 50, st({ view: 4 })).lines().join("\n");
+  assert.match(pool, /○ claude-c 3 models cooling, first back Sun 07:00Z \(quota, in 2d\)/);
+  assert.match(pool, /○ qa-a cooling until Sun 07:00Z \(quota, whole account, in 2d\)/);
+  assert.doesNotMatch(pool, /qa-d [^\n]*back|qa-a [^\n]*14:10Z/);
+  const home = render(raw, hist(), 176, 50, st()).lines().join("\n");
+  assert.match(home, /ACCOUNT POOL[^\n]*○ codex-b first model back 20:00Z/, "Home names the next one back");
+  assert.doesNotMatch(home, /qa-d back|qa-a back 14:10Z/);
+  // QA's home case: only the credential-gated account cooling: Home says when the whole account is back
+  const gate = { ...raw, accounts: [a[1], a[2]] };
+  assert.match(render(gate, hist(), 176, 50, st()).lines().join("\n"), /ACCOUNT POOL[^\n]*○ qa-a back Sun 07:00Z/);
+  // the demo fleet carries one, so the README images show it
+  assert.match(render(fixture.raw, hist(), 176, 50, st({ view: 4 })).lines().join("\n"), /○ codex-c 1 model cooling, first back Fri 20:06Z \(quota, in 1d\)/);
+});
