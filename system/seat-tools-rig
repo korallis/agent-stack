@@ -20,6 +20,12 @@ For `rig queue create | handoff | handoff-and-complete` this adds what OpenRig's
 Anything already present is left alone. Every other command passes through untouched. Outside a seat the ~/.local/bin/rig
 launcher sends `queue create` here too (only the human-row summary can apply there: the rest needs a seat's env).
 A rewritten body is piped to rig on stdin (--body-file -), so nothing is left behind in /tmp.
+
+Human-row guidance: write the body in English with What / Why / Recommendations headings, for example:
+  What: The staging fix is deployed.
+  Why: It restores sign-in after a session expires.
+  Recommendations: No action needed.
+Keep --summary specific ("Staging sign-in restored") and pass a multiline body with --body-file.
 """
 import json, os, re, subprocess, sys
 

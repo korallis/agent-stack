@@ -22,6 +22,14 @@ Operating rules, but they are not the owner's word: an owner decision wins over 
 them as the owner's.
 - (none yet)
 
+## Owner communication
+
+Respond to the owner in English, in every rig and on every harness. Use these three headings for replies,
+updates and decision requests: `What`, `Why`, `Recommendations`.
+State the result or request under What, its reason under Why, and anything the owner should do under
+Recommendations. Say "No action needed" when there is nothing for the owner to do. Keep each section brief.
+Human queue rows also need a specific `--summary`; the headings belong in the body.
+
 ## Operating rules
 
 - Credentials and client data stay out of code, commits, tool inputs, transcripts and screenshots. Load credential
