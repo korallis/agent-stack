@@ -146,7 +146,8 @@ test("native grok and kimi seats pass the instruction check with launcher-writte
   assert.match(blocks(missing).detail, /impl-kimi-1 \(\.kimi-code\/AGENTS\.md: relaunch the seat; agent-native-seat writes it\)/);
   assert.doesNotMatch(blocks(missing).detail, /grok|shell/);
   const old = await checkAll(seatSpec, [], { setup: (home, W) => { culture(W); launch(home, W); write(join(W, "rig/CULTURE.md"), "# Culture\nA newer rule.\n"); } });
-  assert.match(stale(old)?.detail ?? "", /impl-grok-1\/\.grok\/rules\/openrig-seat\.md \(older than the rig's CULTURE\.md or the implementer role: relaunch the seat\)/);
+  // one source for the check and the refresh: agent-refresh-guidance regenerates native files too (WO96)
+  assert.match(stale(old)?.detail ?? "", /^run agent-refresh-guidance --apply: .*impl-grok-1\/\.grok\/rules\/openrig-seat\.md \(native instructions out of date/);
 });
 
 // QA PR118 P1: the roster's own seats, through the real dispatch consumer (seats() over `rig ps --nodes`, WO90).

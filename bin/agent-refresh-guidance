@@ -15,10 +15,14 @@ block is missing.
 Only managed blocks change; text outside them is never touched. Blocks OpenRig ships itself (CULTURE-default.md,
 openrig-*.md) are left alone. --apply backs up every file it changes to ~/.local/share/agent-stack/backups/ first.
 Running sessions still need to re-read the file: tell the lead ("re-read CLAUDE.local.md / AGENTS.md").
+Native grok/kimi seats (a terminal member that starts agent-native-seat) keep their instructions in the CLI's own rules
+file, which the launcher writes at start; OpenRig never sees it. This regenerates that file with the launcher's own
+--dry-run (so it matches what a start would write) and, with --apply, tells an idle seat to re-read it. A busy seat is
+listed as pending, never interrupted: run --apply again when it is idle, or relaunch it there.
 Dry run unless --apply. --json prints, instead, {"total": N, "changed": [{"seat", "file", "reasons"}]}: what would change
 (or changed, with --apply) and why. agent-project-check uses it, so the check and the refresh never disagree.
 """
-import glob, json, os, re, shutil, sys, time
+import glob, hashlib, json, os, re, shlex, shutil, subprocess, sys, time
 
 H = os.path.expanduser("~")
 arg = next((a for a in sys.argv[1:] if not a.startswith("--")), None)
@@ -139,9 +143,89 @@ for cwd in cwds:
                 os.makedirs(os.path.dirname(dest), exist_ok=True)
                 shutil.copy2(path, dest)
                 open(path, "w").write(new)
+# Native seats: regenerate the launcher's instruction file and, at idle, ask the seat to re-read it (WO96).
+NATIVE_FILE = {"grok": ".grok/rules/openrig-seat.md", "kimi": ".kimi-code/AGENTS.md"}
+natives, notified, pending = [], [], []
+try:
+    sd = yaml.safe_load(spec) or {}
+    for pod in sd.get("pods") or []:
+        for m in pod.get("members") or []:
+            start = next((str(a.get("value")) for a in ((m.get("startup") or {}).get("actions") or [])
+                          if isinstance(a, dict) and "agent-native-seat" in str(a.get("value") or "")), None)
+            if m.get("cwd") and start:
+                natives.append({"seat": f"{pod['id']}-{m['id']}@{sd.get('name')}", "rig": sd.get("name"), "cwd": m["cwd"], "start": start})
+except Exception:
+    natives = None   # without a parsed spec there are no session names to tell: report, never guess
+launcher = os.path.join(os.path.dirname(os.path.realpath(__file__)), "agent-native-seat")   # the installed, trusted one
+# A seat told nothing yet (busy, or the send failed) stays pending here until a send succeeds, keyed by the file's
+# content hash: rerunning --apply at idle tells it, even though its file is current by then (QA PR126).
+PENDING = os.path.join(os.environ.get("AGENT_STACK_STATE") or os.path.join(H, ".local/state/agent-stack"), "native-refresh-pending.json")
+try: pending_state = json.load(open(PENDING))
+except (OSError, ValueError): pending_state = {}
+def save_pending():
+    os.makedirs(os.path.dirname(PENDING), exist_ok=True)
+    tmp = f"{PENDING}.{os.getpid()}.tmp"; json.dump(pending_state, open(tmp, "w"), indent=1); os.replace(tmp, PENDING)
+def seat_idle(rig, seat):
+    try:
+        out = subprocess.run(["rig", "ps", "--nodes", "--rig", rig, "--json"], capture_output=True, text=True, timeout=30).stdout
+        nodes = json.loads(out); nodes = nodes if isinstance(nodes, list) else nodes.get("nodes", [])
+        n = next((x for x in nodes if x.get("canonicalSessionName") == seat), None)
+        return bool(n) and (n.get("agentActivity") or {}).get("state") == "idle"
+    except Exception:
+        return False
+def tell(seat, rig, path):
+    return seat_idle(rig, seat) and subprocess.run(["rig", "send", seat,
+        f"[agent-refresh-guidance] Your OpenRig instructions changed (the rig's CULTURE.md or your role guidance). "
+        f"Re-read {path} now and follow it from your next step."], capture_output=True, timeout=60).returncode == 0
+for n in natives or []:
+    # the launcher by its executable's name (absolute or quoted paths included); anything else is reported, not run
+    try:
+        words = shlex.split(n["start"])
+        at = next(i for i, w in enumerate(words) if os.path.basename(w) == "agent-native-seat")
+    except (ValueError, StopIteration):
+        report.append({"seat": os.path.basename(n["cwd"]), "file": "-", "reasons": [f"startup action not understood (expected agent-native-seat <cli> ...): {n['start'][:120]}"]})
+        changed += 1; total += 1; continue
+    args = words[at + 1:]
+    rel = NATIVE_FILE.get(args[0] if args else "")
+    path = os.path.join(n["cwd"], rel or "")
+    if not rel or not os.path.exists(path):
+        continue   # not started yet: the launcher writes it at start
+    r = subprocess.run([launcher, *args, "--dry-run"], cwd=n["cwd"], capture_output=True, text=True, timeout=60,
+                       env={**os.environ, "OPENRIG_SESSION_NAME": n["seat"], "OPENRIG_WORK_ROOT": W})
+    try:
+        want = json.loads(r.stdout)["files"][rel]
+    except (ValueError, KeyError):
+        report.append({"seat": os.path.basename(n["cwd"]), "file": rel, "reasons": [f"agent-native-seat --dry-run failed: {(r.stderr or r.stdout).strip()[-160:]}"]})
+        changed += 1; total += 1; continue
+    total += 1
+    digest = hashlib.sha256(want.encode()).hexdigest()
+    if open(path).read() != want:
+        changed += 1
+        report.append({"seat": os.path.basename(n["cwd"]), "file": rel, "reasons": ["native instructions out of date (the rig's CULTURE.md or the role)"]})
+        if not APPLY:
+            continue
+        dest = os.path.join(backup_dir, os.path.basename(n["cwd"]), rel)
+        os.makedirs(os.path.dirname(dest), exist_ok=True); shutil.copy2(path, dest)
+        tmp = f"{path}.{os.getpid()}.tmp"; open(tmp, "w").write(want); os.replace(tmp, path)
+        pending_state[n["seat"]] = {"path": path, "hash": digest, "since": time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime())}
+        save_pending()   # before the send: a crash between write and send still leaves it owed
+    elif not (APPLY and pending_state.get(n["seat"], {}).get("hash") == digest):
+        continue   # current, and nothing owed for this content
+    if tell(n["seat"], n["rig"], path):
+        notified.append(n["seat"]); pending_state.pop(n["seat"], None); save_pending()
+    else:
+        pending.append(n["seat"])
 if JSON:
-    print(json.dumps({"total": total, "changed": report}))
+    print(json.dumps({"total": total, "changed": report, **({"native_unchecked": True} if natives is None else {}),
+                      **({"native_notified": notified, "native_pending": pending} if APPLY else
+                         {"native_owed": sorted(seat for seat in pending_state if any(n["seat"] == seat for n in natives))} if natives else {})}))
     sys.exit(0)
+if natives is None:
+    print("native seats not checked: the rig spec doesn't parse (or PyYAML is missing), so their sessions aren't known")
+if notified:
+    print("told to re-read their instructions:", ", ".join(notified))
+if pending:
+    print("rewritten but busy, not told yet (run --apply again when idle, or relaunch there):", ", ".join(pending))
 if restored:
     print("restored lost blocks for:", ", ".join(restored))
 if fixed_strays:
