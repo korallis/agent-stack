@@ -740,3 +740,23 @@ Claude Code's advisor ([docs](https://code.claude.com/docs/en/advisor)) is off f
 (request `58478277`). Our seats set `CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC`, which also turns off the advisor's
 feature flags, and each advisor call re-reads the conversation without the prompt cache, a cost every seat would pay
 on every turn. Revisit after the Fable architects have run for a while.
+
+
+### Operator inactivity watchdog
+
+`agent-operator-watch` observes `operator-agent@kernel` once per minute. When a pending row is at least 15 minutes old
+and the operator has been observed inactive for 15 minutes, it attempts one wake. If pending work remains after
+another 15 inactive minutes, it creates one durable urgent row for `advisor-lead@kernel`. The advisor checks current
+custody, handles operator-safe actions through existing gates, or alerts the owner through Slack.
+
+Working activity or changed terminal activity resets the episode. Unknown or stale activity causes no action.
+A stopped operator follows the same timing. A missing node or daemon error is reported in the service journal.
+Failed wake delivery still starts the escalation clock. Failed advisor queue writes retry with the same item ID.
+The watchdog never merges or rebuilds a seat itself.
+
+Run `agent-operator-watch --dry-run` to inspect the next action without changing state or sending anything.
+`--operator`, `--advisor` and `--state` select other addresses or an isolated state file. The default state is
+`$AGENT_STACK_STATE/operator-watch.json` (or `~/.local/state/agent-stack/operator-watch.json`), protected by a process
+lock and atomic writes. Only timestamps and delivery receipts are stored. Installation enables
+`agent-operator-watch.timer`; stop that timer to disable it. Detection takes up to one timer interval beyond each
+threshold, plus command latency. No observation history is inferred on first installation.
