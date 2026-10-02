@@ -34,6 +34,10 @@ them as the owner's.
 - Send an informational row to the owner (@OWNER@) with `--human-intent update`; requests use
   `--human-intent decision`. Give human rows a `--summary`. Read `guidance/coordination.md` before sending one,
   especially for proof attachments; leave decision rows pending until answered.
+- Slice boundary: after the next owner has the queue handoff, publish a fresh recap and ask the lead or recovery
+  seat to start a fresh session at idle with `agent-seat-handover <seat> --source rebuild --reason slice-boundary`.
+  Record remaining work and wakes first. Use the "Slice-boundary session refresh" procedure in agent-stack
+  `docs/REFERENCE.md`; do not clear an active turn or reset before custody has passed.
 - Near the context wall, publish a fresh packet with `agent-seat-recap write <packet.md>`; include decisions and
   rationale, open work and `UNVERIFIED:` facts. Check `agent-seat-recap show` before an idle-gated handover.
 - Seats run without permission prompts (`agent-never-prompt-check`). Follow owner approvals already recorded here.
