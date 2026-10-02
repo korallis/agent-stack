@@ -3,6 +3,7 @@ import path from 'node:path';
 import os from 'node:os';
 import { createHash } from 'node:crypto';
 import {readProjectScopes, type ProjectScope} from './project-sources.ts';
+import {cardText} from './wording.ts';
 import { Cache, type Options } from '../data.ts';
 import { classify, qrowFromItem, type Raw, type QRow } from '../model.ts';
 import type { Adapter, Snapshot, Status, Step, PullRequest } from './types.ts';
@@ -21,9 +22,9 @@ function disposition(row:QRow,owner:string,now:number):{status:Status;reason:str
  if(blocker===owner||blockedOwner===owner||/^human(?:-[\w.-]+)?@/.test(blocker))return {status:'blocked',reason:'Waiting for a person to decide'};
  const progressing=row.waiting?.liveness?.activity==='working'||row.waiting?.liveness?.activity==='running';
  if(/(?:outage|model[-_ ]out|model[-_ ]unavailable|pool[-_ ]empty|quota[-_ ]exhausted)/i.test([blocker,...row.tags].join(' '))&&!progressing)return {status:'blocked',reason:short(row.summary)||'A service or model is unavailable'};
- if(liveWake(row,now))return {status:'waiting',reason:'Parked with a scheduled wake'};
- if(row.waiting?.liveness?.activity==='stalled')return {status:'blocked',reason:'No progress and no live wake'};
- return {status:'waiting',reason:blocker?'Waiting for a dependency':'Parked; wake status not reported'};
+ if(liveWake(row,now))return {status:'waiting',reason:'Waiting until the scheduled check'};
+ if(row.waiting?.liveness?.activity==='stalled')return {status:'blocked',reason:'No progress or scheduled follow-up'};
+ return {status:'waiting',reason:blocker?'Waiting for a dependency':'Waiting; follow-up time not reported'};
 }
 
 export function snapshotFromRaw(input:Raw,supplements:Supplements={},history:Measurements={}):Snapshot {
@@ -58,12 +59,15 @@ export function snapshotFromRaw(input:Raw,supplements:Supplements={},history:Mea
   const gateProgress=held&&tt.filter(q=>q.prId===held.id).some(q=>{const r=byId.get(q.id);return r&&liveWake(r,raw.at)&&['working','running'].includes(r.waiting?.liveness?.activity??'');});
   const idle=aa.length>0&&aa.every(a=>a.status==='ok'&&byId.get(a.taskId??'')?.state!=='in-progress');
   const state:Status=needs||blocking||held&&!gateProgress||aa.some(a=>a.status==='blocked')?'blocked':active.length?'ok':waits.length||held||tt.some(q=>q.status==='waiting')?'waiting':idle||aa.some(a=>a.status==='ok')?'ok':'unknown';
-  const reason=needs?'Your decision is needed':blocking?states.get(blocking.id)!.reason:held?`PR #${held.number} ${gateProgress?'is being rechecked':'held by merge gate'}`:active.length?'Work is moving':waits.length?(waits.every(r=>liveWake(r,raw.at))?'Waiting by design; wakes scheduled':'Waiting for the next step'):state==='ok'?'Ready for work':state==='waiting'?'Waiting for the next step':'Activity not reported';
+  const reason=needs?'Your decision is needed':blocking?states.get(blocking.id)!.reason:held?`PR #${held.number} ${gateProgress?'is being rechecked':'held by merge gate'}`:active.length?'Work is moving':waits.length?(waits.every(r=>liveWake(r,raw.at))?'Scheduled to resume':'Waiting for the next step'):state==='ok'?'Ready for work':state==='waiting'?'Waiting for the next step':'Activity not reported';
   const current=active.filter(r=>r.summary).sort((a,b)=>Number(/(?:lead|deputy)/.test(b.destination))-Number(/(?:lead|deputy)/.test(a.destination))||b.updated.localeCompare(a.updated))[0];
   const mission=scope?.milestone??supplements.progress?.[t.id]?.milestone??null;
-  const focus=scope?.activeMissions.length===1?scope.activeMissions[0].label:scope?.activeMissions.length?`${scope.activeMissions.length} active milestones`:mission;
+  const missions=scope?.activeMissions??[],first=cardText(missions[0]?.label??mission,missions[0]?[missions[0].id]:[]);
+  const focus=missions.length>1?`${first.length>32?first.slice(0,31).trimEnd()+'…':first} +${missions.length-1} more`:first;
   const inFlight=prs.filter(p=>p.teamId===t.id&&p.state==='OPEN');
-  const sentence=needs||blocking||held&&!gateProgress?`${focus?focus+': ':''}${reason}.`:current?`${focus?focus+': ':''}${short(current.summary,170)}`:waits.length?`${focus?focus+': ':''}${short(waits.find(r=>/witness/i.test(r.summary??''))?.summary,150)||(waits.every(r=>liveWake(r,raw.at))?'Work is parked with a wake to resume it.':'Waiting for the next dependency or assignment.')}`:inFlight.length?`${focus?focus+': ':''}PR ${inFlight.slice(0,3).map(p=>'#'+p.number).join(', ')} in review.`:focus?`${focus}: ${reason.toLowerCase()}.`:ops?(t.name==='kernel'?'Keeping the fleet running.':'Building and maintaining the agent tooling.'):`${name}: ${reason.toLowerCase()}.`;
+  const clause=needs?'Waiting for your decision.':blocking?reason:held&&!gateProgress?'A change needs attention before it can merge.':current?cardText(short(current.summary,170),[current.id])||'Work is moving.':waits.length?cardText(short(waits.find(r=>/witness/i.test(r.summary??''))?.summary,150))||(waits.every(r=>liveWake(r,raw.at))?'Work is scheduled to resume.':'Waiting for the next dependency or assignment.'):inFlight.length?`${inFlight.length===1?'One change is':`${inFlight.length} changes are`} in review.`:focus?reason:ops?(t.name==='kernel'?'Keeping the fleet running.':'Building and maintaining the agent tooling.'):reason;
+  const cleanClause=cardText(clause)||'Activity not reported',prefix=focus&&cleanClause.toLowerCase().startsWith(focus.toLowerCase()+':')?'':focus?focus+': ':'';
+  const punctuated=cleanClause+(/[.!?]$/.test(cleanClause)?'':'.'),sentence=missions.length>1?`${punctuated} ${focus}.`:prefix+punctuated;
   const progress=scope?{milestone:scope.milestone,progress:scope.progress,eta:scope.eta,milestones:scope.milestones}:supplements.progress?.[t.id]??{};
   return {id:t.id,name,description:ops?(t.name==='kernel'?'Fleet operations and human coordination.':'Builds and maintains the agent tooling.'):scope?.description??'',kind:ops?'operations' as const:'project' as const,status:state,reason,sentence,milestone:null,progress:null,eta:null,milestones:[],...(!ops?progress:{}),progressLabel:!ops?scope?.progressLabel??null:null,agentIds:aa.map(a=>a.id),taskIds:tt.map(q=>q.id),merges:supplements.merges?.[t.id]??null};
  });
@@ -72,7 +76,14 @@ export function snapshotFromRaw(input:Raw,supplements:Supplements={},history:Mea
  const capacity=raw.accounts.map(a=>({id:`${a.provider}:${a.label}`,provider:a.provider,label:a.label,used:a.short,weekly:a.weekly,resetAt:a.resetAt??null,cooldownUntil:a.coolUntil??null,credits:a.credits??(a.onCredits?'Using credits':null),status:(a.blocked||a.over?'blocked':a.cooling?'waiting':a.status==='active'?'ok':'unknown') as Status,reason:a.blocked?'Disabled':a.cooling?`${a.coolReason??'Cooling down'}${a.coolUntil?` until ${a.coolUntil}`:''}`:a.over?'Over limit':a.onCredits?'Using credits':a.status,history:history.capacity?.[`${a.provider}:${a.label}`]??[]}));
  const blocked=teams.filter(t=>t.status==='blocked').length;
  const projects=teams.filter(t=>t.kind==='project');
- return {version:1,at:raw.at,source:'OpenRig fleet',stale,sources,headline:stale?'Fleet data is stale.':decisions.length?`${teams.filter(t=>decisions.some(d=>d.teamId===t.id)).map(t=>t.name).slice(0,3).join(', ')||'Fleet'}: ${decisions.length} decision${decisions.length===1?' needs':'s need'} you.`:blocked?teams.filter(t=>t.status==='blocked').slice(0,3).map(t=>`${t.name}: ${t.reason.toLowerCase()}`).join('; ')+'.':projects.length?projects.slice(0,3).map(t=>`${t.name}: ${t.reason.toLowerCase()}`).join('; ')+'.':teams.length?'Fleet operations are running.':'No active teams reported.',teams,agents,tasks,prs,capacity,decisions,lastDecision:supplements.lastDecision??null,events:raw.events.slice(0,60).map((e,i)=>({id:`${e.at}:${i}`,at:e.at,teamId:rigs.find(t=>t.name===e.rig)?.id??null,text:e.text,status:(e.kind==='BLOCKED'?'blocked':e.kind==='DOWN'?'waiting':'ok') as Status}))};
+ const onTrack=projects.filter(t=>t.status==='ok').map(t=>t.name);
+ const names=onTrack.length<2?onTrack[0]:onTrack.slice(0,-1).join(', ')+' and '+onTrack.at(-1);
+ const healthy=onTrack.length?`${names} ${onTrack.length===1?'is':'are'} on track.`:'';
+ const decisionText=decisions.length?`${teams.filter(t=>decisions.some(d=>d.teamId===t.id)).map(t=>t.name).slice(0,3).join(', ')||'Fleet'}: ${decisions.length} decision${decisions.length===1?' needs':'s need'} you.`:'No decisions need you.';
+ const blockedText=!decisions.length&&blocked?teams.filter(t=>t.status==='blocked').slice(0,3).map(t=>`${t.name}: ${t.reason.toLowerCase()}`).join('; ')+'.':'';
+ const workText=healthy||(!decisions.length&&!blocked?(projects.length?projects.slice(0,3).map(t=>`${t.name}: ${t.reason.toLowerCase()}`).join('; ')+'.':teams.length?'Fleet operations are running.':'No active teams reported.'):'');
+ const headline=stale?'Fleet data is stale.':[decisionText,blockedText,workText].filter(Boolean).join(' ');
+ return {version:1,at:raw.at,source:'OpenRig fleet',stale,sources,headline,teams,agents,tasks,prs,capacity,decisions,lastDecision:supplements.lastDecision??null,events:raw.events.slice(0,60).map((e,i)=>({id:`${e.at}:${i}`,at:e.at,teamId:rigs.find(t=>t.name===e.rig)?.id??null,text:e.text,status:(e.kind==='BLOCKED'?'blocked':e.kind==='DOWN'?'waiting':'ok') as Status}))};
 }
 type CacheLike=Pick<Cache,'raw'|'onChange'|'start'|'stop'|'soon'|'setSeat'|'setView'>;
 export interface FleetOptions extends Options {history?:string|null;cacheFile?:string|null;cache?:CacheLike;run?:Run;projectsRoot?:string|null;ownerAddress?:string}

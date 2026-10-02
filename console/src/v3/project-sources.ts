@@ -3,6 +3,7 @@ import fs from 'node:fs';
 import path from 'node:path';
 import {readBounded, type Run} from './sources.ts';
 import type {Step} from './types.ts';
+import {cardText} from './wording.ts';
 export interface ProjectScope {projectId:string;root:string;repo:string|null;name:string;description:string;milestone:string|null;progress:number|null;progressLabel:string;source:string;eta:null;milestones:Step[];activeMissions:{id:string;label:string;status:string}[];nativeAgents?:Record<string,{cwd:string;model:string|null}>}
 const scalarValue=(v:string):string|null=>{
  const text=v.trim();if(/^[&*!\[{]/.test(text))return null;
@@ -85,7 +86,7 @@ export async function readProjectScopes(projectsRoot:string,rigNames:string[],ru
   const repo=bindings[0].repo;const readme=repo?read(path.join(repo,'README.md')):'';
   const description=authoredPurpose(project,spec,culture,readme);
   const missionsRef=manifestScalar(project,['missions','root'])??'missions',missionsRoot=inside(root,missionsRef);if(!missionsRoot)continue;
-  const missions=listDirs(missionsRoot,80).map(id=>{const dir=path.join(missionsRoot,id),text=read(path.join(dir,'mission.yaml')),status=manifestScalar(text,['metadata','status'])??'unknown';return {id,dir,text,status,label:heading(read(path.join(dir,'SPEC.md')))??manifestScalar(text,['metadata','name'])??id};});
+  const missions=listDirs(missionsRoot,80).map(id=>{const dir=path.join(missionsRoot,id),text=read(path.join(dir,'mission.yaml')),status=manifestScalar(text,['metadata','status'])??'unknown';return {id,dir,text,status,label:cardText(heading(read(path.join(dir,'SPEC.md')))??manifestScalar(text,['metadata','name'])??id,[id])};});
   const building=missions.filter(m=>m.status==='building');const active=building.length?building:missions.filter(m=>m.status==='active'||m.status==='in-progress');
   const activeMissions=active.map(({id,label,status})=>({id,label,status}));let total=0,done=0,unknown=0,valid=active.length>0;
   const milestones:Step[]=[];

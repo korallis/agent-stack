@@ -1,4 +1,5 @@
 import { Screen, type RGB } from '../term.ts';
+import {providerName} from './wording.ts';
 import type { Snapshot, ViewState, Hit, View, Step } from './types.ts';
 import { P, safe, clip, txt, para, wrap, label, box, pct, statusColor, statusWord, bar, big, ring, trend, age, time, countdown } from './draw.ts';
 export interface CommandItem { label:string; detail:string; view:View; id?:string; kind?:Hit['kind'] }
@@ -29,8 +30,17 @@ function providerSummaries(snapshot:Snapshot) {
   });
 }
 function capacityTiming(c:{resetAt:string|null;cooldownUntil?:string|null},at:number):string {
-  return c.resetAt?`next reset ${countdown(c.resetAt,at)}`:c.cooldownUntil?`cooldown ${countdown(c.cooldownUntil,at)}`:'reset unknown';
+  const reset=c.resetAt?countdown(c.resetAt,at):null,cooldown=c.cooldownUntil?countdown(c.cooldownUntil,at):null;
+  return [reset?(reset==='due'?'reset due':`resets ${reset}`):'',cooldown?(cooldown==='due'?'cooldown end due':`cooldown ends ${cooldown}`):''].filter(Boolean).join(' · ')||'Reset time not reported';
 }
+
+function usageText(c:ReturnType<typeof providerSummaries>[number],width:number):string {
+  if(!c.window)return 'Usage not reported';
+  const long=`${value(c.used)} of ${c.window==='5h'?'5-hour':'weekly'} limit used`;
+  const text=long.length<=width?long:`${value(c.used)} of ${c.window} limit used`;
+  return c.known>1&&text.length+11<=width?text+' on average':text;
+}
+function observedText(c:ReturnType<typeof providerSummaries>[number]):string {return `Observed ${c.known} of ${c.accounts.length} ${c.accounts.length===1?'account':'accounts'}`;}
 
 export function renderV3(snapshot:Snapshot,w:number,h:number,state:ViewState):{screen:Screen;hits:Hit[]} {
   const screen=new Screen(w,h,P.bg),s=screen,hits:Hit[]=[];
@@ -72,9 +82,9 @@ export function renderV3(snapshot:Snapshot,w:number,h:number,state:ViewState):{s
     const available=end-bottom;if(!snapshot.capacity.length)txt(s,2,bottom+2,'Capacity unavailable',split-4,P.dim);
     providerSummaries(snapshot).slice(0,Math.min(4,Math.max(1,Math.floor(available/2)))).forEach((c,i)=>{
       const y=bottom+2+i*2,barWidth=Math.max(5,Math.floor((split-20)*.35)),textX=16+barWidth;
-      txt(s,2,y,c.provider,10,P.fg);bar(s,14,y,barWidth,c.used,statusColor(c.status));
-      txt(s,textX,y,c.window?`${value(c.used)} ${c.window} avg · ${c.known}/${c.accounts.length}`:'Usage unknown',split-textX-2,P.fg);
-      txt(s,14,y+1,[c.credits?`Credits: ${c.credits}`:'',capacityTiming(c,snapshot.at)].filter(Boolean).join(' · '),split-16,P.dim);
+      txt(s,2,y,providerName(c.provider),10,P.fg);bar(s,14,y,barWidth,c.used,statusColor(c.status));
+      txt(s,textX,y,usageText(c,split-textX-2),split-textX-2,P.fg);
+      txt(s,2,y+1,[observedText(c),c.credits?(/credits/i.test(c.credits)?c.credits:`Credits: ${c.credits}`):'',capacityTiming(c,snapshot.at)].filter(Boolean).join(' · '),split-4,P.dim);
     });recent(split,bottom+2,w-split-2,available);
   }
   function team(){const t=selectedTeam;if(!t){txt(s,2,3,'No teams available',w-4,P.dim);return;}title(t.name,t.description,`${statusWord(t.status)} · ${t.sentence}`,statusColor(t.status));if(t.progressLabel)txt(s,2,5,t.progressLabel,w-4,P.dim);label(s,2,7,w-4,'MILESTONES');journey(2,10,w-4,t.milestones);
@@ -107,14 +117,14 @@ export function renderV3(snapshot:Snapshot,w:number,h:number,state:ViewState):{s
     const summaries=providerSummaries(snapshot),providers=summaries.map(c=>c.provider),count=Math.max(1,Math.min(4,providers.length)),cw=Math.floor((w-4)/count);
     if(!providers.length)txt(s,2,3,'Capacity unavailable',w-4,P.dim);
     summaries.slice(0,count).forEach((c,i)=>{
-      const x=2+i*cw;txt(s,x,2,c.provider,cw-2,P.white,true);if(c.credits)txt(s,x,3,`Credits: ${c.credits}`,cw-2,P.dim);
-      big(s,x,4,c.used===null?'--':String(Math.round(c.used)),P.white,cw-4);txt(s,x+12,6,c.window?`% ${c.window} avg`:'unknown',cw-14,P.dim);
-      txt(s,x,7,`${c.known}/${c.accounts.length} accounts with ${c.window??'usage'} data`,cw-2,P.dim);bar(s,x,8,cw-3,c.used,P.dim);txt(s,x,9,capacityTiming(c,snapshot.at),cw-2,P.dim);
+      const x=2+i*cw;txt(s,x,2,providerName(c.provider),cw-2,P.white,true);txt(s,x,3,observedText(c),cw-2,P.dim);if(c.credits)para(s,x+12,4,cw-14,2,/credits/i.test(c.credits)?c.credits:`Credits: ${c.credits}`,P.dim);
+      big(s,x,4,c.used===null?'--':String(Math.round(c.used)),P.white,cw-4);txt(s,x+12,6,c.window?'% used':'unknown',cw-14,P.dim);
+      txt(s,x,7,usageText(c,cw-2),cw-2,P.dim);bar(s,x,8,cw-3,c.used,P.dim);txt(s,x,9,capacityTiming(c,snapshot.at),cw-2,P.dim);
     });
     const chartY=12,chartH=compact?6:14,bottom=compact?21:30;label(s,2,11,w-4,'UTILIZATION (%)','recorded samples');const colors:RGB[]=[P.blue,P.amber,P.green,[174,145,215]];const samples=snapshot.capacity.flatMap(c=>c.history).filter(p=>Number.isFinite(p.at)&&Number.isFinite(p.used)),lo=Math.min(...samples.map(p=>p.at)),hi=Math.max(...samples.map(p=>p.at));txt(s,2,chartY,'100',4,P.dim);txt(s,2,chartY+chartH-1,'0',4,P.dim);for(let j=0;j<chartH;j++)txt(s,6,chartY+j,'│',1,P.line);txt(s,6,chartY+chartH,'└'+'─'.repeat(w-10),w-8,P.line);if(!samples.length)txt(s,9,chartY+2,'Utilization history unavailable',w-12,P.dim);else{snapshot.capacity.forEach(c=>{for(const window of ['5h','weekly'])trend(s,8,chartY,w-12,chartH,c.history.filter(p=>(p.window??'5h')===window).map(p=>({x:p.at,y:p.used})),colors[providers.indexOf(c.provider)%colors.length],lo,hi);});txt(s,8,chartY+chartH+1,time(new Date(lo).toISOString()),15,P.dim);txt(s,w-19,chartY+chartH+1,time(new Date(hi).toISOString()),15,P.dim);}
-    providers.slice(0,4).forEach((provider,i)=>txt(s,8+i*Math.floor((w-16)/4),chartY+chartH+2,'━ '+provider+' '+[...new Set(snapshot.capacity.filter(c=>c.provider===provider).flatMap(c=>c.history.map(p=>p.window??'5h')))].join('/'),Math.floor((w-16)/4)-1,colors[i%colors.length]));
-    const split=Math.floor(w*.65);label(s,2,bottom,split-5,'ACCOUNTS');label(s,split,bottom,w-split-2,'FALLBACK');txt(s,2,bottom+1,'ACCOUNT                  5H      WEEKLY    RESET / CREDITS',split-5,P.dim);const rows=Math.max(1,Math.floor((end-bottom-1)/2));snapshot.capacity.slice(Math.max(0,state.scroll),Math.max(0,state.scroll)+rows).forEach((c,i)=>{const y=bottom+3+i*2;txt(s,2,y,c.label,24,P.fg);txt(s,27,y,value(c.used),8,statusColor(c.status));txt(s,35,y,value(c.weekly),10,P.dim);txt(s,45,y,c.credits??capacityTiming(c,snapshot.at),split-47,P.dim);});
-    const fallback=snapshot.events.filter(e=>/fallback|rerout|429|cooldown/i.test(e.text));para(s,split,bottom+2,w-split-2,compact?1:4,fallback.length?fallback.map(e=>e.text).join('\n'):'No fallback events recorded',P.dim);const resetY=compact?bottom+4:bottom+7;label(s,split,resetY,w-split-2,'RESET');para(s,split,resetY+2,w-split-2,Math.max(1,end-resetY-1),snapshot.capacity.length?snapshot.capacity.map(c=>`${c.label}: ${capacityTiming(c,snapshot.at)}${c.reason&&!c.cooldownUntil?' · '+c.reason:''}`).join('\n'):'Reset times unknown',P.dim);
+    providers.slice(0,4).forEach((provider,i)=>txt(s,8+i*Math.floor((w-16)/4),chartY+chartH+2,'━ '+providerName(provider)+' '+[...new Set(snapshot.capacity.filter(c=>c.provider===provider).flatMap(c=>c.history.map(p=>p.window??'5h')))].join('/'),Math.floor((w-16)/4)-1,colors[i%colors.length]));
+    const split=Math.floor(w*.65);label(s,2,bottom,split-5,'ACCOUNTS');label(s,split,bottom,w-split-2,'FALLBACK');txt(s,2,bottom+1,'ACCOUNT                  5H      WEEKLY    RESET / COOLDOWN / CREDITS',split-5,P.dim);const rows=Math.max(1,Math.floor((end-bottom-1)/2));snapshot.capacity.slice(Math.max(0,state.scroll),Math.max(0,state.scroll)+rows).forEach((c,i)=>{const y=bottom+3+i*2;txt(s,2,y,c.label,24,P.fg);txt(s,27,y,value(c.used),8,statusColor(c.status));txt(s,35,y,value(c.weekly),10,P.dim);txt(s,45,y,c.credits??capacityTiming(c,snapshot.at),split-47,P.dim);});
+    const fallback=snapshot.events.filter(e=>/fallback|rerout|429|cooldown/i.test(e.text));para(s,split,bottom+2,w-split-2,compact?1:4,fallback.length?fallback.map(e=>e.text).join('\n'):'No fallback events recorded',P.dim);const resetY=compact?bottom+4:bottom+7;label(s,split,resetY,w-split-2,'RESETS / COOLDOWNS');para(s,split,resetY+2,w-split-2,Math.max(1,end-resetY-1),snapshot.capacity.length?snapshot.capacity.map(c=>`${c.label}: ${capacityTiming(c,snapshot.at)}${c.reason&&!c.cooldownUntil?' · '+c.reason:''}`).join('\n'):'Reset times unknown',P.dim);
   }
   ({fleet,team,agent,task,pr,capacity}[state.view])();
   txt(s,2,0,'◆',1,P.blue,true);txt(s,4,0,'rig console',12,P.white,true);let tabX=20;(['fleet','team','agent','task','pr','capacity'] as View[]).forEach((view,i)=>{const text=`${i+1} ${view==='pr'?'PR':view[0].toUpperCase()+view.slice(1)}`;txt(s,tabX,0,text,text.length,state.view===view?P.blue:P.dim,state.view===view);hit(tabX,0,text.length,1,view);tabX+=text.length+3;});const feed=state.paused?'paused':snapshot.stale?'stale':'live';txt(s,w-18,0,`${feed}  ${time(new Date(snapshot.at).toISOString())}`,17,snapshot.stale?P.amber:P.dim);

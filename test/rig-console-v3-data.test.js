@@ -7,6 +7,9 @@ import { FleetAdapter, snapshotFromRaw } from '../console/src/v3/adapter.ts';
 import { bindVerdict, progressFromExecution, prFromGithub } from '../console/src/v3/sources.ts';
 import { qrowFromItem } from '../console/src/model.ts';
 import { parseAccounts } from '../console/src/data.ts';
+import { cardText } from '../console/src/v3/wording.ts';
+import { renderV3 } from '../console/src/v3/render.ts';
+import { initialState } from '../console/src/v3/controller.ts';
 const at = Date.parse('2026-10-02T12:00:00Z');
 const row = (id, extra={}) => ({id,state:'pending',priority:'routine',source:'coord@alpha',destination:'builder@alpha',blockedOn:null,tags:[],created:new Date(at-1000).toISOString(),updated:new Date(at).toISOString(),summary:'Build a feature',...extra});
 const raw = (extra={}) => ({at,host:{id:'test'},daemon:{ok:true},rigs:[{id:'rig-a',name:'alpha',lifecycle:'running',seats:[]}],queue:[],attention:[],gates:[],accounts:[],heavy:[],events:[],refreshMs:5000,sources:{daemon:'ok'},...extra});
@@ -170,4 +173,52 @@ test('PR refresh failures retain historical gates per PR and cannot be erased by
   mode='recovered';cache.raw.at+=60000;const nextReads=reads+2;adapter.refresh();await until(()=>reads>=nextReads&&!adapter.enriching);
   const recovered=adapter.snapshot().prs.find(p=>p.number===1);assert.equal(recovered.freshness,'fresh');assert.equal(recovered.verdict,'HOLD');assert.equal(recovered.observedAt,new Date(cache.raw.at).toISOString());assert.equal(recovered.refreshError,null);assert.equal(recovered.historicalGate,undefined);assert.equal(adapter.snapshot().sources.github,'ok');
  }finally{adapter.stop();server.closeAllConnections();await new Promise(r=>server.close(r));}
+});
+
+test('fleet headline includes decisions and other on-track project names',()=>{
+ const seat=rig=>({rig,pod:'impl',name:'builder',session:`builder@${rig}`,kind:'agent',activity:'working',model:null,ctx:null,why:null});
+ const s=snapshotFromRaw(raw({rigs:['alpha','beta','gamma'].map(name=>({id:name,name,seats:[seat(name)]})),queue:[row('decision',{destination:'owner@external',humanIntent:'decision'}),row('beta-work',{source:'lead@beta',destination:'builder@beta',state:'in-progress'})]}));
+ assert.match(s.headline,/1 decision needs you/);assert.match(s.headline,/beta.*gamma.*on track/i);assert.doesNotMatch(s.headline.split('. ').at(-1),/alpha/);
+});
+
+test('card text removes queue wrappers and IDs without removing meaningful human wording',()=>{
+ const scope={name:'Example Portal',description:'Neutral project',milestone:'M03 — Booking journeys',progress:null,eta:null,milestones:[],activeMissions:[{id:'M03',label:'M03 — Booking journeys',status:'building'}]};
+ const s=snapshotFromRaw(raw({queue:[row('qitem-20261002120000-abcdef12',{state:'in-progress',summary:'Queue row qitem-20261002120000-abcdef12: T035 — Review row-level access for ISO 27001 and Q4 reporting.'})]}),{projects:{alpha:scope}});
+ assert.equal(s.teams[0].sentence,'Booking journeys: Review row-level access for ISO 27001 and Q4 reporting.');
+ assert.equal(s.tasks[0].title,'Queue row qitem-20261002120000-abcdef12: T035 — Review row-level access for ISO 27001 and Q4 reporting.','detail titles retain the authored text');
+});
+
+test('planned-wait card copy explains resumption without internal queue vocabulary',()=>{
+ const scope={name:'Example Portal',description:'Neutral project',milestone:'Booking journeys',progress:null,eta:null,milestones:[],activeMissions:[{id:'booking',label:'Booking journeys',status:'building'}]};
+ const s=snapshotFromRaw(raw({queue:[row('park',{state:'blocked',waiting:{nextBackstop:{mechanism:'watchdog:later',dueAt:new Date(at+60000).toISOString()}}})]}),{projects:{alpha:scope}});
+ assert.match(s.teams[0].sentence,/Booking journeys:.*scheduled to resume/i);assert.doesNotMatch(s.teams[0].sentence,/parked|wake|qitem|row/i);assert.equal(s.teams[0].status,'waiting');
+});
+
+test('healthy headline says no decisions need the owner without claiming stale projects are on track',()=>{
+ const input=raw({rigs:[{id:'alpha',name:'alpha',seats:[{rig:'alpha',pod:'impl',name:'builder',session:'builder@alpha',kind:'agent',activity:'working',model:null,ctx:null,why:null}]}]});
+ assert.equal(snapshotFromRaw(input).headline,'No decisions need you. alpha is on track.');
+ assert.equal(snapshotFromRaw({...input,daemon:{ok:false,error:'offline'}}).headline,'Fleet data is stale.');
+});
+
+test('mission wrappers are removed before exact known identifiers, preserving subject tokens',()=>{
+ for(const wrapper of ['Mission — ', 'Mission: ']){
+  assert.equal(cardText(wrapper+'M0 — Repository housekeeping',['M0']),'Repository housekeeping');
+  assert.equal(cardText(wrapper+'M0 — ISO 27001 and Q4 reporting',['M0']),'ISO 27001 and Q4 reporting');
+ }
+ assert.equal(cardText('Mission — M01 — Identity (D-27)',['M0']),'M01 — Identity (D-27)');
+ assert.equal(cardText('Mission control for Q4'),'Mission control for Q4');
+});
+
+test('multiple missions leave room for the work clause and retain complete detail labels',()=>{
+ const labels=['Repository housekeeping and executable design references','Identity (D-27): app access','Booking journeys for ISO 27001 and Q4','Reporting improvements'];
+ const scope={name:'Example Portal',description:'Neutral project',milestone:labels.join(' · '),progress:null,eta:null,milestones:labels.map((label,i)=>({id:String(i),label,state:'active',detail:label,at:null})),activeMissions:labels.map((label,i)=>({id:'M'+i,label:'Mission — M'+i+' — '+label,status:'building'}))};
+ const s=snapshotFromRaw(raw({rigs:['alpha','beta','gamma','delta','epsilon'].map(name=>({id:name,name,seats:[]})),queue:[row('build',{state:'in-progress',summary:'Fix the date picker on mobile.'})]}),{projects:{alpha:scope}});
+ for(const [width,height,top,bottom,right] of [[100,30,18,20,31],[160,50,27,30,30]]){
+  const card=renderV3(s,width,height,initialState()).screen.lines().slice(top,bottom).map(line=>line.slice(4,right).trim()).join(' ');
+  assert.match(card,/date picker/,`the actual ${width}x${height} fleet card shows the task subject`);
+ }
+ assert.match(s.teams[0].sentence,/^Fix the date picker on mobile\. Repository housekeeping.*\+3 more\.$/);
+ assert.ok(s.teams[0].sentence.length<=80,s.teams[0].sentence);
+ assert.doesNotMatch(s.teams[0].sentence,/Mission|M0|Identity|ISO/);
+ assert.equal(s.teams[0].milestone,scope.milestone);assert.deepEqual(s.teams[0].milestones,scope.milestones);
 });

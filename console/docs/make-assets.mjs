@@ -31,7 +31,7 @@ export const SHOTS = [
   { name: "agent", caption: "Agent: terminal, context and current task", size: [160, 50], st: { view: "agent", agentId: "impl@cobalt" }, expect: /LIVE TERMINAL[\s\S]*CONTEXT[\s\S]*HISTORY/ },
   { name: "task", caption: "Task: journey, acceptance and linked PR", size: [160, 50], st: { view: "task", taskId: "cobalt-task-2" }, expect: /JOURNEY[\s\S]*WHAT TO DO[\s\S]*DONE WHEN/ },
   { name: "pr-gate", caption: "PR and gate: checks, reviews and Jev's verdict", size: [160, 50], st: { view: "pr", prId: "cobalt-pr-121" }, expect: /PIPELINE[\s\S]*JEV MERGE GATE[\s\S]*CHECKS/ },
-  { name: "capacity", caption: "Capacity: usage history, accounts and resets", size: [160, 50], st: { view: "capacity" }, expect: /5h avg[\s\S]*ACCOUNTS[\s\S]*FALLBACK[\s\S]*5H +WEEKLY[\s\S]*Three tasks rerouted[\s\S]*RESET/ },
+  { name: "capacity", caption: "Capacity: usage history, accounts and resets", size: [160, 50], st: { view: "capacity" }, expect: /5-hour limit used[\s\S]*ACCOUNTS[\s\S]*FALLBACK[\s\S]*5H +WEEKLY[\s\S]*Three tasks rerouted[\s\S]*RESET/ },
   { name: "help", caption: "Help: keys and status meanings", size: [160, 50], st: { view: "fleet" }, keys: ["?"], expect: /Help[\s\S]*command palette[\s\S]*PgUp PgDn[\s\S]*unknown values stay unknown/ },
   { name: "command-palette", caption: "Command palette: find a team or work item", size: [160, 50], st: { view: "fleet" }, keys: [":", ..."cobalt"], expect: /COMMAND[\s\S]*Team Cobalt[\s\S]*esc close/ },
 ];

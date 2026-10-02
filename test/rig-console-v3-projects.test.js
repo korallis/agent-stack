@@ -51,3 +51,11 @@ test('complete block memberships retain indentless/indented lists, metadata and 
   assert.equal(scope.progress,50);assert.match(scope.progressLabel,/1\/2 slices marked done/);assert.equal(scope.milestones.length,2);
  }finally{fs.rmSync(w.dir,{recursive:true,force:true})}}
 });
+
+test('mission display labels remove only leading identifiers and retain human subject details',async()=>{
+ const w=workspace();try{
+  w.put('missions/M03/mission.yaml',mission('building',['a']));w.put('missions/M03/SPEC.md','# M03 — Booking journeys for Q4 and ISO 27001\n');w.put('missions/M03/slices/a/slice.yaml','metadata:\n  id: A\n  status: building\n');
+  const scope=(await readProjectScopes(w.dir,['alpha'],async()=>null)).alpha;
+  assert.equal(scope.milestone,'Booking journeys for Q4 and ISO 27001');assert.equal(scope.activeMissions[0].id,'M03');
+ }finally{fs.rmSync(w.dir,{recursive:true,force:true})}
+});
