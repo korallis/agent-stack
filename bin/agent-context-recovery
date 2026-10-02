@@ -161,6 +161,8 @@ def main():
     # A successor may already have replaced the triggering session, or the node may be gone.
     report, held = [], set()
     for seat, receipt in state.items():
+        if args.rig and seat.rsplit('@', 1)[-1] != args.rig:
+            continue
         if receipt.get('attemptedKey') and receipt.get('outcome') not in (None, 'complete'):
             held.add(seat)
             report.append({'seat': seat, 'action': receipt['outcome'], 'dryRun': args.dry_run})

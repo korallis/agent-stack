@@ -67,6 +67,9 @@ elif sys.argv[1:3]==['queue','create']:print('{}')
 else:sys.exit(99)
 `,{mode:0o755});
   const run=()=>spawnSync(script,['--all','--state',state],{env:{...process.env,PATH:`${root}:/usr/bin:/bin`,CALLS:calls},encoding:'utf8'});
+  writeFileSync(state,JSON.stringify({'gone@other':{attemptedKey:'old-error',outcome:'handover-unknown',outcomeNotified:false}}));writeFileSync(calls,'');
+  const scoped=spawnSync(script,['--rig','test','--state',state],{env:{...process.env,PATH:`${root}:/usr/bin:/bin`,CALLS:calls},encoding:'utf8'});
+  assert.equal(scoped.status,0,scoped.stderr);assert.equal(JSON.parse(readFileSync(state))['gone@other'].outcomeNotified,false);assert.doesNotMatch(readFileSync(calls,'utf8'),/create/);
   for(const outcome of ['handover-unknown','wake-repair-needed','handover-failed']){
    writeFileSync(state,JSON.stringify({'gone@test':{attemptedKey:'old-error',outcome,outcomeNotified:false}}));writeFileSync(calls,'');
    let r=run();assert.equal(r.status,0,r.stderr);assert.equal(JSON.parse(readFileSync(state))['gone@test'].outcomeNotified,true);
