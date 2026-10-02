@@ -140,6 +140,10 @@ export class Cache {
   constructor(o: Options) {
     this.opt = { procDir: "/proc", jevLog: null, timeoutMs: 4000, events: true, gateDayMax: GATE_DAY_MAX,
       transcripts: process.env.OPENRIG_TRANSCRIPTS_PATH || path.join(process.env.OPENRIG_HOME || path.join(os.homedir(), ".openrig"), "transcripts"), ...o, interval: Math.max(MIN_INTERVAL, o.interval) } as Cache["opt"];
+    // the daemon tier is read over the network (OPENRIG_URL / --url can point at a remote, TLS-fronted daemon): refuse
+    // to start if the process has globally disabled certificate validation, rather than silently trusting any peer.
+    if (this.opt.url.startsWith("https:") && process.env.NODE_TLS_REJECT_UNAUTHORIZED === "0")
+      throw new Error("refusing to use an https:// daemon URL with NODE_TLS_REJECT_UNAUTHORIZED=0 (certificate validation disabled)");
     this.interval = this.opt.interval;
     this.raw = {
       at: this.now(), host: { id: os.hostname(), cores: os.cpus().length, load: [0, 0, 0], memUsedGB: 0, memTotalGB: 0 },
