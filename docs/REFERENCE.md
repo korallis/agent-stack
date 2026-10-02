@@ -574,6 +574,31 @@ keep edits with the main model or give the editing subagent an explicit model. T
 subagents without a model choice, not a task classifier. The FORCE variable is not set, so explicit model choices
 still win. Human sessions outside OpenRig keep their existing environment; main model routing is unchanged.
 
+### Slice-boundary session refresh
+
+Start the next slice in a fresh session so unrelated completed work does not grow every later request.
+The finishing seat records its result and hands the queue row to the next owner before requesting a refresh.
+Use this sequence:
+
+1. Confirm the handoff row exists and names the next owner. Update the slice's PROGRESS and PROOF files.
+2. Write a short recap with the completed candidate and proof, next task, remaining queue IDs, decisions and unresolved
+   facts. Include parked work and its wake. Publish it with `agent-seat-recap write <packet.md>` and check the declared
+   chain with `agent-seat-recap show`. Do this after the handoff so the recap records the new custody.
+3. Queue a refresh request to the lead or recovery seat, with the handoff row and recap path. The finishing seat stops
+   taking new work until that request is resolved. A seat cannot safely restart its own running turn.
+4. The receiver checks the handoff and recap against the current queue. The recap must have been written in the last
+   five minutes and after the handoff. If work changed, ask for a new recap. Check the target with
+   `rig ps --nodes --rig <rig> --session <seat> --fields canonicalSessionName,sessionStatus,agentActivity --json`.
+   Require a running session and freshly sampled idle activity. Unknown, working or waiting for input means defer.
+5. Recheck idle immediately before running
+   `agent-seat-handover <seat> --source rebuild --reason slice-boundary`. This wrapper preserves parked-row timers
+   where the daemon allows it. Treat exit 3 as an unknown outcome: inspect seat status instead of retrying. Exit 4
+   means the handover completed but a wake needs repair. Record the receipt and any repaired wakes in the request.
+
+The daemon handover has no atomic idle precondition. Keep the refresh request under one recovery owner and avoid
+sending new work during the operation. A plain `/clear` does not perform these custody and wake checks.
+The successor runs `rig whoami --json`, reads the recap and current queue, then claims the next task.
+
 ### Jev as the decision layer
 
 Code gathers the evidence and owns the thresholds; Jev makes the judgment; anything short of the act band goes to
