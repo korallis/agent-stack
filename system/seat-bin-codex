@@ -90,6 +90,14 @@ chose = any(n in ("-a", "--ask-for-approval") or n in NO_PROMPT
             or (n in ("-c", "--config") and (v or "").split("=", 1)[0].strip() == "approval_policy") for n, v in options(args))
 if not chose:
     extra += ["-a", "never"]
+# Compact before a seat re-sends half its window every turn (WO88): Codex has no auto-compact limit by default, so a
+# busy seat ran to hundreds of thousands of tokens per turn. Leads and architects hold more context (300k), every
+# other seat 200k; AGENT_CODEX_AUTO_COMPACT_TOKENS overrides, and a caller's own -c model_auto_compact_token_limit wins.
+if not any(n in ("-c", "--config") and (v or "").split("=", 1)[0].strip() == "model_auto_compact_token_limit" for n, v in options(args)):
+    seat = (os.environ.get("OPENRIG_SESSION_NAME") or "").split("@")[0]
+    limit = os.environ.get("AGENT_CODEX_AUTO_COMPACT_TOKENS") or ("300000" if seat.startswith(("coord-", "arch-")) else "200000")
+    if limit.isdigit():
+        extra += ["-c", f"model_auto_compact_token_limit={limit}"]
 # OpenRig >= 0.6 passes --no-daemon itself (upstream #69), and Codex refuses a repeated flag, so add it only when absent.
 nd = [] if any(n == "--no-daemon" for n, _ in options(args)) else ["--no-daemon"]
 os.execv(real, [real, *nd, *extra, *args])

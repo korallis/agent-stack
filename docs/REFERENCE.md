@@ -587,6 +587,20 @@ start-up context tells a Fable seat to stop and tell the lead instead of carryin
 `agent-project-check <Project>` WARNs when a Fable seat's screen asks for the consent or says the model is
 unavailable. The fix: run `/model fable` once in that seat, accept, then relaunch the seat at idle.
 
+### Seat compaction (context size per turn)
+
+Every turn re-sends the seat's whole context, so a seat that never compacts burns quota fastest. Claude models report a
+1M window here (Sonnet 5.5 too, without `[1m]`) and Claude Code compacts only near it; Codex has no auto-compact limit
+unless one is set. Managed seats therefore compact earlier (WO88):
+- Claude Code: `system/env.sh` sets `CLAUDE_CODE_AUTO_COMPACT_WINDOW`, which Claude Code compacts against
+  (min(model window, value)): 400000 for leads and architects (`coord-*`, `arch-*`), 200000 for every other seat.
+  Measured with Claude Code's own `/context`: 1M → "/ 400k" (compacts at ~367k) and "/ 200k" (~167k). An explicit
+  value wins; your own interactive `claude` is untouched.
+- Codex: the seat shim passes `-c model_auto_compact_token_limit=300000` to leads and architects and `200000` to
+  every other seat (`AGENT_CODEX_AUTO_COMPACT_TOKENS` overrides; a caller's own `-c` value wins).
+- Native grok/kimi seats compact with their own settings (`agent-native-seat`; kimi runs the 256k model).
+Seats pick these up when they relaunch.
+
 ### Claude effort and search subagents
 
 Managed seats get Claude-specific launch defaults from `system/env.sh`. Implementers (`impl-*`, and the development
