@@ -268,6 +268,24 @@ with `agent-login` and the pool uses it straight away.
     --size 176x50 --view river` for one frame. `node console/docs/make-assets.mjs` redraws the README's images and
     animated demo from it (headless Chromium and ImageMagick; `--check` renders the frames without them and
     checks the README against them, as the tests do).
+- **Native grok and kimi seats: `agent-native-seat`.** OpenRig hosts them as `runtime: terminal` members (`agent_ref:
+  "builtin:terminal"`, `profile: none`, a worktree `cwd`) whose startup action runs, in the seat's worktree,
+  `agent-native-seat grok --role implementer` or `agent-native-seat kimi --role reviewer` (`--model`, default
+  grok-4.7-build-fast / kimi-code/k3-256k; a `[1m]` model is refused). At each start it:
+  - writes the rig's CULTURE.md and the role's guidance where the CLI reads project rules (grok `.grok/rules/`, kimi
+    `.kimi-code/AGENTS.md`), never over the project's own AGENTS.md, kept out of git by a `.gitignore` in the directory
+    the launcher creates (that worktree only). The culture is `--culture`, else `$OPENRIG_WORK_ROOT/rig/CULTURE.md`,
+    else the nearest one above the seat; none found stops the start (`--no-culture` opts out);
+  - grok: adds hooks that call OpenRig's activity relay, and keeps it from loading `~/.claude` hooks, MCP servers,
+    skills and rules and from auto-updating; kimi: pre-trusts the folder (it exits on an untrusted one) and turns off
+    its auto-update;
+  - runs the CLI never-prompt (`--always-approve` / `--auto`) under a pty that turns tmux's extended-keys Ctrl+M
+    (OpenRig's submit) into Enter, also when it arrives split across writes, which kimi needs (mvschwarz/openrig#496), and reports busy/idle from the CLI's
+    progress sequences, so `rig send --wait-for-idle` and the activity views work;
+  - resumes its own session on restore (grok by the id it fixed at first start, kimi with `-c`; `--fresh` starts over).
+  Limits of terminal seats on OpenRig 0.6.3: no context %, `set-model` is ignored (the model is in the command), they
+  sit outside OpenRig's workflow role routing (queue rows and `rig send` work), no fork. `--dry-run` shows what a start
+  would write and run. Both CLIs need their own login (`grok login`, `kimi login`).
 - **Relaunch a seat only when it is idle.** Codex: `C-u`, `/quit`, Enter. Claude: `/exit`. Then
   `rig launch <rigId> <pod.member>` (the rig ID, not its name). Check that it resumed its own conversation (Codex
   `resume <thread>`, Claude `--resume <session-id>` on its command line).

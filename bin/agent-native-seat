@@ -1,0 +1,299 @@
+#!/usr/bin/env python3
+"""agent-native-seat: run a native agent CLI (grok, kimi) as an OpenRig seat.
+
+  agent-native-seat grok --role implementer [--model grok-4.7-build-fast]
+  agent-native-seat kimi --role reviewer   [--model kimi-code/k3-256k]
+  agent-native-seat <cli> --role <role> --dry-run     what it would write and run, as JSON; changes nothing
+
+OpenRig hosts these as `runtime: terminal` members whose startup action runs this command in the seat's worktree. On
+OpenRig 0.6.3 a terminal seat gets no instruction files, no activity signal and no managed resume, so this command:
+  - writes the seat's instructions where the CLI reads project rules, never over the project's own AGENTS.md:
+    grok `.grok/rules/openrig-seat.md`, kimi `.kimi-code/AGENTS.md`, kept out of git by a `.gitignore` in the directory
+    the launcher creates (this worktree only). The text is the rig's CULTURE.md (--culture, else
+    $OPENRIG_WORK_ROOT/rig/CULTURE.md, else the nearest one above the seat; none found is an error) and the role's
+    guidance/role.md;
+  - grok: Claude-compatible hooks in `.grok/hooks/openrig-activity.json` that call OpenRig's own activity relay, so the
+    daemon sees busy/idle (`rig send --wait-for-idle` works); the CLI is kept from loading ~/.claude settings, hooks,
+    MCP servers, skills and rules (they belong to the Claude seats), and from auto-updating;
+  - kimi: pre-trusts the folder (kimi exits on an untrusted folder) and keeps it from auto-updating;
+  - runs the CLI under a pty that (1) turns tmux's extended-keys Ctrl+M (OpenRig submits with `send-keys C-m`) into a
+    plain CR, which kitty-protocol TUIs such as kimi need (mvschwarz/openrig#496), and (2) reports busy/idle to
+    OpenRig's activity ingest from the CLI's own progress sequences (OSC 9;4), kimi's only signal;
+  - resumes its own session on restore: grok by the session id it fixed on the first start, kimi with -c.
+The CLI always runs in its never-prompt mode (grok --always-approve, kimi --auto), as every seat does.
+"""
+import argparse, fcntl, hashlib, json, os, pty, re, select, signal, sys, termios, threading, time, tty, uuid
+import urllib.error, urllib.request
+from pathlib import Path
+
+CLIS = {"grok": {"model": "grok-4.7-build-fast"}, "kimi": {"model": "kimi-code/k3-256k"}}
+# tmux (extended-keys, csi-u) sends these for `send-keys C-m` to an app that asked for extended keys
+CTRL_M = (b"\x1b[109;5u", b"\x1b[27;5;13~")
+PROGRESS = re.compile(rb"\x1b\]9;4;(\d)")
+GROK_ENV = {"GROK_CLAUDE_HOOKS_ENABLED": "false", "GROK_CLAUDE_MCPS_ENABLED": "false", "GROK_CLAUDE_SKILLS_ENABLED": "false",
+            "GROK_CLAUDE_AGENTS_ENABLED": "false", "GROK_CLAUDE_RULES_ENABLED": "false", "GROK_CURSOR_HOOKS_ENABLED": "false",
+            "GROK_CURSOR_MCPS_ENABLED": "false", "GROK_DISABLE_AUTOUPDATER": "1"}
+KIMI_ENV = {"KIMI_CODE_NO_AUTO_UPDATE": "1", "KIMI_CLI_NO_AUTO_UPDATE": "1"}
+HOOK_EVENTS = ("SessionStart", "UserPromptSubmit", "PreToolUse", "Stop", "Notification")
+
+
+def die(msg):
+    print(f"agent-native-seat: {msg}", file=sys.stderr)
+    sys.exit(2)
+
+
+def state_dir(seat):
+    root = Path(os.environ.get("AGENT_STACK_STATE") or Path.home() / ".local/state/agent-stack")
+    return root / "native-seats" / re.sub(r"[^A-Za-z0-9@._-]", "_", seat)
+
+
+def relay_path():
+    """OpenRig's own activity relay (reads a Claude-style hook payload on stdin, posts it with the seat's OPENRIG_* env)."""
+    if os.environ.get("OPENRIG_ACTIVITY_RELAY"):
+        return os.environ["OPENRIG_ACTIVITY_RELAY"]
+    return str(Path.home() / ".local/share/agent-stack/openrig/lib/node_modules/@openrig/cli/daemon/assets/plugins/"
+               "openrig-core/hooks/scripts/activity-relay.cjs")
+
+
+def kimi_trust_key(root):
+    """kimi's folder-trust key (encodeWorkDirKey(canonicalWorkspaceRoot(root)) in its bundle): wd_<slug>_<sha256[:12]>."""
+    norm = str(Path(root).resolve()).rstrip("/")
+    slug = re.sub(r"^-+|-+$", "", re.sub(r"[^a-z0-9._-]+", "-", norm.split("/")[-1].lower()))[:40].strip("-")
+    slug = "workspace" if slug in ("", ".", "..") else slug
+    return f"wd_{slug}_{hashlib.sha256(norm.encode()).hexdigest()[:12]}"
+
+
+def find_culture(explicit, cwd, env):
+    """The rig's CULTURE.md: --culture (must exist), else $OPENRIG_WORK_ROOT/rig/CULTURE.md (seats' worktrees usually sit
+    beside the workspace, not inside it), else the nearest <dir>/rig/CULTURE.md above the seat. None found: fail."""
+    if explicit:
+        if not Path(explicit).is_file(): die(f"--culture {explicit}: no such file")
+        return Path(explicit)
+    tried = []
+    if env.get("OPENRIG_WORK_ROOT"):
+        tried.append(Path(env["OPENRIG_WORK_ROOT"]) / "rig/CULTURE.md")
+    tried += [p / "rig/CULTURE.md" for p in [Path(cwd), *Path(cwd).parents]]
+    found = next((p for p in tried if p.is_file()), None)
+    if not found:
+        die("no rig CULTURE.md: pass --culture <file>, set OPENRIG_WORK_ROOT, or --no-culture to start without one")
+    return found
+
+
+def instructions(role, culture, agents_dir):
+    parts = ["<!-- Managed by agent-native-seat: regenerated at every start; edit the rig's CULTURE.md or the role's "
+             "guidance instead. -->",
+             "# You are an OpenRig seat",
+             "Your seat name is in $OPENRIG_SESSION_NAME; `rig whoami --json` shows your rig, pod and role. Work arrives as "
+             "queue rows and `rig send` messages: read each row with `rig queue show <id> --full --json`, and follow the "
+             "rig's culture below for claiming, handing off and closing rows."]
+    for title, path in (("Rig culture", culture), ("Your role", Path(agents_dir) / role / "guidance" / "role.md")):
+        if path and Path(path).is_file():
+            parts += [f"# {title}", Path(path).read_text()]
+        elif title == "Your role":
+            die(f"no role guidance at {path} (roles: {', '.join(sorted(p.name for p in Path(agents_dir).iterdir() if p.is_dir()))})")
+    return "\n\n".join(parts).rstrip() + "\n"
+
+
+IGNORE = "# agent-native-seat: this seat's own files, never committed\n*\n"
+
+
+def ignores(cwd, rel_files):
+    """Keep the seat's files out of git without touching the project's ignore rules or other worktrees: a `.gitignore`
+    of `*` in the topmost directory each file needs that is the launcher's own (it doesn't exist yet, or already holds
+    this marker). A file whose directories all belong to the project gets none and is reported."""
+    places, visible = set(), []
+    for rel in rel_files:
+        parts, own = Path(rel).parts[:-1], None
+        for i in range(1, len(parts) + 1):
+            d = Path(cwd, *parts[:i])
+            gi = d / ".gitignore"
+            if not d.exists() or (gi.is_file() and gi.read_text() == IGNORE):
+                own = Path(*parts[:i]) / ".gitignore"; break
+        (places.add(str(own)) if own else visible.append(rel))
+    return sorted(places), visible
+
+
+def plan(args, cwd, env):
+    """Everything this start writes and runs. Pure apart from reading files and the saved session id."""
+    seat = env.get("OPENRIG_SESSION_NAME") or f"{args.cli}-{Path(cwd).name}"
+    sdir = state_dir(seat)
+    culture = None if args.no_culture else find_culture(args.culture, cwd, env)
+    agents_dir = Path(args.agents_dir or Path(__file__).resolve().parent.parent / "rig/template/agents")
+    text = instructions(args.role, culture, agents_dir)
+    model = args.model or CLIS[args.cli]["model"]
+    files, child_env = {}, {}
+    if args.cli == "grok":
+        files[".grok/rules/openrig-seat.md"] = text
+        node = env.get("OPENRIG_NODE_BIN") or "node"
+        hook = [{"hooks": [{"type": "command", "command": f"{node} {relay_path()}"}]}]
+        files[".grok/hooks/openrig-activity.json"] = json.dumps({"hooks": {e: hook for e in HOOK_EVENTS}}, indent=2) + "\n"
+        child_env.update(GROK_ENV)
+        sid_file = sdir / "grok-session-id"
+        saved = sid_file.read_text().strip() if sid_file.is_file() else ""
+        resume = bool(saved) and not args.fresh
+        sid = saved if resume else str(uuid.uuid4())
+        argv = ["grok", "-m", model, "--always-approve", "--trust", "--no-leader", "--no-alt-screen",
+                *(["-r", sid] if resume else ["-s", sid])]
+        state = {"grok-session-id": sid}
+    else:
+        files[".kimi-code/AGENTS.md"] = text
+        child_env.update(KIMI_ENV)
+        kimi_home = Path(env.get("KIMI_CODE_HOME") or Path.home() / ".kimi-code")
+        trust = kimi_home / "workspace-trust" / kimi_trust_key(cwd)
+        started = (sdir / "kimi-started").is_file() and not args.fresh
+        argv = ["kimi", "--auto", "-m", model, *(["-c"] if started else [])]
+        state = {"kimi-started": "1"}
+        files[str(trust)] = json.dumps({"root": str(Path(cwd).resolve()), "trustedAt": int(time.time() * 1000)})
+    ignore, visible = ignores(cwd, [p for p in files if not os.path.isabs(p)])
+    files.update({g: IGNORE for g in ignore})
+    return {"cli": args.cli, "seat": seat, "role": args.role, "model": model, "cwd": str(cwd), "argv": argv,
+            "env": child_env, "files": files, "state_dir": str(sdir), "state": state, "ignore": ignore,
+            "visible_to_git": visible, "culture": str(culture) if culture else None}
+
+
+def apply(p):
+    for rel, text in p["files"].items():
+        path = Path(rel) if os.path.isabs(rel) else Path(p["cwd"]) / rel
+        path.parent.mkdir(parents=True, exist_ok=True)
+        if not path.exists() or path.read_text() != text:
+            path.write_text(text)
+    if p["visible_to_git"]:
+        print(f"agent-native-seat: in the project's own directories, so not ignored by git: {', '.join(p['visible_to_git'])}", file=sys.stderr)
+    sdir = Path(p["state_dir"]); sdir.mkdir(parents=True, exist_ok=True)
+    for name, value in p["state"].items():
+        (sdir / name).write_text(value + "\n")
+
+
+PROGRESS_HEAD = b"\x1b]9;4;"
+
+
+def progress_prefix(data):
+    """The longest end of `data` that could still grow into a progress sequence (a prefix of ESC ] 9 ; 4 ;), else b""."""
+    return next((data[-n:] for n in range(min(len(data), len(PROGRESS_HEAD)), 0, -1) if PROGRESS_HEAD.startswith(data[-n:])), b"")
+
+
+class CtrlM:
+    """tmux's extended-keys Ctrl+M → CR, across any chunk boundary: a tail that could still become a Ctrl+M sequence is
+    held (never more than one sequence long) and released unchanged if the next bytes don't complete it, or after a
+    short wait (300 ms; a lone Esc still reaches the CLI)."""
+    def __init__(self):
+        self.held = b""
+    def feed(self, data):
+        data = self.held + data
+        for seq in CTRL_M:
+            data = data.replace(seq, b"\r")
+        cut = next((n for n in range(min(len(data), max(map(len, CTRL_M)) - 1), 0, -1)
+                    if any(seq.startswith(data[-n:]) for seq in CTRL_M)), 0)
+        self.held = data[len(data) - cut:] if cut else b""
+        return data[:len(data) - cut] if cut else data
+    def flush(self):
+        out, self.held = self.held, b""
+        return out
+
+
+def post(event, env, log=None):
+    """One activity event to OpenRig's ingest (POST /api/activity/hooks), as its own relay sends it. Silent without the
+    seat's OPENRIG_URL/OPENRIG_SESSION_NAME, i.e. outside a seat."""
+    if log:
+        with open(log, "a") as f: f.write(json.dumps({"t": time.time(), "event": event}) + "\n")
+    url, session, token = env.get("OPENRIG_URL"), env.get("OPENRIG_SESSION_NAME"), env.get("OPENRIG_ACTIVITY_HOOK_TOKEN")
+    if not url or not session or not token:
+        return None
+    body = {"sessionName": session, "runtime": env.get("OPENRIG_RUNTIME", "terminal"), "hookEvent": event,
+            "occurredAt": time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime())}
+    if env.get("OPENRIG_NODE_ID"): body["nodeId"] = env["OPENRIG_NODE_ID"]
+    if env.get("OPENRIG_OCCUPANT_GENERATION"): body["generation"] = env["OPENRIG_OCCUPANT_GENERATION"]
+    req = urllib.request.Request(url.rstrip("/") + "/api/activity/hooks", data=json.dumps(body).encode(), method="POST",
+                                 headers={"Content-Type": "application/json", "Authorization": f"Bearer {token}"})
+    def send():
+        try: status = urllib.request.urlopen(req, timeout=3).status
+        except urllib.error.HTTPError as e: status = e.code
+        except Exception as e: status = type(e).__name__
+        if log:
+            with open(log, "a") as f: f.write(json.dumps({"t": time.time(), "posted": event, "status": status}) + "\n")
+    t = threading.Thread(target=send, daemon=True); t.start()
+    return t
+
+
+def run(argv, child_env, idle_s=2.0):
+    """The CLI under a pty: input passes through except tmux's extended-keys Ctrl+M (→ CR); output passes through, and
+    its progress sequences (OSC 9;4;N: 0 done, else busy) become activity events, Stop only after idle_s of quiet."""
+    env = dict(os.environ)
+    log = env.get("AGENT_NATIVE_SEAT_LOG")
+    pid, fd = pty.fork()
+    if pid == 0:
+        os.environ.update(child_env)
+        # kimi emits progress only for terminals it knows (WezTerm among them); inside tmux TERM_PROGRAM is "tmux"
+        os.environ["TERM_PROGRAM"] = "WezTerm"
+        try: os.execvp(argv[0], argv)
+        except OSError as e:
+            sys.stderr.write(f"agent-native-seat: cannot run {argv[0]}: {e}\n"); os._exit(127)
+    def winch(*_):
+        try: fcntl.ioctl(fd, termios.TIOCSWINSZ, fcntl.ioctl(0, termios.TIOCGWINSZ, b"\0" * 8))
+        except OSError: pass
+    signal.signal(signal.SIGWINCH, winch); winch()
+    old = termios.tcgetattr(0) if os.isatty(0) else None
+    if old: tty.setraw(0)
+    busy, tail, idle_since, keys, held_at = False, b"", None, CtrlM(), None
+    # how long a possible half sequence waits for the rest: seats have no human at the keys, so latency costs nothing
+    hold_s = float(os.environ.get("AGENT_NATIVE_SEAT_KEY_HOLD_MS", "300")) / 1000
+    try:
+        while True:
+            r, _, _ = select.select([0, fd], [], [], 0.05 if keys.held else 0.25)
+            if keys.held and 0 not in r and held_at is not None and time.monotonic() - held_at >= hold_s:
+                os.write(fd, keys.flush()); held_at = None
+            if busy and idle_since is not None and time.monotonic() - idle_since >= idle_s:
+                busy, idle_since = False, None; post("Stop", env, log)
+            if fd in r:
+                try: data = os.read(fd, 65536)
+                except OSError: break
+                if not data: break
+                os.write(1, data)
+                scan, done_at = tail + data, 0
+                for m in PROGRESS.finditer(scan):
+                    done_at = m.end()
+                    if m.group(1) != b"0":
+                        idle_since = None
+                        if not busy: busy = True; post("active", env, log)
+                    elif busy and idle_since is None:
+                        idle_since = time.monotonic()
+                tail = progress_prefix(scan[done_at:])   # only an unfinished sequence carries over, never a parsed one
+            if 0 in r:
+                data = os.read(0, 65536)
+                if not data:
+                    if keys.held: os.write(fd, keys.flush())
+                    break
+                out = keys.feed(data)
+                held_at = time.monotonic() if keys.held else None
+                if out: os.write(fd, out)
+    finally:
+        if old: termios.tcsetattr(0, termios.TCSADRAIN, old)
+        last = post("SessionEnd", env, log)
+        if last: last.join(3)   # the process ends next: let the last report out
+    _, status = os.waitpid(pid, 0)
+    return os.waitstatus_to_exitcode(status)
+
+
+def main():
+    ap = argparse.ArgumentParser(prog="agent-native-seat", description=__doc__.split("\n\n")[0],
+                                 formatter_class=argparse.RawDescriptionHelpFormatter)
+    ap.add_argument("cli", choices=sorted(CLIS))
+    ap.add_argument("--role", required=True, help="a role under rig/template/agents (implementer, reviewer, test-author, …)")
+    ap.add_argument("--model", help="model for the CLI (default: grok-4.7-build-fast / kimi-code/k3-256k)")
+    ap.add_argument("--culture", help="the rig's CULTURE.md (default: the nearest <dir>/rig/CULTURE.md above the seat)")
+    ap.add_argument("--no-culture", action="store_true", help="start without the rig's culture (not for project seats)")
+    ap.add_argument("--agents-dir", help=argparse.SUPPRESS)
+    ap.add_argument("--fresh", action="store_true", help="start a new session instead of resuming the seat's own")
+    ap.add_argument("--dry-run", action="store_true", help="print what it would write and run, as JSON; change nothing")
+    args = ap.parse_args()
+    if args.model and re.search(r"\[1m\]$", args.model):
+        die(f"{args.model}: a 1M-token window re-sends half a million tokens a turn; use the 256k model")
+    p = plan(args, Path.cwd(), dict(os.environ))
+    if args.dry_run:
+        print(json.dumps(p, indent=2)); return 0
+    apply(p)
+    return run(p["argv"], p["env"], float(os.environ.get("AGENT_NATIVE_SEAT_IDLE_S", "2")))
+
+
+if __name__ == "__main__":
+    sys.exit(main())
