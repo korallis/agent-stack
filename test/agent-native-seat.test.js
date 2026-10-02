@@ -235,7 +235,14 @@ test("hook mode: notes only the event's name, then hands the payload unchanged t
   const noted = JSON.parse(fs.readFileSync(state, "utf8"));
   assert.deepEqual(Object.keys(noted).sort(), ["event", "t"]); assert.equal(noted.event, "Stop");
   assert.equal(spawnSync("python3", [tool, "hook", "--state", state, "--", relay], { input: "not json", encoding: "utf8" }).status, 3, "a bad payload still reaches the relay");
-  assert.equal(JSON.parse(fs.readFileSync(state, "utf8")).event, null);
+  assert.equal(JSON.parse(fs.readFileSync(state, "utf8")).event, "Stop", "a payload without a turn event leaves the record");
+  // grok sends a notification after every Stop (seen live, WO96): relayed unchanged, but the Stop stays the last turn event
+  const note = JSON.stringify({ hook_event_name: "notification", session_id: "s1", message: "private text" });
+  assert.equal(spawnSync("python3", [tool, "hook", "--state", state, "--", relay], { input: note, encoding: "utf8" }).status, 3);
+  assert.equal(fs.readFileSync(got, "utf8"), note, "relayed byte for byte");
+  assert.equal(JSON.parse(fs.readFileSync(state, "utf8")).event, "Stop");
+  spawnSync("python3", [tool, "hook", "--state", state, "--", relay], { input: JSON.stringify({ hook_event_name: "pre_tool_use" }), encoding: "utf8" });
+  assert.equal(JSON.parse(fs.readFileSync(state, "utf8")).event, "pre_tool_use", "a turn event still moves it");
 });
 
 test("idle keepalive: an idle seat re-reports idle (first soon after start, then on an interval); a busy grok, by its last hook, does not", async () => {

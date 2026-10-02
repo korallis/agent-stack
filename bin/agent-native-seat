@@ -232,9 +232,14 @@ def hook_name(event):
     return re.sub(r"[^a-z]", "", str(event or "").lower())
 
 
+# The events that move a turn's state. grok also sends Notification after every Stop (seen live, WO96): it must not
+# replace the Stop, or an idle seat stops saying so and expires to "unknown". Others are relayed but not noted.
+TURN_HOOKS = ("sessionstart", "userpromptsubmit", "turnstarted", "pretooluse", "posttooluse", "stop", "sessionend")
+
+
 def hook(argv):
-    """agent-native-seat hook --state FILE -- RELAY...: one grok hook. Notes the event's name (and nothing else of the
-    payload) in FILE for the idle keepalive, then gives the payload, unchanged, to OpenRig's relay; its exit code."""
+    """agent-native-seat hook --state FILE -- RELAY...: one grok hook. Notes a turn event's name (and nothing else of
+    the payload) in FILE for the idle keepalive, then gives the payload, unchanged, to OpenRig's relay; its exit code."""
     state, relay = argv[argv.index("--state") + 1], argv[argv.index("--") + 1:]
     data = sys.stdin.buffer.read()
     try:
@@ -242,6 +247,8 @@ def hook(argv):
         event = next((d[k] for k in ("hookEvent", "hookEventName", "hook_event_name") if isinstance(d.get(k), str)), None)
     except (ValueError, AttributeError): event = None
     try:
+        if hook_name(event) not in TURN_HOOKS:
+            raise OSError("not a turn event: relayed, not noted")
         tmp = f"{state}.{os.getpid()}"
         Path(state).parent.mkdir(parents=True, exist_ok=True)
         with open(tmp, "w") as f: json.dump({"event": event, "t": time.time()}, f)
