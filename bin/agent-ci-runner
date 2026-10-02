@@ -1,0 +1,349 @@
+#!/usr/bin/env python3
+"""agent-ci-runner: local GitHub Actions runners for the korallis repos on this host (docs/RUNNERS.md).
+
+  agent-ci-runner install REPO [--dry-run]   download the pinned runner (checksum verified), start
+                                             agent-ci-runner@REPO, wait until GitHub lists it online, set the repo
+                                             variable CI_LOCAL=1 (workflows then pick the local runner)
+  agent-ci-runner stop|start REPO            pause (CI_LOCAL cleared first, so jobs go to hosted runners) / resume
+  agent-ci-runner remove REPO [--keep]       clear CI_LOCAL, stop the unit, delete the runner on GitHub and its dir
+  agent-ci-runner status [--json]            units, GitHub runner state, CI_LOCAL, job slots, load
+  agent-ci-runner logs REPO [-n N]           the unit's journal
+  agent-ci-runner register REPO              (ExecStartPre of the unit) fresh ephemeral registration, clean work dir
+  agent-ci-runner watch                      (timer, every 2 min) a runner down for 10 minutes -> CI_LOCAL cleared,
+                                             so its repo's jobs run hosted instead of queueing; back online -> set again
+
+Repos are korallis/<REPO> (AGENT_CI_OWNER). korallis is a personal account, so a runner serves exactly one repo: one
+ephemeral runner per repo, and the job gate (system/ci-runner-hook) caps how many jobs run at once across all of them
+(AGENT_CI_MAX_JOBS in ~/.config/agent-stack/ci-runners.env, default 2). Registration and removal tokens come from
+`gh api` and reach the runner only as ACTIONS_RUNNER_INPUT_TOKEN in its environment: never printed, never on a
+command line. Fork pull requests never reach a local runner: the workflows' runs-on picks the hosted runner for them.
+"""
+import argparse
+import hashlib
+import json
+import os
+import pwd
+import re
+import shutil
+import socket
+import subprocess
+import sys
+import tarfile
+import time
+import urllib.request
+from pathlib import Path
+
+VERSION = "2.337.0"
+SHA256 = "70920811a4f8ad4328818682bca5c6469c1c942fab52448868071d0063816613"
+LABEL = "korallis-local"
+VAR = "CI_LOCAL"
+OFFLINE_GRACE_S = 600
+REAL_HOME = Path(pwd.getpwuid(os.getuid()).pw_dir)
+OWNER = os.environ.get("AGENT_CI_OWNER", "korallis")
+ROOT = Path(os.environ.get("AGENT_CI_ROOT", REAL_HOME / ".local/share/agent-stack/ci-runners"))
+STATE = Path(os.environ.get("AGENT_CI_STATE", REAL_HOME / ".local/state/agent-stack/ci-runners"))
+CONFIG = Path(os.environ.get("AGENT_CI_CONFIG", REAL_HOME / ".config/agent-stack/ci-runners.env"))
+CACHE = Path(os.environ.get("AGENT_CI_CACHE", REAL_HOME / ".cache/agent-stack"))
+HOOK_SRC = Path(__file__).resolve().parent.parent / "system/ci-runner-hook"
+HOST = os.environ.get("AGENT_CI_HOST", socket.gethostname().split(".")[0])
+DEFAULT_CONFIG = """# Local CI runners (agent-ci-runner, docs/RUNNERS.md). Numbers only; read by the job gate at every job start.
+AGENT_CI_MAX_JOBS=2
+AGENT_CI_MAX_LOAD_PER_CPU=1.0
+AGENT_CI_MIN_MEM_GB=6
+AGENT_CI_GATE_WAIT_S=900
+"""
+
+
+def die(msg, code=1):
+    print(f"agent-ci-runner: {msg}", file=sys.stderr)
+    sys.exit(code)
+
+
+def say(msg):
+    print(msg, flush=True)
+    subprocess.run(["logger", "-t", "agent-ci-runner", msg], check=False)
+
+
+def repo_ok(repo):
+    if not re.fullmatch(r"[A-Za-z0-9._-]{1,100}", repo) or repo.startswith(("_", ".")):
+        die(f"not a repo name: {repo!r}")
+    return repo
+
+
+def gh(*args, check=True):
+    # The unit's HOME is the runner's own; gh's login lives in the real home.
+    env = {**os.environ, "HOME": str(REAL_HOME)}
+    r = subprocess.run(["gh", *args], capture_output=True, text=True, env=env)
+    if check and r.returncode != 0:
+        die(f"gh {' '.join(args[:3])} failed: {(r.stderr or r.stdout).strip()[:300]}")
+    return r
+
+
+def token(repo, kind):
+    r = gh("api", "-X", "POST", f"repos/{OWNER}/{repo}/actions/runners/{kind}-token", "--jq", ".token")
+    tok = r.stdout.strip()
+    if not tok:
+        die(f"GitHub returned no {kind} token for {OWNER}/{repo}")
+    return tok
+
+
+def systemctl(*args, check=True):
+    r = subprocess.run(["systemctl", "--user", *args], capture_output=True, text=True)
+    if check and r.returncode != 0:
+        die(f"systemctl --user {' '.join(args)} failed: {(r.stderr or r.stdout).strip()[:300]}")
+    return r
+
+
+def unit(repo):
+    return f"agent-ci-runner@{repo}.service"
+
+
+def runner_dir(repo):
+    return ROOT / repo / "runner"
+
+
+def installed():
+    return sorted(p.name for p in ROOT.glob("*") if p.is_dir() and not p.name.startswith(("_", ".")) and (p / "runner").is_dir()) if ROOT.is_dir() else []
+
+
+def github_runners(repo):
+    r = gh("api", f"repos/{OWNER}/{repo}/actions/runners", "--paginate", "--jq", ".runners[] | {id, name, status, busy}", check=False)
+    if r.returncode != 0:
+        return None
+    return [json.loads(line) for line in r.stdout.splitlines() if line.strip()]
+
+
+def online(repo):
+    runners = github_runners(repo)
+    if runners is None:
+        return None
+    return any(x["name"] == f"{HOST}-{repo}" and x["status"] == "online" for x in runners)
+
+
+def var_get(repo):
+    r = gh("api", f"repos/{OWNER}/{repo}/actions/variables/{VAR}", "--jq", ".value", check=False)
+    return r.stdout.strip() if r.returncode == 0 else None
+
+
+def var_set(repo, on):
+    if on:
+        gh("variable", "set", VAR, "--body", "1", "--repo", f"{OWNER}/{repo}")
+    elif var_get(repo) is not None:
+        gh("variable", "delete", VAR, "--repo", f"{OWNER}/{repo}")
+
+
+def run_config(repo, args, tok):
+    d = runner_dir(repo)
+    env = {**os.environ, "ACTIONS_RUNNER_INPUT_TOKEN": tok, "HOME": str(ROOT / repo / "home")}
+    r = subprocess.run([str(d / "config.sh"), *args], cwd=d, env=env, capture_output=True, text=True)
+    out = (r.stdout + r.stderr).replace(tok, "***")
+    tail = "\n".join(l for l in out.splitlines() if l.strip())[-1500:]
+    return r.returncode, tail
+
+
+def cmd_register(repo):
+    d = runner_dir(repo)
+    if not (d / "config.sh").is_file():
+        die(f"{d} has no runner; run agent-ci-runner install {repo}")
+    (STATE / "slots" / repo).unlink(missing_ok=True)  # a (re)start means the previous job is over
+    shutil.rmtree(d / "_work", ignore_errors=True)
+    for f in (".runner", ".credentials", ".credentials_rsaparams"):
+        (d / f).unlink(missing_ok=True)
+    (ROOT / repo / "home").mkdir(parents=True, exist_ok=True)
+    (ROOT / repo / "toolcache").mkdir(parents=True, exist_ok=True)
+    rc, tail = run_config(repo, ["--unattended", "--ephemeral", "--replace", "--disableupdate",
+                                 "--url", f"https://github.com/{OWNER}/{repo}", "--name", f"{HOST}-{repo}",
+                                 "--labels", LABEL, "--work", "_work"], token(repo, "registration"))
+    print(tail)
+    if rc != 0:
+        die(f"runner registration for {OWNER}/{repo} failed (exit {rc})")
+    print(f"registered {HOST}-{repo} for {OWNER}/{repo} (ephemeral, label {LABEL})")
+
+
+def fetch_runner():
+    tarball = Path(os.environ.get("AGENT_CI_TARBALL", CACHE / f"actions-runner-linux-x64-{VERSION}.tar.gz"))
+    want = os.environ.get("AGENT_CI_SHA256", SHA256)
+    if not tarball.is_file():
+        CACHE.mkdir(parents=True, exist_ok=True)
+        url = f"https://github.com/actions/runner/releases/download/v{VERSION}/actions-runner-linux-x64-{VERSION}.tar.gz"
+        tmp = tarball.with_suffix(".part")
+        with urllib.request.urlopen(url, timeout=120) as resp, open(tmp, "wb") as out:
+            shutil.copyfileobj(resp, out)
+        tmp.replace(tarball)
+    got = hashlib.sha256(tarball.read_bytes()).hexdigest()
+    if got != want:
+        die(f"{tarball}: checksum {got} is not the pinned {want}; refusing to install it")
+    return tarball
+
+
+def install_hooks():
+    shared = ROOT / "_shared"
+    shared.mkdir(parents=True, exist_ok=True)
+    shutil.copy2(HOOK_SRC, shared / "ci-runner-hook")
+    for name, mode in (("job-started.sh", "start"), ("job-completed.sh", "end")):
+        p = shared / name
+        p.write_text(f'#!/usr/bin/env bash\nexec "$(dirname "$0")/ci-runner-hook" {mode}\n')
+        p.chmod(0o755)
+    (STATE / "slots").mkdir(parents=True, exist_ok=True)
+    if not CONFIG.exists():
+        CONFIG.parent.mkdir(parents=True, exist_ok=True)
+        CONFIG.write_text(DEFAULT_CONFIG)
+        CONFIG.chmod(0o600)
+
+
+def wait_online(repo, seconds):
+    end = time.time() + seconds
+    while time.time() < end:
+        if online(repo):
+            return True
+        time.sleep(float(os.environ.get("AGENT_CI_POLL_S", "5")))
+    return False
+
+
+def cmd_install(repo, dry):
+    r = gh("api", f"repos/{OWNER}/{repo}", "--jq", ".full_name", check=False)
+    if r.returncode != 0:
+        die(f"{OWNER}/{repo} is not reachable with gh: {(r.stderr or r.stdout).strip()[:200]}")
+    d = runner_dir(repo)
+    if dry:
+        print(f"would install runner {VERSION} into {d}, start {unit(repo)} (sandboxed, agent-heavy.slice), "
+              f"wait for {HOST}-{repo} online, then set {VAR}=1 on {OWNER}/{repo}")
+        return
+    tarball = fetch_runner()
+    marker = d / ".agent-ci-version"
+    if not marker.is_file() or marker.read_text().strip() != VERSION:
+        shutil.rmtree(d, ignore_errors=True)
+        d.mkdir(parents=True)
+        with tarfile.open(tarball) as t:
+            t.extractall(d, filter="tar")
+        marker.write_text(VERSION + "\n")
+    install_hooks()
+    (STATE / f"{repo}.paused").unlink(missing_ok=True)
+    systemctl("daemon-reload")
+    systemctl("enable", "--now", unit(repo))
+    if not wait_online(repo, float(os.environ.get("AGENT_CI_ONLINE_WAIT_S", "120"))):
+        die(f"{HOST}-{repo} did not come online; {VAR} left unset (jobs stay hosted). See: agent-ci-runner logs {repo}")
+    var_set(repo, True)
+    say(f"{OWNER}/{repo}: local runner {HOST}-{repo} online; {VAR}=1 (Linux jobs run here)")
+
+
+def cmd_stop(repo):
+    var_set(repo, False)
+    (STATE).mkdir(parents=True, exist_ok=True)
+    (STATE / f"{repo}.paused").write_text(str(int(time.time())))
+    systemctl("stop", unit(repo), check=False)
+    say(f"{OWNER}/{repo}: local runner paused; {VAR} cleared (jobs run hosted)")
+
+
+def cmd_start(repo):
+    (STATE / f"{repo}.paused").unlink(missing_ok=True)
+    systemctl("start", unit(repo))
+    if not wait_online(repo, float(os.environ.get("AGENT_CI_ONLINE_WAIT_S", "120"))):
+        die(f"{HOST}-{repo} did not come online; {VAR} left unset")
+    var_set(repo, True)
+    say(f"{OWNER}/{repo}: local runner resumed; {VAR}=1")
+
+
+def cmd_remove(repo, keep):
+    var_set(repo, False)
+    systemctl("disable", "--now", unit(repo), check=False)
+    for x in github_runners(repo) or []:
+        if x["name"] == f"{HOST}-{repo}":
+            gh("api", "-X", "DELETE", f"repos/{OWNER}/{repo}/actions/runners/{x['id']}")
+    (STATE / "slots" / repo).unlink(missing_ok=True)
+    (STATE / f"{repo}.paused").unlink(missing_ok=True)
+    if not keep:
+        shutil.rmtree(ROOT / repo, ignore_errors=True)
+    say(f"{OWNER}/{repo}: local runner removed; {VAR} cleared")
+
+
+def load_state():
+    try:
+        return json.loads((STATE / "watch.json").read_text())
+    except (OSError, ValueError):
+        return {}
+
+
+def cmd_watch():
+    st, now = load_state(), int(time.time())
+    for repo in installed():
+        if (STATE / f"{repo}.paused").exists():
+            continue
+        active = systemctl("is-active", unit(repo), check=False).stdout.strip() == "active"
+        up = online(repo)
+        if up is None:
+            continue  # GitHub unreachable: judge nothing
+        if active and up:
+            st.pop(repo, None)
+            if var_get(repo) != "1":
+                var_set(repo, True)
+                say(f"{OWNER}/{repo}: local runner back online; {VAR}=1 again")
+            continue
+        since = st.setdefault(repo, now)
+        if now - since >= OFFLINE_GRACE_S and var_get(repo) == "1":
+            var_set(repo, False)
+            say(f"{OWNER}/{repo}: local runner down {(now - since) // 60} min (unit {'active' if active else 'inactive'}); "
+                f"{VAR} cleared, jobs run hosted until it is back")
+            subprocess.run(["notify-send", "--app-name=Agent stack", "CI moved to hosted runners",
+                            f"{OWNER}/{repo}: the local runner is down"], check=False, capture_output=True)
+    STATE.mkdir(parents=True, exist_ok=True)
+    (STATE / "watch.json").write_text(json.dumps(st))
+
+
+def cmd_status(as_json):
+    rows = []
+    slots = STATE / "slots"
+    busy = sorted(p.name for p in slots.glob("*") if p.is_file() and not p.name.startswith(".")) if slots.is_dir() else []
+    for repo in installed():
+        rows.append({"repo": repo, "unit": systemctl("is-active", unit(repo), check=False).stdout.strip(),
+                     "online": online(repo), "ci_local": var_get(repo), "paused": (STATE / f"{repo}.paused").exists(),
+                     "job_slot": repo in busy})
+    cfg = dict(re.findall(r"^(AGENT_CI_[A-Z_]+)=([0-9.]+)$", CONFIG.read_text(), re.M)) if CONFIG.is_file() else {}
+    summary = {"runners": rows, "busy_slots": busy, "max_jobs": int(cfg.get("AGENT_CI_MAX_JOBS", 2)),
+               "load1": float(Path("/proc/loadavg").read_text().split()[0]), "cpus": os.cpu_count()}
+    if as_json:
+        print(json.dumps(summary, indent=2))
+        return
+    for r in rows:
+        print(f"{r['repo']:<20} unit {r['unit']:<9} github {'online' if r['online'] else ('?' if r['online'] is None else 'offline'):<8}"
+              f" {VAR}={r['ci_local'] or 'unset':<6}{' paused' if r['paused'] else ''}{' running a job' if r['job_slot'] else ''}")
+    print(f"jobs: {len(busy)}/{summary['max_jobs']} slots busy; load {summary['load1']}/{summary['cpus']}")
+
+
+def main():
+    p = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
+    sub = p.add_subparsers(dest="cmd", required=True)
+    for name in ("install", "stop", "start", "remove", "logs", "register"):
+        s = sub.add_parser(name)
+        s.add_argument("repo")
+        if name == "install":
+            s.add_argument("--dry-run", action="store_true")
+        if name == "remove":
+            s.add_argument("--keep", action="store_true")
+        if name == "logs":
+            s.add_argument("-n", type=int, default=100)
+    sub.add_parser("watch")
+    s = sub.add_parser("status")
+    s.add_argument("--json", action="store_true")
+    a = p.parse_args()
+    repo = repo_ok(a.repo) if hasattr(a, "repo") else None
+    if a.cmd == "install":
+        cmd_install(repo, a.dry_run)
+    elif a.cmd == "register":
+        cmd_register(repo)
+    elif a.cmd == "stop":
+        cmd_stop(repo)
+    elif a.cmd == "start":
+        cmd_start(repo)
+    elif a.cmd == "remove":
+        cmd_remove(repo, a.keep)
+    elif a.cmd == "logs":
+        os.execvp("journalctl", ["journalctl", "--user", "-u", unit(repo), "-n", str(a.n), "--no-pager"])
+    elif a.cmd == "watch":
+        cmd_watch()
+    else:
+        cmd_status(a.json)
+
+
+if __name__ == "__main__":
+    main()
