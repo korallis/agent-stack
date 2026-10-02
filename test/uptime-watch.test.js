@@ -78,3 +78,56 @@ test('truncated chunks and malformed status lines do not suppress another overdu
   assert.equal(readFileSync(calls,'utf8').trim().split('\n').length,3);
  }finally{await new Promise(resolve=>server.close(resolve));rmSync(root,{recursive:true,force:true});}
 });
+
+test('interval_minutes: default probes every run, a longer interval waits, down alerts still fire after 15 minutes',async()=>{
+ const root=mkdtempSync(join(tmpdir(),'uptime-interval-')); const hits={}; let status=200;
+ const server=http.createServer((req,res)=>{hits[req.url]=(hits[req.url]||0)+1;res.statusCode=status;res.end('ok');});
+ await new Promise(resolve=>server.listen(0,'127.0.0.1',resolve));
+ try{
+  const config=join(root,'config.json'),state=join(root,'state.json'),calls=join(root,'calls'),base=`http://127.0.0.1:${server.address().port}`;
+  writeFileSync(config,JSON.stringify([{id:'every-minute',url:`${base}/fast`,destination:'ops@test'},{id:'slow',url:`${base}/slow`,destination:'ops@test',interval_minutes:5},{id:'slower',url:`${base}/slower`,destination:'ops@test',interval_minutes:10}]));
+  writeFileSync(join(root,'rig'),`#!/bin/sh\nprintf 'alert\\n' >> "$HOME/calls"\n`,{mode:0o755});
+  const run=()=>new Promise(resolve=>{const p=spawn(script,['--config',config,'--state',state],{env:{...process.env,HOME:root,PATH:`${root}:/usr/bin:/bin`}});let out='',err='';p.stdout.on('data',b=>out+=b);p.stderr.on('data',b=>err+=b);p.on('close',code=>{assert.equal(code,0,err);resolve(Object.fromEntries(JSON.parse(out).map(x=>[x.id,x.action])));});});
+  const edit=f=>{const s=JSON.parse(readFileSync(state,'utf8'));f(s,Date.now()/1000);writeFileSync(state,JSON.stringify(s));};
+  assert.deepEqual(await run(),{'every-minute':'healthy',slow:'healthy',slower:'healthy'});
+  assert.deepEqual(await run(),{'every-minute':'healthy',slow:'skipped',slower:'skipped'});
+  assert.deepEqual(hits,{'/fast':2,'/slow':1,'/slower':1});
+  edit((s,now)=>{s.slow.probedAt=now-240;s.slower.probedAt=now-301;});
+  assert.deepEqual(await run(),{'every-minute':'healthy',slow:'skipped',slower:'skipped'});
+  edit((s,now)=>{s.slow.probedAt=now-300;});
+  assert.deepEqual(await run(),{'every-minute':'healthy',slow:'healthy',slower:'skipped'});
+  assert.deepEqual(hits,{'/fast':4,'/slow':2,'/slower':1});
+  // ten-minute probes: the gap between two failures is one outage, so the alert comes at the 15-minute mark
+  status=503;edit((s,now)=>{s.slower={...s.slower,probedAt:now-601,checkedAt:now-601,downSince:now-1300};});
+  assert.deepEqual(await run(),{'every-minute':'observe',slow:'skipped',slower:'alert'});
+  assert.equal(readFileSync(calls,'utf8').trim().split('\n').length,1);
+ }finally{await new Promise(resolve=>server.close(resolve));rmSync(root,{recursive:true,force:true});}
+});
+
+test('interval_minutes: five-minute failures alert at 15 minutes; invalid intervals are rejected',()=>{
+ const got=py(`
+s={}; a=[m['observe'](s,False,False,t,600) for t in (0,300,600,900)]
+base={'id':'stage','url':'https://example.test/health','destination':'ops@test'}
+ok=[]
+for v in [0,1441,1.5,'5',True,None]:
+ try: m['validate']([dict(base,interval_minutes=v)]); ok.append(True)
+ except ValueError: ok.append(False)
+m['validate']([dict(base,interval_minutes=5),dict(base,id='day',interval_minutes=1440)])
+print(json.dumps([a,ok]))`);
+ assert.deepEqual(got,[['observe','observe','observe','alert'],[false,false,false,false,false,false]]);
+});
+
+test('interval_minutes: a monitor queued behind slower probes records its own probe time',async()=>{
+ const root=mkdtempSync(join(tmpdir(),'uptime-queued-'));
+ const server=http.createServer((req,res)=>setTimeout(()=>{res.statusCode=200;res.end('ok');},req.url==='/last'?0:1500));
+ await new Promise(resolve=>server.listen(0,'127.0.0.1',resolve));
+ try{
+  const config=join(root,'config.json'),state=join(root,'state.json'),base=`http://127.0.0.1:${server.address().port}`;
+  // four workers: the fifth monitor starts only after the first four finish
+  writeFileSync(config,JSON.stringify(['a','b','c','d','last'].map(id=>({id,url:`${base}/${id}`,destination:'ops@test',interval_minutes:5}))));
+  const r=await new Promise(resolve=>{const p=spawn(script,['--config',config,'--state',state],{env:{...process.env,PATH:'/usr/bin:/bin'}});let err='';p.stderr.on('data',b=>err+=b);p.on('close',code=>resolve({code,err}));});
+  assert.equal(r.code,0,r.err);
+  const s=JSON.parse(readFileSync(state,'utf8')), first=Math.min(...['a','b','c','d'].map(id=>s[id].probedAt));
+  assert.ok(s.last.probedAt-first>=1.4,`queued probe stored ${s.last.probedAt-first}s after the first`);
+ }finally{await new Promise(resolve=>server.close(resolve));rmSync(root,{recursive:true,force:true});}
+});

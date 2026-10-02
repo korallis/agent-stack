@@ -948,6 +948,7 @@ threshold, plus command latency. No observation history is inferred on first ins
     "url": "https://staging.example.test/health",
     "destination": "coord-lead@sample",
     "bodyContains": "ready",
+    "interval_minutes": 5,
     "windows": [{"start": "2030-01-01T09:00:00Z", "end": "2030-01-01T09:30:00Z"}]
   }
 ]
@@ -958,11 +959,20 @@ The response must be 2xx. Redirects count as unhealthy, so login redirects canno
 `bodyContains` checks a literal UTF-8 marker in the first 64 KiB. An endpoint that returns 200 with the wrong marker
 is unhealthy. The watcher checks at most four endpoints concurrently, with a ten-second socket timeout.
 
+Optional `interval_minutes` (a whole number from 1 to 1440, default 1) probes that endpoint only once that many
+minutes have passed since its last probe (measured from when that monitor's probe started, with five seconds'
+tolerance for timer jitter, so probes are at least `interval_minutes` × 60 − 5 seconds apart); the timer still runs
+every minute and other monitors are unaffected. Use it
+for an endpoint whose backend should be allowed to idle, such as a database that suspends when unused. A skipped run
+reports `"action": "skipped"` and changes nothing. Changing the interval starts a new observation window.
+
 After at least 15 minutes of failed observations outside maintenance, the watcher creates one urgent queue row for
 that monitor's destination. The row contains the monitor ID and status, without the URL or response body. The receiver
 investigates and alerts the owner through project policy. The watcher does not restart or deploy services. A healthy
 check rearms the alert. Maintenance windows suppress checks and reset downtime; after the window ends, 15 minutes of
-failed observations are required again. Observation gaps over ten minutes also reset downtime.
+failed observations are required again. Observation gaps over ten minutes (or two intervals, if longer) also reset
+downtime. With a longer interval the alert comes at the first failed probe at least 15 minutes after the first failure,
+for example the fourth consecutive failure at five minutes.
 
 Run `agent-uptime-watch --dry-run` to probe and report without writing state or alerting. `--config` and `--state`
 select fixture files. Missing configuration is a no-op. State defaults to

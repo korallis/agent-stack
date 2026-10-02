@@ -43,6 +43,9 @@ def validate(monitors):
             raise ValueError('destination must be seat@rig')
         if 'bodyContains' in m and (not isinstance(m['bodyContains'], str) or not m['bodyContains'] or len(m['bodyContains']) > 4096):
             raise ValueError('bodyContains must be a short nonempty string')
+        interval = m.get('interval_minutes', 1)
+        if type(interval) is not int or not 1 <= interval <= 1440:
+            raise ValueError('interval_minutes must be a whole number of minutes from 1 to 1440')
         if not isinstance(m.get('windows', []), list):
             raise ValueError('windows must be a list')
         for w in m.get('windows', []):
@@ -51,12 +54,12 @@ def validate(monitors):
     return monitors
 
 
-def observe(state, healthy, maintenance, now):
+def observe(state, healthy, maintenance, now, gap=600):
     if maintenance or healthy:
         state.clear()
         state['checkedAt'] = now
         return 'maintenance' if maintenance else 'healthy'
-    if not 0 <= now - state.get('checkedAt', now) <= 600:
+    if not 0 <= now - state.get('checkedAt', now) <= gap:
         state.clear()  # A missing observer does not prove a continuous outage.
     state['checkedAt'] = now
     state.setdefault('downSince', now)
@@ -79,6 +82,12 @@ def probe(m):
         return False, error.code
     except (OSError, urllib.error.URLError, http.client.HTTPException, ValueError):
         return False, 'unreachable'
+
+
+def timed_probe(m):
+    # A monitor queued behind slower ones is probed later than the run started; its interval counts from its own probe.
+    started = time.time()
+    return probe(m) + (started,)
 
 
 def save(path, state):
@@ -113,17 +122,31 @@ def main():
         raise ValueError('invalid monitor state')
     now = time.time()
     maintenance = {m['id']: any(timestamp(w['start']) <= now < timestamp(w['end']) for w in m.get('windows', [])) for m in monitors}
-    with ThreadPoolExecutor(max_workers=4) as pool:
-        results = list(pool.map(lambda m: (False, 'maintenance') if maintenance[m['id']] else probe(m), monitors))
-    report, failed = [], False
-    for m, (healthy, status) in zip(monitors, results):
+    fingerprints, due = {}, {}
+    for m in monitors:
         s = state.setdefault(m['id'], {})
-        # Changing an endpoint or alert destination starts a new observation window.
-        fingerprint = hashlib.sha256(json.dumps(m, sort_keys=True).encode()).hexdigest()
-        if s.get('config') and s['config'] != fingerprint:
+        # Changing an endpoint, alert destination or interval starts a new observation window.
+        fingerprints[m['id']] = hashlib.sha256(json.dumps(m, sort_keys=True).encode()).hexdigest()
+        if s.get('config') and s['config'] != fingerprints[m['id']]:
             s.clear()
-        action = observe(s, healthy, maintenance[m['id']], now)
-        s['config'] = fingerprint
+        # The timer runs every minute and the default probes every run; a slower monitor waits its interval (less a few
+        # seconds of timer jitter).
+        interval = m.get('interval_minutes', 1)
+        due[m['id']] = maintenance[m['id']] or interval == 1 or now - s.get('probedAt', float('-inf')) >= interval * 60 - 5
+    with ThreadPoolExecutor(max_workers=4) as pool:
+        results = list(pool.map(lambda m: (False, 'maintenance') if maintenance[m['id']] else timed_probe(m) if due[m['id']] else None, monitors))
+    report, failed = [], False
+    for m, result in zip(monitors, results):
+        s = state[m['id']]
+        if result is None:
+            report.append({'id': m['id'], 'status': 'not-due', 'action': 'skipped', 'dryRun': args.dry_run})
+            continue
+        healthy, status = result[:2]
+        # Down-alert timing still counts from the first failure; gaps up to two intervals are one observed outage.
+        action = observe(s, healthy, maintenance[m['id']], now, max(600, 2 * m.get('interval_minutes', 1) * 60))
+        if not maintenance[m['id']]:
+            s['probedAt'] = result[2]
+        s['config'] = fingerprints[m['id']]
         row = {'id': m['id'], 'status': status, 'action': action, 'dryRun': args.dry_run}
         if action == 'alert' and not args.dry_run:
             key = hashlib.sha256(f'{m["id"]}:{s["downSince"]}'.encode()).hexdigest()[:24]
