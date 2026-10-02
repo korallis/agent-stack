@@ -16,3 +16,6 @@ explains project wiring. `mission-slice-sop` and `queue-handoff` cover the work 
 Check your model against your member's `model:` in the rig spec. Report any mismatch to the lead; do not switch
 accounts yourself. Fable may need one-time usage-credit consent: if requested or unavailable, tell the lead to
 arrange `/model fable` consent and an idle relaunch. Do not silently continue on a different model.
+
+For agent reads use `rig ps --nodes --toon`, `rig queue list --toon`,
+`gh pr list --json number,title,state --toon` or `<JSON command> | agent-toon`. Keep `--json` for machines.

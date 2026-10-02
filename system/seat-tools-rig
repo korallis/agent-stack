@@ -17,7 +17,8 @@ For `rig queue create | handoff | handoff-and-complete` this adds what OpenRig's
   - EC-3: the body line `worktree_path=<path>` when the destination seat has a worktree
     (~/Projects/<P>.worktrees/<member>). A handoff that keeps the source body gets that body re-sent
     with the destination's line, so the baton always names where the new owner works.
-Anything already present is left alone. Every other command passes through untouched. Outside a seat the ~/.local/bin/rig
+Anything already present is left alone. `ps --toon` and `queue list --toon` explicitly encode successful JSON reads
+for agents. Without --toon, every other command passes through untouched. Outside a seat the ~/.local/bin/rig
 launcher sends `queue create` here too (only the human-row summary can apply there: the rest needs a seat's env).
 A rewritten body is piped to rig on stdin (--body-file -), so nothing is left behind in /tmp.
 """
@@ -32,6 +33,26 @@ def run_real(a, stdin_text=None):
     if stdin_text is None:
         os.execv(REAL, [REAL] + a)
     sys.exit(subprocess.run([REAL] + a, input=stdin_text, text=True).returncode)
+
+
+# Explicit agent-facing output only. Preserve the normal machine JSON and queue-write paths.
+flags = args[:args.index("--")] if "--" in args else args
+if "--toon" in flags:
+    if not (args[:1] == ["ps"] or args[:2] == ["queue", "list"]):
+        print("seat rig: --toon supports ps and queue list reads only", file=sys.stderr)
+        sys.exit(2)
+    clean = [a for i, a in enumerate(args) if not (i < len(flags) and a == "--toon")]
+    if "--json" not in flags:
+        clean.insert(clean.index("--") if "--" in clean else len(clean), "--json")
+    env = {**os.environ, "AGENT_STACK_RIG_HELPER": "1"}
+    result = subprocess.run([REAL, *clean], stdout=subprocess.PIPE, env=env)
+    if result.returncode:
+        sys.stdout.buffer.write(result.stdout)
+        sys.exit(result.returncode if result.returncode > 0 else 128 - result.returncode)
+    try:
+        sys.exit(subprocess.run(["agent-toon"], input=result.stdout).returncode)
+    except FileNotFoundError:
+        sys.exit("seat rig: agent-toon missing; run ./install.sh --apply")
 
 
 if len(args) < 2 or args[0] != "queue" or args[1] not in ("create", "handoff", "handoff-and-complete"):

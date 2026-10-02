@@ -1,0 +1,30 @@
+#!/usr/bin/env python3
+"""Seat-only gh wrapper: --toon formats successful --json reads; ordinary calls pass through."""
+import os
+import shutil
+import subprocess
+import sys
+
+# Skip this wrapper's directory while resolving the real gh, including symlinked PATH entries.
+here = os.path.dirname(os.path.realpath(__file__))
+path = os.pathsep.join(p for p in os.environ.get("PATH", "").split(os.pathsep) if os.path.realpath(p or ".") != here)
+real = shutil.which("gh", path=path)
+if not real:
+    sys.exit("seat gh: upstream gh not found on PATH")
+args = sys.argv[1:]
+# Anything after -- is positional data, not a formatting request.
+flags = args[:args.index("--")] if "--" in args else args
+if "--toon" not in flags:
+    os.execv(real, [real, *args])
+if not any(a == "--json" or a.startswith("--json=") for a in flags):
+    print("seat gh: --toon requires --json <fields>; keep JSON for machine consumers", file=sys.stderr)
+    sys.exit(2)
+args = [a for i, a in enumerate(args) if not (i < len(flags) and a == "--toon")]
+result = subprocess.run([real, *args], stdout=subprocess.PIPE)
+if result.returncode:
+    sys.stdout.buffer.write(result.stdout)
+    sys.exit(result.returncode if result.returncode > 0 else 128 - result.returncode)
+try:
+    sys.exit(subprocess.run(["agent-toon"], input=result.stdout).returncode)
+except FileNotFoundError:
+    sys.exit("seat gh: agent-toon missing; run ./install.sh --apply")
