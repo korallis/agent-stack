@@ -224,7 +224,12 @@ def post(event, env, log=None):
     return t
 
 
-IDLE_HOOKS = ("Stop", "SessionStart")
+IDLE_HOOKS = ("stop", "sessionstart")   # compared normalised: grok sends Stop/stop and SessionStart/session_start
+
+
+def hook_name(event):
+    """One spelling for a hook's event name: grok mixes PascalCase and snake_case (SessionStart, session_start)."""
+    return re.sub(r"[^a-z]", "", str(event or "").lower())
 
 
 def hook(argv):
@@ -247,7 +252,7 @@ def hook(argv):
 
 def hook_idle(state):
     """Is grok idle at its prompt, by its last hook (a finished turn, or a session that just started)?"""
-    try: return json.loads(Path(state).read_text()).get("event") in IDLE_HOOKS
+    try: return hook_name(json.loads(Path(state).read_text()).get("event")) in IDLE_HOOKS
     except (OSError, ValueError): return False
 
 
