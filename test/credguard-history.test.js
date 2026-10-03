@@ -22,7 +22,7 @@ test("force pushes and rebase updates of a PR branch are refused, in both runtim
     "gh pr update-branch 391 --rebase", "gh pr update-branch --rebase", "gh pr update-branch 391 -r", "gh pr update-branch -R korallis/x 391 --rebase",
     "gh pr update-branch --rebase=true 391",
     "git push --force", "git push -f", "git push origin feature -f", "git push -uf origin feature", "git push --force origin HEAD",
-    "git push --force-with-lease", "git push --force-with-lease=feature:abc123 origin feature", "git push origin +feature", "git push origin +HEAD:feature",
+    "git push --force-with-lease", "git push --force-with-lease=feature:abc123 origin feature", "git push origin +feature", "git push origin +HEAD:feature", "git push --mirror", "git push --mirror origin",
     "git -C /tmp/x push -f", "git -c push.default=current push --force", "GIT_TRACE=1 git push -f", "cd repo && git push --force-with-lease",
     "git fetch origin; git push -f origin x", "bash -c 'git push --force'", "sh -c \"gh pr update-branch 5 --rebase\"", "env git push -f",
   ]) {

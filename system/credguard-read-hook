@@ -19,7 +19,7 @@
 // pointing into the seat's scratch dir (PW_DIR/<seat>/net/), which is protected like a credential file; the seat reads
 // it through agent-net-summary (method, host, path, status).
 // History guard (2026-10-03), in the same hook so every Claude and Codex seat has it: a force push (--force, -f in a
-// short-option cluster, --force-with-lease, a +refspec) or gh pr update-branch --rebase is refused, nested shells
+// short-option cluster, --force-with-lease, a +refspec, --mirror) or gh pr update-branch --rebase is refused, nested shells
 // included; published PRs get fix-up commits and a merge of main (CULTURE).
 "use strict";
 const fs = require("node:fs"), path = require("node:path"), os = require("node:os");
@@ -471,6 +471,7 @@ function historyRewrite(verb, args) {
     if (args[i] !== "push") return null;
     for (const a of args.slice(i + 1)) {
       if (/^--force(-with-lease(=.*)?)?$/.test(a)) return `git push ${a} rewrites the remote branch`;
+      if (a === "--mirror") return "git push --mirror overwrites (and deletes) the remote's branches to match this clone";
       if (/^-[a-zA-Z]+$/.test(a) && a.slice(1).includes("f")) return `git push ${a} (force) rewrites the remote branch`;
       if (a.startsWith("+")) return `git push ${a}: a + refspec force-updates the remote branch`;   // no remote name starts with +
     }
