@@ -79,8 +79,11 @@ const online = (name = "testhost-demo", status = "online") => ({ runners: [{ id:
 
 test("the unit sandboxes the job (no home, keys or seats), bounds it inside agent-heavy.slice and gates every job", () => {
   const u = fs.readFileSync(join(repo, "system/systemd/agent-ci-runner@.service"), "utf8");
+  assert.doesNotMatch(u, /^StartLimitBurst=/m, "no burst limit on the runner unit");
   for (const line of ["Slice=agent-heavy.slice", "PrivateUsers=yes", "ProtectHome=tmpfs", "PrivateTmp=yes", "NoNewPrivileges=yes",
     "MemoryMax=8G", "MemorySwapMax=0", "CPUQuota=800%", "CPUWeight=20", "IOWeight=20", "Restart=always",
+    // no start limit: per-job restarts of a busy ephemeral runner (20 jobs in 10 min) hit 20/600 s and stopped it for good
+    "StartLimitIntervalSec=0",
     // hosted images' timezone and locale: date-sensitive browser tests failed on the host's local time
     "Environment=TZ=UTC", "Environment=LANG=C.UTF-8", "Environment=LC_ALL=C.UTF-8",
     "EnvironmentFile=-%h/.local/share/agent-stack/ci-runners/%i/ci.env",
@@ -105,6 +108,17 @@ test("the unit sandboxes the job (no home, keys or seats), bounds it inside agen
   assert.match(fs.readFileSync(hook, "utf8"), /cpus=\$\{AGENT_CI_NPROC:-\$\(nproc --all\)\}/);
   const inst = fs.readFileSync(join(repo, "install.sh"), "utf8");
   assert.match(inst, /for f in [^;]*\bagent-ci-runner\b/); assert.match(inst, /for t in [^;]*\bagent-ci-runner-watch\b/);
+});
+
+test("register: a failing registration backs off (after 3 failures in 10 min, each attempt waits first); a success clears it", () => {
+  const { env, run } = world(online());
+  const reg = () => { const t0 = Date.now(); const r = spawnSync("python3", [tool, "register", "demo"], { encoding: "utf8", env: { ...env, AGENT_CI_REGISTER_BACKOFF_S: "0.6" } }); return { ...r, ms: Date.now() - t0 }; };
+  for (let i = 0; i < 3; i++) { const r = reg(); assert.equal(r.status, 1); assert.doesNotMatch(r.stderr, /waiting/, `attempt ${i + 1} doesn't wait`); }
+  const slow = reg(); assert.equal(slow.status, 1); assert.match(slow.stderr, /3 failed registrations of demo in 10 min: waiting 0\.6s first/); assert.ok(slow.ms >= 550, `waited ${slow.ms} ms`);
+  assert.equal(run("install", "demo").status, 0);   // now it can register
+  const ok = reg(); assert.equal(ok.status, 0, ok.stderr); assert.match(ok.stderr, /waiting/, "still backed off once (4 recent failures)");
+  assert.ok(!fs.existsSync(join(env.AGENT_CI_STATE, "register-failures-demo.json")), "a success clears the record");
+  const next = reg(); assert.equal(next.status, 0); assert.doesNotMatch(next.stderr, /waiting/);
 });
 
 test("register: a fresh ephemeral registration with a clean work dir; the token reaches config.sh only by env and is never printed", () => {

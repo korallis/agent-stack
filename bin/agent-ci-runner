@@ -227,6 +227,33 @@ def alloc_port(inst):
     return ports[inst]
 
 
+def register_with_backoff(inst):
+    """register, bounded on failure: after REGISTER_FAILS failures in 10 min each attempt first waits
+    AGENT_CI_REGISTER_BACKOFF_S (60), so a broken registration retried by the unit's Restart= (every 5 s, no start
+    limit) asks GitHub for a token about once a minute, not 12 times. A success clears the record."""
+    f = STATE / f"register-failures-{inst}.json"
+    now = time.time()
+    try:
+        recent = [t for t in json.loads(f.read_text()) if now - t < 600]
+    except (OSError, ValueError):
+        recent = []
+    if len(recent) >= REGISTER_FAILS:
+        wait = float(os.environ.get("AGENT_CI_REGISTER_BACKOFF_S", "60"))
+        print(f"{len(recent)} failed registrations of {inst} in 10 min: waiting {wait:g}s first", file=sys.stderr)
+        time.sleep(wait)
+    try:
+        cmd_register(inst)
+    except SystemExit as e:
+        if e.code not in (0, None):
+            STATE.mkdir(parents=True, exist_ok=True)
+            f.write_text(json.dumps([*recent, time.time()]))
+        raise
+    f.unlink(missing_ok=True)
+
+
+REGISTER_FAILS = 3
+
+
 def cmd_register(inst):
     repo = split(inst)[0]
     if not runner_dir(inst).is_dir():
@@ -528,7 +555,7 @@ def main():
             die("--count must be 1 to 8")
         cmd_install(repo, a.count, a.dry_run, a.lane)
     elif a.cmd == "register":
-        cmd_register(repo)
+        register_with_backoff(repo)
     elif a.cmd == "stop":
         cmd_stop(repo)
     elif a.cmd == "start":
