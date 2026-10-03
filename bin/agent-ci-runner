@@ -198,6 +198,29 @@ def extract_runner(inst):
     (d / ".agent-ci-version").write_text(VERSION + "\n")
 
 
+PORT_BASE = int(os.environ.get("AGENT_CI_PORT_BASE", "47100"))
+
+
+def alloc_port(inst):
+    """A stable E2E_PORT per runner instance (PORT_BASE..PORT_BASE+99): two runners on this host must not start the same
+    app port (a project's 2 browser shards collided on its default port, 2026-10-03)."""
+    f = STATE / "ports.json"
+    try:
+        ports = json.loads(f.read_text())
+    except (OSError, ValueError):
+        ports = {}
+    ports = {k: v for k, v in ports.items() if (ROOT / k / "runner").is_dir() or k == inst}
+    if inst not in ports:
+        used = set(ports.values())
+        free = next((p for p in range(PORT_BASE, PORT_BASE + 100) if p not in used), None)
+        if free is None:
+            die(f"no free E2E_PORT in {PORT_BASE}..{PORT_BASE + 99}")
+        ports[inst] = free
+    STATE.mkdir(parents=True, exist_ok=True)
+    f.write_text(json.dumps(ports, sort_keys=True))
+    return ports[inst]
+
+
 def cmd_register(inst):
     repo = split(inst)[0]
     if not runner_dir(inst).is_dir():
@@ -211,6 +234,8 @@ def cmd_register(inst):
         if config_value("AGENT_CI_KEEP_CACHE", "0") != "1":
             shutil.rmtree(ROOT / inst / sub, ignore_errors=True)
         (ROOT / inst / sub).mkdir(parents=True, exist_ok=True)
+    # the unit loads this file (EnvironmentFile): each runner's jobs get their own app port
+    (ROOT / inst / "ci.env").write_text(f"E2E_PORT={alloc_port(inst)}\n")
     rc, tail = run_config(inst, ["--unattended", "--ephemeral", "--replace", "--disableupdate",
                                  "--url", f"https://github.com/{OWNER}/{repo}", "--name", runner_name(inst),
                                  "--labels", LABEL, "--work", "_work"], token(repo, "registration"))
@@ -267,6 +292,13 @@ def drop_instance(inst):
         if x["name"] == runner_name(inst):
             gh("api", "-X", "DELETE", f"repos/{OWNER}/{repo}/actions/runners/{x['id']}")
     (STATE / "slots" / inst).unlink(missing_ok=True)
+    f = STATE / "ports.json"
+    try:
+        ports = json.loads(f.read_text())
+        ports.pop(inst, None)
+        f.write_text(json.dumps(ports, sort_keys=True))
+    except (OSError, ValueError):
+        pass
 
 
 def cmd_install(repo, count, dry):
@@ -306,6 +338,7 @@ def cmd_stop(repo):
     (STATE / f"{repo}.paused").write_text(str(int(time.time())))
     for inst in instances(repo):
         systemctl("stop", unit(inst), check=False)
+        (STATE / "slots" / inst).unlink(missing_ok=True)  # a job stopped mid-run never reaches its job-completed hook
     say(f"{OWNER}/{repo}: local runner(s) paused; {VAR} cleared (jobs run hosted)")
 
 
