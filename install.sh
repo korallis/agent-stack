@@ -187,6 +187,9 @@ if [ $CHECK = 0 ]; then
   for t in cliproxyapi-health cliproxy-usage openrig-health cliproxy-authwatch cliproxy-quotawatch openrig-update agent-repos-sync agent-human-inbox-tidy agent-stuck-check agent-reroute agent-operator-watch agent-uptime-watch agent-ci-runner-watch agent-refresh-guidance agent-context-recovery agent-playwright-retention playwright-browsers; do systemctl --user enable --now "$t.timer" >/dev/null 2>&1 || todo "$t.timer"; done
 fi
 "$S/bin/openrig-ensure" --check | sed 's/^/   /' || true   # WARN installed != pin; FAIL when local patches aren't all applied
+# Local CI runners run their job gate from ci-runners/_shared: refresh it (by rename, safe under running jobs), so a
+# merged hook change reaches the next job. Nothing when no runners are installed.
+if [ $CHECK = 0 ]; then "$S/bin/agent-ci-runner" refresh-hooks | sed 's/^/   /' || todo "agent-ci-runner refresh-hooks"; fi
 # Transcript capture defaults: every 15s, 400 lines. The shipped 2s/1000 lines across ~90 seats starved the daemon.
 # The interval is a floor: a slower one set on purpose (e.g. 60) is kept, only a faster or missing one becomes 15.
 for kv in "transcripts.poll_interval_seconds 15 floor" "transcripts.lines 400 exact"; do
