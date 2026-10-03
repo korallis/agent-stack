@@ -7,7 +7,8 @@
 // Prints the review.merge_gate input as JSON: pr, full head and base shas, the change, every required check by name,
 // the independent-review status on that head, QA's bug-review-board proof (proof/brb-<head>.md), the blast-radius
 // comment, and the target branch, deploy effect and rollback as limits. Anything missing says MISSING, never
-// "fine". --decide also asks Jev. Exit 0: live Jev merge in the act band. Exit 3: live Jev merge below the act bar with
+// "fine". --decide also asks Jev, but never while GitHub reports mergeable UNKNOWN (it waits up to 90 s first; still
+// UNKNOWN: exit 4, Jev not asked). Exit 0: live Jev merge in the act band. Exit 3: live Jev merge below the act bar with
 // the gates it checks green (see gateProblems): NEEDS CONFIRM, a one-line exact-head "confirm <sha>" from the
 // other-family independent reviewer after the integrator checks the repository's own gates (the integrator role's
 // below-bar path). Exit 1: hold. Code still re-checks the head and merges with --match-head-commit.
@@ -599,6 +600,16 @@ export function blastSection(body) {
   return redact(redact(text.slice(at)).replace(/\s+/g, " ").trim()).slice(0, 900);
 }
 
+// GitHub recomputes mergeability after a push or a base change and reports UNKNOWN meanwhile. Gating then gave HOLDs
+// that were only the recompute (three on one project on 2026-10-03), so with --decide the helper first waits: it reads
+// mergeable every pollS seconds for up to maxS while it is UNKNOWN. Returns the last value read.
+export async function awaitMergeable({ read, sleep = (s) => new Promise((r) => setTimeout(r, s * 1000)), pollS = 5, maxS = 90 }) {
+  if (!(pollS > 0) || !(maxS >= 0)) throw new Error(`awaitMergeable: pollS must be > 0 and maxS >= 0 (got ${pollS}, ${maxS})`);   // 0 would never advance
+  let value = read(), waited = 0;
+  while (value === "UNKNOWN" && waited + pollS <= maxS) { await sleep(pollS); waited += pollS; value = read(); }
+  return { value, waited };
+}
+
 export function gather(pr, { repo, mission, slice, change, deploy, rollback, config, configPath, authorFamily } = {}) {
   const R = repo ? ["-R", repo] : [];
   const FIELDS = "number,title,body,createdAt,headRefOid,baseRefOid,baseRefName,headRefName,mergeable,mergeStateStatus,reviewDecision,isDraft,comments,reviews";
@@ -841,6 +852,20 @@ if (import.meta.url === `file://${process.argv[1]}` || process.argv[1]?.endsWith
     if (!text.trim()) { console.error(`agent-merge-evidence: --extra-evidence ${file} is empty`); process.exit(2); }
     extraEvidence = { label: file.split("/").pop(), text };
   }
+  if (a.includes("--decide")) {
+    // Never ask Jev while GitHub is still computing mergeability (see awaitMergeable).
+    const R = flag("--repo") ? ["-R", flag("--repo")] : [];
+    // a poll interval must be positive (0 would poll forever); the wait may be 0 (one read, no polling)
+    const env = (n, d, min0) => { const v = Number(process.env[n]); return process.env[n] && Number.isFinite(v) && (min0 ? v >= 0 : v > 0) ? v : d; };
+    let m;
+    try { m = await awaitMergeable({ read: () => ghJson("pr", "view", String(pr), ...R, "--json", "mergeable").mergeable,
+      pollS: env("AGENT_MERGE_EVIDENCE_POLL_S", 5), maxS: env("AGENT_MERGE_EVIDENCE_MERGEABLE_WAIT_S", 90, true) }); }
+    catch (e) { console.error(`agent-merge-evidence: ${e.message}`); process.exit(2); }
+    if (m.value === "UNKNOWN") {
+      console.error(`merge gate: NOT DECIDED (GitHub still reports mergeable UNKNOWN after ${m.waited}s: it is recomputing after a push or a base change). Jev was not asked; run the gate again in a minute.`);
+      process.exit(4);
+    }
+  }
   let facts;
   try { facts = gather(pr, { repo: flag("--repo"), mission: flag("--mission"), slice: flag("--slice"), change: flag("--change"), deploy: flag("--deploy"), rollback: flag("--rollback"), configPath: flag("--config"), authorFamily: flag("--author-family") }); }
   catch (e) { console.error(`agent-merge-evidence: ${e.message}`); process.exit(2); }
@@ -849,6 +874,10 @@ if (import.meta.url === `file://${process.argv[1]}` || process.argv[1]?.endsWith
   // this head) is for people and must never be copied into an input. Same shape with --decide, plus the decision.
   const history = facts.gateHistory || [];
   if (!a.includes("--decide")) { console.log(JSON.stringify({ input, history }, null, 2)); process.exit(0); }
+  if (facts.mergeable === "UNKNOWN") {   // it can flip back between the wait and the full read
+    console.error("merge gate: NOT DECIDED (GitHub reports mergeable UNKNOWN again: it is recomputing). Jev was not asked; run the gate again in a minute.");
+    process.exit(4);
+  }
   const rec = await decideOrStub("review.merge_gate", input, { caller: process.env.OPENRIG_SESSION_NAME || "agent-merge-evidence" });
   console.log(JSON.stringify({ input, history, decision: { decided_by: rec.decided_by, band: rec.band, result: rec.result, request_id: rec.request_id, ...(rec.stubbed ? { stubbed: true } : {}) } }, null, 2));
   const o = outcome(rec, facts);
