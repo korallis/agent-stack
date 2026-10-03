@@ -1,11 +1,13 @@
 #!/usr/bin/env python3
 """agent-ci-runner: local GitHub Actions runners for the korallis repos on this host (docs/RUNNERS.md).
 
-  agent-ci-runner install REPO [--count N] [--dry-run]
+  agent-ci-runner install REPO [--count N] [--main-lane|--no-main-lane] [--dry-run]
                                              download the pinned runner (checksum verified) and run N runners for REPO
                                              (default: as installed, else 1; runner k >= 2 is instance REPO_r<k>), each as
                                              agent-ci-runner@<instance>; wait until GitHub lists them all online, then
-                                             variable CI_LOCAL=1 (workflows then pick the local runner)
+                                             variable CI_LOCAL=1 (workflows then pick the local runner). --main-lane: the
+                                             last runner (N >= 2) takes only label korallis-local-main, so it is kept for
+                                             the jobs a workflow sends there (push to main); kept until --no-main-lane
   agent-ci-runner stop|start REPO            pause (CI_LOCAL cleared first, so jobs go to hosted runners) / resume
   agent-ci-runner remove REPO [--keep]       clear CI_LOCAL, stop the unit, delete the runner on GitHub and its dir
   agent-ci-runner status [--json]            units, GitHub runner state, CI_LOCAL, job slots, load
@@ -38,6 +40,7 @@ from pathlib import Path
 VERSION = "2.337.0"
 SHA256 = "70920811a4f8ad4328818682bca5c6469c1c942fab52448868071d0063816613"
 LABEL = "korallis-local"
+MAIN_LABEL = "korallis-local-main"   # the main-lane runner's only label (install --main-lane)
 VAR = "CI_LOCAL"
 OFFLINE_GRACE_S = 600
 REAL_HOME = Path(pwd.getpwuid(os.getuid()).pw_dir)
@@ -238,11 +241,11 @@ def cmd_register(inst):
     (ROOT / inst / "ci.env").write_text(f"E2E_PORT={alloc_port(inst)}\n")
     rc, tail = run_config(inst, ["--unattended", "--ephemeral", "--replace", "--disableupdate",
                                  "--url", f"https://github.com/{OWNER}/{repo}", "--name", runner_name(inst),
-                                 "--labels", LABEL, "--work", "_work"], token(repo, "registration"))
+                                 "--labels", label(inst), "--work", "_work"], token(repo, "registration"))
     print(tail)
     if rc != 0:
         die(f"runner registration for {OWNER}/{repo} failed (exit {rc})")
-    print(f"registered {runner_name(inst)} for {OWNER}/{repo} (ephemeral, label {LABEL})")
+    print(f"registered {runner_name(inst)} for {OWNER}/{repo} (ephemeral, label {label(inst)})")
 
 
 def fetch_runner():
@@ -285,6 +288,30 @@ def wait_online(repo, names, seconds):
     return False
 
 
+def lanes():
+    try:
+        return json.loads((STATE / "lanes.json").read_text())
+    except (OSError, ValueError):
+        return {}
+
+
+def set_lane(repo, inst):
+    """{repo: instance}: that instance registers with MAIN_LABEL only; inst None removes the repo's lane."""
+    d = lanes()
+    if inst:
+        d[repo] = inst
+    else:
+        d.pop(repo, None)
+    STATE.mkdir(parents=True, exist_ok=True)
+    tmp = STATE / "lanes.json.tmp"
+    tmp.write_text(json.dumps(d, sort_keys=True))
+    os.replace(tmp, STATE / "lanes.json")
+
+
+def label(inst):
+    return MAIN_LABEL if lanes().get(split(inst)[0]) == inst else LABEL
+
+
 def drop_instance(inst):
     repo = split(inst)[0]
     systemctl("disable", "--now", unit(inst), check=False)
@@ -301,16 +328,20 @@ def drop_instance(inst):
         pass
 
 
-def cmd_install(repo, count, dry):
+def cmd_install(repo, count, dry, lane=None):
     r = gh("api", f"repos/{OWNER}/{repo}", "--jq", ".full_name", check=False)
     if r.returncode != 0:
         die(f"{OWNER}/{repo} is not reachable with gh: {(r.stderr or r.stdout).strip()[:200]}")
     count = count or max(1, len(instances(repo)))
     want = [inst_name(repo, k) for k in range(1, count + 1)]
     extra = [i for i in instances(repo) if i not in want]
+    if lane and len(want) < 2:
+        die("--main-lane needs --count 2 or more (the other runners take the PR jobs)")
+    lane_inst = want[-1] if lane else None if lane is False else lanes().get(repo) if lanes().get(repo) in want else None
     if dry:
         print(f"would install runner {VERSION} as {', '.join(want)} ({', '.join(runner_name(i) for i in want)}; sandboxed, "
-              f"agent-heavy.slice){'; remove ' + ', '.join(extra) if extra else ''}; wait for them online, then set {VAR}=1 on {OWNER}/{repo}")
+              f"agent-heavy.slice){'; remove ' + ', '.join(extra) if extra else ''}"
+              f"{'; ' + lane_inst + ' takes only ' + MAIN_LABEL if lane_inst else ''}; wait for them online, then set {VAR}=1 on {OWNER}/{repo}")
         return
     # Only a new instance is extracted here: register re-extracts the verified release before every start anyway, and an
     # installed runner may be in the middle of a job (re-extracting it would pull its files from under that job).
@@ -318,6 +349,8 @@ def cmd_install(repo, count, dry):
         if not runner_dir(inst).is_dir():
             extract_runner(inst)
     install_hooks()
+    # before any start: register reads it (an active runner picks up a change at its next registration, after its job)
+    set_lane(repo, lane_inst)
     for inst in extra:
         drop_instance(inst)
         shutil.rmtree(ROOT / inst, ignore_errors=True)
@@ -360,6 +393,7 @@ def cmd_start(repo):
 
 def cmd_remove(repo, keep):
     var_set(repo, False)
+    set_lane(repo, None)
     for inst in instances(repo):
         drop_instance(inst)
         if not keep:
@@ -383,9 +417,11 @@ def cmd_watch():
         up = online_names(repo)
         if up is None:
             continue  # GitHub unreachable: judge nothing
-        # healthy while any of the repo's runners is both running here and online on GitHub
-        healthy = [i for i in instances(repo) if runner_name(i) in up
-                   and systemctl("is-active", unit(i), check=False).stdout.strip() == "active"]
+        # healthy while, for each label the repo's runners take (korallis-local, and the main lane's if it has one), one
+        # of them is both running here and online on GitHub: with the lane runner down, main's jobs would only queue
+        ok = [i for i in instances(repo) if runner_name(i) in up
+              and systemctl("is-active", unit(i), check=False).stdout.strip() == "active"]
+        healthy = bool(ok) and {label(i) for i in ok} == {label(i) for i in instances(repo)}
         if healthy:
             st.pop(repo, None)
             if var_get(repo) != "1":
@@ -412,7 +448,7 @@ def cmd_status(as_json):
             rows.append({"repo": repo, "instance": inst, "runner": runner_name(inst),
                          "unit": systemctl("is-active", unit(inst), check=False).stdout.strip(),
                          "online": None if up is None else runner_name(inst) in up, "ci_local": ci,
-                         "paused": (STATE / f"{repo}.paused").exists(), "job_slot": inst in busy})
+                         "paused": (STATE / f"{repo}.paused").exists(), "job_slot": inst in busy, "label": label(inst)})
     cfg = dict(re.findall(r"^(AGENT_CI_[A-Z_]+)=([0-9.]+)$", CONFIG.read_text(), re.M)) if CONFIG.is_file() else {}
     summary = {"runners": rows, "busy_slots": busy, "max_jobs": int(cfg.get("AGENT_CI_MAX_JOBS", 2)),
                "load1": float(Path("/proc/loadavg").read_text().split()[0]), "cpus": os.cpu_count()}
@@ -421,7 +457,8 @@ def cmd_status(as_json):
         return
     for r in rows:
         print(f"{r['instance']:<20} unit {r['unit']:<9} github {'online' if r['online'] else ('?' if r['online'] is None else 'offline'):<8}"
-              f" {VAR}={r['ci_local'] or 'unset':<6}{' paused' if r['paused'] else ''}{' running a job' if r['job_slot'] else ''}")
+              f" {VAR}={r['ci_local'] or 'unset':<6}{' paused' if r['paused'] else ''}{' main lane' if r['label'] == MAIN_LABEL else ''}"
+              f"{' running a job' if r['job_slot'] else ''}")
     print(f"jobs: {len(busy)}/{summary['max_jobs']} slots busy; load {summary['load1']}/{summary['cpus']}")
 
 
@@ -434,6 +471,10 @@ def main():
         if name == "install":
             s.add_argument("--dry-run", action="store_true")
             s.add_argument("--count", type=int, default=0, help="runners for this repo (default: as installed, else 1)")
+            g = s.add_mutually_exclusive_group()
+            g.add_argument("--main-lane", dest="lane", action="store_true", default=None,
+                           help=f"the last runner takes only {MAIN_LABEL} (push-to-main jobs)")
+            g.add_argument("--no-main-lane", dest="lane", action="store_false", help="every runner takes PR and main jobs")
         if name == "remove":
             s.add_argument("--keep", action="store_true")
         if name == "logs":
@@ -452,7 +493,7 @@ def main():
     if a.cmd == "install":
         if a.count < 0 or a.count > 8:
             die("--count must be 1 to 8")
-        cmd_install(repo, a.count, a.dry_run)
+        cmd_install(repo, a.count, a.dry_run, a.lane)
     elif a.cmd == "register":
         cmd_register(repo)
     elif a.cmd == "stop":

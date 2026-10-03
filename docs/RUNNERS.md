@@ -74,6 +74,20 @@ For each Linux job:
 Each workflow also needs `concurrency: { group: <name>-${{ github.ref }}, cancel-in-progress: true }`. Jobs that
 install system packages with `sudo apt-get` must use the tools on this host instead: a sandboxed job has no sudo.
 
+**Main lane (optional).** With one runner, a repo's post-merge runs on `main` queue behind its PR runs, and when every
+merge waits for a green `main`, those runs are the bottleneck. `agent-ci-runner install <repo> --count 2 --main-lane`
+gives the last runner only the label `korallis-local-main`, so it never takes a PR job. The repo's workflow then sends
+push-to-main jobs to that label:
+
+```yaml
+    runs-on: ${{ (vars.CI_LOCAL == '1' && (github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository)) && fromJSON(github.event_name == 'push' && github.ref == 'refs/heads/main' && '["self-hosted","linux","korallis-local-main"]' || '["self-hosted","linux","korallis-local"]') || 'ubuntu-24.04' }}
+```
+
+The lane is kept on re-install until `--no-main-lane`, scale-down below 2, or `remove`. A change reaches an active runner
+at its next registration (after its current job). The global job cap and the load gate apply to the lane runner too.
+`watch` counts the repo healthy only while a PR runner and the lane runner are both up; otherwise it clears `CI_LOCAL`
+after 10 minutes, as for a single runner.
+
 ## Hosted exceptions
 
 - **A project job with service containers** (for example postgres and redis under `services:`). That needs Docker, and this user isn't in
@@ -89,6 +103,7 @@ install system packages with `sudo apt-get` must use the tools on this host inst
 |---|---|
 | Install or upgrade a repo's runner(s) | `agent-ci-runner install <repo> [--count N]` (`--dry-run` to see the plan) |
 | Run N runners for one repo | `agent-ci-runner install <repo> --count N`: runner k >= 2 is the instance `<repo>_r<k>` (unit `agent-ci-runner@<repo>_r<k>`, GitHub name `<host>-<repo>-<k>`), each with its own job slot. A lower N removes the extra runners |
+| Keep one runner for `main` | `agent-ci-runner install <repo> --count 2 --main-lane` (undo: `--no-main-lane`); see *Main lane* above |
 | Pause (jobs go hosted) / resume | `agent-ci-runner stop <repo>` / `agent-ci-runner start <repo>` (a runner that is already active, maybe mid-job, is left alone) |
 | Re-register after a failure | `agent-ci-runner stop <repo> && agent-ci-runner start <repo>` (every start registers afresh) |
 | Remove | `agent-ci-runner remove <repo>` (`--keep` keeps the directory) |
