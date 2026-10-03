@@ -263,6 +263,10 @@ test("several runners per repo: <repo>_r<N> instances with their own names, unit
   // stop covers every runner of the repo
   const st = run("stop", "demo");
   assert.deepEqual(st.calls.filter((c) => c.tool === "systemctl").map((c) => c.argv.join(" ")), ["--user stop agent-ci-runner@demo.service", "--user stop agent-ci-runner@demo_r2.service"]);
+  // an installed runner may be mid-job: install (e.g. scaling up) never re-extracts it; register does, before each start
+  fs.writeFileSync(join(env.AGENT_CI_ROOT, "demo/runner/job-in-progress"), "x");
+  set(two); assert.equal(run("install", "demo", "--count", "2").status, 0);
+  assert.ok(fs.existsSync(join(env.AGENT_CI_ROOT, "demo/runner/job-in-progress")), "the running runner's files are left alone");
   // back down to one: runner 2 is disabled, deleted on GitHub, and its directory removed
   set(two);
   const down = run("install", "demo", "--count", "1");

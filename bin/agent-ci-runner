@@ -280,8 +280,11 @@ def cmd_install(repo, count, dry):
         print(f"would install runner {VERSION} as {', '.join(want)} ({', '.join(runner_name(i) for i in want)}; sandboxed, "
               f"agent-heavy.slice){'; remove ' + ', '.join(extra) if extra else ''}; wait for them online, then set {VAR}=1 on {OWNER}/{repo}")
         return
+    # Only a new instance is extracted here: register re-extracts the verified release before every start anyway, and an
+    # installed runner may be in the middle of a job (re-extracting it would pull its files from under that job).
     for inst in want:
-        extract_runner(inst)
+        if not runner_dir(inst).is_dir():
+            extract_runner(inst)
     install_hooks()
     for inst in extra:
         drop_instance(inst)
