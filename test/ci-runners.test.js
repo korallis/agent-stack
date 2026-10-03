@@ -82,6 +82,7 @@ test("the unit sandboxes the job (no home, keys or seats), bounds it inside agen
     "MemoryMax=8G", "MemorySwapMax=0", "CPUQuota=800%", "CPUWeight=20", "IOWeight=20", "Restart=always",
     // hosted images' timezone and locale: date-sensitive browser tests failed on the host's local time
     "Environment=TZ=UTC", "Environment=LANG=C.UTF-8", "Environment=LC_ALL=C.UTF-8",
+    "EnvironmentFile=-%h/.local/share/agent-stack/ci-runners/%i/ci.env",
     "Requires=agent-ci-runner-register@%i.service", "After=network-online.target agent-ci-runner-register@%i.service",
     "ExecStart=%h/.local/share/agent-stack/ci-runners/%i/runner/run.sh",
     "BindPaths=%h/.local/share/agent-stack/ci-runners/%i/home:%h %h/.local/share/agent-stack/ci-runners/%i %h/.local/state/agent-stack/ci-runners",
@@ -228,6 +229,13 @@ test("gate: at most AGENT_CI_MAX_JOBS jobs at once across repos; a slot frees on
   assert.ok(!fs.existsSync("pwned") && !fs.existsSync(join(s, "pwned")), "config lines are parsed as NAME=number only, never run");
 });
 
+test("gate: end frees its slot under the lock, so it never races a start's stale sweep", async () => {
+  const s = gateState(); assert.equal((await done(gate(s, "a", "start"))).code, 0);
+  const held = done(spawn("flock", [join(s, "slots", ".lock"), "sleep", "0.6"])); await sleep(150); const t0 = Date.now();
+  assert.equal((await done(gate(s, "a", "end"))).code, 0); assert.ok(Date.now() - t0 >= 300, "waited for the lock holder");
+  assert.ok(!fs.existsSync(join(s, "slots", "a"))); await held;
+});
+
 test("gate: a hot or memory-starved host waits, up to the gate wait; the slot cap still holds after it; stale slots clear", async () => {
   const hot = gateState("9.50");
   const p = gate(hot, "a", "start", { AGENT_CI_GATE_WAIT_S: "1" }); const t0 = Date.now();
@@ -259,11 +267,18 @@ test("several runners per repo: <repo>_r<N> instances with their own names, unit
   const argv = fs.readFileSync(join(env.AGENT_CI_ROOT, "demo_r2/runner/config-argv.txt"), "utf8").trim().split("\n");
   assert.equal(argv[argv.indexOf("--name") + 1], "testhost-demo-2"); assert.equal(argv[argv.indexOf("--url") + 1], "https://github.com/korallis/demo");
   assert.ok(!fs.existsSync(join(env.AGENT_CI_STATE, "slots/demo_r2")) && fs.existsSync(join(env.AGENT_CI_STATE, "slots/demo")), "only its own slot");
+  // each runner gets its own E2E_PORT, stable across registrations (two browser shards collided on one port)
+  assert.equal(run("register", "demo").status, 0);
+  const port = (i) => fs.readFileSync(join(env.AGENT_CI_ROOT, i, "ci.env"), "utf8");
+  assert.equal(port("demo_r2"), "E2E_PORT=47100\n", "registered first"); assert.equal(port("demo"), "E2E_PORT=47101\n");
+  assert.equal(run("register", "demo_r2").status, 0); assert.equal(port("demo_r2"), "E2E_PORT=47100\n", "stable");
   // the repo is healthy while either runner is up
   set({ runners: [two.runners[1]] }); fs.writeFileSync(join(env.AGENT_CI_STATE, "watch.json"), JSON.stringify({ demo: 0 }));
   run("watch"); assert.equal(scenario().vars.demo, "1");
-  // stop covers every runner of the repo
+  // stop covers every runner of the repo, and frees their job slots (a stopped job never reaches its completed hook)
+  fs.writeFileSync(join(env.AGENT_CI_STATE, "slots/demo_r2"), "1");
   const st = run("stop", "demo");
+  assert.ok(!fs.existsSync(join(env.AGENT_CI_STATE, "slots/demo_r2")));
   assert.deepEqual(st.calls.filter((c) => c.tool === "systemctl").map((c) => c.argv.join(" ")), ["--user stop agent-ci-runner@demo.service", "--user stop agent-ci-runner@demo_r2.service"]);
   // an installed runner may be mid-job: install (e.g. scaling up) never re-extracts it; register does, before each start
   fs.writeFileSync(join(env.AGENT_CI_ROOT, "demo/runner/job-in-progress"), "x");
@@ -277,6 +292,7 @@ test("several runners per repo: <repo>_r<N> instances with their own names, unit
   assert.ok(order.includes("systemctl --user disable --now agent-ci-runner@demo_r2.service")); assert.ok(order.includes("gh api -X DELETE repos/korallis/demo/actions/runners/9"));
   assert.ok(!order.some((c) => c.endsWith("/runners/7")), "runner 1 stays");
   assert.ok(!fs.existsSync(join(env.AGENT_CI_ROOT, "demo_r2")));
+  assert.deepEqual(Object.keys(JSON.parse(fs.readFileSync(join(env.AGENT_CI_STATE, "ports.json"), "utf8"))), ["demo"], "the dropped runner's port is freed");
   // a repo name that looks like an instance is refused
   assert.match(run("install", "demo_r2").stderr, /name a repo, not a runner instance/);
   assert.match(run("install", "demo", "--count", "9").stderr, /--count must be 1 to 8/);

@@ -40,7 +40,8 @@ function watch(env = {}) {
   fs.rmSync(calls, { force: true }); requests = [];
   return new Promise((resolve) => {
     const p = spawn(join(repo, "system/cliproxy-authwatch"), [], { env: { PATH: `${bin}:/usr/bin:/bin`, HOME: root,
-      AUTHWATCH_STATE: join(root, "state"), AUTHWATCH_MGMT_URL: url, AUTHWATCH_SECRETS: secrets, AUTHWATCH_LOG: join(root, "none.jsonl"), ...env } });
+      AUTHWATCH_STATE: join(root, "state"), AUTHWATCH_MGMT_URL: url, AUTHWATCH_SECRETS: secrets, AUTHWATCH_LOG: join(root, "none.jsonl"),
+      ...(process.env.TZ ? { TZ: process.env.TZ } : {}), ...env } });   // the routing log's local time must be the test's
     let out = ""; p.stdout.on("data", (d) => { out += d; }); p.stderr.on("data", (d) => { out += d; });
     p.on("exit", (code) => resolve({ code, out, c: fs.existsSync(calls) ? fs.readFileSync(calls, "utf8") : "" }));
   });

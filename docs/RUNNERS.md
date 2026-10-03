@@ -53,6 +53,9 @@ remain only for the exceptions below, and as the automatic fallback.
   - `stop` and `remove` clear it first.
   - `agent-ci-runner-watch.timer` checks every 2 minutes. If a runner has been down for 10 minutes it clears the
     variable, so jobs run hosted instead of queueing, and it sets the variable again when the runner is back.
+- **Each runner has its own app port.** Jobs get `E2E_PORT` (from 47100 upwards, stable per runner, set by
+  `register`), `TZ=UTC` and `C.UTF-8`, as on hosted Ubuntu. Two runners on this host share its network, so a project
+  whose tests start an app server must take its port from `E2E_PORT` (a fixed port collides between parallel jobs).
 - **Fork PRs never run here.** `runs-on` sends them to a hosted runner (see below). Also turn on the repo setting
   "Require approval for all outside collaborators" (Settings → Actions → Fork pull request workflows), especially on
   the public agent-stack-hd.
