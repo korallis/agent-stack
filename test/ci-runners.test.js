@@ -166,7 +166,7 @@ test("install: a checksum mismatch installs nothing; otherwise hooks and config,
   assert.equal(fs.readFileSync(join(env.AGENT_CI_ROOT, "demo/runner/.agent-ci-version"), "utf8").trim(), "2.337.0");
   const off = world({ runners: [] });
   const o = off.run("install", "demo");
-  assert.equal(o.status, 1); assert.match(o.stderr, /did not come online; CI_LOCAL left unset/); assert.equal(off.scenario().vars, undefined);
+  assert.equal(o.status, 1); assert.match(o.stderr, /did not all come online; CI_LOCAL left unset/); assert.equal(off.scenario().vars, undefined);
 });
 
 test("stop clears CI_LOCAL before stopping; watch leaves a paused runner alone, clears CI_LOCAL after 10 minutes down and restores it", () => {
@@ -240,4 +240,38 @@ test("gate: a hot or memory-starved host waits, up to the gate wait; the slot ca
   await sleep(400); assert.equal(cd, false, "past the load gate the cap still holds");
   const old = (Date.now() / 1000) - 7 * 3600; fs.utimesSync(join(full, "slots/a"), old, old);
   assert.equal((await done(c)).code, 0, "a 7 h old slot is stale and cleared");
+});
+
+test("several runners per repo: <repo>_r<N> instances with their own names, units and slots; scaled up and back down", () => {
+  const two = { runners: [{ id: 7, name: "testhost-demo", status: "online", busy: false }, { id: 9, name: "testhost-demo-2", status: "online", busy: false }] };
+  const { env, run, scenario, set } = world(two);
+  const r = run("install", "demo", "--count", "2");
+  assert.equal(r.status, 0, r.stderr);
+  assert.deepEqual(r.calls.filter((c) => c.tool === "systemctl").map((c) => c.argv.join(" ")),
+    ["--user daemon-reload", "--user enable --now agent-ci-runner@demo.service", "--user enable --now agent-ci-runner@demo_r2.service"]);
+  assert.ok(fs.existsSync(join(env.AGENT_CI_ROOT, "demo/runner/config.sh")) && fs.existsSync(join(env.AGENT_CI_ROOT, "demo_r2/runner/config.sh")));
+  assert.equal(scenario().vars.demo, "1"); assert.match(r.stdout, /2 local runner\(s\) online \(testhost-demo, testhost-demo-2\)/);
+  // runner 2 registers under its own name, for the same repo, with its own slot and home
+  fs.mkdirSync(join(env.AGENT_CI_STATE, "slots"), { recursive: true }); fs.writeFileSync(join(env.AGENT_CI_STATE, "slots/demo_r2"), "1"); fs.writeFileSync(join(env.AGENT_CI_STATE, "slots/demo"), "1");
+  assert.equal(run("register", "demo_r2").status, 0);
+  const argv = fs.readFileSync(join(env.AGENT_CI_ROOT, "demo_r2/runner/config-argv.txt"), "utf8").trim().split("\n");
+  assert.equal(argv[argv.indexOf("--name") + 1], "testhost-demo-2"); assert.equal(argv[argv.indexOf("--url") + 1], "https://github.com/korallis/demo");
+  assert.ok(!fs.existsSync(join(env.AGENT_CI_STATE, "slots/demo_r2")) && fs.existsSync(join(env.AGENT_CI_STATE, "slots/demo")), "only its own slot");
+  // the repo is healthy while either runner is up
+  set({ runners: [two.runners[1]] }); fs.writeFileSync(join(env.AGENT_CI_STATE, "watch.json"), JSON.stringify({ demo: 0 }));
+  run("watch"); assert.equal(scenario().vars.demo, "1");
+  // stop covers every runner of the repo
+  const st = run("stop", "demo");
+  assert.deepEqual(st.calls.filter((c) => c.tool === "systemctl").map((c) => c.argv.join(" ")), ["--user stop agent-ci-runner@demo.service", "--user stop agent-ci-runner@demo_r2.service"]);
+  // back down to one: runner 2 is disabled, deleted on GitHub, and its directory removed
+  set(two);
+  const down = run("install", "demo", "--count", "1");
+  assert.equal(down.status, 0, down.stderr);
+  const order = down.calls.map((c) => `${c.tool} ${c.argv.join(" ")}`);
+  assert.ok(order.includes("systemctl --user disable --now agent-ci-runner@demo_r2.service")); assert.ok(order.includes("gh api -X DELETE repos/korallis/demo/actions/runners/9"));
+  assert.ok(!order.some((c) => c.endsWith("/runners/7")), "runner 1 stays");
+  assert.ok(!fs.existsSync(join(env.AGENT_CI_ROOT, "demo_r2")));
+  // a repo name that looks like an instance is refused
+  assert.match(run("install", "demo_r2").stderr, /name a repo, not a runner instance/);
+  assert.match(run("install", "demo", "--count", "9").stderr, /--count must be 1 to 8/);
 });

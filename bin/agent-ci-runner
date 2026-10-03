@@ -1,8 +1,10 @@
 #!/usr/bin/env python3
 """agent-ci-runner: local GitHub Actions runners for the korallis repos on this host (docs/RUNNERS.md).
 
-  agent-ci-runner install REPO [--dry-run]   download the pinned runner (checksum verified), start
-                                             agent-ci-runner@REPO, wait until GitHub lists it online, set the repo
+  agent-ci-runner install REPO [--count N] [--dry-run]
+                                             download the pinned runner (checksum verified) and run N runners for REPO
+                                             (default: as installed, else 1; runner k >= 2 is instance REPO_r<k>), each as
+                                             agent-ci-runner@<instance>; wait until GitHub lists them all online, then
                                              variable CI_LOCAL=1 (workflows then pick the local runner)
   agent-ci-runner stop|start REPO            pause (CI_LOCAL cleared first, so jobs go to hosted runners) / resume
   agent-ci-runner remove REPO [--keep]       clear CI_LOCAL, stop the unit, delete the runner on GitHub and its dir
@@ -102,16 +104,42 @@ def systemctl(*args, check=True):
     return r
 
 
-def unit(repo):
-    return f"agent-ci-runner@{repo}.service"
+# A repo can have several runners (instances): <repo> is runner 1, <repo>_r<N> runner N (N >= 2). Each instance has its
+# own directory, unit (agent-ci-runner@<instance>), GitHub runner name (<host>-<repo>, <host>-<repo>-<N>) and job slot;
+# CI_LOCAL and the paused state belong to the repo.
+def split(inst):
+    m = re.fullmatch(r"(.+)_r(\d+)", inst)
+    return (m.group(1), int(m.group(2))) if m and int(m.group(2)) >= 2 else (inst, 1)
 
 
-def runner_dir(repo):
-    return ROOT / repo / "runner"
+def inst_name(repo, k):
+    return repo if k == 1 else f"{repo}_r{k}"
+
+
+def runner_name(inst):
+    repo, k = split(inst)
+    return f"{HOST}-{repo}" if k == 1 else f"{HOST}-{repo}-{k}"
+
+
+def unit(inst):
+    return f"agent-ci-runner@{inst}.service"
+
+
+def runner_dir(inst):
+    return ROOT / inst / "runner"
 
 
 def installed():
+    """Every installed instance."""
     return sorted(p.name for p in ROOT.glob("*") if p.is_dir() and not p.name.startswith(("_", ".")) and (p / "runner").is_dir()) if ROOT.is_dir() else []
+
+
+def instances(repo):
+    return sorted((i for i in installed() if split(i)[0] == repo), key=lambda i: split(i)[1])
+
+
+def repos():
+    return sorted({split(i)[0] for i in installed()})
 
 
 def github_runners(repo):
@@ -121,11 +149,12 @@ def github_runners(repo):
     return [json.loads(line) for line in r.stdout.splitlines() if line.strip()]
 
 
-def online(repo):
+def online_names(repo):
+    """This host's runner names GitHub lists online for repo (None: GitHub unreachable)."""
     runners = github_runners(repo)
     if runners is None:
         return None
-    return any(x["name"] == f"{HOST}-{repo}" and x["status"] == "online" for x in runners)
+    return {x["name"] for x in runners if x["status"] == "online"}
 
 
 def var_get(repo):
@@ -140,9 +169,9 @@ def var_set(repo, on):
         gh("variable", "delete", VAR, "--repo", f"{OWNER}/{repo}")
 
 
-def run_config(repo, args, tok):
-    d = runner_dir(repo)
-    env = {**os.environ, "ACTIONS_RUNNER_INPUT_TOKEN": tok, "HOME": str(ROOT / repo / "home")}
+def run_config(inst, args, tok):
+    d = runner_dir(inst)
+    env = {**os.environ, "ACTIONS_RUNNER_INPUT_TOKEN": tok, "HOME": str(ROOT / inst / "home")}
     r = subprocess.run([str(d / "config.sh"), *args], cwd=d, env=env, capture_output=True, text=True)
     out = (r.stdout + r.stderr).replace(tok, "***")
     tail = "\n".join(l for l in out.splitlines() if l.strip())[-1500:]
@@ -157,9 +186,9 @@ def config_value(name, default):
     return default
 
 
-def extract_runner(repo):
+def extract_runner(inst):
     tarball = fetch_runner()  # verified before anything is replaced
-    d = runner_dir(repo)
+    d = runner_dir(inst)
     ROOT.mkdir(parents=True, exist_ok=True)
     os.chdir(ROOT)  # never sit in the directory being replaced (the unit starts this step inside it)
     shutil.rmtree(d, ignore_errors=True)
@@ -169,25 +198,26 @@ def extract_runner(repo):
     (d / ".agent-ci-version").write_text(VERSION + "\n")
 
 
-def cmd_register(repo):
-    if not runner_dir(repo).is_dir():
-        die(f"{runner_dir(repo)} has no runner; run agent-ci-runner install {repo}")
-    (STATE / "slots" / repo).unlink(missing_ok=True)  # a (re)start means the previous job is over
+def cmd_register(inst):
+    repo = split(inst)[0]
+    if not runner_dir(inst).is_dir():
+        die(f"{runner_dir(inst)} has no runner; run agent-ci-runner install {repo}")
+    (STATE / "slots" / inst).unlink(missing_ok=True)  # a (re)start means the previous job is over
     # Nothing a job wrote may reach the next one: the job can write its whole runner directory, so the runner itself
     # is re-extracted from the checksum-verified release (with a fresh _work), and its home and tool cache are wiped,
     # unless AGENT_CI_KEEP_CACHE=1 keeps those two (faster; a same-repo PR job could then leave files a later job uses).
-    extract_runner(repo)
+    extract_runner(inst)
     for sub in ("home", "toolcache"):
         if config_value("AGENT_CI_KEEP_CACHE", "0") != "1":
-            shutil.rmtree(ROOT / repo / sub, ignore_errors=True)
-        (ROOT / repo / sub).mkdir(parents=True, exist_ok=True)
-    rc, tail = run_config(repo, ["--unattended", "--ephemeral", "--replace", "--disableupdate",
-                                 "--url", f"https://github.com/{OWNER}/{repo}", "--name", f"{HOST}-{repo}",
+            shutil.rmtree(ROOT / inst / sub, ignore_errors=True)
+        (ROOT / inst / sub).mkdir(parents=True, exist_ok=True)
+    rc, tail = run_config(inst, ["--unattended", "--ephemeral", "--replace", "--disableupdate",
+                                 "--url", f"https://github.com/{OWNER}/{repo}", "--name", runner_name(inst),
                                  "--labels", LABEL, "--work", "_work"], token(repo, "registration"))
     print(tail)
     if rc != 0:
         die(f"runner registration for {OWNER}/{repo} failed (exit {rc})")
-    print(f"registered {HOST}-{repo} for {OWNER}/{repo} (ephemeral, label {LABEL})")
+    print(f"registered {runner_name(inst)} for {OWNER}/{repo} (ephemeral, label {LABEL})")
 
 
 def fetch_runner():
@@ -221,63 +251,82 @@ def install_hooks():
         CONFIG.chmod(0o600)
 
 
-def wait_online(repo, seconds):
+def wait_online(repo, names, seconds):
     end = time.time() + seconds
     while time.time() < end:
-        if online(repo):
+        if set(names) <= (online_names(repo) or set()):
             return True
         time.sleep(float(os.environ.get("AGENT_CI_POLL_S", "5")))
     return False
 
 
-def cmd_install(repo, dry):
+def drop_instance(inst):
+    repo = split(inst)[0]
+    systemctl("disable", "--now", unit(inst), check=False)
+    for x in github_runners(repo) or []:
+        if x["name"] == runner_name(inst):
+            gh("api", "-X", "DELETE", f"repos/{OWNER}/{repo}/actions/runners/{x['id']}")
+    (STATE / "slots" / inst).unlink(missing_ok=True)
+
+
+def cmd_install(repo, count, dry):
     r = gh("api", f"repos/{OWNER}/{repo}", "--jq", ".full_name", check=False)
     if r.returncode != 0:
         die(f"{OWNER}/{repo} is not reachable with gh: {(r.stderr or r.stdout).strip()[:200]}")
-    d = runner_dir(repo)
+    count = count or max(1, len(instances(repo)))
+    want = [inst_name(repo, k) for k in range(1, count + 1)]
+    extra = [i for i in instances(repo) if i not in want]
     if dry:
-        print(f"would install runner {VERSION} into {d}, start {unit(repo)} (sandboxed, agent-heavy.slice), "
-              f"wait for {HOST}-{repo} online, then set {VAR}=1 on {OWNER}/{repo}")
+        print(f"would install runner {VERSION} as {', '.join(want)} ({', '.join(runner_name(i) for i in want)}; sandboxed, "
+              f"agent-heavy.slice){'; remove ' + ', '.join(extra) if extra else ''}; wait for them online, then set {VAR}=1 on {OWNER}/{repo}")
         return
-    extract_runner(repo)
+    for inst in want:
+        extract_runner(inst)
     install_hooks()
+    for inst in extra:
+        drop_instance(inst)
+        shutil.rmtree(ROOT / inst, ignore_errors=True)
     (STATE / f"{repo}.paused").unlink(missing_ok=True)
     systemctl("daemon-reload")
-    systemctl("enable", "--now", unit(repo))
-    if not wait_online(repo, float(os.environ.get("AGENT_CI_ONLINE_WAIT_S", "120"))):
-        die(f"{HOST}-{repo} did not come online; {VAR} left unset (jobs stay hosted). See: agent-ci-runner logs {repo}")
+    for inst in want:
+        systemctl("enable", "--now", unit(inst))
+    names = [runner_name(i) for i in want]
+    if not wait_online(repo, names, float(os.environ.get("AGENT_CI_ONLINE_WAIT_S", "120"))):
+        die(f"{', '.join(names)} did not all come online; {VAR} left unset (jobs stay hosted). See: agent-ci-runner logs {repo}")
     var_set(repo, True)
-    say(f"{OWNER}/{repo}: local runner {HOST}-{repo} online; {VAR}=1 (Linux jobs run here)")
+    say(f"{OWNER}/{repo}: {len(want)} local runner(s) online ({', '.join(names)}); {VAR}=1 (Linux jobs run here)")
 
 
 def cmd_stop(repo):
     var_set(repo, False)
     (STATE).mkdir(parents=True, exist_ok=True)
     (STATE / f"{repo}.paused").write_text(str(int(time.time())))
-    systemctl("stop", unit(repo), check=False)
-    say(f"{OWNER}/{repo}: local runner paused; {VAR} cleared (jobs run hosted)")
+    for inst in instances(repo):
+        systemctl("stop", unit(inst), check=False)
+    say(f"{OWNER}/{repo}: local runner(s) paused; {VAR} cleared (jobs run hosted)")
 
 
 def cmd_start(repo):
     (STATE / f"{repo}.paused").unlink(missing_ok=True)
-    systemctl("start", unit(repo))
-    if not wait_online(repo, float(os.environ.get("AGENT_CI_ONLINE_WAIT_S", "120"))):
-        die(f"{HOST}-{repo} did not come online; {VAR} left unset")
+    insts = instances(repo)
+    if not insts:
+        die(f"no local runner installed for {repo}; run agent-ci-runner install {repo}")
+    for inst in insts:
+        systemctl("start", unit(inst))
+    if not wait_online(repo, [runner_name(i) for i in insts], float(os.environ.get("AGENT_CI_ONLINE_WAIT_S", "120"))):
+        die(f"the runner(s) for {repo} did not all come online; {VAR} left unset")
     var_set(repo, True)
-    say(f"{OWNER}/{repo}: local runner resumed; {VAR}=1")
+    say(f"{OWNER}/{repo}: local runner(s) resumed; {VAR}=1")
 
 
 def cmd_remove(repo, keep):
     var_set(repo, False)
-    systemctl("disable", "--now", unit(repo), check=False)
-    for x in github_runners(repo) or []:
-        if x["name"] == f"{HOST}-{repo}":
-            gh("api", "-X", "DELETE", f"repos/{OWNER}/{repo}/actions/runners/{x['id']}")
-    (STATE / "slots" / repo).unlink(missing_ok=True)
+    for inst in instances(repo):
+        drop_instance(inst)
+        if not keep:
+            shutil.rmtree(ROOT / inst, ignore_errors=True)
     (STATE / f"{repo}.paused").unlink(missing_ok=True)
-    if not keep:
-        shutil.rmtree(ROOT / repo, ignore_errors=True)
-    say(f"{OWNER}/{repo}: local runner removed; {VAR} cleared")
+    say(f"{OWNER}/{repo}: local runner(s) removed; {VAR} cleared")
 
 
 def load_state():
@@ -289,14 +338,16 @@ def load_state():
 
 def cmd_watch():
     st, now = load_state(), int(time.time())
-    for repo in installed():
+    for repo in repos():
         if (STATE / f"{repo}.paused").exists():
             continue
-        active = systemctl("is-active", unit(repo), check=False).stdout.strip() == "active"
-        up = online(repo)
+        up = online_names(repo)
         if up is None:
             continue  # GitHub unreachable: judge nothing
-        if active and up:
+        # healthy while any of the repo's runners is both running here and online on GitHub
+        healthy = [i for i in instances(repo) if runner_name(i) in up
+                   and systemctl("is-active", unit(i), check=False).stdout.strip() == "active"]
+        if healthy:
             st.pop(repo, None)
             if var_get(repo) != "1":
                 var_set(repo, True)
@@ -305,8 +356,7 @@ def cmd_watch():
         since = st.setdefault(repo, now)
         if now - since >= OFFLINE_GRACE_S and var_get(repo) == "1":
             var_set(repo, False)
-            say(f"{OWNER}/{repo}: local runner down {(now - since) // 60} min (unit {'active' if active else 'inactive'}); "
-                f"{VAR} cleared, jobs run hosted until it is back")
+            say(f"{OWNER}/{repo}: local runner(s) down {(now - since) // 60} min; {VAR} cleared, jobs run hosted until one is back")
             subprocess.run(["notify-send", "--app-name=Agent stack", "CI moved to hosted runners",
                             f"{OWNER}/{repo}: the local runner is down"], check=False, capture_output=True)
     STATE.mkdir(parents=True, exist_ok=True)
@@ -317,10 +367,13 @@ def cmd_status(as_json):
     rows = []
     slots = STATE / "slots"
     busy = sorted(p.name for p in slots.glob("*") if p.is_file() and not p.name.startswith(".")) if slots.is_dir() else []
-    for repo in installed():
-        rows.append({"repo": repo, "unit": systemctl("is-active", unit(repo), check=False).stdout.strip(),
-                     "online": online(repo), "ci_local": var_get(repo), "paused": (STATE / f"{repo}.paused").exists(),
-                     "job_slot": repo in busy})
+    for repo in repos():
+        up, ci = online_names(repo), var_get(repo)
+        for inst in instances(repo):
+            rows.append({"repo": repo, "instance": inst, "runner": runner_name(inst),
+                         "unit": systemctl("is-active", unit(inst), check=False).stdout.strip(),
+                         "online": None if up is None else runner_name(inst) in up, "ci_local": ci,
+                         "paused": (STATE / f"{repo}.paused").exists(), "job_slot": inst in busy})
     cfg = dict(re.findall(r"^(AGENT_CI_[A-Z_]+)=([0-9.]+)$", CONFIG.read_text(), re.M)) if CONFIG.is_file() else {}
     summary = {"runners": rows, "busy_slots": busy, "max_jobs": int(cfg.get("AGENT_CI_MAX_JOBS", 2)),
                "load1": float(Path("/proc/loadavg").read_text().split()[0]), "cpus": os.cpu_count()}
@@ -328,7 +381,7 @@ def cmd_status(as_json):
         print(json.dumps(summary, indent=2))
         return
     for r in rows:
-        print(f"{r['repo']:<20} unit {r['unit']:<9} github {'online' if r['online'] else ('?' if r['online'] is None else 'offline'):<8}"
+        print(f"{r['instance']:<20} unit {r['unit']:<9} github {'online' if r['online'] else ('?' if r['online'] is None else 'offline'):<8}"
               f" {VAR}={r['ci_local'] or 'unset':<6}{' paused' if r['paused'] else ''}{' running a job' if r['job_slot'] else ''}")
     print(f"jobs: {len(busy)}/{summary['max_jobs']} slots busy; load {summary['load1']}/{summary['cpus']}")
 
@@ -338,9 +391,10 @@ def main():
     sub = p.add_subparsers(dest="cmd", required=True)
     for name in ("install", "stop", "start", "remove", "logs", "register"):
         s = sub.add_parser(name)
-        s.add_argument("repo")
+        s.add_argument("repo", help="instance (<repo> or <repo>_r<N>)" if name in ("register", "logs") else "repo")
         if name == "install":
             s.add_argument("--dry-run", action="store_true")
+            s.add_argument("--count", type=int, default=0, help="runners for this repo (default: as installed, else 1)")
         if name == "remove":
             s.add_argument("--keep", action="store_true")
         if name == "logs":
@@ -349,9 +403,17 @@ def main():
     s = sub.add_parser("status")
     s.add_argument("--json", action="store_true")
     a = p.parse_args()
-    repo = repo_ok(a.repo) if hasattr(a, "repo") else None
+    if a.cmd in ("register", "logs"):
+        repo_ok(split(a.repo)[0])
+        repo = a.repo
+    else:
+        repo = repo_ok(a.repo) if hasattr(a, "repo") else None
+        if repo and split(repo)[1] != 1:
+            die(f"{repo!r}: name a repo, not a runner instance (instances are <repo>_r<N>)")
     if a.cmd == "install":
-        cmd_install(repo, a.dry_run)
+        if a.count < 0 or a.count > 8:
+            die("--count must be 1 to 8")
+        cmd_install(repo, a.count, a.dry_run)
     elif a.cmd == "register":
         cmd_register(repo)
     elif a.cmd == "stop":
