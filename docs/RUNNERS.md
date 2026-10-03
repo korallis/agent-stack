@@ -37,13 +37,16 @@ remain only for the exceptions below, and as the automatic fallback.
     under contention.
   - The job-started hook (`system/ci-runner-hook`) holds a job until one of the `AGENT_CI_MAX_JOBS` global slots is
     free, so at most 2 CI jobs run at once across all repos.
-  - For up to 15 minutes it also waits while load1 is above the host's CPU count or MemAvailable is below 6 GB.
+  - For up to 15 minutes it also waits while load1 is above 24 (`AGENT_CI_MAX_LOAD`) or the host's CPU count, or
+    MemAvailable is below 6 GB. Two parallel browser jobs plus the seats pushed load1 to about 35, and UI tests timed
+    out, so the ceiling sits well below the CPU count.
 - **Settings** live in `~/.config/agent-stack/ci-runners.env` (numbers only). Each job start reads them, so no restart
   is needed:
 
   ```
   AGENT_CI_MAX_JOBS=2          # raise to 3 if load allows
   AGENT_CI_MAX_LOAD_PER_CPU=1.0
+  AGENT_CI_MAX_LOAD=24
   AGENT_CI_MIN_MEM_GB=6
   AGENT_CI_GATE_WAIT_S=900
   AGENT_CI_KEEP_CACHE=0        # 1 keeps home/ and toolcache/ between jobs (see above)
@@ -86,7 +89,7 @@ install system packages with `sudo apt-get` must use the tools on this host inst
 |---|---|
 | Install or upgrade a repo's runner(s) | `agent-ci-runner install <repo> [--count N]` (`--dry-run` to see the plan) |
 | Run N runners for one repo | `agent-ci-runner install <repo> --count N`: runner k >= 2 is the instance `<repo>_r<k>` (unit `agent-ci-runner@<repo>_r<k>`, GitHub name `<host>-<repo>-<k>`), each with its own job slot. A lower N removes the extra runners |
-| Pause (jobs go hosted) / resume | `agent-ci-runner stop <repo>` / `agent-ci-runner start <repo>` |
+| Pause (jobs go hosted) / resume | `agent-ci-runner stop <repo>` / `agent-ci-runner start <repo>` (a runner that is already active, maybe mid-job, is left alone) |
 | Re-register after a failure | `agent-ci-runner stop <repo> && agent-ci-runner start <repo>` (every start registers afresh) |
 | Remove | `agent-ci-runner remove <repo>` (`--keep` keeps the directory) |
 | State of all runners, slots and load | `agent-ci-runner status` (`--json`) |

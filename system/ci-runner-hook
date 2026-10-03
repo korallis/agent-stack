@@ -2,18 +2,18 @@
 # ci-runner-hook start|end: the local CI runners' job gate (ACTIONS_RUNNER_HOOK_JOB_STARTED/COMPLETED, through
 # job-started.sh / job-completed.sh in ci-runners/_shared; agent-ci-runner install copies it there).
 # start: wait for one of AGENT_CI_MAX_JOBS global job slots (default 2; one slot file per repo, taken under a lock) and,
-# for up to AGENT_CI_GATE_WAIT_S (900), until load1 <= nproc x AGENT_CI_MAX_LOAD_PER_CPU (1.0) and MemAvailable >=
-# AGENT_CI_MIN_MEM_GB (6). After the wait the load gate is skipped; the slot cap never is. end: free this repo's slot.
+# for up to AGENT_CI_GATE_WAIT_S (900), until load1 <= nproc x AGENT_CI_MAX_LOAD_PER_CPU (1.0) and <= AGENT_CI_MAX_LOAD
+# (24: the fleet's seats need the rest; browser jobs timed out at load1 ~35) and MemAvailable >= AGENT_CI_MIN_MEM_GB (6). After the wait the load gate is skipped; the slot cap never is. end: free this repo's slot.
 # A slot older than AGENT_CI_SLOT_STALE_S (6 h) is cleared. The load gate compares with the HOST's CPUs (`nproc --all`):
 # plain nproc inside the unit reports its CPUQuota (8), which would read a normal load as overloaded. Settings come from AGENT_CI_CONFIG: only NAME=number lines.
 set -u
 mode=${1:-}; repo=${AGENT_CI_REPO:?AGENT_CI_REPO unset}; slots=${AGENT_CI_STATE:?AGENT_CI_STATE unset}/slots
 if [ -r "${AGENT_CI_CONFIG:-}" ]; then
   while IFS= read -r line; do
-    [[ $line =~ ^(AGENT_CI_(MAX_JOBS|MAX_LOAD_PER_CPU|MIN_MEM_GB|GATE_WAIT_S|SLOT_STALE_S|POLL_S))=([0-9]+(\.[0-9]+)?)$ ]] && printf -v "${BASH_REMATCH[1]}" '%s' "${BASH_REMATCH[3]}"
+    [[ $line =~ ^(AGENT_CI_(MAX_JOBS|MAX_LOAD_PER_CPU|MAX_LOAD|MIN_MEM_GB|GATE_WAIT_S|SLOT_STALE_S|POLL_S))=([0-9]+(\.[0-9]+)?)$ ]] && printf -v "${BASH_REMATCH[1]}" '%s' "${BASH_REMATCH[3]}"
   done < "$AGENT_CI_CONFIG"
 fi
-max=${AGENT_CI_MAX_JOBS:-2} per=${AGENT_CI_MAX_LOAD_PER_CPU:-1.0} minmem=${AGENT_CI_MIN_MEM_GB:-6}
+max=${AGENT_CI_MAX_JOBS:-2} per=${AGENT_CI_MAX_LOAD_PER_CPU:-1.0} maxload=${AGENT_CI_MAX_LOAD:-24} minmem=${AGENT_CI_MIN_MEM_GB:-6}
 gate=${AGENT_CI_GATE_WAIT_S:-900} stale=${AGENT_CI_SLOT_STALE_S:-21600} poll=${AGENT_CI_POLL_S:-10}
 loadavg=${AGENT_CI_LOADAVG:-/proc/loadavg} meminfo=${AGENT_CI_MEMINFO:-/proc/meminfo} cpus=${AGENT_CI_NPROC:-$(nproc --all)}
 mkdir -p "$slots"
@@ -30,7 +30,7 @@ while :; do
   for f in "$slots"/*; do m=$(stat -c %Y "$f" 2>/dev/null) || continue; [ $((now - m)) -gt "$stale" ] && rm -f "$f"; done
   busy=$(find "$slots" -maxdepth 1 -type f ! -name '.*' ! -name "$repo" | wc -l)
   load=$(cut -d' ' -f1 "$loadavg"); avail=$(awk '/^MemAvailable:/{print int($2/1048576)}' "$meminfo")
-  calm=$(awk -v l="$load" -v c="$cpus" -v p="$per" -v a="$avail" -v m="$minmem" 'BEGIN{print (l <= c*p && a >= m) ? 1 : 0}')
+  calm=$(awk -v l="$load" -v c="$cpus" -v p="$per" -v x="$maxload" -v a="$avail" -v m="$minmem" 'BEGIN{print (l <= c*p && l <= x && a >= m) ? 1 : 0}')
   waited=$((now - began))
   if [ "$busy" -lt "$max" ] && { [ "$calm" = 1 ] || [ "$waited" -gt "$gate" ]; }; then  # -gt: whole seconds, so at least the full wait
     echo "$now" > "$slots/$repo"; flock -u 9
