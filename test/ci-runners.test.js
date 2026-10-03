@@ -81,9 +81,10 @@ test("the unit sandboxes the job (no home, keys or seats), bounds it inside agen
   for (const line of ["Slice=agent-heavy.slice", "PrivateUsers=yes", "ProtectHome=tmpfs", "PrivateTmp=yes", "NoNewPrivileges=yes",
     "MemoryMax=8G", "MemorySwapMax=0", "CPUQuota=800%", "CPUWeight=20", "IOWeight=20", "Restart=always",
     "ExecStartPre=+%h/.local/bin/agent-ci-runner register %i", "ExecStart=%h/.local/share/agent-stack/ci-runners/%i/runner/run.sh",
-    "BindPaths=%h/.local/share/agent-stack/ci-runners/%i %h/.local/state/agent-stack/ci-runners",
+    "BindPaths=%h/.local/share/agent-stack/ci-runners/%i/home:%h %h/.local/share/agent-stack/ci-runners/%i %h/.local/state/agent-stack/ci-runners",
     "BindReadOnlyPaths=%h/.local/share/agent-stack/ci-runners/_shared -%h/.config/agent-stack/ci-runners.env",
-    "Environment=HOME=%h/.local/share/agent-stack/ci-runners/%i/home",
+    // the runner's worker uses the passwd home: the runner's own home is mounted over that path (Playwright writes ~/.cache)
+    "Environment=HOME=%h",
     "Environment=ACTIONS_RUNNER_HOOK_JOB_STARTED=%h/.local/share/agent-stack/ci-runners/_shared/job-started.sh",
     "Environment=ACTIONS_RUNNER_HOOK_JOB_COMPLETED=%h/.local/share/agent-stack/ci-runners/_shared/job-completed.sh"])
     assert.ok(u.split("\n").includes(line), line);
