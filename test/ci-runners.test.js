@@ -80,6 +80,8 @@ test("the unit sandboxes the job (no home, keys or seats), bounds it inside agen
   const u = fs.readFileSync(join(repo, "system/systemd/agent-ci-runner@.service"), "utf8");
   for (const line of ["Slice=agent-heavy.slice", "PrivateUsers=yes", "ProtectHome=tmpfs", "PrivateTmp=yes", "NoNewPrivileges=yes",
     "MemoryMax=8G", "MemorySwapMax=0", "CPUQuota=800%", "CPUWeight=20", "IOWeight=20", "Restart=always",
+    // hosted images' timezone and locale: date-sensitive browser tests failed on the host's local time
+    "Environment=TZ=UTC", "Environment=LANG=C.UTF-8", "Environment=LC_ALL=C.UTF-8",
     "Requires=agent-ci-runner-register@%i.service", "After=network-online.target agent-ci-runner-register@%i.service",
     "ExecStart=%h/.local/share/agent-stack/ci-runners/%i/runner/run.sh",
     "BindPaths=%h/.local/share/agent-stack/ci-runners/%i/home:%h %h/.local/share/agent-stack/ci-runners/%i %h/.local/state/agent-stack/ci-runners",
