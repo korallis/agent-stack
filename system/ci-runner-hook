@@ -17,17 +17,17 @@ max=${AGENT_CI_MAX_JOBS:-2} per=${AGENT_CI_MAX_LOAD_PER_CPU:-1.0} minmem=${AGENT
 gate=${AGENT_CI_GATE_WAIT_S:-900} stale=${AGENT_CI_SLOT_STALE_S:-21600} poll=${AGENT_CI_POLL_S:-10}
 loadavg=${AGENT_CI_LOADAVG:-/proc/loadavg} meminfo=${AGENT_CI_MEMINFO:-/proc/meminfo} cpus=${AGENT_CI_NPROC:-$(nproc --all)}
 mkdir -p "$slots"
+exec 9>"$slots/.lock"
 case $mode in
-  end) rm -f "$slots/$repo"; echo "[ci-gate] $repo: job slot released"; exit 0 ;;
+  end) flock 9; rm -f "$slots/$repo"; echo "[ci-gate] $repo: job slot released"; exit 0 ;;   # under the lock: never mid-sweep
   start) ;;
   *) echo "usage: ci-runner-hook start|end" >&2; exit 2 ;;
 esac
-exec 9>"$slots/.lock"
 began=$(date +%s); said=0
 while :; do
   now=$(date +%s)
   flock 9
-  for f in "$slots"/*; do [ -f "$f" ] && [ $((now - $(stat -c %Y "$f"))) -gt "$stale" ] && rm -f "$f"; done
+  for f in "$slots"/*; do m=$(stat -c %Y "$f" 2>/dev/null) || continue; [ $((now - m)) -gt "$stale" ] && rm -f "$f"; done
   busy=$(find "$slots" -maxdepth 1 -type f ! -name '.*' ! -name "$repo" | wc -l)
   load=$(cut -d' ' -f1 "$loadavg"); avail=$(awk '/^MemAvailable:/{print int($2/1048576)}' "$meminfo")
   calm=$(awk -v l="$load" -v c="$cpus" -v p="$per" -v a="$avail" -v m="$minmem" 'BEGIN{print (l <= c*p && a >= m) ? 1 : 0}')

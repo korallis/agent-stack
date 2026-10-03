@@ -229,6 +229,13 @@ test("gate: at most AGENT_CI_MAX_JOBS jobs at once across repos; a slot frees on
   assert.ok(!fs.existsSync("pwned") && !fs.existsSync(join(s, "pwned")), "config lines are parsed as NAME=number only, never run");
 });
 
+test("gate: end frees its slot under the lock, so it never races a start's stale sweep", async () => {
+  const s = gateState(); assert.equal((await done(gate(s, "a", "start"))).code, 0);
+  const held = done(spawn("flock", [join(s, "slots", ".lock"), "sleep", "0.6"])); await sleep(150); const t0 = Date.now();
+  assert.equal((await done(gate(s, "a", "end"))).code, 0); assert.ok(Date.now() - t0 >= 300, "waited for the lock holder");
+  assert.ok(!fs.existsSync(join(s, "slots", "a"))); await held;
+});
+
 test("gate: a hot or memory-starved host waits, up to the gate wait; the slot cap still holds after it; stale slots clear", async () => {
   const hot = gateState("9.50");
   const p = gate(hot, "a", "start", { AGENT_CI_GATE_WAIT_S: "1" }); const t0 = Date.now();
