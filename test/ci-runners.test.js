@@ -121,6 +121,17 @@ test("register: a failing registration backs off (after 3 failures in 10 min, ea
   const next = reg(); assert.equal(next.status, 0); assert.doesNotMatch(next.stderr, /waiting/);
 });
 
+test("watch retries a runner whose registration failed (Restart= doesn't: a failed Requires= is not an exit); never a busy, starting or paused one", () => {
+  const { env, run, set } = world(online());
+  assert.equal(run("install", "demo").status, 0);
+  const started = (state) => { set({ active: { "agent-ci-runner@demo.service": state } }); return run("watch").calls.filter((c) => c.tool === "systemctl" && !c.argv.includes("is-active")).map((c) => c.argv.join(" ")); };
+  for (const state of ["failed", "inactive"])
+    assert.deepEqual(started(state), ["--user reset-failed agent-ci-runner@demo.service agent-ci-runner-register@demo.service", "--user start agent-ci-runner@demo.service"], state);
+  for (const state of ["active", "activating"]) assert.deepEqual(started(state), [], `${state}: left alone`);
+  fs.writeFileSync(join(env.AGENT_CI_STATE, "demo.paused"), "1");
+  assert.deepEqual(started("failed"), [], "a paused repo (stop) is never started");
+});
+
 test("register: a fresh ephemeral registration with a clean work dir; the token reaches config.sh only by env and is never printed", () => {
   const { w, env, run } = world();
   const d = join(env.AGENT_CI_ROOT, "demo/runner"); fs.mkdirSync(join(d, "_work/old"), { recursive: true });

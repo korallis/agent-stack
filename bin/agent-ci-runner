@@ -229,8 +229,9 @@ def alloc_port(inst):
 
 def register_with_backoff(inst):
     """register, bounded on failure: after REGISTER_FAILS failures in 10 min each attempt first waits
-    AGENT_CI_REGISTER_BACKOFF_S (60), so a broken registration retried by the unit's Restart= (every 5 s, no start
-    limit) asks GitHub for a token about once a minute, not 12 times. A success clears the record."""
+    AGENT_CI_REGISTER_BACKOFF_S (60). A failed registration fails the runner's start (Requires=), which Restart= does
+    not retry; watch retries it every tick and a manual start may too, and this keeps those to about one token request
+    a minute. A success clears the record."""
     f = STATE / f"register-failures-{inst}.json"
     now = time.time()
     try:
@@ -473,6 +474,16 @@ def cmd_watch():
     for repo in repos():
         if (STATE / f"{repo}.paused").exists():
             continue
+        # The retry path for a failed registration: the runner unit Requires= its register oneshot, so when that fails
+        # the runner's start fails as a dependency, which Restart= does not retry (it reacts only to the runner process
+        # exiting). Each tick (2 min) starts such a runner again; register's backoff bounds the token requests.
+        # Only failed or inactive: active is mid-job, activating is registering or waiting to restart.
+        for i in instances(repo):
+            state = systemctl("is-active", unit(i), check=False).stdout.strip()
+            if state in ("failed", "inactive"):
+                systemctl("reset-failed", unit(i), f"agent-ci-runner-register@{i}.service", check=False)
+                systemctl("start", unit(i), check=False)
+                say(f"{OWNER}/{repo}: runner {i} was {state}; started again (registration retried)")
         up = online_names(repo)
         if up is None:
             continue  # GitHub unreachable: judge nothing
