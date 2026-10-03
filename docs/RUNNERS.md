@@ -6,7 +6,8 @@ remain only for the exceptions below, and as the automatic fallback.
 
 ## How it works
 
-- **One ephemeral runner per repo.** korallis is a personal account, so a runner can serve only one repo. Each repo gets
+- **Ephemeral runners, one or more per repo** (`--count`; a repo with parallel jobs, such as browser shards, can use
+  several, still under the global job cap). korallis is a personal account, so a runner can serve only one repo. Each repo gets
   `agent-ci-runner@<repo>.service`, a systemd user unit. Before every job, `agent-ci-runner-register@<repo>.service`
   (`agent-ci-runner register <repo>`, a separate unit outside the sandbox because it needs `gh`; the runner unit requires
   it before each start) does three things:
@@ -80,7 +81,8 @@ install system packages with `sudo apt-get` must use the tools on this host inst
 
 | Task | Command |
 |---|---|
-| Install or upgrade a repo's runner | `agent-ci-runner install <repo>` (`--dry-run` to see the plan) |
+| Install or upgrade a repo's runner(s) | `agent-ci-runner install <repo> [--count N]` (`--dry-run` to see the plan) |
+| Run N runners for one repo | `agent-ci-runner install <repo> --count N`: runner k >= 2 is the instance `<repo>_r<k>` (unit `agent-ci-runner@<repo>_r<k>`, GitHub name `<host>-<repo>-<k>`), each with its own job slot. A lower N removes the extra runners |
 | Pause (jobs go hosted) / resume | `agent-ci-runner stop <repo>` / `agent-ci-runner start <repo>` |
 | Re-register after a failure | `agent-ci-runner stop <repo> && agent-ci-runner start <repo>` (every start registers afresh) |
 | Remove | `agent-ci-runner remove <repo>` (`--keep` keeps the directory) |
