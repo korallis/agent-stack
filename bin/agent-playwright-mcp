@@ -13,6 +13,9 @@ variables), so when it is absent here it is read from the nearest ancestor proce
 the seat's own codex or claude). No seat (the operator's own shell, a human): "local". The name is reduced to
 [A-Za-z0-9._@-] with no leading dot, as the credential guard does for the net/ dir it allows (system/credguard-read-hook
 netDir).
+
+It also enables the MCP's devtools capability (--caps; any caps given are kept): with it @playwright/mcp 0.0.80 offers
+browser_start_video / browser_stop_video, which a witness records its walk with.
 """
 import os, re, sys
 
@@ -72,18 +75,25 @@ def main(argv):
             os.chmod(d, 0o700)
         except OSError:
             pass
-    args, i = [], 0
+    args, caps, i = [], [], 0
     while i < len(argv):
         a = argv[i]
-        if a == "--output-dir":
+        if a in ("--output-dir", "--caps"):
+            if a == "--caps" and i + 1 < len(argv):
+                caps += argv[i + 1].split(",")
             i += 2
             continue
         if a.startswith("--output-dir="):
             i += 1
             continue
+        if a.startswith("--caps="):
+            caps += a.split("=", 1)[1].split(",")
+            i += 1
+            continue
         args.append(a)
         i += 1
-    cmd = ["npx", *args, "--output-dir", out]
+    caps = list(dict.fromkeys(c for c in [*caps, "devtools"] if c))   # given ones first, devtools once
+    cmd = ["npx", *args, "--caps", ",".join(caps), "--output-dir", out]
     if os.environ.get("AGENT_PLAYWRIGHT_MCP_DRY"):   # tests: print what would run
         print(" ".join(cmd))
         return 0

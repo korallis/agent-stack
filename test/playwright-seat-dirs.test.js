@@ -22,7 +22,7 @@ test("launcher: the seat's own output dir (0700, with net/), any --output-dir gi
   const h = home();
   const r = launch(h, { OPENRIG_SESSION_NAME: "qa-codex-1@shop" }, [...ARGS, "--output-dir", "/shared", "--output-dir=/other"]);
   assert.equal(r.status, 0, r.stderr);
-  assert.equal(r.stdout.trim(), `npx ${ARGS.join(" ")} --output-dir ${join(PW(h), "qa-codex-1@shop")}`);
+  assert.equal(r.stdout.trim(), `npx ${ARGS.join(" ")} --caps devtools --output-dir ${join(PW(h), "qa-codex-1@shop")}`);
   for (const d of [PW(h), join(PW(h), "qa-codex-1@shop"), join(PW(h), "qa-codex-1@shop/net")]) assert.equal(mode(d), 0o700, d);
   assert.match(launch(h, { OPENRIG_SESSION_NAME: "a b/../x@y" }).stdout, /playwright-mcp\/a_b_.._x@y$/m, "a seat name can't leave the dir");
   // QA PR87: dot-only names can't name the parent dirs
@@ -32,6 +32,16 @@ test("launcher: the seat's own output dir (0700, with net/), any --output-dir gi
   }
   const noProc = join(root, `noproc${n}`); fs.mkdirSync(noProc);   // no ancestor with a seat (these tests may run inside one)
   assert.match(launch(h, { AGENT_PLAYWRIGHT_MCP_PROC: noProc }).stdout.trim(), /playwright-mcp\/local$/, "no seat (the operator's shell, a human): local");
+});
+
+test("launcher: the devtools capability (browser_start_video) is always on; caps already given are kept, devtools once", () => {
+  const h = home(), env = { OPENRIG_SESSION_NAME: "witness-codex@shop" };
+  const caps = (extra) => launch(h, env, [...ARGS, ...extra]).stdout.trim().match(/ --caps (\S+) --output-dir /)?.[1];
+  assert.equal(caps([]), "devtools");
+  assert.equal(caps(["--caps", "vision,pdf"]), "vision,pdf,devtools");
+  assert.equal(caps(["--caps=pdf"]), "pdf,devtools");
+  assert.equal(caps(["--caps", "devtools,vision"]), "devtools,vision");
+  assert.equal(launch(h, env, [...ARGS, "--caps", "pdf"]).stdout.match(/--caps/g).length, 1, "one --caps");
 });
 
 test("launcher: a runtime that strips the environment (Codex) still gets the seat, from the nearest ancestor that has it", () => {

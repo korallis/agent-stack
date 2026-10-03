@@ -43,6 +43,9 @@ test("QA, lead and the witness slice: QA and the witness hand the lead the path;
   const w = flat("rig/template/witness-slice/SPEC.md");
   assert.match(w, /give its absolute path to the lead with the result/); assert.match(w, /never `\/tmp` or a repo/);
   assert.match(w, /demo or fictional data only: no secrets, tokens or real client data/);
+  // the MCP witness recipe (the launcher enables --caps devtools, which offers the video tools)
+  for (const doc of [w, flat("rig/template/guidance/coordination.md")])
+    assert.match(doc, /`browser_start_video` .*before the first step|`browser_start_video` .*at the start of the walk/), assert.match(doc, /`browser_stop_video`/), assert.match(doc, /`agent-video-fit`/);
 });
 
 test("the agent-stack skill teaches the rule and the operator's Slack check", () => {
