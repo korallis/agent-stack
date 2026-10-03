@@ -227,20 +227,36 @@ def alloc_port(inst):
     return ports[inst]
 
 
+def last_run_crashed(inst):
+    """Whether the runner's previous run ended with a non-zero exit. An ephemeral runner exits 0 after its job; a crash
+    (run.sh failing before or without a job) is anything else. Read before each start, by register."""
+    r = systemctl("show", unit(inst), "-p", "ExecMainStatus", "--value", check=False)
+    return r.stdout.strip() not in ("", "0")
+
+
 def register_with_backoff(inst):
-    """register, bounded on failure: after REGISTER_FAILS failures in 10 min each attempt first waits
-    AGENT_CI_REGISTER_BACKOFF_S (60). A failed registration fails the runner's start (Requires=), which Restart= does
-    not retry; watch retries it every tick and a manual start may too, and this keeps those to about one token request
-    a minute. A success clears the record."""
+    """register, bounded on failure. A failure is a failed registration, or a previous run that crashed (non-zero
+    exit). After REGISTER_FAILS failures in 10 min each attempt first waits AGENT_CI_REGISTER_BACKOFF_S (60), so a
+    loop asks GitHub for a token about once a minute, not every 5 s. Loops:
+    - a failed registration: the runner's start fails (Requires=), not retried by Restart=; watch retries it every
+      tick, and a manual start may too;
+    - a runner that registers but crashes: Restart=always restarts it every 5 s (the unit has no start limit, so a
+      busy runner's per-job restarts never stop it).
+    A clean previous run (exit 0, a job done) and a successful registration clear the record."""
     f = STATE / f"register-failures-{inst}.json"
     now = time.time()
     try:
         recent = [t for t in json.loads(f.read_text()) if now - t < 600]
     except (OSError, ValueError):
         recent = []
+    crashed = last_run_crashed(inst)
+    if crashed:
+        recent.append(now)
+        STATE.mkdir(parents=True, exist_ok=True)
+        f.write_text(json.dumps(recent))
     if len(recent) >= REGISTER_FAILS:
         wait = float(os.environ.get("AGENT_CI_REGISTER_BACKOFF_S", "60"))
-        print(f"{len(recent)} failed registrations of {inst} in 10 min: waiting {wait:g}s first", file=sys.stderr)
+        print(f"{len(recent)} failed registrations or crashed runs of {inst} in 10 min: waiting {wait:g}s first", file=sys.stderr)
         time.sleep(wait)
     try:
         cmd_register(inst)
@@ -249,7 +265,8 @@ def register_with_backoff(inst):
             STATE.mkdir(parents=True, exist_ok=True)
             f.write_text(json.dumps([*recent, time.time()]))
         raise
-    f.unlink(missing_ok=True)
+    if not crashed:
+        f.unlink(missing_ok=True)
 
 
 REGISTER_FAILS = 3

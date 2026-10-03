@@ -45,6 +45,7 @@ import json, os, sys
 s = json.load(open(os.environ["GH_SCENARIO"])); a = sys.argv[1:]
 open(os.environ["CALLS"], "a").write(json.dumps({"tool": "systemctl", "argv": a}) + "\\n")
 v = s.get("active", "active"); v = v.get(a[-1], "inactive") if isinstance(v, dict) else v   # one state, or per unit
+if "show" in a and "ExecMainStatus" in a: print(s.get("mainStatus", {}).get(a[a.index("show") + 1], "0")); sys.exit(0)
 if "is-active" in a: print(v); sys.exit(0 if v == "active" else 3)
 `, { mode: 0o755 });
 for (const t of ["logger", "notify-send"]) fs.writeFileSync(join(sysStubs, t), "#!/bin/sh\nexit 0\n", { mode: 0o755 });
@@ -111,14 +112,23 @@ test("the unit sandboxes the job (no home, keys or seats), bounds it inside agen
 });
 
 test("register: a failing registration backs off (after 3 failures in 10 min, each attempt waits first); a success clears it", () => {
-  const { env, run } = world(online());
+  const { env, run, set } = world(online());
   const reg = () => { const t0 = Date.now(); const r = spawnSync("python3", [tool, "register", "demo"], { encoding: "utf8", env: { ...env, AGENT_CI_REGISTER_BACKOFF_S: "0.6" } }); return { ...r, ms: Date.now() - t0 }; };
   for (let i = 0; i < 3; i++) { const r = reg(); assert.equal(r.status, 1); assert.doesNotMatch(r.stderr, /waiting/, `attempt ${i + 1} doesn't wait`); }
-  const slow = reg(); assert.equal(slow.status, 1); assert.match(slow.stderr, /3 failed registrations of demo in 10 min: waiting 0\.6s first/); assert.ok(slow.ms >= 550, `waited ${slow.ms} ms`);
+  const slow = reg(); assert.equal(slow.status, 1); assert.match(slow.stderr, /3 failed registrations or crashed runs of demo in 10 min: waiting 0\.6s first/); assert.ok(slow.ms >= 550, `waited ${slow.ms} ms`);
   assert.equal(run("install", "demo").status, 0);   // now it can register
   const ok = reg(); assert.equal(ok.status, 0, ok.stderr); assert.match(ok.stderr, /waiting/, "still backed off once (4 recent failures)");
   assert.ok(!fs.existsSync(join(env.AGENT_CI_STATE, "register-failures-demo.json")), "a success clears the record");
   const next = reg(); assert.equal(next.status, 0); assert.doesNotMatch(next.stderr, /waiting/);
+  // QA (#169): a runner that registers fine but crashes (run.sh exits non-zero) restarts every 5 s with no start limit.
+  // Each crash counts, a successful registration doesn't clear it, and the 4th restart in 10 min waits first.
+  set({ mainStatus: { "agent-ci-runner@demo.service": "1" } });
+  for (let i = 0; i < 2; i++) { const r = reg(); assert.equal(r.status, 0); assert.doesNotMatch(r.stderr, /waiting/, `crash ${i + 1}`); }
+  const loop = reg(); assert.equal(loop.status, 0); assert.match(loop.stderr, /3 failed registrations or crashed runs of demo in 10 min: waiting 0\.6s first/); assert.ok(loop.ms >= 550);
+  // a clean run (exit 0: a job done) clears it: normal ephemeral restarts never wait
+  set({ mainStatus: { "agent-ci-runner@demo.service": "0" } });
+  const clean = reg(); assert.equal(clean.status, 0); assert.ok(!fs.existsSync(join(env.AGENT_CI_STATE, "register-failures-demo.json")));
+  const again = reg(); assert.doesNotMatch(again.stderr, /waiting/);
 });
 
 test("watch retries a runner whose registration failed (Restart= doesn't: a failed Requires= is not an exit); never a busy, starting or paused one", () => {
