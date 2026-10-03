@@ -7,8 +7,9 @@ remain only for the exceptions below, and as the automatic fallback.
 ## How it works
 
 - **One ephemeral runner per repo.** korallis is a personal account, so a runner can serve only one repo. Each repo gets
-  `agent-ci-runner@<repo>.service`, a systemd user unit. Before every job, its `ExecStartPre`
-  (`agent-ci-runner register <repo>`, which runs outside the sandbox because it needs `gh`) does three things:
+  `agent-ci-runner@<repo>.service`, a systemd user unit. Before every job, `agent-ci-runner-register@<repo>.service`
+  (`agent-ci-runner register <repo>`, a separate unit outside the sandbox because it needs `gh`; the runner unit requires
+  it before each start) does three things:
   - wipes the work dir;
   - fetches a registration token with `gh api`. The token reaches the runner only as `ACTIONS_RUNNER_INPUT_TOKEN` in
     its environment: it is never printed and never on a command line;

@@ -80,7 +80,8 @@ test("the unit sandboxes the job (no home, keys or seats), bounds it inside agen
   const u = fs.readFileSync(join(repo, "system/systemd/agent-ci-runner@.service"), "utf8");
   for (const line of ["Slice=agent-heavy.slice", "PrivateUsers=yes", "ProtectHome=tmpfs", "PrivateTmp=yes", "NoNewPrivileges=yes",
     "MemoryMax=8G", "MemorySwapMax=0", "CPUQuota=800%", "CPUWeight=20", "IOWeight=20", "Restart=always",
-    "ExecStartPre=+%h/.local/bin/agent-ci-runner register %i", "ExecStart=%h/.local/share/agent-stack/ci-runners/%i/runner/run.sh",
+    "Requires=agent-ci-runner-register@%i.service", "After=network-online.target agent-ci-runner-register@%i.service",
+    "ExecStart=%h/.local/share/agent-stack/ci-runners/%i/runner/run.sh",
     "BindPaths=%h/.local/share/agent-stack/ci-runners/%i/home:%h %h/.local/share/agent-stack/ci-runners/%i %h/.local/state/agent-stack/ci-runners",
     "BindReadOnlyPaths=%h/.local/share/agent-stack/ci-runners/_shared -%h/.config/agent-stack/ci-runners.env",
     // the runner's worker uses the passwd home: the runner's own home is mounted over that path (Playwright writes ~/.cache)
@@ -90,6 +91,12 @@ test("the unit sandboxes the job (no home, keys or seats), bounds it inside agen
     assert.ok(u.split("\n").includes(line), line);
   assert.doesNotMatch(u, /BindPaths=.*(\.codex|\.claude|\.cli-proxy|\.config\/gh|Projects)/);
   assert.match(u, /\n\[Install\]\nWantedBy=default\.target\n/, "enable --now needs an [Install] section, or install fails on the live host");
+  // no privileged step inside the sandboxed unit: with the home bound over the real home path, systemd can't set up an
+  // ExecStartPre=+ (226/NAMESPACE on the live host); registration is its own unsandboxed unit, run before every start
+  assert.doesNotMatch(u, /^ExecStart(Pre|Post)?=[+!]/m);
+  const reg = fs.readFileSync(join(repo, "system/systemd/agent-ci-runner-register@.service"), "utf8");
+  assert.match(reg, /^Type=oneshot$/m); assert.match(reg, /^ExecStart=%h\/\.local\/bin\/agent-ci-runner register %i$/m);
+  assert.doesNotMatch(reg, /ProtectHome|PrivateUsers|BindPaths/, "registration runs outside the sandbox (it needs gh)");
   // inside the unit plain nproc reports the CPUQuota (8 of 32 here), which would read a normal host load as overloaded
   assert.match(fs.readFileSync(hook, "utf8"), /cpus=\$\{AGENT_CI_NPROC:-\$\(nproc --all\)\}/);
   const inst = fs.readFileSync(join(repo, "install.sh"), "utf8");

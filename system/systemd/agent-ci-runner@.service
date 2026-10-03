@@ -1,12 +1,14 @@
 # One ephemeral GitHub Actions runner for korallis/%i on this host (agent-ci-runner install %i; docs/RUNNERS.md).
-# Every job gets a freshly registered runner and a clean work dir (ExecStartPre, outside the sandbox: it needs gh).
+# Every job gets a freshly registered runner and a clean work dir: agent-ci-runner-register@%i runs before each start,
+# outside the sandbox (it needs gh).
 # The job itself runs sandboxed: it sees only its own runner dir, the shared gate hooks and the CI slot state, never
 # the agents' homes, keys or seats. It shares agent-heavy.slice's memory ceiling with heavy builds, at low CPU and
 # IO weight, and the job-started hook holds it until one of the global CI job slots is free and the host isn't
 # overloaded (AGENT_CI_MAX_JOBS etc. in ~/.config/agent-stack/ci-runners.env).
 [Unit]
 Description=GitHub Actions runner for %i (agent-stack, ephemeral, sandboxed)
-After=network-online.target
+After=network-online.target agent-ci-runner-register@%i.service
+Requires=agent-ci-runner-register@%i.service
 StartLimitIntervalSec=600
 StartLimitBurst=20
 
@@ -25,7 +27,6 @@ Environment=ACTIONS_RUNNER_HOOK_JOB_STARTED=%h/.local/share/agent-stack/ci-runne
 Environment=ACTIONS_RUNNER_HOOK_JOB_COMPLETED=%h/.local/share/agent-stack/ci-runners/_shared/job-completed.sh
 Environment=PATH=/usr/local/bin:/usr/bin:/bin
 WorkingDirectory=%h/.local/share/agent-stack/ci-runners/%i/runner
-ExecStartPre=+%h/.local/bin/agent-ci-runner register %i
 ExecStart=%h/.local/share/agent-stack/ci-runners/%i/runner/run.sh
 Restart=always
 RestartSec=5
