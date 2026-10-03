@@ -328,6 +328,13 @@ def drop_instance(inst):
         pass
 
 
+def start_inactive(inst):
+    # an active runner may be mid-job: starting it again would also start its register unit (Requires=), which
+    # re-extracts the runner and wipes its home under the job
+    if systemctl("is-active", unit(inst), check=False).stdout.strip() != "active":
+        systemctl("start", unit(inst))
+
+
 def cmd_install(repo, count, dry, lane=None):
     r = gh("api", f"repos/{OWNER}/{repo}", "--jq", ".full_name", check=False)
     if r.returncode != 0:
@@ -357,7 +364,8 @@ def cmd_install(repo, count, dry, lane=None):
     (STATE / f"{repo}.paused").unlink(missing_ok=True)
     systemctl("daemon-reload")
     for inst in want:
-        systemctl("enable", "--now", unit(inst))
+        systemctl("enable", unit(inst))
+        start_inactive(inst)
     names = [runner_name(i) for i in want]
     if not wait_online(repo, names, float(os.environ.get("AGENT_CI_ONLINE_WAIT_S", "120"))):
         die(f"{', '.join(names)} did not all come online; {VAR} left unset (jobs stay hosted). See: agent-ci-runner logs {repo}")
@@ -381,10 +389,7 @@ def cmd_start(repo):
     if not insts:
         die(f"no local runner installed for {repo}; run agent-ci-runner install {repo}")
     for inst in insts:
-        # an active runner may be mid-job: starting it again would also start its register unit (Requires=), which
-        # re-extracts the runner and wipes its home under the job
-        if systemctl("is-active", unit(inst), check=False).stdout.strip() != "active":
-            systemctl("start", unit(inst))
+        start_inactive(inst)
     if not wait_online(repo, [runner_name(i) for i in insts], float(os.environ.get("AGENT_CI_ONLINE_WAIT_S", "120"))):
         die(f"the runner(s) for {repo} did not all come online; {VAR} left unset")
     var_set(repo, True)
