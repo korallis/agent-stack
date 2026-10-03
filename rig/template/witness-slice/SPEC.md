@@ -45,9 +45,11 @@ health before the witness starts. A failed deploy parks this slice with a wake; 
 
 Mark anything you couldn't confirm, and say where you looked.
 
-Video (owner rule 2026-10-02): record the whole end-to-end check as a screen video (.mp4/.webm), e.g. a Playwright
-context with `recordVideo` (agent-stack `guidance/coordination.md`), and keep it with the proof (`rig proof add --media
-<file>`). Witness on staging with test data; if real client data would show on screen, stop and ask the owner (through
+Video (owner rule 2026-10-02): record the whole end-to-end check as a screen video (.mp4/.webm) and keep it with the
+proof (`rig proof add --media <file>`). With the Playwright MCP: call `browser_start_video` (`filename: "walk.webm"`,
+`size: {width: 1280, height: 720}`) at the start of the walk and `browser_stop_video` at its end, then run
+`agent-video-fit` on the saved file (under your seat's MCP output dir) and copy it to the proof dir below. In a script:
+a context with `recordVideo` (agent-stack `guidance/coordination.md`). Witness on staging with test data; if real client data would show on screen, stop and ask the owner (through
 the lead) before recording. On a PASS this video is the owner's proof: run `agent-video-fit <video>` (it prints the
 path of a copy under 50 MiB, re-encoding only if needed) and give that path to the lead with the result.
 Evidence: screenshots or video per step, stored where the project allows. Sensitive or client data never goes into git,

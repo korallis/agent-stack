@@ -18,7 +18,10 @@ Read when sending a human row, planning a wave, dispatching work or closing a me
   - How: in a Playwright script, `await page.screenshot({ path: dir + "/home.png", fullPage: true })`; for video,
     `browser.newContext({ recordVideo: { dir, size: { width: 1280, height: 720 } } })`, then `await context.close()`
     and pass `await page.video().path()` (a .webm). Over 50 MiB? `agent-video-fit <video>` prints the path of a copy
-    that fits (H.264 .mp4, re-encoded only when needed); Slack skips a bigger attachment and only the text lands. The Playwright MCP's `browser_take_screenshot` saves under
+    that fits (H.264 .mp4, re-encoded only when needed); Slack skips a bigger attachment and only the text lands.
+    With the Playwright MCP (a witness walking the app by hand): `browser_start_video` (`filename`, e.g. `walk.webm`;
+    `size` 1280x720) before the first step, walk, `browser_stop_video` after the last, then `agent-video-fit` on the
+    saved file and copy the result into the proof folder below. The MCP's `browser_take_screenshot` also saves under
     `~/.local/state/agent-stack/playwright-mcp/<your seat>/`, which is scratch: deleted after 48 hours (sooner on a
     client-data project), so copy what you keep into the slice's proof dir or the proof folder below.
   - Where: `$HOME/.cache/<rig>-tmp/<seat>/proof/` (the seat root of the `TMPDIR` rule below), outside every repo and
