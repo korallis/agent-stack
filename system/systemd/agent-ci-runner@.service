@@ -9,8 +9,10 @@
 Description=GitHub Actions runner for %i (agent-stack, ephemeral, sandboxed)
 After=network-online.target agent-ci-runner-register@%i.service
 Requires=agent-ci-runner-register@%i.service
-StartLimitIntervalSec=600
-StartLimitBurst=20
+# No start limit: an ephemeral runner exits after every job and restarts, so a busy repo's normal job churn (20 short
+# jobs in 10 min) hit the old 20/600 s limit and stopped the runner for good. A failing registration backs off instead
+# (agent-ci-runner register), and watch moves the repo's jobs to hosted runners after 10 min down.
+StartLimitIntervalSec=0
 
 [Service]
 Type=simple
@@ -25,7 +27,8 @@ Environment=RUNNER_TOOL_CACHE=%h/.local/share/agent-stack/ci-runners/%i/toolcach
 Environment=AGENT_TOOLSDIRECTORY=%h/.local/share/agent-stack/ci-runners/%i/toolcache
 Environment=ACTIONS_RUNNER_HOOK_JOB_STARTED=%h/.local/share/agent-stack/ci-runners/_shared/job-started.sh
 Environment=ACTIONS_RUNNER_HOOK_JOB_COMPLETED=%h/.local/share/agent-stack/ci-runners/_shared/job-completed.sh
-Environment=PATH=/usr/local/bin:/usr/bin:/bin
+# _shared/bin: tools a job expects from hosted Ubuntu that this host has only under the hidden home (gh)
+Environment=PATH=%h/.local/share/agent-stack/ci-runners/_shared/bin:/usr/local/bin:/usr/bin:/bin
 # The same timezone and locale as GitHub's hosted Ubuntu images: date-sensitive tests ("last Monday", "this week")
 # failed on the host's Europe/London time.
 Environment=TZ=UTC

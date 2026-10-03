@@ -227,6 +227,66 @@ def alloc_port(inst):
     return ports[inst]
 
 
+def last_run_crashed(inst):
+    """Whether the runner's previous run ended with a non-zero exit. An ephemeral runner exits 0 after its job; a crash
+    (run.sh failing before or without a job) is anything else. Read before each start, by register."""
+    r = systemctl("show", unit(inst), "-p", "ExecMainStatus", "--value", check=False)
+    return r.stdout.strip() not in ("", "0")
+
+
+def given_up(inst):
+    return STATE / f"{inst}.gave-up"
+
+
+def register_with_backoff(inst):
+    """register, bounded on failure. A failure is a failed registration, or a previous run that ended abnormally
+    (non-zero exit: run.sh crashing before or without a job); a clean exit 0 (a job done) clears the streak. From the
+    BACKOFF_FROM-th failure in 30 min each start first waits AGENT_CI_REGISTER_BACKOFF_S (60) x 2^(n - BACKOFF_FROM),
+    so 60, 120, 240 s; at the GIVE_UP_AT-th the runner is given up: register refuses (the runner stays stopped: a
+    failed Requires= isn't restarted), the repo's CI_LOCAL is cleared (jobs run hosted; watch sets it again only while
+    its other runners cover every label), and watch no longer retries it until `agent-ci-runner start <repo>`.
+    Loops this bounds: a failed registration (retried by watch every tick, not by Restart=), and a runner that
+    registers but crashes (Restart=always every 5 s; the unit has no start limit, so a busy runner's per-job restarts
+    never stop it)."""
+    repo = split(inst)[0]
+    f = STATE / f"register-failures-{inst}.json"
+    now = time.time()
+    try:
+        recent = [t for t in json.loads(f.read_text()) if now - t < 1800]
+    except (OSError, ValueError):
+        recent = []
+    crashed = last_run_crashed(inst)
+    if crashed:
+        recent.append(now)
+        STATE.mkdir(parents=True, exist_ok=True)
+        f.write_text(json.dumps(recent))
+    n = len(recent)
+    if n >= GIVE_UP_AT:
+        given_up(inst).write_text(str(int(now)))
+        var_set(repo, False)
+        msg = (f"{OWNER}/{repo}: runner {inst} failed {n} times in 30 min (failed registrations or abnormal exits): "
+               f"given up, not restarted; {VAR} cleared, jobs run hosted. Fix it, then: agent-ci-runner start {repo}")
+        say(msg)
+        subprocess.run(["notify-send", "--app-name=Agent stack", "CI runner given up", msg], check=False, capture_output=True)
+        die(f"{inst} given up after {n} failures")
+    if n >= BACKOFF_FROM:
+        wait = float(os.environ.get("AGENT_CI_REGISTER_BACKOFF_S", "60")) * 2 ** (n - BACKOFF_FROM)
+        print(f"{n} failed registrations or abnormal exits of {inst} in 30 min: waiting {wait:g}s first", file=sys.stderr)
+        time.sleep(wait)
+    try:
+        cmd_register(inst)
+    except SystemExit as e:
+        if e.code not in (0, None):
+            STATE.mkdir(parents=True, exist_ok=True)
+            f.write_text(json.dumps([*recent, time.time()]))
+        raise
+    if not crashed:
+        f.unlink(missing_ok=True)
+
+
+BACKOFF_FROM, GIVE_UP_AT = 3, 6
+
+
 def cmd_register(inst):
     repo = split(inst)[0]
     if not runner_dir(inst).is_dir():
@@ -283,6 +343,38 @@ def put(path, data):
     return True
 
 
+def gh_binary():
+    """The real gh for jobs: hosted Ubuntu has one, and workflows call it (a guard reading a PR's live labels). Here it
+    is a mise install under the home the sandbox hides. AGENT_CI_GH overrides (tests)."""
+    if os.environ.get("AGENT_CI_GH"):
+        p = Path(os.environ["AGENT_CI_GH"])
+        return p if p.is_file() else None
+    path = f"{TOOL_PATH}:{os.environ.get('PATH', '')}"
+    try:
+        r = subprocess.run(["mise", "which", "gh"], capture_output=True, text=True, cwd=REAL_HOME, timeout=30, env={**os.environ, "PATH": path})
+        if r.returncode == 0 and Path(r.stdout.strip()).is_file():
+            return Path(r.stdout.strip())
+    except (OSError, subprocess.TimeoutExpired):
+        pass
+    w = shutil.which("gh", path=path)
+    real = Path(w).resolve() if w else None
+    return real if real and real.name == "gh" else None   # not mise's own binary behind a shim
+
+
+def put_copy(path, src):
+    """put() a copy of src (by rename), skipped when size and mtime already match: no 40 MB re-read per job."""
+    s = src.stat()
+    try:
+        d = path.stat()
+        if d.st_size == s.st_size and int(d.st_mtime) == int(s.st_mtime):
+            return False
+    except OSError:
+        pass
+    put(path, src.read_bytes())
+    os.utime(path, (s.st_atime, s.st_mtime))
+    return True
+
+
 def install_hooks():
     """The job gate every runner runs from ci-runners/_shared (bound read-only into each unit). Called by install, by
     register (before every job, so a merged hook change reaches the next job) and by refresh-hooks (install.sh)."""
@@ -291,6 +383,13 @@ def install_hooks():
     changed = put(shared / "ci-runner-hook", HOOK_SRC.read_bytes())
     for name, mode in (("job-started.sh", "start"), ("job-completed.sh", "end")):
         changed |= put(shared / name, f'#!/usr/bin/env bash\nexec "$(dirname "$0")/ci-runner-hook" {mode}\n'.encode())
+    # gh for jobs: _shared/bin is first on the unit's PATH (the sandbox hides the host's mise install)
+    src = gh_binary()
+    if src:
+        (shared / "bin").mkdir(exist_ok=True)
+        changed |= put_copy(shared / "bin/gh", src)
+    else:
+        print("agent-ci-runner: no gh binary found; jobs that call gh will not find it", file=sys.stderr)
     (STATE / "slots").mkdir(parents=True, exist_ok=True)
     if not CONFIG.exists():
         CONFIG.parent.mkdir(parents=True, exist_ok=True)
@@ -380,6 +479,7 @@ def cmd_install(repo, count, dry, lane=None):
     # Only a new instance is extracted here: register re-extracts the verified release before every start anyway, and an
     # installed runner may be in the middle of a job (re-extracting it would pull its files from under that job).
     for inst in want:
+        given_up(inst).unlink(missing_ok=True)   # a deliberate install retries a runner that was given up
         if not runner_dir(inst).is_dir():
             extract_runner(inst)
     install_hooks()
@@ -413,6 +513,9 @@ def cmd_stop(repo):
 def cmd_start(repo):
     (STATE / f"{repo}.paused").unlink(missing_ok=True)
     insts = instances(repo)
+    for inst in insts:   # a deliberate start retries a runner that was given up, from a clean streak
+        given_up(inst).unlink(missing_ok=True)
+        (STATE / f"register-failures-{inst}.json").unlink(missing_ok=True)
     if not insts:
         die(f"no local runner installed for {repo}; run agent-ci-runner install {repo}")
     for inst in insts:
@@ -446,6 +549,16 @@ def cmd_watch():
     for repo in repos():
         if (STATE / f"{repo}.paused").exists():
             continue
+        # The retry path for a failed registration: the runner unit Requires= its register oneshot, so when that fails
+        # the runner's start fails as a dependency, which Restart= does not retry (it reacts only to the runner process
+        # exiting). Each tick (2 min) starts such a runner again; register's backoff bounds the token requests.
+        # Only failed or inactive: active is mid-job, activating is registering or waiting to restart.
+        for i in instances(repo):
+            state = systemctl("is-active", unit(i), check=False).stdout.strip()
+            if state in ("failed", "inactive") and not given_up(i).exists():
+                systemctl("reset-failed", unit(i), f"agent-ci-runner-register@{i}.service", check=False)
+                systemctl("start", unit(i), check=False)
+                say(f"{OWNER}/{repo}: runner {i} was {state}; started again (registration retried)")
         up = online_names(repo)
         if up is None:
             continue  # GitHub unreachable: judge nothing
@@ -528,7 +641,7 @@ def main():
             die("--count must be 1 to 8")
         cmd_install(repo, a.count, a.dry_run, a.lane)
     elif a.cmd == "register":
-        cmd_register(repo)
+        register_with_backoff(repo)
     elif a.cmd == "stop":
         cmd_stop(repo)
     elif a.cmd == "start":

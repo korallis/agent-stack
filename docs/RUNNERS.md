@@ -56,6 +56,9 @@ remain only for the exceptions below, and as the automatic fallback.
   - `stop` and `remove` clear it first.
   - `agent-ci-runner-watch.timer` checks every 2 minutes. If a runner has been down for 10 minutes it clears the
     variable, so jobs run hosted instead of queueing, and it sets the variable again when the runner is back.
+- **Jobs have `gh`**, as on hosted Ubuntu. The sandbox hides this host's mise install, so `install_hooks` copies the
+  real binary into `ci-runners/_shared/bin` (at install, every registration and `refresh-hooks`; skipped when unchanged),
+  which is first on the unit's `PATH`. The workflow's `GH_TOKEN` authenticates it.
 - **Each runner has its own app port.** Jobs get `E2E_PORT` (from 47100 upwards, stable per runner, set by
   `register`), `TZ=UTC` and `C.UTF-8`, as on hosted Ubuntu. Two runners on this host share its network, so a project
   whose tests start an app server must take its port from `E2E_PORT` (a fixed port collides between parallel jobs).
@@ -111,7 +114,7 @@ after 10 minutes, as for a single runner.
 | Keep one runner for `main` | `agent-ci-runner install <repo> --count 2 --main-lane` (undo: `--no-main-lane`); see *Main lane* above |
 | Deliver a job gate (`system/ci-runner-hook`) change | Automatic: `install.sh --apply` and every runner's registration (before each job) copy it into `ci-runners/_shared` by rename, which is safe under running jobs. By hand: `agent-ci-runner refresh-hooks` |
 | Pause (jobs go hosted) / resume | `agent-ci-runner stop <repo>` / `agent-ci-runner start <repo>` (a runner that is already active, maybe mid-job, is left alone) |
-| Re-register after a failure | `agent-ci-runner stop <repo> && agent-ci-runner start <repo>` (every start registers afresh) |
+| Re-register after a failure | `agent-ci-runner stop <repo> && agent-ci-runner start <repo>` (every start registers afresh). The unit has no start limit (it restarts after every job). A failed registration leaves the runner stopped (systemd's `Restart=` doesn't retry a failed `Requires=`), so `watch` starts it again every 2 minutes unless the repo is paused. A runner that registers but then crashes (non-zero exit) is restarted by `Restart=` every 5 s; `register` reads that exit status before each start. From the 3rd failed registration or abnormal exit in 30 minutes, each start waits first (60, 120, 240 s); at the 6th the runner is **given up**: it stays stopped, the repo's `CI_LOCAL` is cleared (jobs run hosted), a log line and desktop notice say so, and `watch` leaves it alone until `agent-ci-runner start <repo>` (or `install`). A clean run (exit 0 after a job) clears the streak, and `watch` moves the repo to hosted runners after 10 minutes down. A unit stopped by an older start limit: `systemctl --user reset-failed agent-ci-runner@<instance>.service`, then `start` |
 | Remove | `agent-ci-runner remove <repo>` (`--keep` keeps the directory) |
 | State of all runners, slots and load | `agent-ci-runner status` (`--json`) |
 | Logs | `agent-ci-runner logs <repo> -n 200`, or `journalctl --user -u agent-ci-runner@<repo>` |

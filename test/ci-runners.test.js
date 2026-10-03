@@ -45,6 +45,7 @@ import json, os, sys
 s = json.load(open(os.environ["GH_SCENARIO"])); a = sys.argv[1:]
 open(os.environ["CALLS"], "a").write(json.dumps({"tool": "systemctl", "argv": a}) + "\\n")
 v = s.get("active", "active"); v = v.get(a[-1], "inactive") if isinstance(v, dict) else v   # one state, or per unit
+if "show" in a and "ExecMainStatus" in a: print(s.get("mainStatus", {}).get(a[a.index("show") + 1], "0")); sys.exit(0)
 if "is-active" in a: print(v); sys.exit(0 if v == "active" else 3)
 `, { mode: 0o755 });
 for (const t of ["logger", "notify-send"]) fs.writeFileSync(join(sysStubs, t), "#!/bin/sh\nexit 0\n", { mode: 0o755 });
@@ -61,6 +62,7 @@ const tarball = join(root, "runner.tar.gz");
 execFileSync("tar", ["czf", tarball, "-C", rel, "config.sh", "run.sh"]);
 const sha = createHash("sha256").update(fs.readFileSync(tarball)).digest("hex");
 
+const fakeGh = join(root, "fake-gh"); fs.writeFileSync(fakeGh, "#!/bin/sh\necho gh version 0-test\n", { mode: 0o755 });
 let n = 0;
 function world(initial = {}) {
   const w = join(root, `w${n++}`); fs.mkdirSync(w);
@@ -68,7 +70,7 @@ function world(initial = {}) {
   // as in the unit: a minimal PATH; gh is found through AGENT_CI_TOOL_PATH (default ~/.local/bin and the mise shims)
   const env = { PATH: `${sysStubs}:/usr/bin:/bin`, AGENT_CI_TOOL_PATH: stubs, GH_SCENARIO: sc, CALLS: join(w, "calls"), AGENT_CI_ROOT: join(w, "runners"),
     AGENT_CI_STATE: join(w, "state"), AGENT_CI_CONFIG: join(w, "config/ci-runners.env"), AGENT_CI_CACHE: join(w, "cache"),
-    AGENT_CI_TARBALL: tarball, AGENT_CI_SHA256: sha, AGENT_CI_HOST: "testhost", AGENT_CI_POLL_S: "0.05", AGENT_CI_ONLINE_WAIT_S: "1" };
+    AGENT_CI_TARBALL: tarball, AGENT_CI_SHA256: sha, AGENT_CI_GH: fakeGh, AGENT_CI_HOST: "testhost", AGENT_CI_POLL_S: "0.05", AGENT_CI_ONLINE_WAIT_S: "1" };
   const run = (...args) => { fs.writeFileSync(env.CALLS, ""); const r = spawnSync("python3", [tool, ...args], { encoding: "utf8", env });
     return { ...r, calls: fs.readFileSync(env.CALLS, "utf8").trim().split("\n").filter(Boolean).map(JSON.parse) }; };
   const scenario = () => JSON.parse(fs.readFileSync(sc, "utf8"));
@@ -79,8 +81,11 @@ const online = (name = "testhost-demo", status = "online") => ({ runners: [{ id:
 
 test("the unit sandboxes the job (no home, keys or seats), bounds it inside agent-heavy.slice and gates every job", () => {
   const u = fs.readFileSync(join(repo, "system/systemd/agent-ci-runner@.service"), "utf8");
+  assert.doesNotMatch(u, /^StartLimitBurst=/m, "no burst limit on the runner unit");
   for (const line of ["Slice=agent-heavy.slice", "PrivateUsers=yes", "ProtectHome=tmpfs", "PrivateTmp=yes", "NoNewPrivileges=yes",
     "MemoryMax=8G", "MemorySwapMax=0", "CPUQuota=800%", "CPUWeight=20", "IOWeight=20", "Restart=always",
+    // no start limit: per-job restarts of a busy ephemeral runner (20 jobs in 10 min) hit 20/600 s and stopped it for good
+    "StartLimitIntervalSec=0",
     // hosted images' timezone and locale: date-sensitive browser tests failed on the host's local time
     "Environment=TZ=UTC", "Environment=LANG=C.UTF-8", "Environment=LC_ALL=C.UTF-8",
     "EnvironmentFile=-%h/.local/share/agent-stack/ci-runners/%i/ci.env",
@@ -105,6 +110,67 @@ test("the unit sandboxes the job (no home, keys or seats), bounds it inside agen
   assert.match(fs.readFileSync(hook, "utf8"), /cpus=\$\{AGENT_CI_NPROC:-\$\(nproc --all\)\}/);
   const inst = fs.readFileSync(join(repo, "install.sh"), "utf8");
   assert.match(inst, /for f in [^;]*\bagent-ci-runner\b/); assert.match(inst, /for t in [^;]*\bagent-ci-runner-watch\b/);
+});
+
+test("register: failures (failed registrations, abnormal runner exits) back off growing, then the runner is given up; exit 0 never counts", () => {
+  const { env, run, set, scenario } = world(online());
+  const reg = () => { const t0 = Date.now(); const r = spawnSync("python3", [tool, "register", "demo"], { encoding: "utf8", env: { ...env, AGENT_CI_REGISTER_BACKOFF_S: "0.2" } }); return { ...r, ms: Date.now() - t0 }; };
+  const rec = join(env.AGENT_CI_STATE, "register-failures-demo.json"), gave = join(env.AGENT_CI_STATE, "demo.gave-up");
+  // failed registrations (no runner yet): 3 don't wait, the 4th waits first
+  for (let i = 0; i < 3; i++) { const r = reg(); assert.equal(r.status, 1); assert.doesNotMatch(r.stderr, /waiting/, `attempt ${i + 1}`); }
+  const slow = reg(); assert.equal(slow.status, 1); assert.match(slow.stderr, /3 failed registrations or abnormal exits of demo in 30 min: waiting 0\.2s first/); assert.ok(slow.ms >= 180);
+  assert.equal(run("install", "demo").status, 0);
+  const ok = reg(); assert.equal(ok.status, 0, ok.stderr); assert.ok(!fs.existsSync(rec), "a success clears the record");
+  // a clean run (exit 0: a job done) never counts: normal ephemeral restarts never wait
+  set({ mainStatus: { "agent-ci-runner@demo.service": "0" } });
+  for (let i = 0; i < 4; i++) assert.doesNotMatch(reg().stderr, /waiting/);
+  // QA (#169): a runner that registers fine but exits non-zero restarts every 5 s with no start limit. Each abnormal
+  // exit counts (a successful registration doesn't clear it): 2 free, then 0.2, 0.4, 0.8 s, then given up
+  set({ mainStatus: { "agent-ci-runner@demo.service": "1" } });
+  for (let i = 0; i < 2; i++) assert.doesNotMatch(reg().stderr, /waiting/, `crash ${i + 1}`);
+  for (const [n, w] of [[3, "0.2"], [4, "0.4"], [5, "0.8"]]) {
+    const r = reg(); assert.equal(r.status, 0); assert.match(r.stderr, new RegExp(`${n} failed registrations or abnormal exits of demo in 30 min: waiting ${w.replace(".", "\\.")}s first`));
+    assert.ok(r.ms >= Number(w) * 900, `${n}: waited ${r.ms} ms`);
+  }
+  assert.equal(scenario().vars.demo, "1");
+  const up = reg();
+  assert.equal(up.status, 1, "given up: register refuses, so the runner stays stopped");
+  assert.match(up.stdout, /runner demo failed 6 times in 30 min .*given up, not restarted; CI_LOCAL cleared, jobs run hosted\. Fix it, then: agent-ci-runner start demo/);
+  assert.ok(fs.existsSync(gave)); assert.equal(scenario().vars.demo, undefined, "jobs fall back to hosted at once");
+  // watch leaves a given-up runner stopped; start (deliberate) clears it and retries
+  set({ active: { "agent-ci-runner@demo.service": "inactive" } });
+  assert.ok(!run("watch").calls.some((c) => c.tool === "systemctl" && c.argv.includes("start")), "watch doesn't restart it");
+  set({ active: { "agent-ci-runner@demo.service": "inactive" }, runners: online().runners });
+  const st = run("start", "demo"); assert.ok(!fs.existsSync(gave) && !fs.existsSync(rec), "start clears the give-up and the streak");
+  assert.ok(st.calls.some((c) => c.tool === "systemctl" && c.argv.join(" ") === "--user start agent-ci-runner@demo.service"));
+});
+
+test("watch retries a runner whose registration failed (Restart= doesn't: a failed Requires= is not an exit); never a busy, starting or paused one", () => {
+  const { env, run, set } = world(online());
+  assert.equal(run("install", "demo").status, 0);
+  const started = (state) => { set({ active: { "agent-ci-runner@demo.service": state } }); return run("watch").calls.filter((c) => c.tool === "systemctl" && !c.argv.includes("is-active")).map((c) => c.argv.join(" ")); };
+  for (const state of ["failed", "inactive"])
+    assert.deepEqual(started(state), ["--user reset-failed agent-ci-runner@demo.service agent-ci-runner-register@demo.service", "--user start agent-ci-runner@demo.service"], state);
+  for (const state of ["active", "activating"]) assert.deepEqual(started(state), [], `${state}: left alone`);
+  fs.writeFileSync(join(env.AGENT_CI_STATE, "demo.paused"), "1");
+  assert.deepEqual(started("failed"), [], "a paused repo (stop) is never started");
+});
+
+test("jobs get gh (hosted Ubuntu has it; here it lives under the home the sandbox hides): _shared/bin, first on the unit's PATH", () => {
+  const u = fs.readFileSync(join(repo, "system/systemd/agent-ci-runner@.service"), "utf8");
+  assert.match(u, /^Environment=PATH=%h\/\.local\/share\/agent-stack\/ci-runners\/_shared\/bin:\/usr\/local\/bin:\/usr\/bin:\/bin$/m);
+  assert.match(u, /^BindReadOnlyPaths=%h\/\.local\/share\/agent-stack\/ci-runners\/_shared /m, "bound into the sandbox");
+  const { w, env, run } = world(online());
+  assert.equal(run("install", "demo").status, 0);
+  const shared = join(env.AGENT_CI_ROOT, "_shared/bin/gh");
+  assert.equal(fs.readFileSync(shared, "utf8"), fs.readFileSync(fakeGh, "utf8")); assert.equal(fs.statSync(shared).mode & 0o777, 0o755);
+  // a newer gh reaches the next job through register; an unchanged one isn't copied again
+  const newer = join(w, "gh-2"); fs.writeFileSync(newer, "#!/bin/sh\necho gh version 2-test\n"); fs.utimesSync(newer, new Date(), new Date(Date.now() + 5000));
+  const reg = (gh) => spawnSync("python3", [tool, "register", "demo"], { encoding: "utf8", env: { ...env, AGENT_CI_GH: gh } });
+  assert.equal(reg(newer).status, 0); assert.match(fs.readFileSync(shared, "utf8"), /2-test/);
+  const ino = fs.statSync(shared).ino; assert.equal(reg(newer).status, 0); assert.equal(fs.statSync(shared).ino, ino, "unchanged: not re-copied");
+  // no gh found: register still succeeds and says so
+  const none = reg(join(w, "missing")); assert.equal(none.status, 0, none.stderr); assert.match(none.stderr, /no gh binary found/);
 });
 
 test("register: a fresh ephemeral registration with a clean work dir; the token reaches config.sh only by env and is never printed", () => {
@@ -253,7 +319,7 @@ test("hook updates reach ci-runners/_shared through register and install.sh --ap
   assert.equal(fs.readFileSync(fd, "utf8"), fs.readFileSync(hookV(1), "utf8"), "the open file is never rewritten in place"); fs.closeSync(fd);
   assert.notEqual(fs.statSync(shared).ino, ino); assert.equal(fs.readFileSync(shared, "utf8"), fs.readFileSync(hookV(2), "utf8"));
   assert.equal(fs.statSync(shared).mode & 0o777, 0o755);
-  assert.deepEqual(fs.readdirSync(join(env.AGENT_CI_ROOT, "_shared")).sort(), ["ci-runner-hook", "job-completed.sh", "job-started.sh"], "no temp file left");
+  assert.deepEqual(fs.readdirSync(join(env.AGENT_CI_ROOT, "_shared")).sort(), ["bin", "ci-runner-hook", "job-completed.sh", "job-started.sh"], "no temp file left");
   // unchanged: not rewritten
   const ino2 = fs.statSync(shared).ino; assert.match(viaInstallSh(hookV(2)).stdout, /already current/); assert.equal(fs.statSync(shared).ino, ino2);
 });
