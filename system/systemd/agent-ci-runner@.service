@@ -9,8 +9,10 @@
 Description=GitHub Actions runner for %i (agent-stack, ephemeral, sandboxed)
 After=network-online.target agent-ci-runner-register@%i.service
 Requires=agent-ci-runner-register@%i.service
-StartLimitIntervalSec=600
-StartLimitBurst=20
+# No start limit: an ephemeral runner exits after every job and restarts, so a busy repo's normal job churn (20 short
+# jobs in 10 min) hit the old 20/600 s limit and stopped the runner for good. A failing registration backs off instead
+# (agent-ci-runner register), and watch moves the repo's jobs to hosted runners after 10 min down.
+StartLimitIntervalSec=0
 
 [Service]
 Type=simple
