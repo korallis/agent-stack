@@ -22,7 +22,8 @@ remain only for the exceptions below, and as the automatic fallback.
   uses. The runner itself is always fresh, and a release that fails its checksum is refused at every registration.
 - **The job is sandboxed.** It runs with `PrivateUsers`, `ProtectHome=tmpfs`, `PrivateTmp` and `NoNewPrivileges`, and
   sees only:
-  - its own `~/.local/share/agent-stack/ci-runners/<repo>/` (runner, `home/`, `toolcache/`);
+  - its own `~/.local/share/agent-stack/ci-runners/<repo>/` (runner, `home/`, `toolcache/`). Its `home/` is mounted over
+    the real home path, because the runner's worker sets `HOME` from the user database and tools write under `~`;
   - the shared gate hook;
   - the CI slot state.
 

@@ -16,7 +16,9 @@ Slice=agent-heavy.slice
 Environment=AGENT_CI_REPO=%i
 Environment=AGENT_CI_STATE=%h/.local/state/agent-stack/ci-runners
 Environment=AGENT_CI_CONFIG=%h/.config/agent-stack/ci-runners.env
-Environment=HOME=%h/.local/share/agent-stack/ci-runners/%i/home
+# The job's home is the real home PATH with the runner's own home dir mounted over it (BindPaths below): the runner's
+# worker resolves HOME from the user database, and tools write under ~ (Playwright's ~/.cache). Wiped every job.
+Environment=HOME=%h
 Environment=RUNNER_TOOL_CACHE=%h/.local/share/agent-stack/ci-runners/%i/toolcache
 Environment=AGENT_TOOLSDIRECTORY=%h/.local/share/agent-stack/ci-runners/%i/toolcache
 Environment=ACTIONS_RUNNER_HOOK_JOB_STARTED=%h/.local/share/agent-stack/ci-runners/_shared/job-started.sh
@@ -32,7 +34,7 @@ KillMode=control-group
 # Sandbox
 PrivateUsers=yes
 ProtectHome=tmpfs
-BindPaths=%h/.local/share/agent-stack/ci-runners/%i %h/.local/state/agent-stack/ci-runners
+BindPaths=%h/.local/share/agent-stack/ci-runners/%i/home:%h %h/.local/share/agent-stack/ci-runners/%i %h/.local/state/agent-stack/ci-runners
 BindReadOnlyPaths=%h/.local/share/agent-stack/ci-runners/_shared -%h/.config/agent-stack/ci-runners.env
 PrivateTmp=yes
 NoNewPrivileges=yes
