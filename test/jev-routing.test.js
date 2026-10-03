@@ -647,6 +647,9 @@ process.stdout.write(typeof out === "string" ? out : JSON.stringify(out));
 `, { mode: 0o755 });
   const work = join(root, "wo39-work"); fs.mkdirSync(join(work, ".agent-stack"), { recursive: true });
   const c = (body, at) => ({ body, url: `https://x/c${at}`, createdAt: `2026-09-30T1${at}:00:00Z`, author: { login: "owner" } });
+  // the documented default (docs/REFERENCE.md) counts Grok reviewers and numbered seats (2026-10-03: grok reviews were dropped)
+  const REVIEW_HEADING = "^## (review|impl|tests)-(claude|codex|kimi|grok)-?\\d*";
+  assert.ok(fs.readFileSync(join(repo, "docs/REFERENCE.md"), "utf8").includes(`"heading": ${JSON.stringify(REVIEW_HEADING)}`), "the docs show the tested default");
   const fixture = {
     view: { number: 9, title: "Adds login", createdAt: "2026-09-30T09:00:00Z", headRefOid: H, baseRefOid: B, baseRefName: "main", headRefName: "agent/impl-codex-1",
       mergeable: "MERGEABLE", mergeStateStatus: "BLOCKED", reviewDecision: "", isDraft: false,
@@ -669,7 +672,7 @@ process.stdout.write(typeof out === "string" ? out : JSON.stringify(out));
   assert.equal(o.history, undefined, "no earlier run of the gate: no history");
   // The workspace file switches this repo to comments.
   fs.writeFileSync(join(work, ".agent-stack", "merge-evidence.json"), JSON.stringify({ repos: { "o/r": {
-    review: { source: "comments", heading: "^## review-(claude|codex|kimi)" }, qa: { source: "comments", heading: "^## qa-" },
+    review: { source: "comments", heading: REVIEW_HEADING }, qa: { source: "comments", heading: "^## qa-" },
     gate: { source: "comments", heading: "^## jev-merge" } } } }));
   r = run(); assert.equal(r.status, 0, r.stderr); o = evidence(r.stdout);
   assert.match(o.review, /independent review comment on a{40}: success "## review-claude-1" \(seat review-claude-1, another family than the author's codex, https:\/\/x\/c2\)/,
@@ -679,6 +682,9 @@ process.stdout.write(typeof out === "string" ? out : JSON.stringify(out));
   assert.match(o.review, /independent review report, the selected comment itself \(https:\/\/x\/c2, .*seat review-claude-1\): .*verified the API contract\. LIMIT: concurrent writers untested/, "QA WO39 f6: the body travels with the verdict");
   assert.match(o.limits, /limits stated by the independent review: concurrent writers untested/);
   assert.doesNotMatch(o.limits, /merge gate jev-merge/);
+  // a Grok seat's review is the only other-family review of a codex author's PR: it counts
+  o = evidence(run({ view: { ...fixture.view, comments: [c(`## review-grok-2\nhead ${H}\nVerdict: PASS`, 6), fixture.view.comments[2]] } }).stdout);
+  assert.match(o.review, /independent review comment on a{40}: success "## review-grok-2" \(seat review-grok-2, another family than the author's codex/);
   const gateC = c(`## jev-merge\nhead ${H}\nVerdict: HOLD`, 5);
   r = run({ view: { ...fixture.view, comments: [...fixture.view.comments, gateC] } }); o = evidence(r.stdout);
   assert.deepEqual(o.history, ["failure: ## jev-merge (gate comment https://x/c5, 2026-09-30T15:00:00Z)"], "WO45: the own earlier HOLD is history");

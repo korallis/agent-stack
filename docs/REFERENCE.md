@@ -790,7 +790,7 @@ the lead or a person. Send Jev evidence, not conclusions.
   {
     "repos": {
       "acme/shop": {
-        "review": { "source": "comments", "heading": "^## review-(claude|codex|kimi)" },
+        "review": { "source": "comments", "heading": "^## (review|impl|tests)-(claude|codex|kimi|grok)-?\\d*" },
         "qa":     { "source": "comments", "heading": "^## qa-" },
         "gate":   { "source": "comments", "heading": "^## jev-merge" },
         "authorFamily": "codex"
