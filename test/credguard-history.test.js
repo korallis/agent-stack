@@ -25,6 +25,10 @@ test("force pushes and rebase updates of a PR branch are refused, in both runtim
     "git push --force-with-lease", "git push --force-with-lease=feature:abc123 origin feature", "git push origin +feature", "git push origin +HEAD:feature", "git push --mirror", "git push --mirror origin",
     "git -C /tmp/x push -f", "git -c push.default=current push --force", "GIT_TRACE=1 git push -f", "cd repo && git push --force-with-lease",
     "git fetch origin; git push -f origin x", "bash -c 'git push --force'", "sh -c \"gh pr update-branch 5 --rebase\"", "env git push -f",
+    // aliases defined in the command itself (QA 05:27Z)
+    "git -c alias.pf=\"push --force\" pf", "git -c alias.pf='!git push --force' pf", "git -c alias.pm='push --mirror' pm origin",
+    "git config alias.pf \"push --force\"", "git config --global alias.pf 'push -f'", "git config alias.pu '!git push origin +HEAD:main'",
+    "git config set alias.pf \"push --force-with-lease\"", "gh alias set ur 'pr update-branch --rebase'",
   ]) {
     const v = verdict(c);
     assert.ok(v.denied, `refused: ${c}`);
@@ -41,5 +45,7 @@ test("look-alikes that rewrite nothing published are allowed", () => {
     "git push --force-if-includes origin x" /* only meaningful with --force-with-lease; alone it forces nothing */,
     "git pull --rebase", "git rebase origin/main", "git checkout -f main", "git fetch --force", "git branch -f tmp HEAD",
     "echo 'git push --force'", "grep -n 'push -f' notes.md", "gh pr view 391 --json title", "gh pr merge 391 --squash",
+    "git -c alias.st=status st", "git config alias.co checkout", "git config --global alias.pu 'push -u origin HEAD'", "git config --get alias.pf",
+    "gh alias set pv 'pr view'", "gh alias list",
   ]) assert.equal(verdict(c).denied, false, `allowed: ${c}`);
 });

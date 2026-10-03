@@ -20,7 +20,7 @@
 // it through agent-net-summary (method, host, path, status).
 // History guard (2026-10-03), in the same hook so every Claude and Codex seat has it: a force push (--force, -f in a
 // short-option cluster, --force-with-lease, a +refspec, --mirror) or gh pr update-branch --rebase is refused, nested shells
-// included; published PRs get fix-up commits and a merge of main (CULTURE).
+// included, and so is defining an alias for one; published PRs get fix-up commits and a merge of main (CULTURE).
 "use strict";
 const fs = require("node:fs"), path = require("node:path"), os = require("node:os");
 
@@ -464,10 +464,25 @@ function envDump(verb, args, seg) {
 // A seat rebased a published PR on 2026-10-03, so a force push or a rebase update of a PR branch is refused, whatever
 // the branch: the reason, not the rule, is in the denial.
 const GIT_VALUE_OPTS = new Set(["-C", "-c", "--git-dir", "--work-tree", "--namespace", "--exec-path", "--super-prefix", "--config-env"]);
+// An alias defined in the command itself (git -c alias.X=…, git config alias.X …, gh alias set X …) is read like the
+// command it stands for; "!…" aliases are shell commands. Aliases already in a config file are not seen.
+function aliasRewrite(tool, value) {
+  const words = String(value).replace(/^!/, "").trim().split(/\s+/).filter(Boolean);
+  const v = words[0] === tool ? historyRewrite(tool, words.slice(1)) : historyRewrite(tool, words);
+  return v && `it defines an alias for a history rewrite (${v})`;
+}
 function historyRewrite(verb, args) {
   if (verb === "git") {
     let i = 0;
-    while (i < args.length && args[i].startsWith("-")) i += GIT_VALUE_OPTS.has(args[i]) ? 2 : 1;   // git -C dir -c k=v push
+    while (i < args.length && args[i].startsWith("-")) {   // git -C dir -c k=v push
+      if (args[i] === "-c" && /^alias\./i.test(args[i + 1] || "")) { const r = aliasRewrite("git", args[i + 1].slice(args[i + 1].indexOf("=") + 1)); if (r) return r; }
+      i += GIT_VALUE_OPTS.has(args[i]) ? 2 : 1;
+    }
+    if (args[i] === "config") {
+      const at = args.findIndex((a, j) => j > i && /^alias\./i.test(a));
+      if (at >= 0) return aliasRewrite("git", args.slice(at + 1).join(" "));
+      return null;
+    }
     if (args[i] !== "push") return null;
     for (const a of args.slice(i + 1)) {
       if (/^--force(-with-lease(=.*)?)?$/.test(a)) return `git push ${a} rewrites the remote branch`;
@@ -478,6 +493,8 @@ function historyRewrite(verb, args) {
     return null;
   }
   if (verb === "gh") {
+    const al = args.findIndex((a, j) => a === "alias" && args[j + 1] === "set");
+    if (al >= 0) { const ops = args.slice(al + 2).filter((a) => !a.startsWith("-")); if (ops.length >= 2) return aliasRewrite("gh", ops.slice(1).join(" ")); }
     const at = args.findIndex((a, j) => a === "pr" && args[j + 1] === "update-branch");
     if (at < 0) return null;
     const rest = args.slice(at + 2);
