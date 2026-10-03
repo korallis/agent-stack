@@ -348,7 +348,10 @@ def cmd_start(repo):
     if not insts:
         die(f"no local runner installed for {repo}; run agent-ci-runner install {repo}")
     for inst in insts:
-        systemctl("start", unit(inst))
+        # an active runner may be mid-job: starting it again would also start its register unit (Requires=), which
+        # re-extracts the runner and wipes its home under the job
+        if systemctl("is-active", unit(inst), check=False).stdout.strip() != "active":
+            systemctl("start", unit(inst))
     if not wait_online(repo, [runner_name(i) for i in insts], float(os.environ.get("AGENT_CI_ONLINE_WAIT_S", "120"))):
         die(f"the runner(s) for {repo} did not all come online; {VAR} left unset")
     var_set(repo, True)

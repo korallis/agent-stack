@@ -44,7 +44,8 @@ fs.writeFileSync(join(sysStubs, "systemctl"), `#!/usr/bin/env python3
 import json, os, sys
 s = json.load(open(os.environ["GH_SCENARIO"])); a = sys.argv[1:]
 open(os.environ["CALLS"], "a").write(json.dumps({"tool": "systemctl", "argv": a}) + "\\n")
-if "is-active" in a: print(s.get("active", "active")); sys.exit(0 if s.get("active", "active") == "active" else 3)
+v = s.get("active", "active"); v = v.get(a[-1], "inactive") if isinstance(v, dict) else v   # one state, or per unit
+if "is-active" in a: print(v); sys.exit(0 if v == "active" else 3)
 `, { mode: 0o755 });
 for (const t of ["logger", "notify-send"]) fs.writeFileSync(join(sysStubs, t), "#!/bin/sh\nexit 0\n", { mode: 0o755 });
 
@@ -229,6 +230,17 @@ test("gate: at most AGENT_CI_MAX_JOBS jobs at once across repos; a slot frees on
   assert.ok(!fs.existsSync("pwned") && !fs.existsSync(join(s, "pwned")), "config lines are parsed as NAME=number only, never run");
 });
 
+test("gate: load1 above AGENT_CI_MAX_LOAD (24) waits even on a host with CPUs to spare; the ceiling is configurable", async () => {
+  const s = gateState("25.00"); const big = { AGENT_CI_NPROC: "64" };
+  const p = gate(s, "a", "start", { ...big, AGENT_CI_GATE_WAIT_S: "30" }); let ok = false; const pd = done(p).then((x) => ((ok = true), x));
+  await sleep(400); assert.equal(ok, false, "25 > 24 on 64 CPUs: waits");
+  fs.writeFileSync(join(s, "loadavg"), "23.90 1.00 1.00 1/100 123\n"); assert.equal((await pd).code, 0);
+  fs.writeFileSync(join(s, "config"), "AGENT_CI_MAX_LOAD=30\n");
+  const s2 = gateState("25.00"); fs.copyFileSync(join(s, "config"), join(s2, "config"));
+  const r = await done(gate(s2, "b", "start", { ...big, AGENT_CI_GATE_WAIT_S: "30", AGENT_CI_CONFIG: join(s2, "config") }));
+  assert.equal(r.code, 0); assert.match(r.out, /waited 0s/);
+});
+
 test("gate: end frees its slot under the lock, so it never races a start's stale sweep", async () => {
   const s = gateState(); assert.equal((await done(gate(s, "a", "start"))).code, 0);
   const held = done(spawn("flock", [join(s, "slots", ".lock"), "sleep", "0.6"])); await sleep(150); const t0 = Date.now();
@@ -280,6 +292,11 @@ test("several runners per repo: <repo>_r<N> instances with their own names, unit
   const st = run("stop", "demo");
   assert.ok(!fs.existsSync(join(env.AGENT_CI_STATE, "slots/demo_r2")));
   assert.deepEqual(st.calls.filter((c) => c.tool === "systemctl").map((c) => c.argv.join(" ")), ["--user stop agent-ci-runner@demo.service", "--user stop agent-ci-runner@demo_r2.service"]);
+  // start skips an active runner (it may be mid-job; starting it would re-run its register unit) and starts the rest
+  set({ ...two, active: { "agent-ci-runner@demo.service": "active" } });
+  const sr = run("start", "demo"); assert.equal(sr.status, 0, sr.stderr);
+  const started = sr.calls.filter((c) => c.tool === "systemctl" && c.argv.includes("start")).map((c) => c.argv.join(" "));
+  assert.deepEqual(started, ["--user start agent-ci-runner@demo_r2.service"]); assert.equal(scenario().vars.demo, "1");
   // an installed runner may be mid-job: install (e.g. scaling up) never re-extracts it; register does, before each start
   fs.writeFileSync(join(env.AGENT_CI_ROOT, "demo/runner/job-in-progress"), "x");
   set(two); assert.equal(run("install", "demo", "--count", "2").status, 0);
