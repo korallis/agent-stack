@@ -1,0 +1,6 @@
+[Unit]
+Description=Refresh running rigs' seat instructions after CULTURE/role/startup edits; tell idle native seats to re-read
+[Service]
+Type=oneshot
+Environment=PATH=%h/.local/bin:%h/.local/share/mise/shims:/usr/local/bin:/usr/bin:/bin
+ExecStart=%h/.local/bin/agent-refresh-guidance-all

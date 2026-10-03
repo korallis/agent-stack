@@ -1,0 +1,7 @@
+[Unit]
+Description=Refresh running rigs' seat instructions every 5 minutes (near-free when nothing changed)
+[Timer]
+OnBootSec=3min
+OnUnitActiveSec=5min
+[Install]
+WantedBy=timers.target
