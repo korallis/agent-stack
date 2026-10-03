@@ -1,0 +1,13 @@
+--- a/daemon/dist/domain/queue-stuck-sweep.js
++++ b/daemon/dist/domain/queue-stuck-sweep.js
+@@ -342,6 +342,10 @@
+                 continue;
+             if (hasLiveLadder(deps.db, row.qitemId))
+                 continue;
++            // A decision for a human (human_intent decision, or none: OpenRig's legacy default is a decision) waits,
++            // pending and unclaimed, for the human by design: no finding. A human's update row is still swept.
++            if (isHumanSeatSessionRef(row.destinationSession) && row.humanIntent !== "update")
++                continue;
+             // A human destination (external address or human seat) can't claim, so paging the human about their own inbox
+             // is noise. The finding goes to the seat that asked, if it is a live managed seat; else to its orchestrator,
+             // the destination's orchestrator, or finally the operator. Never back to a human.
