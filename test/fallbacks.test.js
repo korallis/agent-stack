@@ -296,6 +296,31 @@ test("reroute keeps a review's author family and an implementation's locked-test
     /^left for the lead: the row names locked tests but not their family/);
 });
 
+// 2026-10-02: cooling Kimi test rows (locked tests for a Grok-implemented slice) went to Grok test seats, which
+// refused them: test author and implementer must be different families.
+test("reroute keeps a test-author row off its slice's implementer family; a test row without its implementer goes to the lead", () => {
+  const now = Date.now(), ago = new Date(now - 60 * 60e3).toISOString();
+  const row = (o = {}) => ({ id: "q", state: "pending", destination: "tests-kimi@app", updated: ago, tags: [], ...o });
+  const tests = [node("tests.kimi", "claude-code", { model: "kimi-k3-256k" }), node("tests.grok", "terminal"), node("tests.codex", "codex", { model: "gpt-6.1-sol" })].map(seatInfo);
+  const kimiOut = eligibleFamilies([acct("kimi-ai", { over_limit: true }), acct("codex"), acct("claude")]);
+  const grokImpl = plan([row({ body: "Lock the tests for 28f.\nImplementer: impl-grok-1 (grok)" })], tests, kimiOut, { now });
+  assert.equal(grokImpl[0].to, "tests-codex@app", "grok is first in the test-author chain, but it built the slice");
+  assert.match(grokImpl[0].note, /not grok: the slice's implementer/);
+  assert.equal(plan([row({ tags: ["implementer-family:grok"] })], tests, kimiOut, { now })[0].to, "tests-codex@app");
+  assert.equal(plan([row({ tags: ["implementer:impl-grok-2@app"] })], tests, kimiOut, { now })[0].to, "tests-codex@app", "the family from the seat's name");
+  assert.equal(plan([row({ body: "Implementer: impl-codex-1 (codex)" })], tests, kimiOut, { now })[0].to, "tests-grok@app", "a codex-built slice: grok is fine");
+  // only the implementer's family free: not moved
+  const busyCodex = [tests[0], tests[1], seatInfo(node("tests.codex", "codex", { model: "gpt-6.1-sol", busy: true }))];
+  assert.match(plan([row({ body: "Implementer: impl-grok-1 (grok)" })], busyCodex, kimiOut, { now })[0].note, /outside the implementer's family \(grok\)/);
+  // no implementer on the row: the lead decides (and is told, per #128)
+  const none = plan([row({ body: "Lock the tests for 28f." })], tests, kimiOut, { now });
+  assert.deepEqual([none[0].to, none[0].note], [null, 'left for the lead: a test-author row without its implementer (add "Implementer: <seat> (<family>)")']);
+  // the list elides the text: it's loaded first
+  const elided = row({ elided: ["body", "summary"], body: "" });
+  assert.equal(plan([elided], tests, kimiOut, { now, load: () => ({ body: "Implementer: impl-grok-1 (grok)" }) })[0].to, "tests-codex@app");
+  assert.match(plan([elided], tests, kimiOut, { now, load: () => null })[0].note, /review, locked-test or implementer constraint/);
+});
+
 // QA PR119 P2: a destination must be able to take the work now.
 test("reroute destinations: idle and below the context wall; a healthy later family beats a blocked earlier one", () => {
   const now = Date.now(), ago = new Date(now - 60 * 60e3).toISOString();

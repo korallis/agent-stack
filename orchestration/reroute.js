@@ -62,9 +62,9 @@ export function plan(rows, all, families, { minutes = 20, now = Date.now(), move
     // the destination: idle, servable, below its wall, with no open work; and the row's own constraint kept (a review's
     // author family, the locked tests' family), or the row is left for the lead
     let full = r;
-    if (["reviewer", "implementer"].includes(seat.role) && (r.elided || []).includes("body")) {
+    if (["reviewer", "implementer", "test-author"].includes(seat.role) && (r.elided || []).includes("body")) {
       const got = load ? load(r) : null;
-      if (!got) { out.push({ id: r.id, from: r.destination, why, to: null, note: "left for the lead: the row's text couldn't be read to keep its review or locked-test constraint" }); continue; }
+      if (!got) { out.push({ id: r.id, from: r.destination, why, to: null, note: "left for the lead: the row's text couldn't be read to keep its review, locked-test or implementer constraint" }); continue; }
       full = { ...r, ...got };
     }
     const pick = pickForWork(all.filter((s) => s.seat !== seat.seat && !taken.has(s.seat)), seat.role, full, { families });
@@ -72,7 +72,7 @@ export function plan(rows, all, families, { minutes = 20, now = Date.now(), move
     taken.add(pick.seat.seat);
     const via = [pick.as ? `as ${pick.as}: no free ${seat.role} seat` : null, pick.fallback ? `fallback: ${pick.fallback.skipped.map((x) => x.reason).join("; ")}` : null,
       pick.constraint?.review ? `review of ${pick.constraint.review.family} work${pick.matrix?.skipped?.length ? `, skipped: ${pick.matrix.skipped.map((x) => x.reason).join("; ")}` : ""}` : null,
-      pick.constraint?.exclude ? `not ${pick.constraint.exclude}: locked tests` : null].filter(Boolean);
+      pick.constraint?.exclude ? `not ${pick.constraint.exclude}: ${pick.constraint.because || "locked tests"}` : null].filter(Boolean);
     out.push({ id: r.id, state: r.state, from: r.destination, why, to: pick.seat.seat, family: pick.seat.family, waited_min: Math.round(age),
       note: `rerouted by agent-reroute after ${Math.round(age)} min: ${claimed}${why}; ${r.destination} -> ${pick.seat.seat} (${[pick.seat.family, ...via].join(", ")})` +
         (out0 ? `; served again ${out0.back ? new Date(out0.back).toISOString() : "at an unknown time"}` : "") +
@@ -92,7 +92,7 @@ export function tellWhom(all, families) {
 export function leftMessage(m) {
   return `[agent-reroute] ${m.id} for ${m.from} was not moved: ${m.why}; ${m.note}. It is yours to decide: re-route it, `
     + `reassign it, or fix the row (a review row needs "Author: <seat> (<family>)", an implementation against locked tests `
-    + `"Locked tests: <seat> (<family>)").`;
+    + `"Locked tests: <seat> (<family>)", a test-author row "Implementer: <seat> (<family>)").`;
 }
 
 // Pure: seats that were unservable (wasOut: seat -> since) and are served again, idle, with claimed rows left: one

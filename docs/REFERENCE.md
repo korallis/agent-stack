@@ -897,6 +897,8 @@ the lead or a person. Send Jev evidence, not conclusions.
     `Author: <seat> (<family>)` line);
   - an implementation against locked tests never goes to the tests' family (`locked-tests:` tag, or a `Locked tests:
     <seat> (<family>)` line).
+  - a test-author row never goes to its slice's implementer family (`implementer:` / `implementer-family:` tags, or an
+    `Implementer: <seat> (<family>)` line). A test row without one is left for the lead.
 
   When the row implies such a constraint but doesn't state it, or can't be read, the row is left for the lead;
   `agent-recover`'s reassign does the same.
