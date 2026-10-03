@@ -420,6 +420,43 @@ function parseArgs(verb, args) {
   return out;
 }
 
+// Process environments hold the seats' API keys and tokens (2026-10-02: `ps eww` printed TYPESAFE_API_KEY into a
+// transcript). Pure: why this command (verb + args, one pipeline segment) would print environment VALUES, or null.
+// Names alone are fine: compgen -e, `${NAME:+set}`, agent-credguard-read-hook --env-names [PID].
+const SECRET_NAME = /(KEY|TOKEN|SECRET|PASSW|PASSPHRASE|AUTH|CRED|COOKIE|SESSION|PRIVATE|SIGN|BEARER|DSN|DATABASE_URL|CONN(ECTION)?_?STR)/i;
+const ENVIRON = /(^|\/)proc\/[^/\s]+\/environ\b/;
+function envDump(verb, args, seg) {
+  const words = [verb, ...args, ...(seg?.redirs || []).map((r) => r.target)];
+  if (words.some((w) => ENVIRON.test(w)) && !["ls", "test", "[", "stat"].includes(verb)) return "it reads a process's environment from /proc/*/environ";
+  const operands = args.filter((a) => !/^[-+]/.test(a));
+  if (verb === "printenv") return operands.length === 0 ? "printenv with no name prints the whole environment"
+    : operands.some((n) => SECRET_NAME.test(n)) ? `printenv prints ${operands.find((n) => SECRET_NAME.test(n))}, a secret-like variable` : null;
+  if (verb === "set" && args.length === 0) return "set with no arguments prints every variable";
+  if (verb === "export" && (args.length === 0 || (args.includes("-p") && !operands.length))) return "export -p prints every exported variable";
+  if (verb === "declare" || verb === "typeset") {
+    if (args.length === 0) return `${verb} with no arguments prints every variable`;
+    if (!operands.length && args.some((a) => /^-[a-zA-Z]*[xp]/.test(a))) return `${verb} ${args.join(" ")} prints the variables with their values`;
+    if (args.some((a) => /^-[a-zA-Z]*p/.test(a)) && operands.some((n) => SECRET_NAME.test(n))) return `${verb} -p prints ${operands.find((n) => SECRET_NAME.test(n))}, a secret-like variable`;
+  }
+  if (verb === "ps") {
+    // BSD-style option words (no dash) with e show each process's environment (ps e, eww, auxe); -E too. -e (dashed,
+    // "every process") does not.
+    // A dashless word is a BSD option cluster only if it isn't the value of an option that takes one (-o user, axo
+    // etime, -p 1) and is made of BSD ps option letters.
+    const takesValue = (w) => /^(-[a-zA-Z]*[oOpPuUgGCtqk]|--(format|sort|pid|ppid|user|group|tty|cols|columns|rows|width))$/.test(w)
+      || (/^[a-zA-Z]+$/.test(w) && /[oOpUtk]$/.test(w));
+    let env = false;
+    for (let i = 0; i < args.length; i++) {
+      const a = args[i];
+      if (/environ/.test(a) || a === "-E" || /^-[a-zA-Z]*E/.test(a)) { env = true; break; }
+      if (!a.startsWith("-") && /^[acefghjlmnrsuvwxSTXZLHOoUptk]+$/.test(a) && a.includes("e")) { env = true; break; }
+      if (takesValue(a)) i++;
+    }
+    if (env) return "ps with e/eww/-E prints each process's environment";
+  }
+  return null;
+}
+
 // Pure: why this Bash command would print a protected file, or null.
 const ASSIGN = /^[A-Za-z_][A-Za-z0-9_]*=/;
 function bashVerdict(command, ctx, depth = 0) {
@@ -503,7 +540,9 @@ function bashVerdict(command, ctx, depth = 0) {
           if (/^-C./.test(w)) addDirs(w.slice(2));   // -CDIR
           k += ["-u", "-C", "--unset", "--chdir"].includes(w) ? 2 : 1;
         }
-        if (k >= words.length) { if (sourced && !words.slice(1).some((w) => w === "-S" || /^-S|^--split-string/.test(w))) return { why: `env prints the variables loaded from ${sourced.path}`, hit: sourced }; break; }
+        if (k >= words.length) { if (sourced && !words.slice(1).some((w) => w === "-S" || /^-S|^--split-string/.test(w))) return { why: `env prints the variables loaded from ${sourced.path}`, hit: sourced };
+          if (!words.slice(1).some((w) => w === "-S" || /^-S|^--split-string/.test(w))) return { env: true, why: "env with no command prints the whole environment" };
+          break; }
         continue;
       }
       if (words[k] === "timeout") { k++; while (k < words.length && /^-/.test(words[k])) k += ["-s", "-k", "--signal", "--kill-after"].includes(words[k]) ? 2 : 1; k++; continue; }
@@ -520,6 +559,8 @@ function bashVerdict(command, ctx, depth = 0) {
     const childCtx = (extra = {}) => ({ ...ctx, ...extra, vars: new Map([...ctx.vars, ...(ctx.childEnv || [])]), childEnv: null });
     const verb = path.basename(words[k] || ""), args = words.slice(k + 1);
     const hitIn = (list) => { for (const w of list) { const h = protectedPath(w, ctx); if (h) return h; } return null; };
+    const dump = envDump(verb, args, seg);
+    if (dump) return { env: true, why: dump };
     if (verb === "cd" || verb === "pushd") { const t = args.find((a) => !/^-/.test(a) && !/^\+\d/.test(a)); addDirs(t === undefined ? ctx.home : t); continue; }
     if (verb === "popd") continue;   // every directory the command visited stays a candidate
     // dotglob: on counts everywhere; off counts only where it certainly applies to this shell
@@ -749,6 +790,15 @@ function decide(input, { home = os.homedir(), pats = patterns(process.env, home)
     if (h) v = { why: "a content search prints the matching lines", hit: h };
   }
   if (!v) return { deny: false };
+  if (v.env) return { deny: true, reason: [
+    `agent-stack credential guard: blocked, because ${v.why}. Environments hold API keys and tokens, and the transcript keeps whatever is printed.`,
+    "Names only, never values:",
+    "  exported variable names in this shell:  compgen -e",
+    "  is one set:                             [ -n \"${NAME:+x}\" ] && echo set",
+    "  another process's variable names:       agent-credguard-read-hook --env-names <PID>   (in ~/.local/share/agent-stack/bin)",
+    "  processes without their environment:    ps -ef / ps aux (no e flag)",
+    "Use a value by name inside the command that needs it; never print it. If a value is wrong, ask the operator.",
+  ].join("\n") };
   const p = v.hit.path.replace(home, "~");
   return { deny: true, reason: [
     `agent-stack credential guard: blocked, because this would print ${p} (a credential file, pattern ${v.hit.pattern}) into the transcript, where it stays: ${v.why}.`,
@@ -762,6 +812,13 @@ function decide(input, { home = os.homedir(), pats = patterns(process.env, home)
 }
 
 function main() {
+  if (process.argv[2] === "--env-names") {   // a process's environment variable NAMES (default: this process's own)
+    const pid = process.argv[3] || "self";
+    if (!/^(self|\d+)$/.test(pid)) { console.error("usage: --env-names [PID]"); process.exitCode = 2; return; }
+    try { for (const e of fs.readFileSync(`/proc/${pid}/environ`, "latin1").split("\0")) { const i = e.indexOf("="); if (i > 0) console.log(e.slice(0, i)); } }
+    catch (e) { console.error(`/proc/${pid}/environ: ${e.code || e.message}`); process.exitCode = 1; }
+    return;
+  }
   if (process.argv[2] === "--keys") {
     for (const f of process.argv.slice(3)) { try { for (const n of keyNames(fs.readFileSync(f, "utf8"))) console.log(n); } catch (e) { console.error(`${f}: ${e.code || e.message}`); process.exitCode = 1; } }
     return;
@@ -777,5 +834,5 @@ function main() {
   process.exit(0);
 }
 
-module.exports = { DEFAULT_PATTERNS, VERCEL_DIR, BYPASS, PW_DIR, NET_DIR, NET_TOOL, netDir, legacyNetDir, netKind, netVerdict, patterns, globRe, protectedPath, lex, parseArgs, bashVerdict, keyNames, decide };
+module.exports = { envDump, SECRET_NAME, DEFAULT_PATTERNS, VERCEL_DIR, BYPASS, PW_DIR, NET_DIR, NET_TOOL, netDir, legacyNetDir, netKind, netVerdict, patterns, globRe, protectedPath, lex, parseArgs, bashVerdict, keyNames, decide };
 if (require.main === module) main();
