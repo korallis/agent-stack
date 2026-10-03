@@ -232,8 +232,11 @@ test("main lane: install --main-lane gives the last runner only korallis-local-m
 });
 
 // the job gate
+const event = (name, payload) => { const f = join(root, `event-${name}.json`); fs.writeFileSync(f, typeof payload === "string" ? payload : JSON.stringify(payload)); return f; };
+const pushEvent = event("push", { ref: "refs/heads/main", repository: { full_name: "korallis/demo" } });
 function gate(state, repo, mode, extra = {}) {
   const env = { PATH: "/usr/bin:/bin", AGENT_CI_REPO: repo, AGENT_CI_STATE: state, AGENT_CI_POLL_S: "0.05", AGENT_CI_NPROC: "4",
+    GITHUB_REPOSITORY: "korallis/demo", GITHUB_EVENT_PATH: pushEvent,
     AGENT_CI_LOADAVG: join(state, "loadavg"), AGENT_CI_MEMINFO: join(state, "meminfo"), ...extra };
   return spawn("bash", [hook, mode], { env });
 }
@@ -244,6 +247,26 @@ function gateState(load = "1.00", memKb = 16 * 1048576) {
   return s;
 }
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
+
+test("gate: fork code is refused before any step (fork PR, fork workflow_run, unreadable event); same-repo runs pass", async () => {
+  const pr = (head) => ({ pull_request: { head: { repo: head && { full_name: head } } }, repository: { full_name: "korallis/demo" } });
+  const refused = [
+    ["a fork pull_request", { GITHUB_EVENT_PATH: event("fork-pr", pr("someone/demo")) }, /code from someone\/demo, not korallis\/demo/],
+    ["a deleted fork's pull_request", { GITHUB_EVENT_PATH: event("gone-pr", pr(null)) }, /code from a deleted fork/],
+    ["a workflow_run from a fork", { GITHUB_EVENT_PATH: event("fork-wr", { workflow_run: { head_repository: { full_name: "someone/demo" } } }) }, /code from someone\/demo/],
+    ["no event file", { GITHUB_EVENT_PATH: join(root, "missing.json") }, /no readable event/],
+    ["an event that is not JSON", { GITHUB_EVENT_PATH: event("junk", "not json") }, /no readable event/],
+    ["no repository", { GITHUB_REPOSITORY: "" }, /no readable event for an unknown repository/],
+  ];
+  for (const [what, env, why] of refused) {
+    const s = gateState(); const r = await done(gate(s, "a", "start", env));
+    assert.equal(r.code, 1, what); assert.match(r.out, /REFUSED, fork code never runs on a local runner/, what); assert.match(r.out, why, what);
+    assert.ok(!fs.existsSync(join(s, "slots", "a")), `${what}: no job slot taken`);
+  }
+  for (const [what, env] of [["a same-repo pull_request", { GITHUB_EVENT_PATH: event("own-pr", pr("korallis/demo")) }], ["a push", {}]]) {
+    const r = await done(gate(gateState(), "a", "start", env)); assert.equal(r.code, 0, what); assert.match(r.out, /job slot taken/, what);
+  }
+});
 
 test("gate: at most AGENT_CI_MAX_JOBS jobs at once across repos; a slot frees on job end", async () => {
   const s = gateState();

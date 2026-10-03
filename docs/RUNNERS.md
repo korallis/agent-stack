@@ -59,9 +59,14 @@ remain only for the exceptions below, and as the automatic fallback.
 - **Each runner has its own app port.** Jobs get `E2E_PORT` (from 47100 upwards, stable per runner, set by
   `register`), `TZ=UTC` and `C.UTF-8`, as on hosted Ubuntu. Two runners on this host share its network, so a project
   whose tests start an app server must take its port from `E2E_PORT` (a fixed port collides between parallel jobs).
-- **Fork PRs never run here.** `runs-on` sends them to a hosted runner (see below). Also turn on the repo setting
-  "Require approval for all outside collaborators" (Settings → Actions → Fork pull request workflows), especially on
-  the public agent-stack-hd.
+- **Fork code never runs here.** Three layers:
+  - `runs-on` sends fork PRs to a hosted runner (see below). That is routing only: a PR runs its own copy of the
+    workflow, so a fork can edit `runs-on`.
+  - The boundary is the job-started hook. Before any step, it fails a job whose event is a pull request from another
+    repository, or a `workflow_run` started by one. It reads the runner's `GITHUB_REPOSITORY` and `GITHUB_EVENT_PATH`,
+    which a workflow can't set, and fails closed when they can't be read.
+  - On a public repo, also require approval for every outside contributor's fork PR workflows:
+    `gh api -X PUT repos/korallis/<repo>/actions/permissions/fork-pr-contributor-approval -f approval_policy=all_external_contributors`.
 
 ## Workflow change (one small PR per repo, through its own gate)
 

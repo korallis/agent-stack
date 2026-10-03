@@ -6,6 +6,10 @@
 # (24: the fleet's seats need the rest; browser jobs timed out at load1 ~35) and MemAvailable >= AGENT_CI_MIN_MEM_GB (6). After the wait the load gate is skipped; the slot cap never is. end: free this repo's slot.
 # A slot older than AGENT_CI_SLOT_STALE_S (6 h) is cleared. The load gate compares with the HOST's CPUs (`nproc --all`):
 # plain nproc inside the unit reports its CPUQuota (8), which would read a normal load as overloaded. Settings come from AGENT_CI_CONFIG: only NAME=number lines.
+# start first refuses fork code (exit 1: the job fails before any step runs): a pull_request-type event whose head repo,
+# or a workflow_run whose head repository, is not GITHUB_REPOSITORY. A workflow's runs-on guard is not enough, because a
+# PR runs its own copy of the workflow and a fork can edit it. Fails closed: no repository, or an event file that
+# can't be read as JSON, is refused too. The runner sets GITHUB_REPOSITORY and GITHUB_EVENT_PATH; a workflow can't.
 set -u
 mode=${1:-}; repo=${AGENT_CI_REPO:?AGENT_CI_REPO unset}; slots=${AGENT_CI_STATE:?AGENT_CI_STATE unset}/slots
 if [ -r "${AGENT_CI_CONFIG:-}" ]; then
@@ -23,6 +27,25 @@ case $mode in
   start) ;;
   *) echo "usage: ci-runner-hook start|end" >&2; exit 2 ;;
 esac
+if ! why=$(python3 - "${GITHUB_REPOSITORY:-}" "${GITHUB_EVENT_PATH:-}" <<'PY'
+import json, sys
+repo, path = sys.argv[1], sys.argv[2]
+try:
+    ev = json.load(open(path))
+    assert repo and isinstance(ev, dict)
+except Exception:
+    print(f"no readable event for {repo or 'an unknown repository'}"); sys.exit(1)
+head = None
+if "pull_request" in ev:
+    head = ((ev.get("pull_request") or {}).get("head") or {}).get("repo") or {}
+elif "workflow_run" in ev:
+    head = (ev.get("workflow_run") or {}).get("head_repository") or {}
+if head is not None and head.get("full_name") != repo:
+    print(f"code from {head.get('full_name') or 'a deleted fork'}, not {repo}"); sys.exit(1)
+PY
+); then
+  echo "[ci-gate] $repo: REFUSED, fork code never runs on a local runner ($why)"; exit 1
+fi
 began=$(date +%s); said=0
 while :; do
   now=$(date +%s)
