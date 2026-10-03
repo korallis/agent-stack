@@ -94,7 +94,7 @@ test("the unit sandboxes the job (no home, keys or seats), bounds it inside agen
     "Environment=ACTIONS_RUNNER_HOOK_JOB_COMPLETED=%h/.local/share/agent-stack/ci-runners/_shared/job-completed.sh"])
     assert.ok(u.split("\n").includes(line), line);
   assert.doesNotMatch(u, /BindPaths=.*(\.codex|\.claude|\.cli-proxy|\.config\/gh|Projects)/);
-  assert.match(u, /\n\[Install\]\nWantedBy=default\.target\n/, "enable --now needs an [Install] section, or install fails on the live host");
+  assert.match(u, /\n\[Install\]\nWantedBy=default\.target\n/, "enable needs an [Install] section, or install fails on the live host");
   // no privileged step inside the sandboxed unit: with the home bound over the real home path, systemd can't set up an
   // ExecStartPre=+ (226/NAMESPACE on the live host); registration is its own unsandboxed unit, run before every start
   assert.doesNotMatch(u, /^ExecStart(Pre|Post)?=[+!]/m);
@@ -155,11 +155,12 @@ test("install: a checksum mismatch installs nothing; otherwise hooks and config,
   const b = spawnSync("python3", [tool, "install", "demo"], { encoding: "utf8", env: { ...bad.env, AGENT_CI_SHA256: "0".repeat(64) } });
   assert.equal(b.status, 1); assert.match(b.stderr, /checksum .* is not the pinned 0{64}; refusing/);
   assert.ok(!fs.existsSync(join(bad.env.AGENT_CI_ROOT, "demo")));
-  const { env, run, scenario } = world(online());
+  const { env, run, scenario } = world({ ...online(), active: "inactive" });
   const r = run("install", "demo");
   assert.equal(r.status, 0, r.stderr);
   const sys = r.calls.filter((c) => c.tool === "systemctl").map((c) => c.argv.join(" "));
-  assert.deepEqual(sys, ["--user daemon-reload", "--user enable --now agent-ci-runner@demo.service"]);
+  assert.deepEqual(sys, ["--user daemon-reload", "--user enable agent-ci-runner@demo.service", "--user is-active agent-ci-runner@demo.service",
+    "--user start agent-ci-runner@demo.service"]);
   assert.equal(scenario().vars.demo, "1");
   const last = r.calls.filter((c) => c.tool === "gh").at(-1).argv.join(" ");
   assert.equal(last, "variable set CI_LOCAL --body 1 --repo korallis/demo", "CI_LOCAL is set last, after the runner is online");
@@ -293,11 +294,15 @@ test("gate: a hot or memory-starved host waits, up to the gate wait; the slot ca
 
 test("several runners per repo: <repo>_r<N> instances with their own names, units and slots; scaled up and back down", () => {
   const two = { runners: [{ id: 7, name: "testhost-demo", status: "online", busy: false }, { id: 9, name: "testhost-demo-2", status: "online", busy: false }] };
-  const { env, run, scenario, set } = world(two);
+  // runner 1 is already active (it may be mid-job): install enables it but never starts it again (that would re-run its
+  // register unit and wipe it under the job); the new runner 2 is started
+  const { env, run, scenario, set } = world({ ...two, active: { "agent-ci-runner@demo.service": "active" } });
   const r = run("install", "demo", "--count", "2");
   assert.equal(r.status, 0, r.stderr);
   assert.deepEqual(r.calls.filter((c) => c.tool === "systemctl").map((c) => c.argv.join(" ")),
-    ["--user daemon-reload", "--user enable --now agent-ci-runner@demo.service", "--user enable --now agent-ci-runner@demo_r2.service"]);
+    ["--user daemon-reload", "--user enable agent-ci-runner@demo.service", "--user is-active agent-ci-runner@demo.service",
+      "--user enable agent-ci-runner@demo_r2.service", "--user is-active agent-ci-runner@demo_r2.service", "--user start agent-ci-runner@demo_r2.service"]);
+  set({ active: "active" });   // both running from here on
   assert.ok(fs.existsSync(join(env.AGENT_CI_ROOT, "demo/runner/config.sh")) && fs.existsSync(join(env.AGENT_CI_ROOT, "demo_r2/runner/config.sh")));
   assert.equal(scenario().vars.demo, "1"); assert.match(r.stdout, /2 local runner\(s\) online \(testhost-demo, testhost-demo-2\)/);
   // runner 2 registers under its own name, for the same repo, with its own slot and home

@@ -101,7 +101,7 @@ after 10 minutes, as for a single runner.
 
 | Task | Command |
 |---|---|
-| Install or upgrade a repo's runner(s) | `agent-ci-runner install <repo> [--count N]` (`--dry-run` to see the plan) |
+| Install or upgrade a repo's runner(s) | `agent-ci-runner install <repo> [--count N]` (`--dry-run` to see the plan). Safe while jobs run: it enables every runner but starts only inactive ones, so an active runner, maybe mid-job, is left alone |
 | Run N runners for one repo | `agent-ci-runner install <repo> --count N`: runner k >= 2 is the instance `<repo>_r<k>` (unit `agent-ci-runner@<repo>_r<k>`, GitHub name `<host>-<repo>-<k>`), each with its own job slot. A lower N removes the extra runners |
 | Keep one runner for `main` | `agent-ci-runner install <repo> --count 2 --main-lane` (undo: `--no-main-lane`); see *Main lane* above |
 | Pause (jobs go hosted) / resume | `agent-ci-runner stop <repo>` / `agent-ci-runner start <repo>` (a runner that is already active, maybe mid-job, is left alone) |
