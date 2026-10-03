@@ -155,6 +155,7 @@ if jq -e '.switchModelsOnFlag == false' "$HOME/.claude/settings.json" >/dev/null
 # Credential read guard: seats never stop for permission, so a PreToolUse hook (Claude: Bash|Read|Grep; Codex: Bash,
 # trusted by hash) refuses a command or read that would print a credential file into the transcript. Local extra
 # paths: one glob per line in $C/credguard-read-paths. Claude sessions pick it up live; Codex seats at next launch.
+# The same hook refuses rewriting published history (force pushes, gh pr update-branch --rebase).
 place "$S/system/credguard-read-hook" "$L/bin/agent-credguard-read-hook" 755
 place "$S/system/credguard-read-install" "$L/bin/credguard-read-install" 755
 while IFS= read -r line; do case "$line" in "ok "*) ok "${line#ok }" ;; *) todo "${line#-- }" ;; esac
