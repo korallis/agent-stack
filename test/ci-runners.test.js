@@ -111,24 +111,37 @@ test("the unit sandboxes the job (no home, keys or seats), bounds it inside agen
   assert.match(inst, /for f in [^;]*\bagent-ci-runner\b/); assert.match(inst, /for t in [^;]*\bagent-ci-runner-watch\b/);
 });
 
-test("register: a failing registration backs off (after 3 failures in 10 min, each attempt waits first); a success clears it", () => {
-  const { env, run, set } = world(online());
-  const reg = () => { const t0 = Date.now(); const r = spawnSync("python3", [tool, "register", "demo"], { encoding: "utf8", env: { ...env, AGENT_CI_REGISTER_BACKOFF_S: "0.6" } }); return { ...r, ms: Date.now() - t0 }; };
-  for (let i = 0; i < 3; i++) { const r = reg(); assert.equal(r.status, 1); assert.doesNotMatch(r.stderr, /waiting/, `attempt ${i + 1} doesn't wait`); }
-  const slow = reg(); assert.equal(slow.status, 1); assert.match(slow.stderr, /3 failed registrations or crashed runs of demo in 10 min: waiting 0\.6s first/); assert.ok(slow.ms >= 550, `waited ${slow.ms} ms`);
-  assert.equal(run("install", "demo").status, 0);   // now it can register
-  const ok = reg(); assert.equal(ok.status, 0, ok.stderr); assert.match(ok.stderr, /waiting/, "still backed off once (4 recent failures)");
-  assert.ok(!fs.existsSync(join(env.AGENT_CI_STATE, "register-failures-demo.json")), "a success clears the record");
-  const next = reg(); assert.equal(next.status, 0); assert.doesNotMatch(next.stderr, /waiting/);
-  // QA (#169): a runner that registers fine but crashes (run.sh exits non-zero) restarts every 5 s with no start limit.
-  // Each crash counts, a successful registration doesn't clear it, and the 4th restart in 10 min waits first.
-  set({ mainStatus: { "agent-ci-runner@demo.service": "1" } });
-  for (let i = 0; i < 2; i++) { const r = reg(); assert.equal(r.status, 0); assert.doesNotMatch(r.stderr, /waiting/, `crash ${i + 1}`); }
-  const loop = reg(); assert.equal(loop.status, 0); assert.match(loop.stderr, /3 failed registrations or crashed runs of demo in 10 min: waiting 0\.6s first/); assert.ok(loop.ms >= 550);
-  // a clean run (exit 0: a job done) clears it: normal ephemeral restarts never wait
+test("register: failures (failed registrations, abnormal runner exits) back off growing, then the runner is given up; exit 0 never counts", () => {
+  const { env, run, set, scenario } = world(online());
+  const reg = () => { const t0 = Date.now(); const r = spawnSync("python3", [tool, "register", "demo"], { encoding: "utf8", env: { ...env, AGENT_CI_REGISTER_BACKOFF_S: "0.2" } }); return { ...r, ms: Date.now() - t0 }; };
+  const rec = join(env.AGENT_CI_STATE, "register-failures-demo.json"), gave = join(env.AGENT_CI_STATE, "demo.gave-up");
+  // failed registrations (no runner yet): 3 don't wait, the 4th waits first
+  for (let i = 0; i < 3; i++) { const r = reg(); assert.equal(r.status, 1); assert.doesNotMatch(r.stderr, /waiting/, `attempt ${i + 1}`); }
+  const slow = reg(); assert.equal(slow.status, 1); assert.match(slow.stderr, /3 failed registrations or abnormal exits of demo in 30 min: waiting 0\.2s first/); assert.ok(slow.ms >= 180);
+  assert.equal(run("install", "demo").status, 0);
+  const ok = reg(); assert.equal(ok.status, 0, ok.stderr); assert.ok(!fs.existsSync(rec), "a success clears the record");
+  // a clean run (exit 0: a job done) never counts: normal ephemeral restarts never wait
   set({ mainStatus: { "agent-ci-runner@demo.service": "0" } });
-  const clean = reg(); assert.equal(clean.status, 0); assert.ok(!fs.existsSync(join(env.AGENT_CI_STATE, "register-failures-demo.json")));
-  const again = reg(); assert.doesNotMatch(again.stderr, /waiting/);
+  for (let i = 0; i < 4; i++) assert.doesNotMatch(reg().stderr, /waiting/);
+  // QA (#169): a runner that registers fine but exits non-zero restarts every 5 s with no start limit. Each abnormal
+  // exit counts (a successful registration doesn't clear it): 2 free, then 0.2, 0.4, 0.8 s, then given up
+  set({ mainStatus: { "agent-ci-runner@demo.service": "1" } });
+  for (let i = 0; i < 2; i++) assert.doesNotMatch(reg().stderr, /waiting/, `crash ${i + 1}`);
+  for (const [n, w] of [[3, "0.2"], [4, "0.4"], [5, "0.8"]]) {
+    const r = reg(); assert.equal(r.status, 0); assert.match(r.stderr, new RegExp(`${n} failed registrations or abnormal exits of demo in 30 min: waiting ${w.replace(".", "\\.")}s first`));
+    assert.ok(r.ms >= Number(w) * 900, `${n}: waited ${r.ms} ms`);
+  }
+  assert.equal(scenario().vars.demo, "1");
+  const up = reg();
+  assert.equal(up.status, 1, "given up: register refuses, so the runner stays stopped");
+  assert.match(up.stdout, /runner demo failed 6 times in 30 min .*given up, not restarted; CI_LOCAL cleared, jobs run hosted\. Fix it, then: agent-ci-runner start demo/);
+  assert.ok(fs.existsSync(gave)); assert.equal(scenario().vars.demo, undefined, "jobs fall back to hosted at once");
+  // watch leaves a given-up runner stopped; start (deliberate) clears it and retries
+  set({ active: { "agent-ci-runner@demo.service": "inactive" } });
+  assert.ok(!run("watch").calls.some((c) => c.tool === "systemctl" && c.argv.includes("start")), "watch doesn't restart it");
+  set({ active: { "agent-ci-runner@demo.service": "inactive" }, runners: online().runners });
+  const st = run("start", "demo"); assert.ok(!fs.existsSync(gave) && !fs.existsSync(rec), "start clears the give-up and the streak");
+  assert.ok(st.calls.some((c) => c.tool === "systemctl" && c.argv.join(" ") === "--user start agent-ci-runner@demo.service"));
 });
 
 test("watch retries a runner whose registration failed (Restart= doesn't: a failed Requires= is not an exit); never a busy, starting or paused one", () => {

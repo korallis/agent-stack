@@ -234,19 +234,25 @@ def last_run_crashed(inst):
     return r.stdout.strip() not in ("", "0")
 
 
+def given_up(inst):
+    return STATE / f"{inst}.gave-up"
+
+
 def register_with_backoff(inst):
-    """register, bounded on failure. A failure is a failed registration, or a previous run that crashed (non-zero
-    exit). After REGISTER_FAILS failures in 10 min each attempt first waits AGENT_CI_REGISTER_BACKOFF_S (60), so a
-    loop asks GitHub for a token about once a minute, not every 5 s. Loops:
-    - a failed registration: the runner's start fails (Requires=), not retried by Restart=; watch retries it every
-      tick, and a manual start may too;
-    - a runner that registers but crashes: Restart=always restarts it every 5 s (the unit has no start limit, so a
-      busy runner's per-job restarts never stop it).
-    A clean previous run (exit 0, a job done) and a successful registration clear the record."""
+    """register, bounded on failure. A failure is a failed registration, or a previous run that ended abnormally
+    (non-zero exit: run.sh crashing before or without a job); a clean exit 0 (a job done) clears the streak. From the
+    BACKOFF_FROM-th failure in 30 min each start first waits AGENT_CI_REGISTER_BACKOFF_S (60) x 2^(n - BACKOFF_FROM),
+    so 60, 120, 240 s; at the GIVE_UP_AT-th the runner is given up: register refuses (the runner stays stopped: a
+    failed Requires= isn't restarted), the repo's CI_LOCAL is cleared (jobs run hosted; watch sets it again only while
+    its other runners cover every label), and watch no longer retries it until `agent-ci-runner start <repo>`.
+    Loops this bounds: a failed registration (retried by watch every tick, not by Restart=), and a runner that
+    registers but crashes (Restart=always every 5 s; the unit has no start limit, so a busy runner's per-job restarts
+    never stop it)."""
+    repo = split(inst)[0]
     f = STATE / f"register-failures-{inst}.json"
     now = time.time()
     try:
-        recent = [t for t in json.loads(f.read_text()) if now - t < 600]
+        recent = [t for t in json.loads(f.read_text()) if now - t < 1800]
     except (OSError, ValueError):
         recent = []
     crashed = last_run_crashed(inst)
@@ -254,9 +260,18 @@ def register_with_backoff(inst):
         recent.append(now)
         STATE.mkdir(parents=True, exist_ok=True)
         f.write_text(json.dumps(recent))
-    if len(recent) >= REGISTER_FAILS:
-        wait = float(os.environ.get("AGENT_CI_REGISTER_BACKOFF_S", "60"))
-        print(f"{len(recent)} failed registrations or crashed runs of {inst} in 10 min: waiting {wait:g}s first", file=sys.stderr)
+    n = len(recent)
+    if n >= GIVE_UP_AT:
+        given_up(inst).write_text(str(int(now)))
+        var_set(repo, False)
+        msg = (f"{OWNER}/{repo}: runner {inst} failed {n} times in 30 min (failed registrations or abnormal exits): "
+               f"given up, not restarted; {VAR} cleared, jobs run hosted. Fix it, then: agent-ci-runner start {repo}")
+        say(msg)
+        subprocess.run(["notify-send", "--app-name=Agent stack", "CI runner given up", msg], check=False, capture_output=True)
+        die(f"{inst} given up after {n} failures")
+    if n >= BACKOFF_FROM:
+        wait = float(os.environ.get("AGENT_CI_REGISTER_BACKOFF_S", "60")) * 2 ** (n - BACKOFF_FROM)
+        print(f"{n} failed registrations or abnormal exits of {inst} in 30 min: waiting {wait:g}s first", file=sys.stderr)
         time.sleep(wait)
     try:
         cmd_register(inst)
@@ -269,7 +284,7 @@ def register_with_backoff(inst):
         f.unlink(missing_ok=True)
 
 
-REGISTER_FAILS = 3
+BACKOFF_FROM, GIVE_UP_AT = 3, 6
 
 
 def cmd_register(inst):
@@ -425,6 +440,7 @@ def cmd_install(repo, count, dry, lane=None):
     # Only a new instance is extracted here: register re-extracts the verified release before every start anyway, and an
     # installed runner may be in the middle of a job (re-extracting it would pull its files from under that job).
     for inst in want:
+        given_up(inst).unlink(missing_ok=True)   # a deliberate install retries a runner that was given up
         if not runner_dir(inst).is_dir():
             extract_runner(inst)
     install_hooks()
@@ -458,6 +474,9 @@ def cmd_stop(repo):
 def cmd_start(repo):
     (STATE / f"{repo}.paused").unlink(missing_ok=True)
     insts = instances(repo)
+    for inst in insts:   # a deliberate start retries a runner that was given up, from a clean streak
+        given_up(inst).unlink(missing_ok=True)
+        (STATE / f"register-failures-{inst}.json").unlink(missing_ok=True)
     if not insts:
         die(f"no local runner installed for {repo}; run agent-ci-runner install {repo}")
     for inst in insts:
@@ -497,7 +516,7 @@ def cmd_watch():
         # Only failed or inactive: active is mid-job, activating is registering or waiting to restart.
         for i in instances(repo):
             state = systemctl("is-active", unit(i), check=False).stdout.strip()
-            if state in ("failed", "inactive"):
+            if state in ("failed", "inactive") and not given_up(i).exists():
                 systemctl("reset-failed", unit(i), f"agent-ci-runner-register@{i}.service", check=False)
                 systemctl("start", unit(i), check=False)
                 say(f"{OWNER}/{repo}: runner {i} was {state}; started again (registration retried)")
