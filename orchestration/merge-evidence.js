@@ -604,6 +604,7 @@ export function blastSection(body) {
 // that were only the recompute (three on one project on 2026-10-03), so with --decide the helper first waits: it reads
 // mergeable every pollS seconds for up to maxS while it is UNKNOWN. Returns the last value read.
 export async function awaitMergeable({ read, sleep = (s) => new Promise((r) => setTimeout(r, s * 1000)), pollS = 5, maxS = 90 }) {
+  if (!(pollS > 0) || !(maxS >= 0)) throw new Error(`awaitMergeable: pollS must be > 0 and maxS >= 0 (got ${pollS}, ${maxS})`);   // 0 would never advance
   let value = read(), waited = 0;
   while (value === "UNKNOWN" && waited + pollS <= maxS) { await sleep(pollS); waited += pollS; value = read(); }
   return { value, waited };
@@ -854,10 +855,11 @@ if (import.meta.url === `file://${process.argv[1]}` || process.argv[1]?.endsWith
   if (a.includes("--decide")) {
     // Never ask Jev while GitHub is still computing mergeability (see awaitMergeable).
     const R = flag("--repo") ? ["-R", flag("--repo")] : [];
-    const env = (n, d) => { const v = Number(process.env[n]); return Number.isFinite(v) && v >= 0 && process.env[n] !== "" ? v : d; };
+    // a poll interval must be positive (0 would poll forever); the wait may be 0 (one read, no polling)
+    const env = (n, d, min0) => { const v = Number(process.env[n]); return process.env[n] && Number.isFinite(v) && (min0 ? v >= 0 : v > 0) ? v : d; };
     let m;
     try { m = await awaitMergeable({ read: () => ghJson("pr", "view", String(pr), ...R, "--json", "mergeable").mergeable,
-      pollS: env("AGENT_MERGE_EVIDENCE_POLL_S", 5), maxS: env("AGENT_MERGE_EVIDENCE_MERGEABLE_WAIT_S", 90) }); }
+      pollS: env("AGENT_MERGE_EVIDENCE_POLL_S", 5), maxS: env("AGENT_MERGE_EVIDENCE_MERGEABLE_WAIT_S", 90, true) }); }
     catch (e) { console.error(`agent-merge-evidence: ${e.message}`); process.exit(2); }
     if (m.value === "UNKNOWN") {
       console.error(`merge gate: NOT DECIDED (GitHub still reports mergeable UNKNOWN after ${m.waited}s: it is recomputing after a push or a base change). Jev was not asked; run the gate again in a minute.`);
