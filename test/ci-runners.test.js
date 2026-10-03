@@ -61,6 +61,7 @@ const tarball = join(root, "runner.tar.gz");
 execFileSync("tar", ["czf", tarball, "-C", rel, "config.sh", "run.sh"]);
 const sha = createHash("sha256").update(fs.readFileSync(tarball)).digest("hex");
 
+const fakeGh = join(root, "fake-gh"); fs.writeFileSync(fakeGh, "#!/bin/sh\necho gh version 0-test\n", { mode: 0o755 });
 let n = 0;
 function world(initial = {}) {
   const w = join(root, `w${n++}`); fs.mkdirSync(w);
@@ -68,7 +69,7 @@ function world(initial = {}) {
   // as in the unit: a minimal PATH; gh is found through AGENT_CI_TOOL_PATH (default ~/.local/bin and the mise shims)
   const env = { PATH: `${sysStubs}:/usr/bin:/bin`, AGENT_CI_TOOL_PATH: stubs, GH_SCENARIO: sc, CALLS: join(w, "calls"), AGENT_CI_ROOT: join(w, "runners"),
     AGENT_CI_STATE: join(w, "state"), AGENT_CI_CONFIG: join(w, "config/ci-runners.env"), AGENT_CI_CACHE: join(w, "cache"),
-    AGENT_CI_TARBALL: tarball, AGENT_CI_SHA256: sha, AGENT_CI_HOST: "testhost", AGENT_CI_POLL_S: "0.05", AGENT_CI_ONLINE_WAIT_S: "1" };
+    AGENT_CI_TARBALL: tarball, AGENT_CI_SHA256: sha, AGENT_CI_GH: fakeGh, AGENT_CI_HOST: "testhost", AGENT_CI_POLL_S: "0.05", AGENT_CI_ONLINE_WAIT_S: "1" };
   const run = (...args) => { fs.writeFileSync(env.CALLS, ""); const r = spawnSync("python3", [tool, ...args], { encoding: "utf8", env });
     return { ...r, calls: fs.readFileSync(env.CALLS, "utf8").trim().split("\n").filter(Boolean).map(JSON.parse) }; };
   const scenario = () => JSON.parse(fs.readFileSync(sc, "utf8"));
@@ -105,6 +106,23 @@ test("the unit sandboxes the job (no home, keys or seats), bounds it inside agen
   assert.match(fs.readFileSync(hook, "utf8"), /cpus=\$\{AGENT_CI_NPROC:-\$\(nproc --all\)\}/);
   const inst = fs.readFileSync(join(repo, "install.sh"), "utf8");
   assert.match(inst, /for f in [^;]*\bagent-ci-runner\b/); assert.match(inst, /for t in [^;]*\bagent-ci-runner-watch\b/);
+});
+
+test("jobs get gh (hosted Ubuntu has it; here it lives under the home the sandbox hides): _shared/bin, first on the unit's PATH", () => {
+  const u = fs.readFileSync(join(repo, "system/systemd/agent-ci-runner@.service"), "utf8");
+  assert.match(u, /^Environment=PATH=%h\/\.local\/share\/agent-stack\/ci-runners\/_shared\/bin:\/usr\/local\/bin:\/usr\/bin:\/bin$/m);
+  assert.match(u, /^BindReadOnlyPaths=%h\/\.local\/share\/agent-stack\/ci-runners\/_shared /m, "bound into the sandbox");
+  const { w, env, run } = world(online());
+  assert.equal(run("install", "demo").status, 0);
+  const shared = join(env.AGENT_CI_ROOT, "_shared/bin/gh");
+  assert.equal(fs.readFileSync(shared, "utf8"), fs.readFileSync(fakeGh, "utf8")); assert.equal(fs.statSync(shared).mode & 0o777, 0o755);
+  // a newer gh reaches the next job through register; an unchanged one isn't copied again
+  const newer = join(w, "gh-2"); fs.writeFileSync(newer, "#!/bin/sh\necho gh version 2-test\n"); fs.utimesSync(newer, new Date(), new Date(Date.now() + 5000));
+  const reg = (gh) => spawnSync("python3", [tool, "register", "demo"], { encoding: "utf8", env: { ...env, AGENT_CI_GH: gh } });
+  assert.equal(reg(newer).status, 0); assert.match(fs.readFileSync(shared, "utf8"), /2-test/);
+  const ino = fs.statSync(shared).ino; assert.equal(reg(newer).status, 0); assert.equal(fs.statSync(shared).ino, ino, "unchanged: not re-copied");
+  // no gh found: register still succeeds and says so
+  const none = reg(join(w, "missing")); assert.equal(none.status, 0, none.stderr); assert.match(none.stderr, /no gh binary found/);
 });
 
 test("register: a fresh ephemeral registration with a clean work dir; the token reaches config.sh only by env and is never printed", () => {
@@ -253,7 +271,7 @@ test("hook updates reach ci-runners/_shared through register and install.sh --ap
   assert.equal(fs.readFileSync(fd, "utf8"), fs.readFileSync(hookV(1), "utf8"), "the open file is never rewritten in place"); fs.closeSync(fd);
   assert.notEqual(fs.statSync(shared).ino, ino); assert.equal(fs.readFileSync(shared, "utf8"), fs.readFileSync(hookV(2), "utf8"));
   assert.equal(fs.statSync(shared).mode & 0o777, 0o755);
-  assert.deepEqual(fs.readdirSync(join(env.AGENT_CI_ROOT, "_shared")).sort(), ["ci-runner-hook", "job-completed.sh", "job-started.sh"], "no temp file left");
+  assert.deepEqual(fs.readdirSync(join(env.AGENT_CI_ROOT, "_shared")).sort(), ["bin", "ci-runner-hook", "job-completed.sh", "job-started.sh"], "no temp file left");
   // unchanged: not rewritten
   const ino2 = fs.statSync(shared).ino; assert.match(viaInstallSh(hookV(2)).stdout, /already current/); assert.equal(fs.statSync(shared).ino, ino2);
 });
