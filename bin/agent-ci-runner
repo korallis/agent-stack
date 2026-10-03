@@ -12,7 +12,10 @@
   agent-ci-runner remove REPO [--keep]       clear CI_LOCAL, stop the unit, delete the runner on GitHub and its dir
   agent-ci-runner status [--json]            units, GitHub runner state, CI_LOCAL, job slots, load
   agent-ci-runner logs REPO [-n N]           the unit's journal
-  agent-ci-runner register REPO              (ExecStartPre of the unit) fresh ephemeral registration, clean work dir
+  agent-ci-runner register REPO              (agent-ci-runner-register@, before every start) fresh ephemeral registration,
+                                             clean work dir
+  agent-ci-runner refresh-hooks              (install.sh --apply) copy the job gate hook into ci-runners/_shared, by
+                                             rename; register does it too, before every job
   agent-ci-runner watch                      (timer, every 2 min) a runner down for 10 minutes -> CI_LOCAL cleared,
                                              so its repo's jobs run hosted instead of queueing; back online -> set again
 
@@ -49,7 +52,7 @@ ROOT = Path(os.environ.get("AGENT_CI_ROOT", REAL_HOME / ".local/share/agent-stac
 STATE = Path(os.environ.get("AGENT_CI_STATE", REAL_HOME / ".local/state/agent-stack/ci-runners"))
 CONFIG = Path(os.environ.get("AGENT_CI_CONFIG", REAL_HOME / ".config/agent-stack/ci-runners.env"))
 CACHE = Path(os.environ.get("AGENT_CI_CACHE", REAL_HOME / ".cache/agent-stack"))
-HOOK_SRC = Path(__file__).resolve().parent.parent / "system/ci-runner-hook"
+HOOK_SRC = Path(os.environ.get("AGENT_CI_HOOK_SRC", Path(__file__).resolve().parent.parent / "system/ci-runner-hook"))
 HOST = os.environ.get("AGENT_CI_HOST", socket.gethostname().split(".")[0])
 DEFAULT_CONFIG = """# Local CI runners (agent-ci-runner, docs/RUNNERS.md). Numbers only; read by the job gate at every job start.
 AGENT_CI_MAX_JOBS=2
@@ -229,6 +232,7 @@ def cmd_register(inst):
     if not runner_dir(inst).is_dir():
         die(f"{runner_dir(inst)} has no runner; run agent-ci-runner install {repo}")
     (STATE / "slots" / inst).unlink(missing_ok=True)  # a (re)start means the previous job is over
+    install_hooks()
     # Nothing a job wrote may reach the next one: the job can write its whole runner directory, so the runner itself
     # is re-extracted from the checksum-verified release (with a fresh _work), and its home and tool cache are wiped,
     # unless AGENT_CI_KEEP_CACHE=1 keeps those two (faster; a same-repo PR job could then leave files a later job uses).
@@ -264,19 +268,42 @@ def fetch_runner():
     return tarball
 
 
+def put(path, data):
+    """Write an executable file by rename, never in place: a running job's bash may be reading the old one (it reads its
+    script as it goes), and no reader ever sees a partly written file. Unchanged content is not rewritten."""
+    try:
+        if path.read_bytes() == data:
+            return False
+    except OSError:
+        pass
+    tmp = path.with_name(f".{path.name}.{os.getpid()}.tmp")
+    tmp.write_bytes(data)
+    tmp.chmod(0o755)
+    os.replace(tmp, path)
+    return True
+
+
 def install_hooks():
+    """The job gate every runner runs from ci-runners/_shared (bound read-only into each unit). Called by install, by
+    register (before every job, so a merged hook change reaches the next job) and by refresh-hooks (install.sh)."""
     shared = ROOT / "_shared"
     shared.mkdir(parents=True, exist_ok=True)
-    shutil.copy2(HOOK_SRC, shared / "ci-runner-hook")
+    changed = put(shared / "ci-runner-hook", HOOK_SRC.read_bytes())
     for name, mode in (("job-started.sh", "start"), ("job-completed.sh", "end")):
-        p = shared / name
-        p.write_text(f'#!/usr/bin/env bash\nexec "$(dirname "$0")/ci-runner-hook" {mode}\n')
-        p.chmod(0o755)
+        changed |= put(shared / name, f'#!/usr/bin/env bash\nexec "$(dirname "$0")/ci-runner-hook" {mode}\n'.encode())
     (STATE / "slots").mkdir(parents=True, exist_ok=True)
     if not CONFIG.exists():
         CONFIG.parent.mkdir(parents=True, exist_ok=True)
         CONFIG.write_text(DEFAULT_CONFIG)
         CONFIG.chmod(0o600)
+    return changed
+
+
+def cmd_refresh_hooks():
+    if not repos():
+        print("no local runners installed: nothing to refresh")
+        return
+    print("job gate hook refreshed (from the next job on)" if install_hooks() else "job gate hook already current")
 
 
 def wait_online(repo, names, seconds):
@@ -485,6 +512,7 @@ def main():
         if name == "logs":
             s.add_argument("-n", type=int, default=100)
     sub.add_parser("watch")
+    sub.add_parser("refresh-hooks")
     s = sub.add_parser("status")
     s.add_argument("--json", action="store_true")
     a = p.parse_args()
@@ -511,6 +539,8 @@ def main():
         os.execvp("journalctl", ["journalctl", "--user", "-u", unit(repo), "-n", str(a.n), "--no-pager"])
     elif a.cmd == "watch":
         cmd_watch()
+    elif a.cmd == "refresh-hooks":
+        cmd_refresh_hooks()
     else:
         cmd_status(a.json)
 

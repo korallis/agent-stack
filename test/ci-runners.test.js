@@ -231,6 +231,33 @@ test("main lane: install --main-lane gives the last runner only korallis-local-m
   set({ ...two, vars: { demo: "1" } }); assert.equal(down(), "1");
 });
 
+test("hook updates reach ci-runners/_shared through register and install.sh --apply, by rename (never partly written)", () => {
+  const { w, env, run } = world(online());
+  const shared = join(env.AGENT_CI_ROOT, "_shared/ci-runner-hook");
+  const hookV = (v) => { const f = join(w, `hook-${v}`); fs.writeFileSync(f, `#!/usr/bin/env bash\n# v${v}\n${"x".repeat(200000)}\n`); return f; };
+  // install.sh's line, run as install.sh --apply runs it
+  const line = fs.readFileSync(join(repo, "install.sh"), "utf8").split("\n").find((l) => l.includes("agent-ci-runner\" refresh-hooks"));
+  assert.ok(line && line.startsWith("if [ $CHECK = 0 ]"), "install.sh --apply refreshes the hook");
+  const viaInstallSh = (src) => spawnSync("bash", ["-c", `CHECK=0; S=${JSON.stringify(repo)}; todo() { echo "TODO $*"; }\n${line}`],
+    { encoding: "utf8", env: { ...env, AGENT_CI_HOOK_SRC: src } });
+  // no runners installed: nothing written
+  const none = viaInstallSh(hookV(0)); assert.equal(none.status, 0, none.stderr); assert.match(none.stdout, /nothing to refresh/);
+  assert.ok(!fs.existsSync(shared));
+  assert.equal(run("install", "demo").status, 0);
+  // register (before every job) delivers an updated hook
+  const r = spawnSync("python3", [tool, "register", "demo"], { encoding: "utf8", env: { ...env, AGENT_CI_HOOK_SRC: hookV(1) } });
+  assert.equal(r.status, 0, r.stderr); assert.equal(fs.readFileSync(shared, "utf8"), fs.readFileSync(hookV(1), "utf8"));
+  // a job's bash that opened v1 keeps reading all of v1 while install.sh puts v2 in place by rename
+  const fd = fs.openSync(shared, "r"); const ino = fs.statSync(shared).ino;
+  const two = viaInstallSh(hookV(2)); assert.equal(two.status, 0, two.stderr); assert.match(two.stdout, /hook refreshed/);
+  assert.equal(fs.readFileSync(fd, "utf8"), fs.readFileSync(hookV(1), "utf8"), "the open file is never rewritten in place"); fs.closeSync(fd);
+  assert.notEqual(fs.statSync(shared).ino, ino); assert.equal(fs.readFileSync(shared, "utf8"), fs.readFileSync(hookV(2), "utf8"));
+  assert.equal(fs.statSync(shared).mode & 0o777, 0o755);
+  assert.deepEqual(fs.readdirSync(join(env.AGENT_CI_ROOT, "_shared")).sort(), ["ci-runner-hook", "job-completed.sh", "job-started.sh"], "no temp file left");
+  // unchanged: not rewritten
+  const ino2 = fs.statSync(shared).ino; assert.match(viaInstallSh(hookV(2)).stdout, /already current/); assert.equal(fs.statSync(shared).ino, ino2);
+});
+
 // the job gate
 const event = (name, payload) => { const f = join(root, `event-${name}.json`); fs.writeFileSync(f, typeof payload === "string" ? payload : JSON.stringify(payload)); return f; };
 const pushEvent = event("push", { ref: "refs/heads/main", repository: { full_name: "korallis/demo" } });
