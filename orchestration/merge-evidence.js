@@ -1,6 +1,6 @@
 #!/usr/bin/env node
 // agent-merge-evidence <pr> [--repo owner/name] [--mission M --slice S] [--change "one line"] [--deploy "..."]
-//                      [--rollback "..."] [--decide]
+//                      [--rollback "..."] [--decide [--no-post]]
 //
 // The merge gate's evidence, assembled from exact-head facts instead of a hand-written summary (Jev decides better
 // on evidence than on conclusions: 51% of review.merge_gate calls came back "uncertain" before this, 2026-09-30).
@@ -8,7 +8,9 @@
 // the independent-review status on that head, QA's bug-review-board proof (proof/brb-<head>.md), the blast-radius
 // comment, and the target branch, deploy effect and rollback as limits. Anything missing says MISSING, never
 // "fine". --decide also asks Jev, but never while GitHub reports mergeable UNKNOWN (it waits up to 90 s first; still
-// UNKNOWN: exit 4, Jev not asked). Exit 0: live Jev merge in the act band. Exit 3: live Jev merge below the act bar with
+// UNKNOWN: exit 4, Jev not asked). Exit 0: live Jev merge in the act band, and the helper has posted the PR comment
+// (verdict, raw request and response) and the jev-merge success status on the head (--no-post: neither; a failed
+// post: exit 5). Exit 3: live Jev merge below the act bar with
 // the gates it checks green (see gateProblems): NEEDS CONFIRM, a one-line exact-head "confirm <sha>" from the
 // other-family independent reviewer after the integrator checks the repository's own gates (the integrator role's
 // below-bar path). Exit 1: hold. Code still re-checks the head and merges with --match-head-commit.
@@ -778,7 +780,7 @@ export function gather(pr, { repo, mission, slice, change, deploy, rollback, con
   if (again.headRefOid !== v.headRefOid || again.baseRefOid !== v.baseRefOid)
     throw new Error(`the PR moved while its evidence was collected (head ${v.headRefOid.slice(0, 12)} -> ${again.headRefOid.slice(0, 12)}, base ${v.baseRefOid.slice(0, 12)} -> ${again.baseRefOid.slice(0, 12)}); run it again`);
   return {
-    pr: v.number, head: v.headRefOid, base: v.baseRefOid, baseRef: v.baseRefName, headRef: v.headRefName,
+    pr: v.number, nwo, head: v.headRefOid, base: v.baseRefOid, baseRef: v.baseRefName, headRef: v.headRefName,
     mergeable: v.mergeable, mergeState: v.mergeStateStatus, reviewDecision: v.reviewDecision || null, isDraft: v.isDraft, change: change || [v.title, firstSection(v.body)].filter(Boolean).join(". "), scope: testScope(files), checks,
     requirements, observedChecks, unstable, gateHistory: gateRuns, gateContext: cfg.gate.context, reviewContext: cfg.review.context, sources: { review: cfg.review.source, qa: cfg.qa.source, gate: cfg.gate.source },
     authorFamily: author.family, independentReview, reviewProblem, reviewNote, reviewLinkProblem,
@@ -838,11 +840,35 @@ export function outcome(rec, facts) {
   return { code: 1, text: `merge gate: HOLD (${rec?.decided_by}/${rec?.band}/${rec?.result?.decision})` };
 }
 
+// Posting the gate's result (operator 2026-10-03: integrators kept hitting "branch policy blocks merge" after forgetting
+// it). Only a pass posts: a live Jev merge in the act band (decided_by jev, not stubbed) with every gate this helper
+// checks green (outcome code 0). Never on review or uncertain bands, fallback, HOLD, NEEDS CONFIRM or errors.
+export const shouldPost = (rec, o) => o?.code === 0 && rec?.decided_by === "jev" && rec?.band === "act" && !rec?.stubbed;
+
+// (a) a PR comment with the verdict line plus the raw request and response, then (b) the gate status on the exact head,
+// success, the request id in its description, target_url = that comment. The comment's first line is the helper's
+// outcome line, so a later gather knows it as a gate report. Returns { commentUrl } or throws (nothing is posted after
+// a failure: no status without its comment).
+export function postGateResult({ facts, input, rec, verdict }) {
+  const fence = (o) => "```json\n" + JSON.stringify(o, null, 2) + "\n```";
+  const response = { decided_by: rec.decided_by, band: rec.band, result: rec.result, request_id: rec.request_id };
+  const body = [`${verdict} at ${facts.head}`, "",
+    `<details><summary>Jev request (review.merge_gate)</summary>\n\n${fence(input)}\n</details>`, "",
+    `<details><summary>Jev response</summary>\n\n${fence(response)}\n</details>`].join("\n");
+  const comment = JSON.parse(execFileSync("gh", ["api", "-X", "POST", `repos/${facts.nwo}/issues/${facts.pr}/comments`, "--input", "-"],
+    { input: JSON.stringify({ body }), encoding: "utf8", stdio: ["pipe", "pipe", "pipe"], timeout: 60_000 }));
+  if (!comment?.html_url) throw new Error("the PR comment was not created (no html_url)");
+  const description = `Live Jev merge (act band); request ${rec.request_id ?? "?"}`.slice(0, 140);
+  gh("api", "-X", "POST", `repos/${facts.nwo}/statuses/${facts.head}`, "-f", "state=success", "-f", `context=${facts.gateContext || GATE_CONTEXT}`,
+    "-f", `description=${description}`, "-f", `target_url=${comment.html_url}`);
+  return { commentUrl: comment.html_url };
+}
+
 if (import.meta.url === `file://${process.argv[1]}` || process.argv[1]?.endsWith("agent-merge-evidence")) {
   const a = process.argv.slice(2);
   const flag = (n) => { const i = a.indexOf(n); return i >= 0 ? a[i + 1] : undefined; };
   const pr = a.find((x) => /^\d+$/.test(x));
-  if (!pr) { console.error("usage: agent-merge-evidence <pr> [--repo o/r] [--mission M --slice S] [--change ...] [--deploy ...] [--rollback ...] [--config F] [--author-family claude|codex|kimi|grok] [--extra-evidence FILE] [--decide]"); process.exit(2); }
+  if (!pr) { console.error("usage: agent-merge-evidence <pr> [--repo o/r] [--mission M --slice S] [--change ...] [--deploy ...] [--rollback ...] [--config F] [--author-family claude|codex|kimi|grok] [--extra-evidence FILE] [--decide [--no-post]]"); process.exit(2); }
   // Extra evidence goes in through this flag, into input.review, so nobody hand-edits the printed JSON.
   let extraEvidence = null;
   if (a.includes("--extra-evidence")) {
@@ -882,5 +908,12 @@ if (import.meta.url === `file://${process.argv[1]}` || process.argv[1]?.endsWith
   console.log(JSON.stringify({ input, history, decision: { decided_by: rec.decided_by, band: rec.band, result: rec.result, request_id: rec.request_id, ...(rec.stubbed ? { stubbed: true } : {}) } }, null, 2));
   const o = outcome(rec, facts);
   console.error(o.text);
+  if (shouldPost(rec, o)) {
+    if (a.includes("--no-post")) console.error("merge gate: not posted (--no-post): no comment, no jev-merge status");
+    else {
+      try { const p = postGateResult({ facts, input, rec, verdict: o.text.split("\n", 1)[0] }); console.error(`merge gate: posted ${p.commentUrl} and the ${facts.gateContext || GATE_CONTEXT} success status on ${facts.head}`); }
+      catch (e) { console.error(`merge gate: PASS but NOT POSTED (${String(e.stderr || e.message).trim().slice(0, 300)}). Post the comment and the ${facts.gateContext || GATE_CONTEXT} status by hand, or run again.`); process.exit(5); }
+    }
+  }
   process.exit(o.code);
 }
