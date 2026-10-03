@@ -79,7 +79,9 @@ TOOL_PATH = os.environ.get("AGENT_CI_TOOL_PATH", f"{REAL_HOME}/.local/bin:{REAL_
 def gh(*args, check=True):
     # The unit's HOME is the runner's own; gh's login (and mise's config) live in the real home.
     env = {**os.environ, "HOME": str(REAL_HOME), "PATH": f"{TOOL_PATH}:{os.environ.get('PATH', '/usr/bin:/bin')}"}
-    r = subprocess.run(["gh", *args], capture_output=True, text=True, env=env)
+    # a stable cwd: the unit's WorkingDirectory is the runner dir, which register replaces (mise's shim fails on a
+    # deleted cwd with "No such file or directory")
+    r = subprocess.run(["gh", *args], capture_output=True, text=True, env=env, cwd=REAL_HOME)
     if check and r.returncode != 0:
         die(f"gh {' '.join(args[:3])} failed: {(r.stderr or r.stdout).strip()[:300]}")
     return r
@@ -158,6 +160,8 @@ def config_value(name, default):
 def extract_runner(repo):
     tarball = fetch_runner()  # verified before anything is replaced
     d = runner_dir(repo)
+    ROOT.mkdir(parents=True, exist_ok=True)
+    os.chdir(ROOT)  # never sit in the directory being replaced (the unit starts this step inside it)
     shutil.rmtree(d, ignore_errors=True)
     d.mkdir(parents=True)
     with tarfile.open(tarball) as t:
