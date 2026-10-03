@@ -343,6 +343,38 @@ def put(path, data):
     return True
 
 
+def gh_binary():
+    """The real gh for jobs: hosted Ubuntu has one, and workflows call it (a guard reading a PR's live labels). Here it
+    is a mise install under the home the sandbox hides. AGENT_CI_GH overrides (tests)."""
+    if os.environ.get("AGENT_CI_GH"):
+        p = Path(os.environ["AGENT_CI_GH"])
+        return p if p.is_file() else None
+    path = f"{TOOL_PATH}:{os.environ.get('PATH', '')}"
+    try:
+        r = subprocess.run(["mise", "which", "gh"], capture_output=True, text=True, cwd=REAL_HOME, timeout=30, env={**os.environ, "PATH": path})
+        if r.returncode == 0 and Path(r.stdout.strip()).is_file():
+            return Path(r.stdout.strip())
+    except (OSError, subprocess.TimeoutExpired):
+        pass
+    w = shutil.which("gh", path=path)
+    real = Path(w).resolve() if w else None
+    return real if real and real.name == "gh" else None   # not mise's own binary behind a shim
+
+
+def put_copy(path, src):
+    """put() a copy of src (by rename), skipped when size and mtime already match: no 40 MB re-read per job."""
+    s = src.stat()
+    try:
+        d = path.stat()
+        if d.st_size == s.st_size and int(d.st_mtime) == int(s.st_mtime):
+            return False
+    except OSError:
+        pass
+    put(path, src.read_bytes())
+    os.utime(path, (s.st_atime, s.st_mtime))
+    return True
+
+
 def install_hooks():
     """The job gate every runner runs from ci-runners/_shared (bound read-only into each unit). Called by install, by
     register (before every job, so a merged hook change reaches the next job) and by refresh-hooks (install.sh)."""
@@ -351,6 +383,13 @@ def install_hooks():
     changed = put(shared / "ci-runner-hook", HOOK_SRC.read_bytes())
     for name, mode in (("job-started.sh", "start"), ("job-completed.sh", "end")):
         changed |= put(shared / name, f'#!/usr/bin/env bash\nexec "$(dirname "$0")/ci-runner-hook" {mode}\n'.encode())
+    # gh for jobs: _shared/bin is first on the unit's PATH (the sandbox hides the host's mise install)
+    src = gh_binary()
+    if src:
+        (shared / "bin").mkdir(exist_ok=True)
+        changed |= put_copy(shared / "bin/gh", src)
+    else:
+        print("agent-ci-runner: no gh binary found; jobs that call gh will not find it", file=sys.stderr)
     (STATE / "slots").mkdir(parents=True, exist_ok=True)
     if not CONFIG.exists():
         CONFIG.parent.mkdir(parents=True, exist_ok=True)

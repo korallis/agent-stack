@@ -27,7 +27,8 @@ Environment=RUNNER_TOOL_CACHE=%h/.local/share/agent-stack/ci-runners/%i/toolcach
 Environment=AGENT_TOOLSDIRECTORY=%h/.local/share/agent-stack/ci-runners/%i/toolcache
 Environment=ACTIONS_RUNNER_HOOK_JOB_STARTED=%h/.local/share/agent-stack/ci-runners/_shared/job-started.sh
 Environment=ACTIONS_RUNNER_HOOK_JOB_COMPLETED=%h/.local/share/agent-stack/ci-runners/_shared/job-completed.sh
-Environment=PATH=/usr/local/bin:/usr/bin:/bin
+# _shared/bin: tools a job expects from hosted Ubuntu that this host has only under the hidden home (gh)
+Environment=PATH=%h/.local/share/agent-stack/ci-runners/_shared/bin:/usr/local/bin:/usr/bin:/bin
 # The same timezone and locale as GitHub's hosted Ubuntu images: date-sensitive tests ("last Monday", "this week")
 # failed on the host's Europe/London time.
 Environment=TZ=UTC
