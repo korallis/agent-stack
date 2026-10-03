@@ -203,6 +203,33 @@ test("remove clears CI_LOCAL first, disables the unit, deletes this host's runne
   assert.match(run("install", "../x").stderr, /not a repo name/);
 });
 
+test("main lane: install --main-lane gives the last runner only korallis-local-main; kept on re-install, dropped on scale-down", () => {
+  const two = { runners: [{ id: 7, name: "testhost-demo", status: "online", busy: false }, { id: 9, name: "testhost-demo-2", status: "online", busy: false }] };
+  const { env, run, set, scenario } = world(two);
+  const labels = (i) => { const a = fs.readFileSync(join(env.AGENT_CI_ROOT, i, "runner/config-argv.txt"), "utf8").trim().split("\n"); return a[a.indexOf("--labels") + 1]; };
+  assert.match(run("install", "demo", "--main-lane").stderr, /--main-lane needs --count 2/, "one runner can't be a lane");
+  assert.match(run("install", "demo", "--count", "2", "--main-lane", "--dry-run").stdout, /demo_r2 takes only korallis-local-main/);
+  assert.equal(run("install", "demo", "--count", "2", "--main-lane").status, 0);
+  for (const i of ["demo", "demo_r2"]) assert.equal(run("register", i).status, 0);
+  assert.equal(labels("demo_r2"), "korallis-local-main", "the lane runner never takes korallis-local (PR) jobs");
+  assert.equal(labels("demo"), "korallis-local");
+  assert.match(run("status").stdout, /demo_r2 .* main lane/);
+  set(two); assert.equal(run("install", "demo").status, 0, "a plain re-install keeps the lane");
+  assert.equal(run("register", "demo_r2").status, 0); assert.equal(labels("demo_r2"), "korallis-local-main");
+  set(two); assert.equal(run("install", "demo", "--count", "2", "--no-main-lane").status, 0);
+  assert.equal(run("register", "demo_r2").status, 0); assert.equal(labels("demo_r2"), "korallis-local");
+  set(two); assert.equal(run("install", "demo", "--count", "2", "--main-lane").status, 0);
+  set(two); assert.equal(run("install", "demo", "--count", "1").status, 0, "scale down");
+  assert.deepEqual(JSON.parse(fs.readFileSync(join(env.AGENT_CI_STATE, "lanes.json"), "utf8")), {}, "the dropped lane runner's lane is gone");
+  assert.equal(run("register", "demo").status, 0); assert.equal(labels("demo"), "korallis-local");
+  // watch: with a lane, the repo is healthy only while both kinds of runner are up (main's jobs need the lane runner)
+  set(two); assert.equal(run("install", "demo", "--count", "2", "--main-lane").status, 0);
+  const down = () => { fs.writeFileSync(join(env.AGENT_CI_STATE, "watch.json"), JSON.stringify({ demo: 1 })); run("watch"); return scenario().vars.demo; };
+  set({ runners: [two.runners[0]], vars: { demo: "1" } }); assert.equal(down(), undefined, "lane runner down: hosted");
+  set({ runners: [two.runners[1]], vars: { demo: "1" } }); assert.equal(down(), undefined, "PR runner down: hosted");
+  set({ ...two, vars: { demo: "1" } }); assert.equal(down(), "1");
+});
+
 // the job gate
 function gate(state, repo, mode, extra = {}) {
   const env = { PATH: "/usr/bin:/bin", AGENT_CI_REPO: repo, AGENT_CI_STATE: state, AGENT_CI_POLL_S: "0.05", AGENT_CI_NPROC: "4",
