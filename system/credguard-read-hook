@@ -18,6 +18,9 @@
 // MCP's --secrets only masks the values in its secrets file. They are allowed only with the tool's own `filename`
 // pointing into the seat's scratch dir (PW_DIR/<seat>/net/), which is protected like a credential file; the seat reads
 // it through agent-net-summary (method, host, path, status).
+// History guard (2026-10-03), in the same hook so every Claude and Codex seat has it: a force push (--force, -f in a
+// short-option cluster, --force-with-lease, a +refspec, --mirror) or gh pr update-branch --rebase is refused, nested shells
+// included, and so is defining an alias for one; published PRs get fix-up commits and a merge of main (CULTURE).
 "use strict";
 const fs = require("node:fs"), path = require("node:path"), os = require("node:os");
 
@@ -457,6 +460,50 @@ function envDump(verb, args, seg) {
   return null;
 }
 
+// Published history is never rewritten (CULTURE: fix-up commits and a merge of main; squashing happens only at merge).
+// A seat rebased a published PR on 2026-10-03, so a force push or a rebase update of a PR branch is refused, whatever
+// the branch: the reason, not the rule, is in the denial.
+const GIT_VALUE_OPTS = new Set(["-C", "-c", "--git-dir", "--work-tree", "--namespace", "--exec-path", "--super-prefix", "--config-env"]);
+// An alias defined in the command itself (git -c alias.X=…, git config alias.X …, gh alias set X …) is read like the
+// command it stands for; "!…" aliases are shell commands. Aliases already in a config file are not seen.
+function aliasRewrite(tool, value) {
+  const words = String(value).replace(/^!/, "").trim().split(/\s+/).filter(Boolean);
+  const v = words[0] === tool ? historyRewrite(tool, words.slice(1)) : historyRewrite(tool, words);
+  return v && `it defines an alias for a history rewrite (${v})`;
+}
+function historyRewrite(verb, args) {
+  if (verb === "git") {
+    let i = 0;
+    while (i < args.length && args[i].startsWith("-")) {   // git -C dir -c k=v push
+      if (args[i] === "-c" && /^alias\./i.test(args[i + 1] || "")) { const r = aliasRewrite("git", args[i + 1].slice(args[i + 1].indexOf("=") + 1)); if (r) return r; }
+      i += GIT_VALUE_OPTS.has(args[i]) ? 2 : 1;
+    }
+    if (args[i] === "config") {
+      const at = args.findIndex((a, j) => j > i && /^alias\./i.test(a));
+      if (at >= 0) return aliasRewrite("git", args.slice(at + 1).join(" "));
+      return null;
+    }
+    if (args[i] !== "push") return null;
+    for (const a of args.slice(i + 1)) {
+      if (/^--force(-with-lease(=.*)?)?$/.test(a)) return `git push ${a} rewrites the remote branch`;
+      if (a === "--mirror") return "git push --mirror overwrites (and deletes) the remote's branches to match this clone";
+      if (/^-[a-zA-Z]+$/.test(a) && a.slice(1).includes("f")) return `git push ${a} (force) rewrites the remote branch`;
+      if (a.startsWith("+")) return `git push ${a}: a + refspec force-updates the remote branch`;   // no remote name starts with +
+    }
+    return null;
+  }
+  if (verb === "gh") {
+    const al = args.findIndex((a, j) => a === "alias" && args[j + 1] === "set");
+    if (al >= 0) { const ops = args.slice(al + 2).filter((a) => !a.startsWith("-")); if (ops.length >= 2) return aliasRewrite("gh", ops.slice(1).join(" ")); }
+    const at = args.findIndex((a, j) => a === "pr" && args[j + 1] === "update-branch");
+    if (at < 0) return null;
+    const rest = args.slice(at + 2);
+    if (rest.some((a) => a === "--rebase" || /^--rebase=(true|1)$/.test(a) || a === "-r" || /^-[a-zA-Z]*r[a-zA-Z]*$/.test(a)))
+      return "gh pr update-branch --rebase rebases the published PR branch";
+  }
+  return null;
+}
+
 // Pure: why this Bash command would print a protected file, or null.
 const ASSIGN = /^[A-Za-z_][A-Za-z0-9_]*=/;
 function bashVerdict(command, ctx, depth = 0) {
@@ -561,6 +608,8 @@ function bashVerdict(command, ctx, depth = 0) {
     const hitIn = (list) => { for (const w of list) { const h = protectedPath(w, ctx); if (h) return h; } return null; };
     const dump = envDump(verb, args, seg);
     if (dump) return { env: true, why: dump };
+    const rewrite = historyRewrite(verb, args);
+    if (rewrite) return { rewrite: true, why: rewrite };
     if (verb === "cd" || verb === "pushd") { const t = args.find((a) => !/^-/.test(a) && !/^\+\d/.test(a)); addDirs(t === undefined ? ctx.home : t); continue; }
     if (verb === "popd") continue;   // every directory the command visited stays a candidate
     // dotglob: on counts everywhere; off counts only where it certainly applies to this shell
@@ -790,6 +839,15 @@ function decide(input, { home = os.homedir(), pats = patterns(process.env, home)
     if (h) v = { why: "a content search prints the matching lines", hit: h };
   }
   if (!v) return { deny: false };
+  if (v.rewrite) return { deny: true, reason: [
+    `agent-stack history guard: blocked, because ${v.why}. A published PR's history is never rewritten: reviews, QA`,
+    "and merge evidence point at its commits (CULTURE: fix-up commits and a merge of main; squashing happens only at merge).",
+    "Instead:",
+    "  bring a PR up to date with main:   gh pr update-branch <PR>      (a merge commit; no --rebase)",
+    "                                     or: git fetch origin && git merge origin/main && git push",
+    "  fix something:                     a new commit on the branch, then a plain git push",
+    "Squash before the FIRST push only (git reset --soft \"$(git merge-base HEAD origin/main)\"). If history truly must change, ask the operator.",
+  ].join("\n") };
   if (v.env) return { deny: true, reason: [
     `agent-stack credential guard: blocked, because ${v.why}. Environments hold API keys and tokens, and the transcript keeps whatever is printed.`,
     "Names only, never values:",
@@ -834,5 +892,5 @@ function main() {
   process.exit(0);
 }
 
-module.exports = { envDump, SECRET_NAME, DEFAULT_PATTERNS, VERCEL_DIR, BYPASS, PW_DIR, NET_DIR, NET_TOOL, netDir, legacyNetDir, netKind, netVerdict, patterns, globRe, protectedPath, lex, parseArgs, bashVerdict, keyNames, decide };
+module.exports = { envDump, historyRewrite, SECRET_NAME, DEFAULT_PATTERNS, VERCEL_DIR, BYPASS, PW_DIR, NET_DIR, NET_TOOL, netDir, legacyNetDir, netKind, netVerdict, patterns, globRe, protectedPath, lex, parseArgs, bashVerdict, keyNames, decide };
 if (require.main === module) main();
