@@ -170,6 +170,8 @@ async function main() {
   if (!(minutes >= 5)) throw new Error("--minutes is at least 5");
   const db = odb();
   db.exec("CREATE TABLE IF NOT EXISTS reroutes (item TEXT PRIMARY KEY, ts INTEGER, from_seat TEXT, to_seat TEXT, why TEXT)");
+  // the successor row a move created, so a chain can be followed from the journal or the ledger (2026-10-04)
+  if (!db.prepare("PRAGMA table_info(reroutes)").all().some((c) => c.name === "successor")) db.exec("ALTER TABLE reroutes ADD COLUMN successor TEXT");
   db.exec("CREATE TABLE IF NOT EXISTS reroute_unserved (seat TEXT PRIMARY KEY, since INTEGER)");
   db.exec("CREATE TABLE IF NOT EXISTS reroute_told (item TEXT PRIMARY KEY, ts INTEGER, seat TEXT, note TEXT)");
   db.exec("CREATE TABLE IF NOT EXISTS reroute_renudged (item TEXT PRIMARY KEY, ts INTEGER, seat TEXT)");
@@ -223,8 +225,9 @@ async function main() {
     }
     for (const m of moves) {
       if (apply && m.to) {
-        rig(["queue", "handoff", m.id, "--to", m.to, "--note", m.note], { json: true });
-        db.prepare("INSERT OR IGNORE INTO reroutes VALUES (?,?,?,?,?)").run(m.id, Date.now(), m.from, m.to, m.why);
+        const res = rig(["queue", "handoff", m.id, "--to", m.to, "--note", m.note], { json: true });
+        m.successor = res?.created?.qitemId ?? null;   // the daemon answers { closed: <source>, created: <successor> }
+        db.prepare("INSERT OR IGNORE INTO reroutes (item, ts, from_seat, to_seat, why, successor) VALUES (?,?,?,?,?,?)").run(m.id, Date.now(), m.from, m.to, m.why, m.successor);
         m.applied = true;
       }
       // left unmoved (no free seat, or a constraint only a lead can settle): tell the lead once per row (WO96)
