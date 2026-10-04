@@ -507,8 +507,15 @@ test("several runners per repo: <repo>_r<N> instances with their own names, unit
   // each runner gets its own E2E_PORT, stable across registrations (two browser shards collided on one port)
   assert.equal(run("register", "demo").status, 0);
   const port = (i) => fs.readFileSync(join(env.AGENT_CI_ROOT, i, "ci.env"), "utf8");
-  assert.equal(port("demo_r2"), "E2E_PORT=47100\n", "registered first"); assert.equal(port("demo"), "E2E_PORT=47101\n");
-  assert.equal(run("register", "demo_r2").status, 0); assert.equal(port("demo_r2"), "E2E_PORT=47100\n", "stable");
+  assert.equal(port("demo_r2"), "E2E_PORT=31000\n", "registered first"); assert.equal(port("demo"), "E2E_PORT=31001\n");
+  assert.equal(run("register", "demo_r2").status, 0); assert.equal(port("demo_r2"), "E2E_PORT=31000\n", "stable");
+  // below the ephemeral range: an old allocation in it (471xx) moves at the next registration; a range overlapping it is refused
+  const pj = join(env.AGENT_CI_STATE, "ports.json"), cur = JSON.parse(fs.readFileSync(pj, "utf8"));
+  fs.writeFileSync(pj, JSON.stringify({ ...cur, demo: 47103 }));
+  assert.equal(run("register", "demo").status, 0); assert.match(port("demo"), /^E2E_PORT=310\d\d\n$/, "migrated out of the ephemeral range");
+  const ranges = join(env.AGENT_CI_STATE, "ephemeral"); fs.writeFileSync(ranges, "30000\t60999\n");
+  const bad = spawnSync("python3", [tool, "register", "demo"], { encoding: "utf8", env: { ...env, AGENT_CI_EPHEMERAL_RANGE: ranges } });
+  assert.equal(bad.status, 1); assert.match(bad.stderr, /E2E_PORT range 31000\.\.31099 overlaps the kernel's ephemeral ports 30000\.\.60999/);
   // the repo is healthy while either runner is up
   set({ runners: [two.runners[1]] }); fs.writeFileSync(join(env.AGENT_CI_STATE, "watch.json"), JSON.stringify({ demo: 0 }));
   run("watch"); assert.equal(scenario().vars.demo, "1");

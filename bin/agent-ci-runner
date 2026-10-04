@@ -210,7 +210,11 @@ def extract_runner(inst):
     (d / ".agent-ci-version").write_text(VERSION + "\n")
 
 
-PORT_BASE = int(os.environ.get("AGENT_CI_PORT_BASE", "47100"))
+# Below the kernel's ephemeral range (32768-60999 by default) and the seats' E2E ports (20000-29999, system/env.sh):
+# inside the ephemeral range any outgoing connection can hold the port as its local end, and the job's test server
+# then fails to bind (EADDRINUSE on a runner's 471xx port, 2026-10-04).
+PORT_BASE = int(os.environ.get("AGENT_CI_PORT_BASE", "31000"))
+EPHEMERAL = Path(os.environ.get("AGENT_CI_EPHEMERAL_RANGE", "/proc/sys/net/ipv4/ip_local_port_range"))
 
 
 def alloc_port(inst):
@@ -221,7 +225,14 @@ def alloc_port(inst):
         ports = json.loads(f.read_text())
     except (OSError, ValueError):
         ports = {}
-    ports = {k: v for k, v in ports.items() if (ROOT / k / "runner").is_dir() or k == inst}
+    try:
+        lo, hi = (int(x) for x in EPHEMERAL.read_text().split()[:2])
+    except (OSError, ValueError):
+        lo, hi = 32768, 60999
+    if PORT_BASE <= hi and PORT_BASE + 99 >= lo:
+        die(f"E2E_PORT range {PORT_BASE}..{PORT_BASE + 99} overlaps the kernel's ephemeral ports {lo}..{hi}; set AGENT_CI_PORT_BASE below {lo - 100}")
+    # an allocation outside the range (the old 471xx ports) is dropped, so the runner gets a new port at registration
+    ports = {k: v for k, v in ports.items() if ((ROOT / k / "runner").is_dir() or k == inst) and PORT_BASE <= v < PORT_BASE + 100}
     if inst not in ports:
         used = set(ports.values())
         free = next((p for p in range(PORT_BASE, PORT_BASE + 100) if p not in used), None)
