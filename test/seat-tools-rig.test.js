@@ -17,6 +17,11 @@ fs.writeFileSync(join(work, "workspace.yaml"), "projects:\n  - id: p\n    root: 
 fs.writeFileSync(join(home, ".local/bin/rig"), `#!/usr/bin/env python3
 import json, os, sys
 a = sys.argv[1:]
+if a[:1] == ["ps"]:
+    seats = os.environ.get("FAKE_SEATS")
+    if seats is None: sys.exit(1)
+    want = a[a.index("--session") + 1]
+    print(json.dumps([{"canonicalSessionName": x} for x in seats.split(",") if x == want])); sys.exit(0)
 if a[:2] == ["queue", "show"]:
     print(os.environ.get("FAKE_SHOW", "{}")); sys.exit(int(os.environ.get("FAKE_SHOW_EXIT", "0")))
 stdin = sys.stdin.read() if "-" in a and "--body-file" in a else None
@@ -35,12 +40,13 @@ function worktree(member, branch) {
 const elsewhere = join(root, "other-repo");
 fs.mkdirSync(elsewhere); g(elsewhere, "init", "-q"); g(elsewhere, "-c", "user.email=t@t", "-c", "user.name=t", "commit", "-q", "--allow-empty", "-m", "x");
 
-function run(argv, { seat = "coord-lead@r", source = null, cwd = root, exit = 0, input, showExit = 0 } = {}) {
+function run(argv, { seat = "coord-lead@r", source = null, cwd = root, exit = 0, input, showExit = 0, seats = "qa-codex-3@r,coord-lead@r", env: extra = {} } = {}) {
   fs.rmSync(log, { force: true });
   const r = spawnSync("python3", [helper, ...argv], {
     cwd, input, encoding: "utf8",
     env: { PATH: process.env.PATH, HOME: home, TMPDIR: tmpdir, OPENRIG_WORK_ROOT: work, OPENRIG_SESSION_NAME: seat,
-      FAKE_LOG: log, FAKE_EXIT: String(exit), FAKE_SHOW_EXIT: String(showExit), FAKE_SHOW: JSON.stringify(source ?? {}) },
+      FAKE_LOG: log, FAKE_EXIT: String(exit), FAKE_SHOW_EXIT: String(showExit), FAKE_SHOW: JSON.stringify(source ?? {}),
+      ...(seats === null ? {} : { FAKE_SEATS: seats }), ...extra },
   });
   const calls = fs.existsSync(log) ? fs.readFileSync(log, "utf8").trim().split("\n").map(l => JSON.parse(l)) : [];
   const call = calls.at(-1);
@@ -222,3 +228,79 @@ test("D: CULTURE, the agent-stack skill and the kernel operator's guidance say: 
 });
 
 process.on("exit", () => fs.rmSync(root, { recursive: true, force: true }));
+
+// 2026-10-04: seats parked rows on invented free-text blockers ("external:qa-scheduling") and sat idle with work waiting.
+test("park: a seat's block/update-to-blocked must name a blocker that clears; the rest is refused with the rule", () => {
+  const ok = [
+    ["queue", "block", "q1", "--on", "qitem-20261004120000-abcd1234"],
+    ["queue", "block", "q1", "--on", "pr:acme/app#193"],
+    ["queue", "block", "q1", "--on", "check:test@9f7c33a6"],
+    ["queue", "block", "q1", "--on", "github-ci:37224131780"],
+    ["queue", "block", "q1", "--on", "fold:m3-wave2"],
+    ["queue", "block", "q1", "--on", "auth:vercel-login"],
+    ["queue", "block", "q1", "--on", "human@kernel", "--summary", "s", "--evidence-ref", "/x"],
+    ["queue", "block", "q1", "--on", "owner@external"],
+    ["queue", "block", "q1", "--on", "external:qa-codex-3@r:needs the preview helper", "--wake-after", "2h"],
+    ["queue", "block", "q1", "--on=external:qa-codex-3@r:helper", "--wake-after=1h30m"],
+    ["queue", "update", "q1", "--state", "blocked", "--blocked-on", "pr:acme/app#7"],
+    // the lead-loop template's plan-approval park
+    ["queue", "block", "q1", "--on", "gate:owner-plan-approval", "--summary", "Plan approval: 4 features", "--evidence-ref", "features.json", "--continuation", "dispatch", "--wake-after", "2h"],
+    ["queue", "update", "q1", "--state", "blocked", "--blocked-on", "external:qa-codex-3@r:x", "--wake-after", "90m"],
+  ];
+  for (const a of ok) {
+    const r = run(a);
+    assert.equal(r.status, 0, `${a.join(" ")}: ${r.stderr}`);
+    assert.deepEqual(r.call.argv, a.map((x) => x), "passed on unchanged");
+  }
+  const bad = [
+    [["queue", "block", "q1", "--on", "external:qa-scheduling"], /external: blocker must read external:<seat>:<reason>/],
+    [["queue", "block", "q1", "--on", "external:qa-codex-3-availability"], /external:<seat>:<reason>/],
+    [["queue", "block", "q1", "--on", "external:registered-host-verification", "--wake-after", "1h"], /external:<seat>:<reason>/],
+    [["queue", "block", "q1", "--on", "gate:ci-pr12-3"], /not a blocker form a seat may park on/],
+    [["queue", "block", "q1", "--on", "gate:owner-plan-approval"], /gate:owner- park needs --wake-after of at most 2h/],
+    [["queue", "block", "q1", "--on", "gate:owner-plan-approval", "--wake-after", "1d"], /gate:owner- park needs --wake-after/],
+    [["queue", "block", "q1", "--on", "PR #12 merge (still OPEN)"], /not a blocker form/],
+    [["queue", "block", "q1", "--on", "check:test@main"], /not a blocker form/],
+    [["queue", "block", "q1", "--on", "external:qa-codex-3@r:helper"], /needs --wake-after \(at most 2h\)/],
+    [["queue", "block", "q1", "--on", "external:qa-codex-3@r:helper", "--wake-after", "3h"], /--wake-after 3h is longer than 2h/],
+    [["queue", "block", "q1", "--on", "external:qa-codex-3@r:helper", "--wake-after", "soon"], /needs --wake-after/],
+    [["queue", "block", "q1", "--on", "external:ghost@r:helper", "--wake-after", "1h"], /there is no seat ghost@r/],
+    [["queue", "block", "q1", "--on", "external:coord-lead@r:me", "--wake-after", "1h"], /coord-lead@r is you/],
+    [["queue", "update", "q1", "--state", "blocked", "--blocked-on", "external:queue-scheduling"], /external:<seat>:<reason>/],
+  ];
+  for (const [a, why] of bad) {
+    const r = run(a);
+    assert.equal(r.status, 2, a.join(" "));
+    assert.equal(r.call, undefined, `${a.join(" ")}: never reaches rig`);
+    assert.match(r.stderr, why, a.join(" "));
+    assert.match(r.stderr, /^seat rig: refused park on /);
+    assert.match(r.stderr.replace(/\s+/g, " "), /hand the work to that seat with a row \(rig queue create \/ handoff\) and end your turn\. Claim first, keep turns short/);
+  }
+  // the seat list can't be read: refused, never assumed
+  const unread = run(["queue", "block", "q1", "--on", "external:qa-codex-3@r:x", "--wake-after", "1h"], { seats: null });
+  assert.equal(unread.status, 2); assert.match(unread.stderr, /could not check that seat qa-codex-3@r exists/);
+});
+
+test("park: not a park, or not a seat, passes through untouched", () => {
+  for (const a of [["queue", "update", "q1", "--note", "progress"], ["queue", "update", "q1", "--state", "in-progress"],
+    ["queue", "block", "q1"], ["queue", "claim", "q1"]]) {
+    const r = run(a);
+    assert.equal(r.status, 0, a.join(" ")); assert.deepEqual(r.call.argv, a);
+  }
+  const op = run(["queue", "block", "q1", "--on", "external:anything"], { seat: "" });
+  assert.equal(op.status, 0, "outside a seat (the operator's shell) OpenRig alone decides");
+  assert.deepEqual(op.call.argv, ["queue", "block", "q1", "--on", "external:anything"]);
+});
+
+test("park: the ~/.local/bin/rig launcher sends a seat's block and update through the helper", () => {
+  const inst = fs.readFileSync(join(dirname(helper), "..", "install.sh"), "utf8");
+  assert.ok(inst.includes('handoff|handoff-and-complete|block|update) [ -n "${OPENRIG_NODE_ID:-}" ] && exec "%s/seat-tools/rig" "$@" ;;'));
+});
+
+test("park: the lead-loop template's own park command passes the rule", () => {
+  const loop = fs.readFileSync(join(dirname(helper), "..", "rig/template/guidance/lead-loop.md"), "utf8");
+  const m = loop.match(/`rig queue block <id> --on (\S+) .*--wake-after (\S+)`/);
+  assert.ok(m, "the template still documents a park");
+  const r = run(["queue", "block", "q1", "--on", m[1], "--wake-after", m[2]]);
+  assert.equal(r.status, 0, r.stderr);
+});

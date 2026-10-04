@@ -1,6 +1,9 @@
 #!/usr/bin/env python3
 """OpenRig seats only (first on the seats' PATH): `rig` with the project's execution-data conventions filled in.
 
+A seat's park (`queue block --on X`, `queue update --state blocked --blocked-on X`) must name a blocker that clears:
+see PARK_HELP below. Anything else is refused before it reaches OpenRig (exit 2), with the rule.
+
 For `rig queue create | handoff | handoff-and-complete` this adds what OpenRig's project views join on
 (sdlc-conventions.md, DISPATCH DATA; scoped-operating-posture.md), so no seat has to remember it:
   - a `project:<id>` tag (the id from the seat's workspace catalog, $OPENRIG_WORK_ROOT/workspace.yaml);
@@ -61,7 +64,8 @@ if "--toon" in flags:
         sys.exit("seat rig: agent-toon missing; run ./install.sh --apply")
 
 
-if len(args) < 2 or args[0] != "queue" or args[1] not in ("create", "handoff", "handoff-and-complete"):
+PARKS = ("block", "update") if os.environ.get("OPENRIG_SESSION_NAME") else ()
+if len(args) < 2 or args[0] != "queue" or args[1] not in ("create", "handoff", "handoff-and-complete", *PARKS):
     run_real(args)
 
 work = os.environ.get("OPENRIG_WORK_ROOT", "")
@@ -116,6 +120,94 @@ def note(msg):
 def has(tl, prefix):
     return any(t.startswith(prefix) for t in tl)
 
+
+# A seat's park must name a blocker that will really clear (2026-10-04: Codex seats parked rows on invented free-text
+# blockers such as "external:qa-scheduling" and sat idle with work waiting). Seats only; OpenRig itself, and the
+# operator's own shell, are untouched. `queue block --on X` and `queue update --state blocked --blocked-on X`.
+PARK_HELP = """seat rig: refused park on {blocker!r}: {why}.
+A park must name a blocker that clears by itself or by someone who knows they owe it:
+  qitem-<id>                      a live row (its resolution is the wake)
+  pr:<owner/repo>#<n>             a pull request (merge or close)
+  check:<name>@<sha>              a named CI check on an exact commit (7-40 hex)
+  github-ci:<run id>              a GitHub Actions run
+  fold:<gate> | auth:<gate>       OpenRig's typed gates
+  gate:owner-<decision>           a decision the owner was asked for (lead-loop: plan approval), plus --wake-after
+                                  of at most 2h
+  human@kernel | <name>@external  a human seat (with --summary and --evidence-ref)
+  external:<seat>:<reason>        another seat that will resolve it (it must exist, and not be you), plus
+                                  --wake-after of at most 2h
+Waiting for a seat to have time ("qa-scheduling", "<seat>-availability") is not a blocker: hand the work to that seat
+with a row (rig queue create / handoff) and end your turn. Claim first, keep turns short, and leave nothing parked
+that you could move forward yourself (CULTURE)."""
+MAX_WAKE_S = 2 * 3600
+
+
+def wake_seconds(text):
+    """'90s', '15m', '2h', '1h30m' -> seconds; None when it isn't a duration."""
+    m = re.fullmatch(r"(?:\d+[smhd])+", (text or "").strip())
+    if not m:
+        return None
+    return sum(int(n) * {"s": 1, "m": 60, "h": 3600, "d": 86400}[u] for n, u in re.findall(r"(\d+)([smhd])", text))
+
+
+def seat_exists(session):
+    """True/False from the daemon's node list across rigs; None when it can't be read."""
+    r = subprocess.run([REAL, "ps", "--nodes", "-A", "--json", "--session", session], capture_output=True, text=True,
+                       env={**os.environ, "AGENT_STACK_RIG_HELPER": "1"})
+    try:
+        rows = json.loads(r.stdout) if r.returncode == 0 else None
+    except ValueError:
+        rows = None
+    if not isinstance(rows, list):
+        return None
+    return any(isinstance(n, dict) and n.get("canonicalSessionName") == session for n in rows)
+
+
+def park_problem(blocker, wake, me):
+    """Why this park's blocker is refused, or None when it is allowed."""
+    b = (blocker or "").strip()
+    if re.fullmatch(r"qitem-[\w-]+", b) or re.fullmatch(r"(fold|auth):\S.*", b):
+        return None
+    if re.fullmatch(r"pr:[\w.-]+/[\w.-]+#\d+", b) or re.fullmatch(r"check:[\w./ -]+@[0-9a-f]{7,40}", b) \
+            or re.fullmatch(r"github-ci:\d+", b):
+        return None
+    if re.fullmatch(r"human(-[\w.-]+)?@(kernel|host)", b) or re.fullmatch(r"[\w.:-]+@external", b):
+        return None
+    if re.fullmatch(r"gate:owner-[\w.-]+", b):
+        secs = wake_seconds(wake)
+        return None if secs and secs <= MAX_WAKE_S else "a gate:owner- park needs --wake-after of at most 2h (re-park when it fires)"
+    m = re.fullmatch(r"external:([\w.-]+@[\w.-]+):(\S.*)", b)
+    if not m:
+        if b.startswith("external:"):
+            return "an external: blocker must read external:<seat>:<reason>, naming the seat that resolves it"
+        return "not a blocker form a seat may park on"
+    seat = m.group(1)
+    if seat == me:
+        return f"{seat} is you: a row parked on yourself never wakes anyone"
+    found = seat_exists(seat)
+    if found is None:
+        return f"could not check that seat {seat} exists (the daemon's node list didn't read)"
+    if not found:
+        return f"there is no seat {seat}"
+    secs = wake_seconds(wake)
+    if secs is None:
+        return "an external: park needs --wake-after (at most 2h), so the row comes back to you"
+    if secs <= 0 or secs > MAX_WAKE_S:
+        return f"--wake-after {wake} is longer than 2h"
+    return None
+
+
+if args[1] in PARKS:
+    flag = "--on" if args[1] == "block" else "--blocked-on"
+    _, blocker = opt(flag)
+    parking = args[1] == "block" or opt("--state")[1] == "blocked"
+    if parking:
+        # no blocker at all: OpenRig refuses that itself
+        why = blocker is not None and park_problem(blocker, opt("--wake-after")[1], os.environ["OPENRIG_SESSION_NAME"])
+        if why:
+            print(PARK_HELP.format(blocker=blocker, why=why), file=sys.stderr)
+            sys.exit(2)
+    run_real(args)
 
 # rig queue handoff / handoff-and-complete options that take a value (the rest are boolean)
 VALUE_FLAGS = {"--body", "--body-file", "--evidence-ref", "--from", "--gate", "--host", "--note", "--priority",
