@@ -193,5 +193,60 @@ test("reduced-review label: one other-family plus one same-family non-writer rev
   assert.doesNotMatch(String(buildMergeInput({ head: H, pr, base: "b".repeat(40), checks: [], reviewVerdict: null, independentReview: null, risk: {} }).review), /reduced review/);
   assert.equal(REDUCED_LABEL, "reduced-review");
   const src = fs.readFileSync(join(repo, "orchestration/merge-evidence.js"), "utf8");
-  assert.match(src, /reducedReview: \(v\.labels \|\| \[\]\)\.some\(\(l\) => l\.name === REDUCED_LABEL\)/);
+  assert.match(src, /reducedReview: has\(REDUCED_LABEL\),/);
+});
+
+// Labels don't move with the head: a risky PR also needs the approver's comment naming the EXACT head (2026-10-04).
+test("owner approval at the exact head: the approver's 'owner-approved … by <approver> at head <sha>' comment; otherwise MISSING", async () => {
+  const { ownerApprovalAtHead } = await import("../orchestration/merge-evidence.js");
+  const H = "1fdda5e53f917277732d5a0d0fd4d33e0cb48fef", OLD = "ec4dfb3d6b3b63600d0a1c733340083220f197c2";
+  const c = (body) => ({ body });
+  assert.equal(ownerApprovalAtHead([c(`owner-approved applied by operator-agent@kernel at head ${H} under the standing approval`)], H), true);
+  assert.equal(ownerApprovalAtHead([c(`reduced-review plus owner-approved re-confirmed by operator-agent@kernel at refreshed head ${H} (the old approval is superseded)`)], H), true);
+  assert.equal(ownerApprovalAtHead([c(`reduced-review plus owner-approved applied by operator-agent@kernel at head ${H}: arch-claude (non-author)`)], H), true, "the reduced-review form");
+  assert.equal(ownerApprovalAtHead([c(`reduced-review plus owner-approved re-applied by operator-agent@kernel at refreshed head ${H}`)], H), true, "re-applied");
+  for (const [why, body] of [["the old head", `owner-approved applied by operator-agent@kernel at head ${OLD}`], ["another seat", `owner-approved applied by coord-lead-claude@app at head ${H}`],
+    ["a short sha", `owner-approved applied by operator-agent@kernel at head 1fdda5e`], ["quoted", `> owner-approved applied by operator-agent@kernel at head ${H}`],
+    ["not on its first line", `Summary\nowner-approved applied by operator-agent@kernel at head ${H}`], ["no owner-approved", `reviewed by operator-agent@kernel at head ${H}`]])
+    assert.equal(ownerApprovalAtHead([c(body)], H), false, why);
+  // the operator's approval often also mentions the merge gate, so it reads as a gate report: gather must still see it
+  const src = fs.readFileSync(join(repo, "orchestration/merge-evidence.js"), "utf8");
+  assert.match(src, /comments: allNotes\.filter\(\(n\) => n\.kind !== "review"\), head: v\.headRefOid, cfg,/, "read from all comments, not the gate-report-filtered ones");
+  const risky = { tier: "risky", features: [{ id: "F-010" }], authorFamily: "claude", ownerApproved: true, reviewFamilies: [{ family: "codex" }, { family: "kimi" }] };
+  assert.deepEqual(riskProblems({ ...risky, approvedAtHead: true }), []);
+  assert.match(riskProblems({ ...risky, approvedAtHead: false }).join(), /MISSING: owner approval not confirmed at this head/);
+  const reduced = { ...risky, reducedReview: true, writers: [], reviewSeats: [{ seat: "review-codex", family: "codex" }, { seat: "review-claude-2", family: "claude" }] };
+  assert.deepEqual(riskProblems({ ...reduced, approvedAtHead: true }), []);
+  assert.match(riskProblems({ ...reduced, approvedAtHead: false }).join(), /MISSING: owner approval not confirmed at this head/, "the reduced mode too");
+});
+
+test("per-repo config: a repo with a standing owner approval needs neither the label nor the exact-head comment, and says so to Jev", async () => {
+  const { resolveConfig } = await import("../orchestration/merge-evidence.js");
+  assert.equal(resolveConfig(null, "o/r").risk.ownerApproval, "label", "the default");
+  const cfg = resolveConfig({ repos: { "o/m": { risk: { ownerApproval: "standing", standing: "CULTURE D-29" } } } }, "o/m");
+  assert.deepEqual([cfg.risk.ownerApproval, cfg.risk.standing], ["standing", "CULTURE D-29"]);
+  assert.throws(() => resolveConfig({ risk: { ownerApproval: "standing" } }, "o/r"), /needs risk\.standing/);
+  assert.throws(() => resolveConfig({ risk: { ownerApproval: "maybe" } }, "o/r"), /must be "label" or "standing"/);
+  const risky = { tier: "risky", features: [{ id: "F-010" }], authorFamily: "claude", reviewFamilies: [{ family: "codex" }, { family: "kimi" }], ownerApproved: false, approvedAtHead: false };
+  assert.equal(riskProblems(risky).length, 2, "label repo: the label and the head approval are MISSING");
+  assert.deepEqual(riskProblems({ ...risky, standingApproval: "CULTURE D-29" }), [], "standing repo: neither is required");
+  const inp = String(buildMergeInput({ head: "a".repeat(40), pr: 1, base: "b".repeat(40), checks: [], reviewVerdict: null, independentReview: null, risk: { tier: "risky", standingApproval: "CULTURE D-29" } }).review);
+  assert.match(inp, /^owner approval: standing for this repository \(CULTURE D-29\); no owner-approved label or exact-head approval comment is required/m);
+});
+
+// QA PR190: an inline comment in gather once swallowed reducedReview and ownerApproved. riskFacts builds them from the
+// PR's labels and ALL its comments, and gather calls it.
+test("riskFacts: reducedReview and ownerApproved from the labels, the exact-head approval from all comments, standing from config", async () => {
+  const { riskFacts, resolveConfig } = await import("../orchestration/merge-evidence.js");
+  const H = "1fdda5e53f917277732d5a0d0fd4d33e0cb48fef", t = { tier: "risky", features: [{ id: "F-010" }], ids: ["F-010"] };
+  const labels = [{ name: "owner-approved" }, { name: "reduced-review" }];
+  const comments = [{ body: `reduced-review plus owner-approved re-confirmed by operator-agent@kernel at refreshed head ${H} (merge gate re-run follows)` }];
+  const r = riskFacts({ t, featuresFile: "read", authorFamily: "claude", labels, comments, head: H, cfg: resolveConfig(null, "o/r") });
+  assert.deepEqual([r.tier, r.reducedReview, r.ownerApproved, r.approvedAtHead, r.standingApproval], ["risky", true, true, true, null]);
+  const none = riskFacts({ t, authorFamily: "claude", labels: [], comments: [], head: H, cfg: resolveConfig(null, "o/r") });
+  assert.deepEqual([none.reducedReview, none.ownerApproved, none.approvedAtHead], [false, false, false]);
+  const standing = riskFacts({ t, authorFamily: "claude", labels: [], comments: [], head: H, cfg: resolveConfig({ risk: { ownerApproval: "standing", standing: "CULTURE D-29" } }, "o/r") });
+  assert.equal(standing.standingApproval, "CULTURE D-29");
+  const src = fs.readFileSync(join(repo, "orchestration/merge-evidence.js"), "utf8");
+  assert.match(src, /risk = riskFacts\(\{ t, featuresFile, featuresError, authorFamily: author\.family, reviewSeats, writers, labels: v\.labels,\n      comments: allNotes\.filter\(\(n\) => n\.kind !== "review"\), head: v\.headRefOid, cfg,/, "gather builds risk through riskFacts");
 });

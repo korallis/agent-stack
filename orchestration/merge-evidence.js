@@ -172,7 +172,12 @@ const SOURCES = { review: ["status", "comments"], qa: ["proof", "comments"], gat
 export function resolveConfig(raw, nwo) {
   const own = (raw?.repos && nwo && raw.repos[nwo]) || {};
   const cfg = { authorFamily: own.authorFamily || raw?.authorFamily || null, identities: { ...raw?.identities, ...own.identities },
-    identityHeadings: { ...raw?.identityHeadings, ...own.identityHeadings } };
+    identityHeadings: { ...raw?.identityHeadings, ...own.identityHeadings },
+    // risky-tier owner approval: "label" (the owner-approved label plus the approver's exact-head comment) or
+    // "standing" (a repo whose owner approval is standing, e.g. a CULTURE decision: neither is required; cite it)
+    risk: { ownerApproval: "label", standing: null, ...raw?.risk, ...own.risk } };
+  if (!["label", "standing"].includes(cfg.risk.ownerApproval)) throw new Error(`merge-evidence config: risk.ownerApproval must be "label" or "standing", not ${JSON.stringify(cfg.risk.ownerApproval)}`);
+  if (cfg.risk.ownerApproval === "standing" && !cfg.risk.standing) throw new Error('merge-evidence config: risk.ownerApproval "standing" needs risk.standing (where the standing approval is recorded)');
   for (const k of Object.keys(SOURCES)) {
     const c = cfg[k] = { ...DEFAULT_CONFIG[k], ...raw?.[k], ...own[k] };
     if (!SOURCES[k].includes(c.source)) throw new Error(`merge-evidence config: ${k}.source must be ${SOURCES[k].join(" or ")}, not ${JSON.stringify(c.source)}`);
@@ -523,6 +528,7 @@ export function buildMergeInput(f) {
     ? `carried review: ${c.seat}, carried from ${String(c.from).slice(0, 12)} to ${f.head}: proven by this helper (ancestor; the PR's own files byte-identical; only base-branch changes in between; required CI green on the head; ${c.seat} passed at ${String(c.from).slice(0, 7)}); NOT a fresh review of this head`
     : `carried review NOT accepted: ${c.seat}, claimed carried from ${String(c.from).slice(0, 12)}: ${c.problems.join("; ")}`);
   const review = [
+    ...(f.risk?.standingApproval && f.risk?.tier === "risky" ? [`owner approval: standing for this repository (${f.risk.standingApproval}); no owner-approved label or exact-head approval comment is required`] : []),
     ...(f.risk?.reducedReview ? [`${REDUCED_NOTE}: this risky PR needs one review from a family other than the author's plus one by a ${f.risk.authorFamily || "same-family"} seat that wrote none of it (${REDUCED_LABEL} label)`] : []),
     ...carried,
     ...(rv ? [rv.state
@@ -717,6 +723,16 @@ function reducedProblems(risk) {
   return p;
 }
 
+// Labels don't move with the head (2026-10-04: a refreshed risky PR still carried its old head's labels), so a risky PR
+// also needs the approver's comment naming the EXACT head: its own first line (not quoted or fenced) reads
+// "owner-approved … applied|re-confirmed|confirmed by <approver> at [refreshed] head <full sha>".
+export const OWNER_APPROVER = process.env.AGENT_MERGE_EVIDENCE_APPROVER || "operator-agent@kernel";
+export function ownerApprovalAtHead(comments = [], head, approver = OWNER_APPROVER) {
+  const who = approver.replace(/[.*+?^${}()|[\]\\]/g, "\\$&"), h = String(head || "").toLowerCase();
+  const re = new RegExp(`owner-approved\\b.*\\b(?:applied|re-confirmed|confirmed)\\s+by\\s+${who}\\s+at\\s+(?:refreshed\\s+)?head\\s+([0-9a-f]{40})\\b`, "i");
+  return comments.some((c) => { const first = ownLines(c.body).find((l) => l) || ""; const m = first.match(re); return !!m && m[1].toLowerCase() === h; });
+}
+
 // Pure: what a PR still lacks for its tier, as MISSING lines (empty when not risky, or complete). Fails closed
 // (operator 2026-10-04): a repo that HAS a features.json and a PR naming F-ids, with the file unreadable or an F-id
 // not in it, is "tier unknown". A repo with no features.json keeps "no tier".
@@ -726,8 +742,11 @@ export function riskProblems(risk) {
   if (risk.featuresFile === "read" && risk.unknown?.length) return [`MISSING: the risk tier of ${risk.unknown.join(", ")} (not in features.json; fix the PR title's F-id or add the feature)`];
   if (risk.tier !== "risky") return [];
   const p = [];
+  if (risk.standingApproval) { risk = { ...risk, ownerApproved: true, approvedAtHead: true }; }   // per-repo config: standing owner approval
+  const approvalAtHead = risk.approvedAtHead === false
+    ? [`MISSING: owner approval not confirmed at this head (no "owner-approved … by ${OWNER_APPROVER} at head <this sha>" comment; labels don't move with the head)`] : [];
   if (risk.reducedReview && risk.authorFamily) {
-    p.push(...reducedProblems(risk));
+    p.push(...reducedProblems(risk), ...approvalAtHead);
     if (!risk.ownerApproved) p.push(`MISSING: the ${OWNER_LABEL} label (risky ${risk.features.map((f) => f.id).join(", ")} needs the owner's OK, or a CULTURE standing approval cited when adding the label)`);
     return p;
   }
@@ -736,6 +755,7 @@ export function riskProblems(risk) {
   if ((risk.reviewFamilies || []).length >= 2 && !(risk.reviewFamilies || []).some((r) => !r.carried))
     p.push(`MISSING: a fresh exact-head review from at least one family (risky ${risk.features.map((f) => f.id).join(", ")}: every counted review is carried from an earlier commit)`);
   if (!risk.ownerApproved) p.push(`MISSING: the ${OWNER_LABEL} label (risky ${risk.features.map((f) => f.id).join(", ")} needs the owner's OK, or a CULTURE standing approval cited when adding the label)`);
+  p.push(...approvalAtHead);
   return p;
 }
 
@@ -806,6 +826,19 @@ export function proveCarry({ nwo, base, head, from, seat, ciGreen, reviewContext
   const problems = carryProblems({ ancestor: ab ? ab.behind_by === 0 : false, filesA: files(toA), filesB: files(toB), abPaths: full(ab) ? full(ab).map((f) => f.filename) : null,
     basePaths: full(baseCmp) ? full(baseCmp).map((f) => f.filename) : null, ciGreen, seatPassedAtA, seat, from: A.slice(0, 7) });
   return { ok: !problems.length, problems, from: A };
+}
+
+// Pure: the risk facts gather builds for a PR that names features (QA PR190: a comment once swallowed fields here, so
+// the wiring is a function the tests drive). labels: the PR's labels; comments: ALL its comments (an approval comment
+// often also reads as a gate report, which the evidence filter drops).
+export function riskFacts({ t, featuresFile, featuresError, authorFamily, reviewSeats = [], writers = [], labels = [], comments = [], head, cfg, reviewFamilies: fams = [] }) {
+  const has = (name) => (labels || []).some((l) => l.name === name);
+  return { ...t, featuresFile, featuresError, authorFamily, reviewSeats, writers,
+    approvedAtHead: ownerApprovalAtHead(comments, head),
+    standingApproval: cfg?.risk?.ownerApproval === "standing" ? cfg.risk.standing : null,
+    reducedReview: has(REDUCED_LABEL),
+    ownerApproved: has(OWNER_LABEL),
+    reviewFamilies: fams };
 }
 
 export function gather(pr, { repo, mission, slice, change, deploy, rollback, config, configPath, authorFamily } = {}) {
@@ -994,11 +1027,12 @@ export function gather(pr, { repo, mission, slice, change, deploy, rollback, con
     const t = featureTier(features, named);
     const reviewSeats = [];
     const writers = [branchSeat(v.headRefName), ...[...String(v.body || "").matchAll(/^\s*Author:\s*([\w.-]+)/gim)].map((m) => m[1])].filter(Boolean);
-    risk = { ...t, featuresFile, featuresError, authorFamily: author.family, reviewSeats, writers, reducedReview: (v.labels || []).some((l) => l.name === REDUCED_LABEL), ownerApproved: (v.labels || []).some((l) => l.name === OWNER_LABEL),
+    risk = riskFacts({ t, featuresFile, featuresError, authorFamily: author.family, reviewSeats, writers, labels: v.labels,
+      comments: allNotes.filter((n) => n.kind !== "review"), head: v.headRefOid, cfg,
       reviewFamilies: t.tier === "risky" ? reviewFamilies({ notes, head: v.headRefOid, authorFamily: author.family, identities: cfg.identities || {},
         headings: cfg.identityHeadingRes || [], statuses, context: cfg.review.context, pr: v.number, carries, seatsOut: reviewSeats,
         carry: (seat, from) => proveCarry({ nwo, base: v.baseRefName, head: v.headRefOid, from, seat, reviewContext: cfg.review.context,
-          ciGreen: (checks.length ? checks.every((c) => c.bucket === "pass") : (observedChecks || []).length > 0 && observedChecks.every((c) => c.bucket === "pass")) }) }) : [] };
+          ciGreen: (checks.length ? checks.every((c) => c.bucket === "pass") : (observedChecks || []).length > 0 && observedChecks.every((c) => c.bucket === "pass")) }) }) : [] });
     risk.carries = carries;
   }
   return {
