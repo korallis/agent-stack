@@ -63,7 +63,8 @@ remain only for the exceptions below, and as the automatic fallback.
 - **Jobs have `gh`**, as on hosted Ubuntu. The sandbox hides this host's mise install, so `install_hooks` copies the
   real binary into `ci-runners/_shared/bin` (at install, every registration and `refresh-hooks`; skipped when unchanged),
   which is first on the unit's `PATH`. The workflow's `GH_TOKEN` authenticates it.
-- **Each runner has its own app port.** Jobs get `E2E_PORT` (from 47100 upwards, stable per runner, set by
+- **Each runner has its own app port.** Jobs get `E2E_PORT` (31000..31099, stable per runner, below the kernel's ephemeral range
+  32768..60999 so no outgoing connection can hold it, and clear of the seats' 20000..29999; set by
   `register`), `TZ=UTC` and `C.UTF-8`, as on hosted Ubuntu. Two runners on this host share its network, so a project
   whose tests start an app server must take its port from `E2E_PORT` (a fixed port collides between parallel jobs).
 - **Fork code never runs here.** Three layers:
