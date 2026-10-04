@@ -37,6 +37,27 @@ if a[:2] == ["variable", "delete"]: s.get("vars", {}).pop(a[a.index("--repo") + 
 if j.endswith("/actions/runners --paginate --jq .runners[] | {id, name, status, busy}"):
     for r in s.get("runners", []): print(json.dumps(r))
     sys.exit(0)
+# Actions runs (requeue_hosted): s["runs"] = {id: {"status", "jobs": [{"status", "labels"}], "cancel": exit code}}
+if "/actions/runs" in j:
+    runs = s.get("runs", {}); path = a[a.index("-X") + 2] if "-X" in a else a[1]
+    m = path.split("/actions/runs")[1]
+    if m.startswith("?status="):
+        st = m.split("=")[1].split("&")[0]
+        for rid, r in runs.items():
+            if r["status"] == st: print(rid)
+        sys.exit(0)
+    rid, _, rest = m.lstrip("/").partition("/"); r = runs.get(rid)
+    if r is None: sys.exit(1)
+    if rest.startswith("jobs"):
+        for jb in r["jobs"]:
+            if jb["status"] == "queued": print(",".join(jb["labels"]))
+        sys.exit(0)
+    if rest in ("cancel", "force-cancel"):
+        code = r.get(rest, 0)
+        if code == 0: r["status"] = "completed"; save()
+        sys.exit(code)
+    if rest == "rerun": r["status"] = "queued"; r["rerun"] = r.get("rerun", 0) + 1; save(); sys.exit(r.get("rerunExit", 0))
+    print(r["status"]); sys.exit(0)
 if a[0] == "api" and a[1].startswith("repos/") and a[1].count("/") == 2: print(a[1][6:]); sys.exit(0)
 sys.exit(3)
 `, { mode: 0o755 });
@@ -406,7 +427,9 @@ test("hook updates reach ci-runners/_shared through register and install.sh --ap
 // the job gate
 const event = (name, payload) => { const f = join(root, `event-${name}.json`); fs.writeFileSync(f, typeof payload === "string" ? payload : JSON.stringify(payload)); return f; };
 const pushEvent = event("push", { ref: "refs/heads/main", repository: { full_name: "korallis/demo" } });
-function gate(state, repo, mode, extra = {}) {
+function gate(state, repo, mode, extra = {}, { guard = true } = {}) {
+  // as register leaves it: this registration's network-guard check (consumed by the job that starts)
+  if (guard && mode === "start") { fs.mkdirSync(join(state, "netguard"), { recursive: true }); fs.writeFileSync(join(state, "netguard", repo), "network guard holds: probe ok (checked 2026-10-04T20:00:00Z)\n"); }
   const env = { PATH: "/usr/bin:/bin", AGENT_CI_REPO: repo, AGENT_CI_STATE: state, AGENT_CI_POLL_S: "0.05", AGENT_CI_NPROC: "4",
     GITHUB_REPOSITORY: "korallis/demo", GITHUB_EVENT_PATH: pushEvent,
     AGENT_CI_LOADAVG: join(state, "loadavg"), AGENT_CI_MEMINFO: join(state, "meminfo"), ...extra };
@@ -602,7 +625,7 @@ test("network guard: netguard-check reports, the probe's own loopback server mus
   const lines = dry.stdout.trim().split("\n").filter((l) => l.startsWith("would run:"));
   // the anchor's unit is written by netguard-install itself: it runs before install.sh --apply places the units
   assert.match(dry.stdout, /^would write: \S+\/\.config\/systemd\/user\/agent-ci-netguard-anchor\.service; systemctl --user daemon-reload$/m);
-  assert.match(lines[0], /^would run: sudo install -o root -g root -m 0755 \S+\/system\/ci-netguard \/usr\/local\/libexec\/agent-ci-netguard$/);
+  assert.match(lines[0], /^would run: sudo install -D -o root -g root -m 0755 \S+\/system\/ci-netguard \/usr\/local\/libexec\/agent-ci-netguard$/);
   for (const re of [/sudo install -o root -g root -m 0644 \S+agent-ci-netguard\.service \/etc\/systemd\/system\/agent-ci-netguard\.service$/,
     /sudo systemctl enable agent-ci-netguard\.timer$/, /^would run: systemctl --user enable --now agent-ci-netguard-anchor\.service$/,
     /sudo systemctl start agent-ci-netguard\.service agent-ci-netguard\.timer$/]) assert.ok(lines.some((l) => re.test(l)), String(re));
@@ -644,8 +667,68 @@ test("netguard-install writes the anchor's user unit itself, before enabling it,
   const calls = fs.readFileSync(env.CALLS, "utf8").trim().split("\n").map(JSON.parse).map((c) => `${c.tool} ${Array.isArray(c.argv) ? c.argv.join(" ") : c.argv}`);
   const at = (re) => calls.findIndex((c) => re.test(c));
   assert.ok(at(/^systemctl --user daemon-reload$/) >= 0 && at(/^systemctl --user daemon-reload$/) < at(/^systemctl --user enable --now agent-ci-netguard-anchor\.service$/), calls.join("\n"));
-  assert.ok(at(/^sudo install -o root -g root -m 0755 \S+\/system\/ci-netguard \/usr\/local\/libexec\/agent-ci-netguard$/) >= 0);
+  assert.ok(at(/^sudo install -D -o root -g root -m 0755 \S+\/system\/ci-netguard \/usr\/local\/libexec\/agent-ci-netguard$/) >= 0);
   assert.ok(at(/^systemctl --user enable --now agent-ci-netguard-anchor/) < at(/^sudo systemctl start agent-ci-netguard\.service/));
   assert.ok(at(/^systemd-run /) > at(/^sudo systemctl start/), "the probe runs last");
   assert.match(r.stdout, /network guard holds/);
+});
+
+test("clearing CI_LOCAL re-runs a run that waits for a local runner (it goes hosted); runs without a queued self-hosted job are left alone", () => {
+  const sh = ["self-hosted", "linux", "korallis-local"];
+  const { run, scenario } = world({ vars: { demo: "1" }, runs: {
+    "11": { status: "queued", jobs: [{ status: "queued", labels: sh }] },
+    "12": { status: "in_progress", jobs: [{ status: "completed", labels: ["ubuntu-24.04"] }, { status: "queued", labels: sh }] },
+    "13": { status: "queued", jobs: [{ status: "queued", labels: ["ubuntu-24.04"] }] },
+    "14": { status: "in_progress", jobs: [{ status: "in_progress", labels: sh }] },
+    "15": { status: "queued", jobs: [{ status: "queued", labels: sh }], cancel: 1 },
+  } });
+  const r = run("stop", "demo");
+  assert.equal(r.status, 0, r.stderr);
+  const runs = scenario().runs;
+  assert.equal(scenario().vars?.demo, undefined, "CI_LOCAL cleared first");
+  for (const id of ["11", "12", "15"]) assert.equal(runs[id].rerun, 1, `run ${id} re-run`);
+  for (const id of ["13", "14"]) assert.equal(runs[id].rerun, undefined, `run ${id} left alone`);
+  const posts = r.calls.filter((c) => c.tool === "gh" && c.argv.includes("-X")).map((c) => c.argv.at(-1).split("/").slice(-2).join("/"));
+  assert.deepEqual(posts.filter((p) => p.startsWith("15/")), ["15/cancel", "15/force-cancel", "15/rerun"], "force-cancel when a plain cancel is refused");
+  assert.ok(posts.indexOf("11/cancel") < posts.indexOf("11/rerun"));
+  assert.match(r.stdout + r.stderr, /run 11 was waiting for a local runner: cancelled and re-run \(now hosted\)/);
+  // CI_LOCAL already unset: nothing is touched
+  const again = run("stop", "demo");
+  assert.ok(!again.calls.some((c) => c.tool === "gh" && c.argv.join(" ").includes("/actions/runs")), "no runs read when nothing was cleared");
+});
+
+test("register logs the guard check on success; netguard-install creates /usr/local/libexec if needed (install -D)", () => {
+  const { env, run } = world();
+  fs.mkdirSync(join(env.AGENT_CI_ROOT, "demo/runner"), { recursive: true });
+  const r = run("register", "demo");
+  assert.equal(r.status, 0, r.stderr);
+  assert.match(r.stdout, /^network guard holds: a job's own loopback server works; the host's loopback services are refused \(checked [^)]+\)$/m);
+  const dry = run("netguard-install", "--dry-run");
+  assert.match(dry.stdout, /^would run: sudo install -D -o root -g root -m 0755 \S+\/system\/ci-netguard \/usr\/local\/libexec\/agent-ci-netguard$/m);
+});
+
+test("gate: the job's log shows this registration's network-guard check; a missing record is reported, not refused", async () => {
+  const s = gateState();
+  const ok = await done(gate(s, "demo", "start"));
+  assert.equal(ok.code, 0); assert.match(ok.out, /\[ci-gate\] demo: network guard holds: probe ok \(checked 2026-10-04T20:00:00Z\)/);
+  assert.ok(!fs.existsSync(join(s, "netguard/demo")), "consumed: a later job needs its own registration's check");
+  await done(gate(s, "demo", "end"));
+  // a runner registered before this hook was delivered has no record: the job runs (its registration was the gate)
+  const none = await done(gate(s, "demo", "start", {}, { guard: false }));
+  assert.equal(none.code, 0); assert.match(none.out, /WARNING: no network-guard record for this job's registration/);
+  await done(gate(s, "demo", "end"));
+  fs.writeFileSync(join(s, "netguard/demo"), "something else\n");
+  const bad = await done(gate(s, "demo", "start", {}, { guard: false }));
+  assert.equal(bad.code, 0); assert.match(bad.out, /WARNING: no network-guard record/); assert.doesNotMatch(bad.out, /something else/);
+});
+
+test("register writes the guard record for the job only when the check holds, and removes a stale one first", () => {
+  const { env, run, set } = world();
+  fs.mkdirSync(join(env.AGENT_CI_ROOT, "demo/runner"), { recursive: true });
+  assert.equal(run("register", "demo").status, 0);
+  const rec = join(env.AGENT_CI_STATE, "netguard/demo");
+  assert.match(fs.readFileSync(rec, "utf8"), /^network guard holds: a job's own loopback server works; the host's loopback services are refused \(checked \d{4}-\d\d-\d\dT\d\d:\d\d:\d\dZ\)\n$/);
+  set({ netguard: "open" });
+  assert.equal(run("register", "demo").status, 1);
+  assert.ok(!fs.existsSync(rec), "a failed check leaves no record behind");
 });

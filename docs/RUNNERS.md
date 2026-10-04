@@ -84,6 +84,9 @@ remain only for the exceptions below, and as the automatic fallback.
   AGENT_CI_KEEP_CACHE=0        # 1 keeps home/ and toolcache/ between jobs (see above)
   ```
 - **Fallback.** The repo variable `CI_LOCAL=1` sends a repo's Linux jobs here.
+  - When anything clears `CI_LOCAL`, a run created while it was set (its `runs-on` already resolved to self-hosted)
+    would wait for a local runner for ever: every queued or running run with a job still queued for a self-hosted
+    label is cancelled (force-cancel if refused) and re-run, which resolves `runs-on` again and sends it hosted.
   - `agent-ci-runner install` sets it only once GitHub lists the runner online.
   - `stop` and `remove` clear it first.
   - `agent-ci-runner-watch.timer` checks every 2 minutes. If a runner has been down for 10 minutes it clears the

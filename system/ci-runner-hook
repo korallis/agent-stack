@@ -46,6 +46,16 @@ PY
 ); then
   echo "[ci-gate] $repo: REFUSED, fork code never runs on a local runner ($why)"; exit 1
 fi
+# The network guard: this runner's registration probed it from inside the CI slice just before this job (a failed
+# probe never registers a runner, and clears CI_LOCAL) and wrote the result; shown here so it's in every job's log.
+# A missing record is reported, not refused: a runner registered before this hook was updated has none.
+guard=$AGENT_CI_STATE/netguard/$repo
+if line=$(cat "$guard" 2>/dev/null) && [[ $line == "network guard holds:"* ]]; then
+  echo "[ci-gate] $repo: $line"
+else
+  echo "[ci-gate] $repo: WARNING: no network-guard record for this job's registration (check: agent-ci-runner netguard-check)"
+fi
+rm -f "$guard"
 began=$(date +%s); said=0
 # While the HOST holds this job (load or memory, not the slot cap) a marker says since when: agent-ci-runner watch moves
 # a repo whose job is held 10+ min to hosted runners until the host is calm again. Gone as the hook ends.
