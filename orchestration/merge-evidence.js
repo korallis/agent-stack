@@ -1,6 +1,6 @@
 #!/usr/bin/env node
 // agent-merge-evidence <pr> [--repo owner/name] [--mission M --slice S] [--change "one line"] [--deploy "..."]
-//                      [--rollback "..."] [--decide [--no-post]]
+//                      [--rollback "..."] [--decide [--no-post] [--confirm <comment-url>]]
 //
 // The merge gate's evidence, assembled from exact-head facts instead of a hand-written summary (Jev decides better
 // on evidence than on conclusions: 51% of review.merge_gate calls came back "uncertain" before this, 2026-09-30).
@@ -963,11 +963,49 @@ export function postGateResult({ facts, input, rec, verdict }) {
   return { commentUrl: comment.html_url };
 }
 
+// ---- The below-bar confirm (--confirm <comment-url>) ----------------------------------------------------------------
+// Jev chose MERGE below the act bar with every checked gate green (exit 3, NEEDS CONFIRM): the integrator asks the
+// other-family independent reviewer for a one-line exact-head "confirm <sha>". With --confirm <that comment's URL>
+// the helper checks it and posts the gate's success status itself (operator 2026-10-04: integrators hit "branch policy
+// blocks merge" after having to hand-post it). Never on HOLD, act-band PASS (that one posts already), fallback or error.
+export const shouldConfirm = (rec, o) => o?.code === 3 && rec?.decided_by === "jev" && ["review", "uncertain"].includes(rec?.band)
+  && rec?.result?.decision === "merge" && !rec?.stubbed;
+// Pure: why a confirm comment can't stand for this PR and head (empty: it can). Its seat is the first word of its
+// heading; it must be of a known family other than the author's, be on this PR, and have its own "confirm <full head
+// sha>" line (not fenced or quoted) with no failing verdict.
+// The seat: the heading's first word ("## review-kimi …"), or the one after "Reviewer:" ("Reviewer: arch-claude (Opus).
+// **confirm <sha>.** Basis: …", the reviewers' usual layout). The confirm: "confirm <full sha>" opening one of its own
+// lines or a sentence in one (bold is stripped), never inside a fence or quote; "cannot confirm …" is no confirm.
+export function confirmProblems({ body, url, pr, head, authorFamily }) {
+  const p = [], first = ownLines(body).find((l) => l) || "";
+  const seat = (first.match(/^#*\s*(?:reviewer\s*:\s*)?([\w.-]+(?:@[\w.-]+)?)/i) || [])[1] || null, family = familyOf(seat);
+  if (!new RegExp(`/pull/${pr}(?:[#/?]|$)`).test(String(url || ""))) p.push(`the confirm (${url}) is not on PR #${pr}`);
+  if (!seat || !family) p.push(`its heading names no seat of a known family ("${first.slice(0, 60)}")`);
+  if (!authorFamily) p.push("the author's family is unknown, so the confirm can't be verified as other-family (pass --author-family)");
+  else if (family && family === authorFamily) p.push(`${seat} is of the author's family (${authorFamily})`);
+  if (!ownLines(body).some((l) => new RegExp(`(?:^|[.:;]\\s+)confirm\\s+${String(head).toLowerCase()}(?![0-9a-f])`, "i").test(l))) p.push(`it has no line of its own reading "confirm ${head}"`);
+  if (declarations(body).verdicts.some((v) => v !== "success")) p.push("it also declares a verdict that isn't success");
+  return { seat, family, problems: p };
+}
+// The confirm comment (an issue comment or a PR review, by its URL).
+export function readConfirm(nwo, pr, url) {
+  const c = String(url).match(/#issuecomment-(\d+)$/), r = String(url).match(/#pullrequestreview-(\d+)$/);
+  if (c) { const j = ghJson("api", `repos/${nwo}/issues/comments/${c[1]}`); return { body: j.body, url: j.html_url || url }; }
+  if (r) { const j = ghJson("api", `repos/${nwo}/pulls/${pr}/reviews/${r[1]}`); return { body: j.body, url: j.html_url || url }; }
+  throw new Error(`--confirm needs a PR comment or review URL (…#issuecomment-<id> or …#pullrequestreview-<id>), not ${url}`);
+}
+export function postConfirmStatus({ facts, rec, seat, url }) {
+  const description = `Jev merge below confidence bar (${rec.request_id ?? "?"}); ${seat} confirmed at ${String(facts.head).slice(0, 7)}`.slice(0, 140);
+  gh("api", "-X", "POST", `repos/${facts.nwo}/statuses/${facts.head}`, "-f", "state=success", "-f", `context=${facts.gateContext || GATE_CONTEXT}`,
+    "-f", `description=${description}`, "-f", `target_url=${url}`);
+  return { description };
+}
+
 if (import.meta.url === `file://${process.argv[1]}` || process.argv[1]?.endsWith("agent-merge-evidence")) {
   const a = process.argv.slice(2);
   const flag = (n) => { const i = a.indexOf(n); return i >= 0 ? a[i + 1] : undefined; };
   const pr = a.find((x) => /^\d+$/.test(x));
-  if (!pr) { console.error("usage: agent-merge-evidence <pr> [--repo o/r] [--mission M --slice S] [--change ...] [--deploy ...] [--rollback ...] [--config F] [--author-family claude|codex|kimi|grok] [--extra-evidence FILE] [--decide [--no-post]]"); process.exit(2); }
+  if (!pr) { console.error("usage: agent-merge-evidence <pr> [--repo o/r] [--mission M --slice S] [--change ...] [--deploy ...] [--rollback ...] [--config F] [--author-family claude|codex|kimi|grok] [--extra-evidence FILE] [--decide [--no-post] [--confirm <comment-url>]]"); process.exit(2); }
   // Extra evidence goes in through this flag, into input.review, so nobody hand-edits the printed JSON.
   let extraEvidence = null;
   if (a.includes("--extra-evidence")) {
@@ -1017,6 +1055,19 @@ if (import.meta.url === `file://${process.argv[1]}` || process.argv[1]?.endsWith
     else {
       try { const p = postGateResult({ facts, input, rec, verdict: o.text.split("\n", 1)[0] }); console.error(`merge gate: posted ${p.commentUrl} and the ${facts.gateContext || GATE_CONTEXT} success status on ${facts.head}`); }
       catch (e) { console.error(`merge gate: PASS but NOT POSTED (${String(e.stderr || e.message).trim().slice(0, 300)}). Post the comment and the ${facts.gateContext || GATE_CONTEXT} status by hand, or run again.`); process.exit(5); }
+    }
+  }
+  if (a.includes("--confirm")) {
+    const url = flag("--confirm");
+    if (!shouldConfirm(rec, o)) console.error(`merge gate: --confirm ignored: it applies only to NEEDS CONFIRM (a live Jev merge below the act bar with every gate green), not to this result`);
+    else {
+      let c, v;
+      try { c = readConfirm(facts.nwo, facts.pr, url); v = confirmProblems({ body: c.body, url: c.url, pr: facts.pr, head: facts.head, authorFamily: facts.authorFamily }); }
+      catch (e) { console.error(`merge gate: NEEDS CONFIRM, the confirm couldn't be read: ${String(e.stderr || e.message).trim().slice(0, 300)}`); process.exit(3); }
+      if (v.problems.length) { console.error(`merge gate: NEEDS CONFIRM, confirm not accepted:\n${v.problems.map((x) => `- ${x}`).join("\n")}`); process.exit(3); }
+      if (a.includes("--no-post")) { console.error(`merge gate: confirm by ${v.seat} accepted; not posted (--no-post)`); process.exit(3); }
+      try { const s = postConfirmStatus({ facts, rec, seat: v.seat, url: c.url }); console.error(`merge gate: PASS (Jev merge below the act bar; ${v.seat} confirmed at ${facts.head}); posted ${facts.gateContext || GATE_CONTEXT} success: "${s.description}"`); process.exit(0); }
+      catch (e) { console.error(`merge gate: confirm accepted but NOT POSTED (${String(e.stderr || e.message).trim().slice(0, 300)}). Post the ${facts.gateContext || GATE_CONTEXT} status by hand, or run again.`); process.exit(5); }
     }
   }
   process.exit(o.code);
