@@ -45,6 +45,7 @@ import json, os, sys
 s = json.load(open(os.environ["GH_SCENARIO"])); a = sys.argv[1:]
 open(os.environ["CALLS"], "a").write(json.dumps({"tool": "systemctl", "argv": a}) + "\\n")
 v = s.get("active", "active"); v = v.get(a[-1], "inactive") if isinstance(v, dict) else v   # one state, or per unit
+if "show" in a and "Slice" in a: print(s.get("slice", "agent-heavy-ci.slice")); sys.exit(0)
 if "show" in a and "ExecMainStatus" in a: print(s.get("mainStatus", {}).get(a[a.index("show") + 1], "0")); sys.exit(0)
 if "is-active" in a: print(v); sys.exit(0 if v == "active" else 3)
 `, { mode: 0o755 });
@@ -58,6 +59,9 @@ m = s.get("netguard", "refused")
 if m == "real": sys.exit(subprocess.run(a[a.index("/usr/bin/python3"):]).returncode)
 if m == "fail": print("Failed to start transient service unit", file=sys.stderr); sys.exit(1)
 print(m)
+`, { mode: 0o755 });
+fs.writeFileSync(join(sysStubs, "sudo"), `#!/bin/sh
+printf '{"tool": "sudo", "argv": "%s"}\\n' "$*" >> "$CALLS"
 `, { mode: 0o755 });
 for (const t of ["logger", "notify-send"]) fs.writeFileSync(join(sysStubs, t), "#!/bin/sh\nexit 0\n", { mode: 0o755 });
 
@@ -567,6 +571,12 @@ test("network guard: register probes from inside the CI slice before every regis
   assert.deepEqual(probe.argv.slice(0, 8), ["--user", "--quiet", "--wait", "--pipe", "--collect", "--slice=agent-heavy-ci.slice", "-p", "PrivateUsers=yes"]);
   assert.ok(ok.calls.indexOf(probe) < ok.calls.findIndex((c) => c.tool === "gh" && c.argv.join(" ").includes("registration-token")), "probe before the token");
   assert.equal(scenario().vars.demo, "1");
+  // a runner still in the old slice (its unit loaded before install.sh --apply) is outside the guard: refused too
+  const { env: e0, run: r0, scenario: s0 } = world({ vars: { demo: "1" }, slice: "agent-heavy.slice" });
+  fs.mkdirSync(join(e0.AGENT_CI_ROOT, "demo/runner"), { recursive: true });
+  const old = r0("register", "demo");
+  assert.equal(old.status, 1); assert.match(old.stderr, /agent-ci-runner@demo\.service runs in agent-heavy\.slice, not agent-heavy-ci\.slice: run install\.sh --apply/);
+  assert.equal(s0().vars?.demo, undefined); assert.ok(!old.calls.some((c) => c.tool === "systemd-run"), "no probe needed");
   for (const [mode, why] of [["open", /reached a service on the host's loopback/], ["fail", /the probe failed .*Failed to start transient/],
     ["real", /reached a service on the host's loopback/]]) {
     const { env: e2, run: r2, scenario: sc2 } = world({ vars: { demo: "1" }, netguard: mode });
@@ -589,7 +599,9 @@ test("network guard: netguard-check reports, the probe's own loopback server mus
   assert.equal(ok("netguard-check").status, 0);
   const dry = run("netguard-install", "--dry-run");
   assert.equal(dry.status, 0, dry.stderr);
-  const lines = dry.stdout.trim().split("\n");
+  const lines = dry.stdout.trim().split("\n").filter((l) => l.startsWith("would run:"));
+  // the anchor's unit is written by netguard-install itself: it runs before install.sh --apply places the units
+  assert.match(dry.stdout, /^would write: \S+\/\.config\/systemd\/user\/agent-ci-netguard-anchor\.service; systemctl --user daemon-reload$/m);
   assert.match(lines[0], /^would run: sudo install -o root -g root -m 0755 \S+\/system\/ci-netguard \/usr\/local\/libexec\/agent-ci-netguard$/);
   for (const re of [/sudo install -o root -g root -m 0644 \S+agent-ci-netguard\.service \/etc\/systemd\/system\/agent-ci-netguard\.service$/,
     /sudo systemctl enable agent-ci-netguard\.timer$/, /^would run: systemctl --user enable --now agent-ci-netguard-anchor\.service$/,
@@ -618,4 +630,22 @@ test("network guard: the nft table (system/ci-netguard --print) touches only the
   assert.ok(rules.every((l) => l.includes("ct mark and 0x20000000 == 0x20000000")), "nothing outside the CI slice is touched");
   assert.equal(spawnSync("bash", [g, "apply", "x"], { encoding: "utf8" }).status, 2);
   assert.equal(spawnSync("bash", [g, "bogus"], { encoding: "utf8" }).status, 2);
+});
+
+test("netguard-install writes the anchor's user unit itself, before enabling it, then runs the root steps and the probe", () => {
+  const { w, env } = world();
+  const units = join(w, "user-units");
+  fs.writeFileSync(env.CALLS, "");
+  const r = spawnSync("python3", [tool, "netguard-install"], { encoding: "utf8", env: { ...env, AGENT_CI_USER_UNITS: units } });
+  assert.equal(r.status, 0, r.stderr);
+  const placed = join(units, "agent-ci-netguard-anchor.service");
+  assert.equal(fs.readFileSync(placed, "utf8"), fs.readFileSync(join(repo, "system/systemd/agent-ci-netguard-anchor.service"), "utf8"));
+  assert.equal(fs.statSync(placed).mode & 0o777, 0o644);
+  const calls = fs.readFileSync(env.CALLS, "utf8").trim().split("\n").map(JSON.parse).map((c) => `${c.tool} ${Array.isArray(c.argv) ? c.argv.join(" ") : c.argv}`);
+  const at = (re) => calls.findIndex((c) => re.test(c));
+  assert.ok(at(/^systemctl --user daemon-reload$/) >= 0 && at(/^systemctl --user daemon-reload$/) < at(/^systemctl --user enable --now agent-ci-netguard-anchor\.service$/), calls.join("\n"));
+  assert.ok(at(/^sudo install -o root -g root -m 0755 \S+\/system\/ci-netguard \/usr\/local\/libexec\/agent-ci-netguard$/) >= 0);
+  assert.ok(at(/^systemctl --user enable --now agent-ci-netguard-anchor/) < at(/^sudo systemctl start agent-ci-netguard\.service/));
+  assert.ok(at(/^systemd-run /) > at(/^sudo systemctl start/), "the probe runs last");
+  assert.match(r.stdout, /network guard holds/);
 });

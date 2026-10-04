@@ -49,9 +49,15 @@ remain only for the exceptions below, and as the automatic fallback.
   table (atomically) only when the id changed. **Fail closed:** before every registration, `register` runs a probe
   inside the slice: its own loopback server must answer and a canary on the host's loopback must not. Otherwise the
   runner doesn't start and the repo's `CI_LOCAL` is cleared (jobs run hosted); `watch` sets it again once the runner
-  is back. Install once with `agent-ci-runner netguard-install` (through sudo: a root-owned copy of the script in
-  `/usr/local/libexec`, never the checkout, plus `agent-ci-netguard.service`/`.timer` in `/etc/systemd/system`), and
-  install it BEFORE a runner unit with `Slice=agent-heavy-ci.slice` starts: until then every registration refuses.
+  is back. `register` also refuses a runner whose unit isn't in the slice yet. Install, in this order:
+  1. `agent-ci-runner netguard-install` (through sudo): the anchor's user unit (written by the command itself), a
+     root-owned copy of the script in `/usr/local/libexec` (never the checkout), and `agent-ci-netguard.service`/`.timer`
+     in `/etc/systemd/system`; it ends with the probe ("network guard holds").
+  2. `install.sh --apply`: places the runner unit with `Slice=agent-heavy-ci.slice` (and reloads systemd).
+  3. Restart every runner that isn't mid-job (`agent-ci-runner status` shows busy ones): an idle runner registered
+     before step 2 still runs in the old slice, unguarded, until it restarts. A busy one moves after its job.
+
+  Run in the other order, every registration refuses until step 1, and repos run hosted meanwhile.
   `agent-ci-runner netguard-check` runs the probe; `sudo /usr/local/libexec/agent-ci-netguard remove` drops the table.
 - **Load bounds.**
   - Every runner sits in `agent-heavy.slice`, sharing its 24G memory ceiling with heavy builds.
