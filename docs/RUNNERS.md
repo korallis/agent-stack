@@ -40,6 +40,10 @@ remain only for the exceptions below, and as the automatic fallback.
   - For up to 15 minutes it also waits while load1 is above 24 (`AGENT_CI_MAX_LOAD`) or the host's CPU count, or
     MemAvailable is below 6 GB. Two parallel browser jobs plus the seats pushed load1 to about 35, and UI tests timed
     out, so the ceiling sits well below the CPU count.
+  - When a repo's job is held that long by the host (load or memory, not the slot cap) for 10 minutes, `watch` moves
+    the repo to hosted runners (`CI_LOCAL` cleared, `<repo>.load-paused`, a log line and a desktop notice). It brings
+    it back after the host has been calm (the gate's own test) for 10 minutes. A repo paused by hand (`stop`) is never
+    resumed by this rule. `status` shows `load paused`.
 - **Settings** live in `~/.config/agent-stack/ci-runners.env` (numbers only). Each job start reads them, so no restart
   is needed:
 

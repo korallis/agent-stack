@@ -47,6 +47,9 @@ PY
   echo "[ci-gate] $repo: REFUSED, fork code never runs on a local runner ($why)"; exit 1
 fi
 began=$(date +%s); said=0
+# While the HOST holds this job (load or memory, not the slot cap) a marker says since when: agent-ci-runner watch moves
+# a repo whose job is held 10+ min to hosted runners until the host is calm again. Gone as the hook ends.
+waiting=$AGENT_CI_STATE/waiting; mkdir -p "$waiting"; trap 'rm -f "$waiting/$repo"' EXIT
 while :; do
   now=$(date +%s)
   flock 9
@@ -61,6 +64,7 @@ while :; do
     exit 0
   fi
   flock -u 9
+  if [ "$busy" -lt "$max" ] && [ "$calm" != 1 ]; then [ -e "$waiting/$repo" ] || echo "$began host" > "$waiting/$repo"; else rm -f "$waiting/$repo"; fi
   if [ $((now - said)) -ge 60 ]; then
     echo "[ci-gate] $repo: waiting ($busy/$max CI jobs running, load $load/$cpus, ${avail}G free; load gate for $((gate - waited > 0 ? gate - waited : 0))s more)"
     said=$now
