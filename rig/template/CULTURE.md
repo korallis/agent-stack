@@ -56,8 +56,8 @@ Human queue rows also need a specific `--summary`; the headings belong in the bo
   by PID; no pattern-based killall or pkill. Destructive operations and publication need the applicable authority.
 - Run tests through `agent-heavy test -- <cmd>`, builds and lint through `agent-heavy build -- <cmd>`, browser tests
   through `agent-heavy browser -- <cmd>`. Tests, mutation runs and test scripts run ONLY there, from their own repo or
-  worktree: its sandbox keeps everything but that repo, ~/.cache and /tmp read-only (2026-10-04: a test cleanup run
-  outside it deleted ~/.config, ~/.local/share and the dotfiles). The read guard refuses a test runner started
+  worktree: its sandbox keeps everything but that repo and the seat's own cache dir read-only, with a private /tmp
+  (2026-10-04: a test cleanup run outside it deleted ~/.config, ~/.local/share and the dotfiles). The read guard refuses a test runner started
   directly. Docker and sudo stay outside agent-heavy: bring services up first (`docker compose up`), then run the
   tests in it. Servers run outside the limiter. Use focused runs and few workers. Read `guidance/host-operations.md` before
   scratch setup, heavy work, credential CLI use or context handover (paths resolve under `$OPENRIG_WORK_ROOT/rig`).

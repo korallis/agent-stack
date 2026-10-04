@@ -48,5 +48,5 @@ test("the rule is in CULTURE and the hook says why", () => {
   assert.match(culture, /Run tests through `agent-heavy test -- <cmd>`, builds and lint through `agent-heavy build -- <cmd>`/);
   assert.match(culture, /Tests, mutation runs and test scripts run ONLY there, from their own repo or worktree/);
   assert.match(culture, /Docker and sudo stay outside agent-heavy: bring services up first \(`docker compose up`\), then run the tests in it\./);
-  assert.match(verdict("npm test").reason, /deleted ~\/\.config, ~\/\.local\/share and the dotfiles/);
+  assert.match(verdict("npm test").reason.replace(/\s+/g, " "), /deleted ~\/\.config, ~\/\.local\/share and the dotfiles/);
 });

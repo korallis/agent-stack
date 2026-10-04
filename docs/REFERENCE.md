@@ -383,7 +383,10 @@ Details are in the `agent-stack` skill. What went wrong before: [docs/incidents/
   inside a job. No privileges inside (no sudo) and the host's groups are unmapped
   (no docker socket). A job run from a directory that holds the home directory (`~`, `/home`, `/`) is refused, and so is
   any job where bwrap can't run (exit 78): there is no unsandboxed fallback. The read guard refuses a test runner
-  (`node --test`, `npm test`, vitest, jest, playwright test, pytest, go/cargo/deno test, …) started outside agent-heavy.
+  (`node --test`, `npm test`, vitest, jest, playwright test, pytest, go/cargo/deno test, …) started outside agent-heavy. Native
+  seats (grok, kimi) run no hook of ours: `agent-native-seat` puts `system/native-test-guard/bin` first on their CLI's
+  PATH, whose node, npm, npx, pnpm, yarn, bun, python, pytest, vitest, jest, mocha, go, cargo and deno refuse the same
+  test runs (the hook's `--test-argv` check and message) and run the real program otherwise.
   Test runs use the `test` class (`agent-heavy test -- <cmd>`): 4 slots of their own, 200% CPU, 4G, no swap, 30 min,
   2 workers (`AGENT_HEAVY_TEST_*`), the same sandbox; builds keep their 2 slots. Docker and sudo stay outside
   agent-heavy: bring services up first, then run the tests in it. Every scope is cleared afterwards (`reset-failed`), so failed ones don't pile up. It refuses long-lived servers (`npm start`,

@@ -88,7 +88,9 @@ test("kimi: instructions in .kimi-code/AGENTS.md, the folder pre-trusted with ki
   const trust = join(root, "kimi-home", "workspace-trust", key);
   assert.ok(trust in p.files, Object.keys(p.files).join(", "));
   assert.equal(JSON.parse(p.files[trust]).root, real);
-  assert.deepEqual(p.env, { KIMI_CODE_NO_AUTO_UPDATE: "1", KIMI_CLI_NO_AUTO_UPDATE: "1" });
+  const { PATH, ...rest } = p.env;
+  assert.deepEqual(rest, { KIMI_CODE_NO_AUTO_UPDATE: "1", KIMI_CLI_NO_AUTO_UPDATE: "1" });
+  assert.ok(PATH.startsWith(`${join(dirname(fileURLToPath(import.meta.url)), "..", "system/native-test-guard/bin")}:`), "the test guard first on PATH");
 });
 
 test("refuses a [1m] model and an unknown role", () => {

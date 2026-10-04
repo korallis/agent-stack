@@ -855,6 +855,20 @@ function bypassDenial() {
   ].join("\n");
 }
 
+function testDenial(why) {
+  return [
+    `agent-stack test guard: blocked, because ${why} runs tests outside agent-heavy. Tests, mutation runs and test`,
+    "scripts run only inside agent-heavy's sandbox (bwrap: everything but the job's repo and its seat's dir is read-only,",
+    "/tmp is private and HOME a scratch dir). On 2026-10-04 a test cleanup run outside it deleted ~/.config, ~/.local/share",
+    "and the dotfiles.",
+    "Instead:",
+    "  agent-heavy test -- <this command>             (browser tests: agent-heavy browser -- …; builds: agent-heavy build -- …)",
+    "  a mutation control: <mutate …> -- agent-heavy test -- <the test command>",
+    "Docker and sudo don't work inside agent-heavy: bring services up first (docker compose up), then run the tests there.",
+    "Run it from the repository or worktree the tests belong to.",
+  ].join("\n");
+}
+
 function decide(input, { home = os.homedir(), pats = patterns(process.env, home), env = process.env } = {}) {
   const ctx = { cwd: input.cwd || process.cwd(), home, pats };
   const t = input.tool_name, ti = input.tool_input || {};
@@ -883,16 +897,7 @@ function decide(input, { home = os.homedir(), pats = patterns(process.env, home)
     "  fix something:                     a new commit on the branch, then a plain git push",
     "Squash before the FIRST push only (git reset --soft \"$(git merge-base HEAD origin/main)\"). If history truly must change, ask the operator.",
   ].join("\n") };
-  if (v.tests) return { deny: true, reason: [
-    `agent-stack test guard: blocked, because ${v.why} runs tests outside agent-heavy. Tests, mutation runs and test`,
-    "scripts run only inside agent-heavy's sandbox (bwrap: everything but the job's repo, ~/.cache and /tmp is read-only, and",
-    "HOME is a scratch dir). On 2026-10-04 a test cleanup run outside it deleted ~/.config, ~/.local/share and the dotfiles.",
-    "Instead:",
-    "  agent-heavy test -- <this command>             (browser tests: agent-heavy browser -- …; builds: agent-heavy build -- …)",
-    "  a mutation control: <mutate …> -- agent-heavy test -- <the test command>",
-    "Docker and sudo don't work inside agent-heavy: bring services up first (docker compose up), then run the tests there.",
-    "Run it from the repository or worktree the tests belong to.",
-  ].join("\n") };
+  if (v.tests) return { deny: true, reason: testDenial(v.why) };
   if (v.env) return { deny: true, reason: [
     `agent-stack credential guard: blocked, because ${v.why}. Environments hold API keys and tokens, and the transcript keeps whatever is printed.`,
     "Names only, never values:",
@@ -922,6 +927,13 @@ function main() {
     catch (e) { console.error(`/proc/${pid}/environ: ${e.code || e.message}`); process.exitCode = 1; }
     return;
   }
+  // --test-argv <program> <args...>: the native seats' PATH guard (system/native-test-guard) asks whether a command is
+  // a test run; exit 3 with the same message as the hook if it is, 0 if not
+  if (process.argv[2] === "--test-argv") {
+    const why = testRun(path.basename(process.argv[3] || ""), process.argv.slice(4));
+    if (why) { process.stderr.write(testDenial(why) + "\n"); process.exit(3); }
+    process.exit(0);
+  }
   if (process.argv[2] === "--keys") {
     for (const f of process.argv.slice(3)) { try { for (const n of keyNames(fs.readFileSync(f, "utf8"))) console.log(n); } catch (e) { console.error(`${f}: ${e.code || e.message}`); process.exitCode = 1; } }
     return;
@@ -937,5 +949,5 @@ function main() {
   process.exit(0);
 }
 
-module.exports = { envDump, historyRewrite, testRun, SECRET_NAME, DEFAULT_PATTERNS, VERCEL_DIR, BYPASS, PW_DIR, NET_DIR, NET_TOOL, netDir, legacyNetDir, netKind, netVerdict, patterns, globRe, protectedPath, lex, parseArgs, bashVerdict, keyNames, decide };
+module.exports = { envDump, historyRewrite, testRun, testDenial, SECRET_NAME, DEFAULT_PATTERNS, VERCEL_DIR, BYPASS, PW_DIR, NET_DIR, NET_TOOL, netDir, legacyNetDir, netKind, netVerdict, patterns, globRe, protectedPath, lex, parseArgs, bashVerdict, keyNames, decide };
 if (require.main === module) main();

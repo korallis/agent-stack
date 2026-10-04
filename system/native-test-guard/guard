@@ -1,0 +1,28 @@
+#!/usr/bin/env bash
+# The test guard for native seats (grok, kimi): their CLIs run no PreToolUse hook of ours, so agent-native-seat puts
+# this directory first on the CLI's PATH. Each name here (node, npm, npx, pnpm, yarn, bun, python, python3, pytest,
+# vitest, jest, mocha, go, cargo, deno) links to this script, which refuses a test run outside agent-heavy, with the same
+# message as the Claude/Codex hook (system/credguard-read-hook --test-argv decides), and otherwise runs the real
+# program: the next one of that name on PATH. Inside agent-heavy (AGENT_HEAVY_SLOT, and AGENT_HEAVY_REAL_HOME, which
+# only its sandbox sets) every call goes straight through. Calls that can't be a test run (no "test" in the program
+# name or its arguments) never start the check. Best effort against accidents, like the hook.
+name=${0##*/}
+here=$(cd "$(dirname "$0")" && pwd -P)
+real() {   # <name>: the first <name> on PATH that isn't one of these guards
+  local d IFS=:
+  for d in $PATH; do
+    [[ -n $d && -x $d/$1 && ! -d $d/$1 ]] || continue
+    [[ $(cd "$d" 2>/dev/null && pwd -P) == "$here" ]] && continue
+    printf '%s\n' "$d/$1"; return 0
+  done
+  return 1
+}
+target=$(real "$name") || { echo "$name: command not found" >&2; exit 127; }
+if [[ -z ${AGENT_HEAVY_SLOT:-} || -z ${AGENT_HEAVY_REAL_HOME:-} ]] && [[ $name =~ ^(pytest|py\.test|vitest|jest|mocha)$ || " $* " == *test* ]]; then
+  node=$(real node) || { echo "agent-stack test guard: can't check '$name $*' (no node on PATH); run it through agent-heavy test" >&2; exit 126; }
+  "$node" "$(dirname "$(readlink -f "$0")")/../credguard-read-hook" --test-argv "$name" "$@"
+  rc=$?
+  if [[ $rc == 3 ]]; then exit 126; fi
+  if [[ $rc != 0 ]]; then echo "agent-stack test guard: the check failed (exit $rc); run '$name $*' through agent-heavy test" >&2; exit 126; fi
+fi
+exec "$target" "$@"
