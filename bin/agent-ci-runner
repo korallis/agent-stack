@@ -378,11 +378,16 @@ def netguard_require(repo, inst):
     """Before every registration: no runner starts while the network guard doesn't hold, or outside the slice it
     guards (a runner unit loaded before install.sh --apply placed the new one). Fail closed: CI_LOCAL is cleared (jobs
     run hosted) and register fails, so the runner backs off and watch sets CI_LOCAL again once it is back."""
+    (STATE / "netguard" / inst).unlink(missing_ok=True)   # only this registration's own check may vouch for the job
     slice_ = systemctl("show", unit(inst), "-p", "Slice", "--value", check=False).stdout.strip()
     ok, detail = (False, f"{unit(inst)} runs in {slice_ or 'an unknown slice'}, not {SLICE}: run install.sh --apply") \
         if slice_ != SLICE else netguard_probe()
     if ok:
-        print(f"network guard holds: {detail}")   # the unit's journal: each job's registration records its check
+        line = f"network guard holds: {detail} (checked {time.strftime('%Y-%m-%dT%H:%M:%SZ', time.gmtime())})"
+        print(line)   # the unit's journal
+        # ... and the job's own log: the job-started hook prints this and refuses the job without it
+        (STATE / "netguard").mkdir(parents=True, exist_ok=True)
+        (STATE / "netguard" / inst).write_text(line + "\n")
         return
     var_set(repo, False)
     msg = (f"{OWNER}/{repo}: network guard not holding ({detail}); {VAR} cleared, jobs run hosted. "

@@ -427,7 +427,9 @@ test("hook updates reach ci-runners/_shared through register and install.sh --ap
 // the job gate
 const event = (name, payload) => { const f = join(root, `event-${name}.json`); fs.writeFileSync(f, typeof payload === "string" ? payload : JSON.stringify(payload)); return f; };
 const pushEvent = event("push", { ref: "refs/heads/main", repository: { full_name: "korallis/demo" } });
-function gate(state, repo, mode, extra = {}) {
+function gate(state, repo, mode, extra = {}, { guard = true } = {}) {
+  // as register leaves it: this registration's network-guard check (consumed by the job that starts)
+  if (guard && mode === "start") { fs.mkdirSync(join(state, "netguard"), { recursive: true }); fs.writeFileSync(join(state, "netguard", repo), "network guard holds: probe ok (checked 2026-10-04T20:00:00Z)\n"); }
   const env = { PATH: "/usr/bin:/bin", AGENT_CI_REPO: repo, AGENT_CI_STATE: state, AGENT_CI_POLL_S: "0.05", AGENT_CI_NPROC: "4",
     GITHUB_REPOSITORY: "korallis/demo", GITHUB_EVENT_PATH: pushEvent,
     AGENT_CI_LOADAVG: join(state, "loadavg"), AGENT_CI_MEMINFO: join(state, "meminfo"), ...extra };
@@ -700,7 +702,33 @@ test("register logs the guard check on success; netguard-install creates /usr/lo
   fs.mkdirSync(join(env.AGENT_CI_ROOT, "demo/runner"), { recursive: true });
   const r = run("register", "demo");
   assert.equal(r.status, 0, r.stderr);
-  assert.match(r.stdout, /^network guard holds: a job's own loopback server works; the host's loopback services are refused$/m);
+  assert.match(r.stdout, /^network guard holds: a job's own loopback server works; the host's loopback services are refused \(checked [^)]+\)$/m);
   const dry = run("netguard-install", "--dry-run");
   assert.match(dry.stdout, /^would run: sudo install -D -o root -g root -m 0755 \S+\/system\/ci-netguard \/usr\/local\/libexec\/agent-ci-netguard$/m);
+});
+
+test("gate: the job's log shows this registration's network-guard check; a missing record is reported, not refused", async () => {
+  const s = gateState();
+  const ok = await done(gate(s, "demo", "start"));
+  assert.equal(ok.code, 0); assert.match(ok.out, /\[ci-gate\] demo: network guard holds: probe ok \(checked 2026-10-04T20:00:00Z\)/);
+  assert.ok(!fs.existsSync(join(s, "netguard/demo")), "consumed: a later job needs its own registration's check");
+  await done(gate(s, "demo", "end"));
+  // a runner registered before this hook was delivered has no record: the job runs (its registration was the gate)
+  const none = await done(gate(s, "demo", "start", {}, { guard: false }));
+  assert.equal(none.code, 0); assert.match(none.out, /WARNING: no network-guard record for this job's registration/);
+  await done(gate(s, "demo", "end"));
+  fs.writeFileSync(join(s, "netguard/demo"), "something else\n");
+  const bad = await done(gate(s, "demo", "start", {}, { guard: false }));
+  assert.equal(bad.code, 0); assert.match(bad.out, /WARNING: no network-guard record/); assert.doesNotMatch(bad.out, /something else/);
+});
+
+test("register writes the guard record for the job only when the check holds, and removes a stale one first", () => {
+  const { env, run, set } = world();
+  fs.mkdirSync(join(env.AGENT_CI_ROOT, "demo/runner"), { recursive: true });
+  assert.equal(run("register", "demo").status, 0);
+  const rec = join(env.AGENT_CI_STATE, "netguard/demo");
+  assert.match(fs.readFileSync(rec, "utf8"), /^network guard holds: a job's own loopback server works; the host's loopback services are refused \(checked \d{4}-\d\d-\d\dT\d\d:\d\d:\d\dZ\)\n$/);
+  set({ netguard: "open" });
+  assert.equal(run("register", "demo").status, 1);
+  assert.ok(!fs.existsSync(rec), "a failed check leaves no record behind");
 });
