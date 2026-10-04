@@ -194,6 +194,7 @@ function cli(script, args, { nodes, rows, proxy, state, jev = {}, caller = "agen
     `  "queue list -A --state in-progress"*) cat "${join(dir, "left.json")}" ;;\n  "queue show "*) cat "${join(dir, "show.json")}" ;;\n` +
     `  "queue handoff"*) echo '{"qitemId":"q-new"}' ;;\n  "send "*) [ -f "${join(dir, "fail-send")}" ] && exit 1 ;;\nesac\nexit 0\n`);
   w("agent-proxy-status", `#!/bin/sh\ncat "${join(dir, "proxy.json")}"\n`);
+  w("gh", "#!/bin/sh\necho 'gh: no network in tests' >&2\nexit 1\n");   // hermetic: PR evidence is unreadable here
   w("nodes.json", JSON.stringify(nodes)); w("rows.json", JSON.stringify(rows)); w("proxy.json", JSON.stringify(proxy));
   w("left.json", JSON.stringify(rows.filter((r) => r.state === "in-progress"))); w("jev.json", JSON.stringify(jev));
   w("show.json", JSON.stringify(show ?? { qitemId: "q-1", destinationSession: "coord-lead-claude@app", state: "in-progress", body: "", tags: [] }));
@@ -554,4 +555,40 @@ test("agent-reroute --apply sends the reminder once per row and remembers it", (
   assert.deepEqual(two.out.reminders, [], "once per row"); assert.doesNotMatch(two.calls, /agent-renudge/);
   const dry = cli("reroute.js", [], { nodes, rows, proxy: [acct("codex")], state: fs.mkdtempSync(join(process.env.AGENT_STACK_STATE, "renudge-dry-")) });
   assert.equal(dry.out.reminders.length, 1); assert.doesNotMatch(dry.calls, /rig send/, "without --apply: reported, not sent");
+});
+
+// 2026-10-04: a third-family review row went to the head's PRIMARY reviewer when Kimi was cooling. Seats that already
+// reviewed the exact head never take it; a third/other-family row also skips every family already counted.
+test("head reviewers: statuses, '## review-<seat>' comments naming the head, GitHub reviews on the head commit; any verdict", async () => {
+  const { reviewersFrom, isThirdFamilyReview } = await import("../orchestration/seatlive.js");
+  const H = "abc1234def5678901234567890123456789abcde";
+  const ev = reviewersFrom({ head: H,
+    statuses: [{ context: "independent-review", description: "review-claude-1 (Opus): clean at abc1234" }, { context: "independent-review", description: "review-codex: BLOCK at abc1234" },
+      { context: "jev-merge", description: "review-grok-9: other context" }],
+    comments: [{ body: `## review-kimi exact-head\nhead: ${H}\nVerdict: PASS` }, { body: "## review-grok-2\nhead: 1111111\nVerdict: PASS" }, { body: "## qa-codex-1\nhead abc1234" }],
+    reviews: [{ commit_id: H, body: "## review-grok-1\nVerdict: PASS" }, { commit_id: "f".repeat(40), body: "## review-grok-3\nVerdict: PASS" }] });
+  assert.deepEqual([...ev.seats].sort(), ["review-claude-1", "review-codex", "review-grok-1", "review-kimi"]);
+  assert.deepEqual([...ev.families].sort(), ["claude", "codex", "grok", "kimi"]);
+  for (const t of ["Kimi third review of PR #261 at head abc1234", "Third-family review needed", "independent third review", "other-family review of #12"]) assert.equal(isThirdFamilyReview(t), true, t);
+  for (const t of ["Review PR #12", "third attempt at the build", "Refresh review"]) assert.equal(isThirdFamilyReview(t), false, t);
+});
+
+test("plan: a review row never goes to a seat that already reviewed the head; a third review skips counted families; unreadable evidence or no one left: the lead", () => {
+  const now = Date.now(), ago = new Date(now - 60 * 60e3).toISOString();
+  const kimiOut = eligibleFamilies([acct("claude"), acct("codex"), acct("kimi", { over_limit: true })]);
+  const all = [node("review.kimi", "claude-code", { model: "kimi-k3" }), node("review.claude-1", "claude-code", { model: "claude-opus-5-5" }), node("review.claude-2", "claude-code", { model: "claude-opus-5-5" }),
+    node("review.codex-1", "codex", { model: "gpt-6.1-sol" })].map(seatInfo);
+  const row = (body) => ({ id: "q", state: "pending", destination: "review-kimi@app", updated: ago, tags: [], body: `${body}\nAuthor: impl-grok-1 (grok)` });
+  const ev = (seats) => () => ({ head: "abc1234def56", seats: new Set(seats), families: new Set(seats.map((s) => s.includes("claude") ? "claude" : s.includes("codex") ? "codex" : "kimi")) });
+  // the incident: the third review of PR #261, claude-1 (primary) and codex already reviewed: no claude, no codex seat may take it
+  const third = plan([row("Kimi third review of PR #261 at head abc1234")], all, kimiOut, { now, reviewed: ev(["review-claude-1", "review-codex-1"]) });
+  assert.equal(third[0].to, null); assert.match(third[0].note, /left for the lead: every free reviewer already reviewed head abc1234def56 \(review-claude-1, review-codex-1; a third review needs a family other than claude, codex\)/);
+  // an ordinary review row: only the seats that reviewed are skipped (claude-2 is a different seat)
+  const plain = plan([row("Review PR #261 at head abc1234")], all, kimiOut, { now, reviewed: ev(["review-claude-1", "review-codex-1"]) });
+  assert.equal(plain[0].to, "review-claude-2@app");
+  // the evidence can't be read: never guessed
+  const unread = plan([row("Review PR #261 at head abc1234")], all, kimiOut, { now, reviewed: () => null });
+  assert.deepEqual([unread[0].to, unread[0].note], [null, "left for the lead: who already reviewed its PR's head couldn't be read, so an independent reviewer can't be chosen"]);
+  // a row naming no PR is unaffected
+  assert.notEqual(plan([row("Review the docs change")], all, kimiOut, { now, reviewed: () => null })[0].to, null);
 });

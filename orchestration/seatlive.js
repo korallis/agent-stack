@@ -105,3 +105,34 @@ export function staleReason(ref, { repo, ghView = (r, n) => { const o = run("gh"
   if (ref.head && !String(v.headRefOid || "").toLowerCase().startsWith(ref.head)) return `${r}#${ref.pr}'s head moved (the row names ${ref.head}, the PR is at ${String(v.headRefOid).slice(0, 12)})`;
   return null;
 }
+
+// Who already reviewed this PR's exact head (2026-10-04: a third-family review row was rerouted to the PRIMARY
+// reviewer of that head). Seats from the independent-review statuses on the head (the description's first word),
+// "## review-<seat>" PR comments that name the head, and GitHub reviews on the head commit (the seat from the body's
+// first line). Any verdict counts: a seat that blocked the head has reviewed it too. Families from the seat names.
+// null when the PR or its head can't be read (callers leave the row rather than guess).
+const FAMILY = (seat) => /claude|fable|opus|sonnet/i.test(seat) ? "claude" : /codex|gpt/i.test(seat) ? "codex" : /kimi/i.test(seat) ? "kimi" : /grok/i.test(seat) ? "grok" : null;
+export function reviewersFrom({ head, statuses = [], comments = [], reviews = [] }) {
+  const h = String(head || "").toLowerCase(), seats = new Set();
+  const namesHead = (text) => (String(text || "").match(/\b[0-9a-f]{7,40}\b/gi) || []).some((x) => h.startsWith(x.toLowerCase()));
+  for (const s of statuses) if (s.context === "independent-review") { const m = String(s.description || "").match(/^\s*([\w.-]+)/); if (m && /^(review|arch|qa)-/i.test(m[1])) seats.add(m[1].toLowerCase()); }
+  for (const c of comments) { const m = String(c.body || "").match(/^#*\s*(?:reviewer\s*:\s*)?((?:review|arch)-[\w.-]+)/i); if (m && namesHead(c.body)) seats.add(m[1].toLowerCase()); }
+  for (const r of reviews) { if (String(r.commit_id || "").toLowerCase() !== h) continue; const m = String(r.body || "").match(/^#*\s*(?:reviewer\s*:\s*)?((?:review|arch)-[\w.-]+)/i); if (m) seats.add(m[1].toLowerCase()); }
+  return { seats, families: new Set([...seats].map(FAMILY).filter(Boolean)) };
+}
+export function headReviewers(ref, { repo } = {}) {
+  const r = ref?.repo || repo;
+  if (!ref || !r) return null;
+  const j = (args) => { const o = run("gh", args); try { return o ? JSON.parse(o) : null; } catch { return null; } };
+  const pr = j(["pr", "view", String(ref.pr), "-R", r, "--json", "headRefOid"]);
+  const head = ref.head || pr?.headRefOid;
+  if (!head) return null;
+  const full = pr?.headRefOid && pr.headRefOid.toLowerCase().startsWith(head.toLowerCase()) ? pr.headRefOid : head;
+  const pages = (path) => { const o = run("gh", ["api", path, "--paginate", "--slurp"]); try { const v = o ? JSON.parse(o) : null; return Array.isArray(v) ? v.flat() : null; } catch { return null; } };
+  const statuses = pages(`repos/${r}/commits/${full}/statuses?per_page=100`), comments = pages(`repos/${r}/issues/${ref.pr}/comments?per_page=100`), reviews = pages(`repos/${r}/pulls/${ref.pr}/reviews?per_page=100`);
+  if (!statuses || !comments || !reviews) return null;
+  return { head: full, ...reviewersFrom({ head: full, statuses, comments, reviews }) };
+}
+
+// Pure: a review row that must come from a family that hasn't reviewed the head yet (the third, independent review).
+export const isThirdFamilyReview = (text) => /\b(third[- ](family|review|reviewer)|other[- ]family\s+review|independent\s+third|kimi\s+third)\b/i.test(String(text || ""));
