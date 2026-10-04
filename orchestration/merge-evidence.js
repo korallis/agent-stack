@@ -615,7 +615,7 @@ export async function awaitMergeable({ read, sleep = (s) => new Promise((r) => s
 
 // ---- Risk tier (starter-kit repos) ----------------------------------------------------------------------------------
 // A starter-kit repo's features.json gives each feature (F-NNN) a risk_tier; a PR names its features in its title
-// ("F-012 WP-08: ..."). A risky PR needs two independent reviews from two different families, neither the author's,
+// ("F-012 WP-08: ...") or its body. A risky PR needs two independent reviews from two different families, neither the author's,
 // and the owner-approved label, before Jev is asked (2026-10-04: a risky PR merged with one review and no label).
 const TIER_RANK = { trivial: 0, standard: 1, risky: 2 };
 export const OWNER_LABEL = "owner-approved";
@@ -896,14 +896,18 @@ export function gather(pr, { repo, mission, slice, change, deploy, rollback, con
     throw new Error(`the PR moved while its evidence was collected (head ${v.headRefOid.slice(0, 12)} -> ${again.headRefOid.slice(0, 12)}, base ${v.baseRefOid.slice(0, 12)} -> ${again.baseRefOid.slice(0, 12)}); run it again`);
   // the risk tier of the features the PR names (starter-kit repos: features.json on the base branch)
   let risk = null;
-  if (/\bF-\d{3,}\b/.test(v.title || "")) {
+  // the features the PR names in its title OR its body (2026-10-04: a risky feature's PR named it only in the body,
+  // "Implement F-006 …", so its tier was never read and it passed without its owner-approved label). Every F-id named
+  // counts; the highest tier wins, so a passing mention can only make the gate stricter.
+  const named = `${v.title || ""}\n${v.body || ""}`;
+  if (/\bF-\d{3,}\b/.test(named)) {
     let features = null, featuresFile = "read", featuresError = null;
     try { const c = ghJson("api", `repos/${nwo}/contents/features.json?ref=${encodeURIComponent(v.baseRefName)}`); features = JSON.parse(Buffer.from(c.content, "base64").toString("utf8")); }
     catch (e) {   // 404: the repo has no features.json (no tier); anything else: it has one we can't read (tier unknown)
       const why = String(e.stderr || e.message || "");
       featuresFile = /HTTP 404|Not Found/i.test(why) ? "absent" : "unreadable"; featuresError = why.trim().split("\n")[0].slice(0, 160);
     }
-    const t = featureTier(features, v.title);
+    const t = featureTier(features, named);
     risk = { ...t, featuresFile, featuresError, authorFamily: author.family, ownerApproved: (v.labels || []).some((l) => l.name === OWNER_LABEL),
       reviewFamilies: t.tier === "risky" ? reviewFamilies({ notes, head: v.headRefOid, authorFamily: author.family, identities: cfg.identities || {},
         headings: cfg.identityHeadingRes || [], statuses, context: cfg.review.context, pr: v.number }) : [] };
