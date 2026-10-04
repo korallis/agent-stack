@@ -228,7 +228,8 @@ fi
 # The filesystem sandbox (2026-10-04: a mutation run of a test-harness cleanup called rmSync('/', {recursive: true}) as
 # the owner, outside any sandbox, and wiped ~/.config, ~/.local/share and the dotfiles). Every job runs under bwrap:
 # the whole filesystem read-only, except the job's own repository (its git top level and git common dir), ~/.cache,
-# the agents' worktrees (~/Projects/*.worktrees), /tmp, its TMPDIR and agent-heavy's own lock dir. HOME and the XDG
+# /tmp, its TMPDIR and agent-heavy's own lock dir. Never other worktrees or projects (QA: a job in one repo could
+# change another project's worktree). HOME and the XDG
 # dirs point at a per-run scratch dir under ~/.cache/agent-heavy (removed afterwards); real config a tool needs is
 # passed read-only by path (gh, git, mise, Playwright's browsers). No way to skip it: if bwrap can't run, the job is
 # refused. Inside, no privileges can be gained (no sudo) and the host's groups are unmapped (no docker socket).
@@ -239,7 +240,6 @@ common=$(git rev-parse --path-format=absolute --git-common-dir 2>/dev/null) || c
 rw=("$top" "$real_home/.cache" "$dir")
 [[ ${AGENT_HEAVY_TMP_RW:-1} == 0 ]] || rw+=(/tmp)   # AGENT_HEAVY_TMP_RW=0: tests only (stricter, never looser)
 [[ -n $common ]] && rw+=("$common")
-for w in "$real_home"/Projects/*.worktrees; do [[ -d $w ]] && rw+=("$w"); done
 [[ -n ${TMPDIR:-} && -d $TMPDIR ]] && rw+=("$TMPDIR")
 for p in "${rw[@]}"; do
   r=$(realpath -m "$p")

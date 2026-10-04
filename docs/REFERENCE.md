@@ -375,7 +375,7 @@ Details are in the `agent-stack` skill. What went wrong before: [docs/incidents/
   `timeout` for the max runtime.
   Filesystem sandbox (2026-10-04, after a test cleanup run outside it deleted ~/.config, ~/.local/share and the
   dotfiles): every job runs under `bwrap` with the whole filesystem read-only except its repository (git top level
-  and common dir), `~/.cache`, `~/Projects/*.worktrees`, `/tmp`, its `TMPDIR` and the slot dir. `HOME` and the XDG dirs
+  and common dir), `~/.cache`, `/tmp`, its `TMPDIR` and the slot dir; never another worktree or project. `HOME` and the XDG dirs
   are a per-run scratch dir under `~/.cache/agent-heavy/` (removed afterwards); gh, git, mise and Playwright's
   browsers get their real config by path, read-only. No privileges inside (no sudo) and the host's groups are unmapped
   (no docker socket). A job run from a directory that holds the home directory (`~`, `/home`, `/`) is refused, and so is

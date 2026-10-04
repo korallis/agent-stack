@@ -456,3 +456,30 @@ test("the test class: 4 slots of their own (2 CPUs, 4G, no swap, 30 min, 2 worke
   assert.equal(st.status, 0); assert.equal((st.stdout.match(/^test \d\/4 /gm) || []).length, 4);
   assert.match(heavy(["nope", "--", "true"]).stderr, /class must be build, browser or test/);
 });
+
+// QA (heavy-sandbox f31eb22): every project's worktrees were writable, so a job in one repo changed a sentinel in
+// another project's worktree. Only the job's own worktree and its repo's git dir are writable now.
+test("sandbox real: a job writes its own worktree and its repo's git dir, never a sibling worktree or another project's", { skip: !realBwrap && "bwrap unavailable" }, () => {
+  const base = fs.mkdtempSync(join(os.tmpdir(), "agent-heavy-wt-")), g = (cwd, ...a) => spawnSync("git", a, { cwd, encoding: "utf8" });
+  const main = join(base, "P"), mine = join(base, "P.worktrees/mine"), sibling = join(base, "P.worktrees/sibling"), other = join(base, "Q.worktrees/lead");
+  fs.mkdirSync(main); g(main, "init", "-q"); g(main, "-c", "user.email=t@t", "-c", "user.name=t", "commit", "-q", "--allow-empty", "-m", "c");
+  g(main, "worktree", "add", "-q", mine); g(main, "worktree", "add", "-q", sibling);
+  fs.mkdirSync(other, { recursive: true });
+  for (const d of [sibling, other]) fs.writeFileSync(join(d, "sentinel"), "x");
+  try {
+    const job = `echo y > ${sibling}/sentinel 2>&1; echo y > ${other}/sentinel 2>&1; echo ok > own && echo own-ok; git commit -q --allow-empty -m job && echo commit-ok`;
+    const r = spawnSync(join(repo, "bin/agent-heavy"), ["test", "--wait", "60", "--", "sh", "-c", job], { cwd: mine, encoding: "utf8",
+      env: { PATH: `${bin}:/usr/bin:/bin`, XDG_RUNTIME_DIR: root, USER: "t", AGENT_HEAVY_DIR: join(root, "real-locks"), AGENT_HEAVY_TMP_RW: "0",
+        AGENT_HEAVY_BWRAP: bwrapPath, GIT_AUTHOR_NAME: "t", GIT_AUTHOR_EMAIL: "t@t", GIT_COMMITTER_NAME: "t", GIT_COMMITTER_EMAIL: "t@t" } });
+    assert.equal(((r.stdout + r.stderr).match(/Read-only file system/g) || []).length, 2, r.stdout + r.stderr);
+    assert.match(r.stdout, /own-ok/); assert.match(r.stdout, /commit-ok/, "the repo's git dir (common dir) is writable");
+    for (const d of [sibling, other]) assert.equal(fs.readFileSync(join(d, "sentinel"), "utf8"), "x", `${d} unchanged`);
+  } finally { fs.rmSync(base, { recursive: true, force: true }); }
+});
+
+test("sandbox: no worktrees dir is bound beyond the job's own repository", () => {
+  const log = join(root, "bwrap-calls-wt"); fs.rmSync(log, { force: true });
+  assert.equal(heavy(["test", "--", "true"], { BWRAP_CALLS: log }).status, 0);
+  const binds = [...fs.readFileSync(log, "utf8").trim().split("\n")[1].matchAll(/--bind (\S+) \1 /g)].map((m) => m[1]);
+  assert.deepEqual(binds.filter((b) => /\.worktrees(\/|$)/.test(b) && !b.startsWith(repo)), [], binds.join(" "));
+});
