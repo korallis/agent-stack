@@ -1,0 +1,9 @@
+# System unit (root): load the CI network guard for user @UID@'s CI slice (system/ci-netguard; docs/RUNNERS.md).
+# Installed by `agent-ci-runner netguard-install`; the script is a root-owned copy, never the user's checkout.
+[Unit]
+Description=Network guard for local CI jobs of uid @UID@ (agent-stack)
+After=nftables.service
+
+[Service]
+Type=oneshot
+ExecStart=/usr/local/libexec/agent-ci-netguard apply @UID@

@@ -16,6 +16,10 @@
                                              clean work dir
   agent-ci-runner refresh-hooks              (install.sh --apply) copy the job gate hook into ci-runners/_shared, by
                                              rename; register does it too, before every job
+  agent-ci-runner netguard-install [--dry-run]  (once, through sudo) the network guard: a root-owned copy of
+                                             system/ci-netguard, its system timer, and the CI slice's anchor unit
+  agent-ci-runner netguard-check             probe from inside the CI slice: a job's own loopback server works, the
+                                             host's services don't answer (register runs this before every job)
   agent-ci-runner watch                      (timer, every 2 min) a runner down for 10 minutes -> CI_LOCAL cleared,
                                              so its repo's jobs run hosted instead of queueing; back online -> set again
 
@@ -24,6 +28,8 @@ ephemeral runner per repo, and the job gate (system/ci-runner-hook) caps how man
 (AGENT_CI_MAX_JOBS in ~/.config/agent-stack/ci-runners.env, default 2). Registration and removal tokens come from
 `gh api` and reach the runner only as ACTIONS_RUNNER_INPUT_TOKEN in its environment: never printed, never on a
 command line. Fork pull requests never reach a local runner: the workflows' runs-on picks the hosted runner for them.
+Jobs run in agent-heavy-ci.slice, where the network guard (system/ci-netguard) refuses the host's own services, the LAN
+and the tailnet; register refuses to start a runner while the guard doesn't hold (fail closed: CI_LOCAL is cleared).
 """
 import argparse, fcntl
 import hashlib
@@ -303,12 +309,59 @@ def register_with_backoff(inst):
 
 BACKOFF_FROM, GIVE_UP_AT = 3, 6
 
+SLICE = "agent-heavy-ci.slice"   # the runners' slice (a child of agent-heavy.slice); the network guard matches it
+# Run inside the CI slice: a server of the probe's own must answer on loopback (a job's E2E server), the canary the
+# caller holds on the host's loopback must not. Prints "refused" only when both hold.
+PROBE = '''import socket, sys
+own = socket.socket(); own.bind(("127.0.0.1", 0)); own.listen(1)
+socket.create_connection(own.getsockname(), timeout=5).close()
+try:
+    socket.create_connection(("127.0.0.1", int(sys.argv[1])), timeout=5).close()
+    print("open")
+except OSError:
+    print("refused")
+'''
+
+
+def netguard_probe():
+    """(ok, detail): whether a process in the CI slice can still reach its own loopback servers but not the host's."""
+    canary = socket.socket()
+    try:
+        canary.bind(("127.0.0.1", 0)); canary.listen(8)
+        r = subprocess.run(["systemd-run", "--user", "--quiet", "--wait", "--pipe", "--collect", f"--slice={SLICE}",
+                            "-p", "PrivateUsers=yes", "/usr/bin/python3", "-c", PROBE, str(canary.getsockname()[1])],
+                           capture_output=True, text=True, timeout=60, stdin=subprocess.DEVNULL)
+        out = r.stdout.strip()
+    except (OSError, subprocess.TimeoutExpired) as e:
+        return False, f"the probe didn't run ({e})"
+    finally:
+        canary.close()
+    if out == "refused":
+        return True, "a job's own loopback server works; the host's loopback services are refused"
+    if out == "open":
+        return False, "a job in the CI slice reached a service on the host's loopback"
+    return False, f"the probe failed (its own loopback server, or systemd-run): {(r.stderr or out).strip()[-200:]}"
+
+
+def netguard_require(repo):
+    """Before every registration: no runner starts while the network guard doesn't hold. Fail closed: CI_LOCAL is
+    cleared (jobs run hosted) and register fails, so the runner backs off and watch sets CI_LOCAL again once it is back."""
+    ok, detail = netguard_probe()
+    if ok:
+        return
+    var_set(repo, False)
+    msg = (f"{OWNER}/{repo}: network guard not holding ({detail}); {VAR} cleared, jobs run hosted. "
+           f"Check: agent-ci-runner netguard-check; install once: agent-ci-runner netguard-install")
+    say(msg)
+    die(msg)
+
 
 def cmd_register(inst):
     repo = split(inst)[0]
     if not runner_dir(inst).is_dir():
         die(f"{runner_dir(inst)} has no runner; run agent-ci-runner install {repo}")
     (STATE / "slots" / inst).unlink(missing_ok=True)  # a (re)start means the previous job is over
+    netguard_require(repo)
     install_hooks()
     # Nothing a job wrote may reach the next one: the job can write its whole runner directory, so the runner itself
     # is re-extracted from the checksum-verified release (with a fresh _work), and its home and tool cache are wiped,
@@ -490,7 +543,7 @@ def cmd_install(repo, count, dry, lane=None):
     lane_inst = want[-1] if lane else None if lane is False else lanes().get(repo) if lanes().get(repo) in want else None
     if dry:
         print(f"would install runner {VERSION} as {', '.join(want)} ({', '.join(runner_name(i) for i in want)}; sandboxed, "
-              f"agent-heavy.slice){'; remove ' + ', '.join(extra) if extra else ''}"
+              f"{SLICE}){'; remove ' + ', '.join(extra) if extra else ''}"
               f"{'; ' + lane_inst + ' takes only ' + MAIN_LABEL if lane_inst else ''}; wait for them online, then set {VAR}=1 on {OWNER}/{repo}")
         return
     before = {i: label(i) for i in want if runner_dir(i).is_dir()}   # installed runners' labels, before the lane moves
@@ -692,6 +745,38 @@ def cmd_status(as_json):
     print(f"jobs: {len(busy)}/{summary['max_jobs']} slots busy; load {summary['load1']}/{summary['cpus']}")
 
 
+NETGUARD_BIN = "/usr/local/libexec/agent-ci-netguard"
+
+
+def cmd_netguard_install(dry):
+    """Once per host, through sudo: the guard script as a ROOT-OWNED copy (root's timer must never run a file this
+    user can change), its system service and timer for this uid, and the anchor that keeps the CI slice alive."""
+    src = Path(__file__).resolve().parent.parent / "system"
+    uid = str(os.getuid())
+    rendered = CACHE / "ci-netguard-units"
+    if not dry:
+        rendered.mkdir(parents=True, exist_ok=True)
+        for n in ("agent-ci-netguard.service", "agent-ci-netguard.timer"):
+            (rendered / n).write_text((src / "netguard" / n).read_text().replace("@UID@", uid))
+    steps = [["sudo", "install", "-o", "root", "-g", "root", "-m", "0755", str(src / "ci-netguard"), NETGUARD_BIN]]
+    steps += [["sudo", "install", "-o", "root", "-g", "root", "-m", "0644", str(rendered / n), f"/etc/systemd/system/{n}"]
+              for n in ("agent-ci-netguard.service", "agent-ci-netguard.timer")]
+    steps += [["sudo", "systemctl", "daemon-reload"], ["sudo", "systemctl", "enable", "agent-ci-netguard.timer"],
+              ["systemctl", "--user", "enable", "--now", "agent-ci-netguard-anchor.service"],
+              ["sudo", "systemctl", "start", "agent-ci-netguard.service", "agent-ci-netguard.timer"]]
+    for st in steps:
+        if dry:
+            print("would run:", " ".join(st))
+        elif subprocess.run(st).returncode != 0:
+            die(f"failed: {' '.join(st)}")
+    if dry:
+        return
+    ok, detail = netguard_probe()
+    print(("network guard holds: " if ok else "network guard NOT holding: ") + detail)
+    if not ok:
+        sys.exit(1)
+
+
 def main():
     p = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     sub = p.add_subparsers(dest="cmd", required=True)
@@ -711,6 +796,8 @@ def main():
             s.add_argument("-n", type=int, default=100)
     sub.add_parser("watch")
     sub.add_parser("refresh-hooks")
+    sub.add_parser("netguard-install").add_argument("--dry-run", action="store_true")
+    sub.add_parser("netguard-check")
     s = sub.add_parser("status")
     s.add_argument("--json", action="store_true")
     a = p.parse_args()
@@ -739,6 +826,12 @@ def main():
         cmd_watch()
     elif a.cmd == "refresh-hooks":
         cmd_refresh_hooks()
+    elif a.cmd == "netguard-install":
+        cmd_netguard_install(a.dry_run)
+    elif a.cmd == "netguard-check":
+        ok, detail = netguard_probe()
+        print(("network guard holds: " if ok else "network guard NOT holding: ") + detail)
+        sys.exit(0 if ok else 1)
     else:
         cmd_status(a.json)
 

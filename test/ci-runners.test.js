@@ -48,6 +48,17 @@ v = s.get("active", "active"); v = v.get(a[-1], "inactive") if isinstance(v, dic
 if "show" in a and "ExecMainStatus" in a: print(s.get("mainStatus", {}).get(a[a.index("show") + 1], "0")); sys.exit(0)
 if "is-active" in a: print(v); sys.exit(0 if v == "active" else 3)
 `, { mode: 0o755 });
+// systemd-run: the network guard's probe. "refused" (the guard holds; the default), "open", "fail", or "real": run the
+// probe itself on this host, outside any guard, so it really reaches the canary
+fs.writeFileSync(join(sysStubs, "systemd-run"), `#!/usr/bin/env python3
+import json, os, subprocess, sys
+s = json.load(open(os.environ["GH_SCENARIO"])); a = sys.argv[1:]
+open(os.environ["CALLS"], "a").write(json.dumps({"tool": "systemd-run", "argv": a}) + "\\n")
+m = s.get("netguard", "refused")
+if m == "real": sys.exit(subprocess.run(a[a.index("/usr/bin/python3"):]).returncode)
+if m == "fail": print("Failed to start transient service unit", file=sys.stderr); sys.exit(1)
+print(m)
+`, { mode: 0o755 });
 for (const t of ["logger", "notify-send"]) fs.writeFileSync(join(sysStubs, t), "#!/bin/sh\nexit 0\n", { mode: 0o755 });
 
 // a fake runner release
@@ -82,7 +93,7 @@ const online = (name = "testhost-demo", status = "online") => ({ runners: [{ id:
 test("the unit sandboxes the job (no home, keys or seats), bounds it inside agent-heavy.slice and gates every job", () => {
   const u = fs.readFileSync(join(repo, "system/systemd/agent-ci-runner@.service"), "utf8");
   assert.doesNotMatch(u, /^StartLimitBurst=/m, "no burst limit on the runner unit");
-  for (const line of ["Slice=agent-heavy.slice", "PrivateUsers=yes", "ProtectHome=tmpfs", "PrivateTmp=yes", "NoNewPrivileges=yes",
+  for (const line of ["Slice=agent-heavy-ci.slice", "PrivateUsers=yes", "ProtectHome=tmpfs", "PrivateTmp=yes", "NoNewPrivileges=yes",
     "MemoryMax=8G", "MemorySwapMax=0", "CPUQuota=800%", "CPUWeight=20", "IOWeight=20", "Restart=always",
     // no start limit: per-job restarts of a busy ephemeral runner (20 jobs in 10 min) hit 20/600 s and stopped it for good
     "StartLimitIntervalSec=0",
@@ -545,4 +556,66 @@ test("several runners per repo: <repo>_r<N> instances with their own names, unit
   // a repo name that looks like an instance is refused
   assert.match(run("install", "demo_r2").stderr, /name a repo, not a runner instance/);
   assert.match(run("install", "demo", "--count", "9").stderr, /--count must be 1 to 8/);
+});
+
+test("network guard: register probes from inside the CI slice before every registration and fails closed", () => {
+  const { w, env, run, scenario } = world({ vars: { demo: "1" } });
+  const d = join(env.AGENT_CI_ROOT, "demo/runner"); fs.mkdirSync(d, { recursive: true });
+  const ok = run("register", "demo");
+  assert.equal(ok.status, 0, ok.stderr);
+  const probe = ok.calls.find((c) => c.tool === "systemd-run");
+  assert.deepEqual(probe.argv.slice(0, 8), ["--user", "--quiet", "--wait", "--pipe", "--collect", "--slice=agent-heavy-ci.slice", "-p", "PrivateUsers=yes"]);
+  assert.ok(ok.calls.indexOf(probe) < ok.calls.findIndex((c) => c.tool === "gh" && c.argv.join(" ").includes("registration-token")), "probe before the token");
+  assert.equal(scenario().vars.demo, "1");
+  for (const [mode, why] of [["open", /reached a service on the host's loopback/], ["fail", /the probe failed .*Failed to start transient/],
+    ["real", /reached a service on the host's loopback/]]) {
+    const { env: e2, run: r2, scenario: sc2 } = world({ vars: { demo: "1" }, netguard: mode });
+    fs.mkdirSync(join(e2.AGENT_CI_ROOT, "demo/runner"), { recursive: true });
+    const r = r2("register", "demo");
+    assert.equal(r.status, 1, mode);
+    assert.match(r.stderr, why, mode);
+    assert.match(r.stderr, /network guard not holding .*CI_LOCAL cleared, jobs run hosted/, mode);
+    assert.equal(sc2().vars?.demo, undefined, `${mode}: CI_LOCAL cleared`);
+    assert.ok(!r.calls.some((c) => c.tool === "gh" && c.argv.join(" ").includes("registration-token")), `${mode}: never registered`);
+  }
+  void w;
+});
+
+test("network guard: netguard-check reports, the probe's own loopback server must work, and netguard-install is root-owned and explicit", () => {
+  const { run } = world({ netguard: "real" });
+  const c = run("netguard-check");
+  assert.equal(c.status, 1); assert.match(c.stdout, /network guard NOT holding: a job in the CI slice reached a service/);
+  const { run: ok } = world();
+  assert.equal(ok("netguard-check").status, 0);
+  const dry = run("netguard-install", "--dry-run");
+  assert.equal(dry.status, 0, dry.stderr);
+  const lines = dry.stdout.trim().split("\n");
+  assert.match(lines[0], /^would run: sudo install -o root -g root -m 0755 \S+\/system\/ci-netguard \/usr\/local\/libexec\/agent-ci-netguard$/);
+  for (const re of [/sudo install -o root -g root -m 0644 \S+agent-ci-netguard\.service \/etc\/systemd\/system\/agent-ci-netguard\.service$/,
+    /sudo systemctl enable agent-ci-netguard\.timer$/, /^would run: systemctl --user enable --now agent-ci-netguard-anchor\.service$/,
+    /sudo systemctl start agent-ci-netguard\.service agent-ci-netguard\.timer$/]) assert.ok(lines.some((l) => re.test(l)), String(re));
+  assert.ok(lines.findIndex((l) => /anchor/.test(l)) < lines.findIndex((l) => /systemctl start agent-ci-netguard/.test(l)), "the slice exists before the table loads");
+  const unit = fs.readFileSync(join(repo, "system/netguard/agent-ci-netguard.service"), "utf8");
+  assert.match(unit, /^ExecStart=\/usr\/local\/libexec\/agent-ci-netguard apply @UID@$/m, "root runs its own copy, never the checkout");
+  assert.match(fs.readFileSync(join(repo, "system/netguard/agent-ci-netguard.timer"), "utf8"), /^OnUnitActiveSec=30s$/m);
+  const anchor = fs.readFileSync(join(repo, "system/systemd/agent-ci-netguard-anchor.service"), "utf8");
+  assert.match(anchor, /^Slice=agent-heavy-ci\.slice$/m); assert.match(anchor, /^ExecStart=\/usr\/bin\/sleep infinity$/m);
+});
+
+test("network guard: the nft table (system/ci-netguard --print) touches only the CI slice and refuses the host and private ranges", () => {
+  const g = join(repo, "system/ci-netguard");
+  const r = spawnSync("bash", [g, "apply", "1000", "--print"], { encoding: "utf8" });
+  assert.equal(r.status, 0, r.stderr);
+  const t = r.stdout, cg = '"user.slice/user-1000.slice/user@1000.service/agent.slice/agent-heavy.slice/agent-heavy-ci.slice"';
+  assert.match(t, /^table inet agent_ci\ndelete table inet agent_ci\ntable inet agent_ci \{/, "an atomic replace");
+  assert.ok(t.includes(`socket cgroupv2 level 6 ${cg} ct state new ct mark set ct mark or 0x20000000`), "only the CI slice is marked");
+  assert.match(t, /ct mark and 0x20000000 == 0x20000000 ip daddr \{ 10\.0\.0\.0\/8, 100\.64\.0\.0\/10, 169\.254\.0\.0\/16, 172\.16\.0\.0\/12, 192\.168\.0\.0\/16 \} reject/);
+  assert.match(t, /ct mark and 0x20000000 == 0x20000000 ip6 daddr \{ fc00::\/7, fe80::\/10 \} reject/);
+  const inChain = t.slice(t.indexOf("chain in"));
+  const rules = inChain.split("\n").filter((l) => /^\s+iif lo/.test(l));
+  assert.ok(rules.at(-2).includes("meta l4proto tcp reject with tcp reset") && rules.at(-1).includes("reject with icmpx"), "local delivery refused last");
+  assert.ok(rules.some((l) => l.includes(`socket cgroupv2 level 6 ${cg} accept`)), "a job's own listeners stay reachable");
+  assert.ok(rules.every((l) => l.includes("ct mark and 0x20000000 == 0x20000000")), "nothing outside the CI slice is touched");
+  assert.equal(spawnSync("bash", [g, "apply", "x"], { encoding: "utf8" }).status, 2);
+  assert.equal(spawnSync("bash", [g, "bogus"], { encoding: "utf8" }).status, 2);
 });
