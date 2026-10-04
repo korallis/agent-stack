@@ -375,9 +375,12 @@ Details are in the `agent-stack` skill. What went wrong before: [docs/incidents/
   `timeout` for the max runtime.
   Filesystem sandbox (2026-10-04, after a test cleanup run outside it deleted ~/.config, ~/.local/share and the
   dotfiles): every job runs under `bwrap` with the whole filesystem read-only except its repository (git top level
-  and common dir), `~/.cache`, `/tmp`, its `TMPDIR` and the slot dir; never another worktree or project. `HOME` and the XDG dirs
-  are a per-run scratch dir under `~/.cache/agent-heavy/` (removed afterwards); gh, git, mise and Playwright's
-  browsers get their real config by path, read-only. No privileges inside (no sudo) and the host's groups are unmapped
+  and common dir), its seat's dir `~/.cache/agent-heavy/<seat>/` and the slot dir; `/tmp` is a private tmpfs per run
+  (`TMPDIR=/tmp`). Never another worktree, project or seat's files, nor the host's `/tmp`. `HOME` and the XDG dirs are
+  a per-run scratch dir in the seat's dir (removed afterwards; the seat's npm and XDG caches persist there); gh, git,
+  mise and Playwright's browsers get their real config by path, read-only. mise keeps its trust state in the scratch
+  HOME and trusts `~/Projects` and the job's repo by path (`MISE_TRUSTED_CONFIG_PATHS`); it never installs a tool
+  inside a job. No privileges inside (no sudo) and the host's groups are unmapped
   (no docker socket). A job run from a directory that holds the home directory (`~`, `/home`, `/`) is refused, and so is
   any job where bwrap can't run (exit 78): there is no unsandboxed fallback. The read guard refuses a test runner
   (`node --test`, `npm test`, vitest, jest, playwright test, pytest, go/cargo/deno test, …) started outside agent-heavy.

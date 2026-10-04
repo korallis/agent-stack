@@ -390,19 +390,30 @@ test("WO58 real: a run past its ceiling is OOM-killed in its own scope, the slot
 
 // 2026-10-04: a mutation run of a test-harness cleanup called rmSync('/', {recursive: true}) as the owner, outside any
 // sandbox, and wiped ~/.config, ~/.local/share and the dotfiles. Every agent-heavy job now runs under bwrap.
-test("sandbox: every job runs under bwrap with / read-only, only its repo, ~/.cache, worktrees, /tmp and the lock dir writable, HOME a scratch dir", () => {
+test("sandbox: every job runs under bwrap: / read-only, a private /tmp, only its repo, its seat's dir and the lock dir writable, HOME a scratch dir", () => {
   const log = join(root, "bwrap-calls"); fs.rmSync(log, { force: true });
-  const r = heavy(["build", "--", "sh", "-c", "echo ran"], { BWRAP_CALLS: log });
+  const r = heavy(["build", "--", "sh", "-c", "echo ran"], { BWRAP_CALLS: log, OPENRIG_SESSION_NAME: "qa-1@demo" });
   assert.equal(r.status, 0, r.stderr); assert.match(r.stdout, /ran/);
   const [probe, run] = fs.readFileSync(log, "utf8").trim().split("\n");
   assert.equal(probe, "--ro-bind / / --dev-bind /dev /dev true", "bwrap is checked before a slot is taken");
-  assert.match(run, /^--ro-bind \/ \/ --dev-bind \/dev \/dev --bind \/proc \/proc /, "everything read-only first");
+  assert.match(run, /^--ro-bind \/ \/ --dev-bind \/dev \/dev --bind \/proc \/proc --tmpfs \/tmp /, "everything read-only, then a private /tmp");
   const home = spawnSync("sh", ["-c", "getent passwd $(id -u) | cut -d: -f6"], { encoding: "utf8" }).stdout.trim();
-  for (const p of [repo, `${home}/.cache`, join(root, "agent-heavy"), "/tmp"]) assert.ok(run.includes(` --bind ${p} ${p} `), `writable: ${p}`);
-  assert.doesNotMatch(run, new RegExp(` --bind ${home} ${home} `), "never the home directory itself");
-  assert.match(run, new RegExp(` --setenv HOME ${home}/\\.cache/agent-heavy/run-agent-heavy-build-\\d+-\\d+/home `));
-  for (const v of ["XDG_CONFIG_HOME", "XDG_DATA_HOME", "XDG_STATE_HOME", "XDG_CACHE_HOME"]) assert.match(run, new RegExp(` --setenv ${v} ${home}/\\.cache/agent-heavy/run-`), v);
+  // a nested run (this suite itself inside agent-heavy) keeps its seat dir in the outer job's private /tmp
+  const seat = process.env.AGENT_HEAVY_REAL_HOME ? "/tmp/agent-heavy-nested/qa-1@demo" : `${home}/.cache/agent-heavy/qa-1@demo`;
+  const binds = [...run.matchAll(/--bind (\S+) \1 /g)].map((m) => m[1]).filter((b) => b !== "/proc");
+  const common = spawnSync("git", ["rev-parse", "--path-format=absolute", "--git-common-dir"], { cwd: repo, encoding: "utf8" }).stdout.trim();
+  assert.deepEqual(binds.sort(), [repo, common, seat, join(root, "agent-heavy")].sort(), "writable: only these");
+  assert.ok(run.indexOf("--tmpfs /tmp") < run.indexOf(`--bind ${repo} `), "binds come after the tmpfs, so a repo under /tmp stays visible");
+  assert.match(run, / --setenv TMPDIR \/tmp /);
+  assert.match(run, new RegExp(` --setenv HOME ${seat}/run-agent-heavy-build-\\d+-\\d+/home `));
+  for (const v of ["XDG_CONFIG_HOME", "XDG_DATA_HOME", "XDG_STATE_HOME"]) assert.match(run, new RegExp(` --setenv ${v} ${seat}/run-`), v);
+  assert.match(run, new RegExp(` --setenv XDG_CACHE_HOME ${seat}/cache `)); assert.match(run, new RegExp(` --setenv npm_config_cache ${seat}/npm `));
   assert.match(run, new RegExp(` --setenv GH_CONFIG_DIR ${home}/\\.config/gh `), "real config by path (read-only)");
+  // mise: its trust state in the scratch HOME (the real one is read-only), the projects and this repo trusted by path,
+  // and never an install inside a job (a project: mise exec failed, its node pin wasn't applied)
+  assert.match(run, new RegExp(` --setenv MISE_STATE_DIR ${seat}/run-\\S+/home/\\.mise-state `));
+  assert.match(run, new RegExp(` --setenv MISE_TRUSTED_CONFIG_PATHS ${home}/Projects:${repo} `));
+  for (const kv of ["MISE_YES 0", "MISE_EXEC_AUTO_INSTALL false", "MISE_NOT_FOUND_AUTO_INSTALL false", "MISE_TASK_RUN_AUTO_INSTALL false"]) assert.ok(run.includes(` --setenv ${kv} `), kv);
   assert.match(run, / --die-with-parent /); assert.match(run, / -- sh -c echo ran$/);
   const scratch = run.match(/--setenv HOME (\S+)\/home /)[1];
   assert.equal(fs.existsSync(scratch), false, "the scratch dir is removed after the run");
@@ -413,10 +424,10 @@ test("sandbox: refused when bwrap can't run (never unsandboxed), or when the job
   assert.equal(r.status, 78); assert.match(r.stderr, /refused: the filesystem sandbox \(bwrap\) can't run here, and jobs never run without it/);
   assert.equal(r.c, "", "no slot taken");
   const home = spawnSync("sh", ["-c", "getent passwd $(id -u) | cut -d: -f6"], { encoding: "utf8" }).stdout.trim();
-  for (const cwd of ["/", dirname(home)]) {
+  for (const cwd of ["/", dirname(home), "/tmp", `${home}/.cache`]) {
     const x = spawnSync(join(repo, "bin/agent-heavy"), ["build", "--", "true"], { cwd, encoding: "utf8",
       env: { PATH: `${bin}:/usr/bin:/bin`, XDG_RUNTIME_DIR: root, USER: "t", AGENT_HEAVY_BWRAP: join(bin, "bwrap") } });
-    assert.equal(x.status, 2, cwd); assert.match(x.stderr, /refused: the job would get write access to .*, which holds your home directory/, cwd);
+    assert.equal(x.status, 2, cwd); assert.match(x.stderr, /refused: the job would get write access to .*, which holds your home directory or other seats' files/, cwd);
   }
 });
 
@@ -424,24 +435,35 @@ test("sandbox: refused when bwrap can't run (never unsandboxed), or when the job
 // directory survives), can't touch the real ~/.config (EROFS), and still writes in its own repository.
 const bwrapPath = spawnSync("sh", ["-c", "command -v bwrap"], { encoding: "utf8", env: { PATH: "/usr/bin:/bin" } }).stdout.trim();
 const realBwrap = !process.env.CI && !!bwrapPath && spawnSync(bwrapPath, ["--ro-bind", "/", "/", "--dev-bind", "/dev", "/dev", "true"]).status === 0;
-test("sandbox real: rm -rf outside the writable set fails with EROFS and changes nothing; the repo stays writable", { skip: !realBwrap && "bwrap unavailable" }, () => {
-  // the victim sits beside the job's repo in a dir the job may not write (/tmp is dropped from its writable set here:
-  // AGENT_HEAVY_TMP_RW=0, a tests-only knob that only narrows it), so this also works when the suite itself runs
-  // inside agent-heavy
-  const base = fs.mkdtempSync(join(os.tmpdir(), "agent-heavy-ro-")), victim = join(base, "victim"), work = join(base, "repo");
-  fs.mkdirSync(join(victim, "deep"), { recursive: true }); fs.writeFileSync(join(victim, "deep/keep"), "x");
-  fs.mkdirSync(work); spawnSync("git", ["init", "-q"], { cwd: work });
+test("sandbox real: rm -rf of other seats' ~/.cache dirs, the host's /tmp and ~/.config changes nothing; the repo stays writable", { skip: !realBwrap && "bwrap unavailable" }, () => {
+  // Sentinels a job must never reach (a lead, 2026-10-04): a dir in ~/.cache that isn't the job's seat's (inside a
+  // sandboxed suite run this is the run's own scratch HOME, which a job of ANOTHER seat must not write), and the
+  // host's /tmp (the job gets its own).
+  const home = spawnSync("sh", ["-c", "getent passwd $(id -u) | cut -d: -f6"], { encoding: "utf8" }).stdout.trim();
+  const cacheBase = process.env.AGENT_HEAVY_REAL_HOME ? process.env.HOME : join(home, ".cache/agent-heavy");
+  fs.mkdirSync(cacheBase, { recursive: true });
+  const other = fs.mkdtempSync(join(cacheBase, "other-seat-")), tmpSentinel = fs.mkdtempSync(join(os.tmpdir(), "host-tmp-"));
+  for (const d of [other, tmpSentinel]) fs.writeFileSync(join(d, "keep"), "x");
+  const work = fs.mkdtempSync(join(os.tmpdir(), "agent-heavy-repo-")); spawnSync("git", ["init", "-q"], { cwd: work });
   try {
-    const job = `rm -rf ${victim} 2>&1; touch -c "$AGENT_HEAVY_REAL_HOME/.config" 2>&1; echo ok > written && echo repo-write-ok; echo "home=$HOME"`;
-    const r = spawnSync(join(repo, "bin/agent-heavy"), ["build", "--wait", "60", "--", "sh", "-c", job], { cwd: work, encoding: "utf8",
-      env: { PATH: `${bin}:/usr/bin:/bin`, XDG_RUNTIME_DIR: root, USER: "t", AGENT_HEAVY_DIR: join(root, "real-locks"), AGENT_HEAVY_TMP_RW: "0",
-        AGENT_HEAVY_BWRAP: bwrapPath } });   // the real one (the stub sits first on PATH)
-    assert.match(r.stdout, /rm: cannot remove .*victim.*Read-only file system/, r.stdout + r.stderr);
-    assert.match(r.stdout, /touch: setting times of '.*\/\.config': Read-only file system/);
-    assert.match(r.stdout, /repo-write-ok/); assert.equal(fs.readFileSync(join(work, "written"), "utf8"), "ok\n");
-    assert.match(r.stdout, /home=\S+\/\.cache\/agent-heavy\/run-/, "HOME is the run's scratch dir");
-    assert.equal(fs.readFileSync(join(victim, "deep/keep"), "utf8"), "x", "nothing outside the writable set changed");
-  } finally { fs.rmSync(base, { recursive: true, force: true }); }
+    const job = `rm -rf ${other} 2>&1; rm -rf ${tmpSentinel} 2>&1; ls ${tmpSentinel} 2>&1; touch -c "$AGENT_HEAVY_REAL_HOME/.config" 2>&1;` +
+      ` echo ok > written && echo repo-write-ok; echo t > /tmp/x && echo tmp-ok; echo "home=$HOME tmpdir=$TMPDIR"`;
+    const r = spawnSync(join(repo, "bin/agent-heavy"), ["test", "--wait", "60", "--", "sh", "-c", job], { cwd: work, encoding: "utf8",
+      env: { PATH: `${bin}:/usr/bin:/bin`, XDG_RUNTIME_DIR: root, USER: "t", OPENRIG_SESSION_NAME: `another-seat-${process.pid}@test`,
+        AGENT_HEAVY_DIR: join(root, "real-locks"), AGENT_HEAVY_BWRAP: bwrapPath } });   // the real one (the stub sits first on PATH)
+    const out = r.stdout + r.stderr;
+    assert.match(out, new RegExp(`rm: cannot remove '${other}.*Read-only file system`), out);
+    assert.match(out, /ls: cannot access '.*host-tmp-.*': No such file or directory/, "the host's /tmp isn't even visible");
+    assert.match(out, /touch: setting times of '.*\/\.config': Read-only file system/);
+    assert.match(out, /repo-write-ok/); assert.equal(fs.readFileSync(join(work, "written"), "utf8"), "ok\n");
+    assert.match(out, /tmp-ok/); assert.equal(fs.existsSync("/tmp/x") && fs.readFileSync("/tmp/x", "utf8") === "t\n", false, "its /tmp is private");
+    assert.match(out, new RegExp(`home=\\S+/agent-heavy(-nested)?/another-seat-${process.pid}@test/run-\\S+ tmpdir=/tmp`));
+    for (const d of [other, tmpSentinel]) assert.equal(fs.readFileSync(join(d, "keep"), "utf8"), "x", `${d} unchanged`);
+  } finally {
+    for (const d of [other, tmpSentinel, work]) fs.rmSync(d, { recursive: true, force: true });
+    for (const b of [join(home, ".cache/agent-heavy"), "/tmp/agent-heavy-nested"])
+      fs.rmSync(join(b, `another-seat-${process.pid}@test`), { recursive: true, force: true });
+  }
 });
 
 test("the test class: 4 slots of their own (2 CPUs, 4G, no swap, 30 min, 2 workers), sandboxed like the others; builds keep 2", () => {
@@ -469,9 +491,10 @@ test("sandbox real: a job writes its own worktree and its repo's git dir, never 
   try {
     const job = `echo y > ${sibling}/sentinel 2>&1; echo y > ${other}/sentinel 2>&1; echo ok > own && echo own-ok; git commit -q --allow-empty -m job && echo commit-ok`;
     const r = spawnSync(join(repo, "bin/agent-heavy"), ["test", "--wait", "60", "--", "sh", "-c", job], { cwd: mine, encoding: "utf8",
-      env: { PATH: `${bin}:/usr/bin:/bin`, XDG_RUNTIME_DIR: root, USER: "t", AGENT_HEAVY_DIR: join(root, "real-locks"), AGENT_HEAVY_TMP_RW: "0",
+      env: { PATH: `${bin}:/usr/bin:/bin`, XDG_RUNTIME_DIR: root, USER: "t", AGENT_HEAVY_DIR: join(root, "real-locks"),
         AGENT_HEAVY_BWRAP: bwrapPath, GIT_AUTHOR_NAME: "t", GIT_AUTHOR_EMAIL: "t@t", GIT_COMMITTER_NAME: "t", GIT_COMMITTER_EMAIL: "t@t" } });
-    assert.equal(((r.stdout + r.stderr).match(/Read-only file system/g) || []).length, 2, r.stdout + r.stderr);
+    // a sibling under the host's /tmp is invisible (private /tmp), one under ~/Projects read-only: either way, refused
+    assert.equal(((r.stdout + r.stderr).match(/Read-only file system|No such file or directory/g) || []).length, 2, r.stdout + r.stderr);
     assert.match(r.stdout, /own-ok/); assert.match(r.stdout, /commit-ok/, "the repo's git dir (common dir) is writable");
     for (const d of [sibling, other]) assert.equal(fs.readFileSync(join(d, "sentinel"), "utf8"), "x", `${d} unchanged`);
   } finally { fs.rmSync(base, { recursive: true, force: true }); }
@@ -482,4 +505,21 @@ test("sandbox: no worktrees dir is bound beyond the job's own repository", () =>
   assert.equal(heavy(["test", "--", "true"], { BWRAP_CALLS: log }).status, 0);
   const binds = [...fs.readFileSync(log, "utf8").trim().split("\n")[1].matchAll(/--bind (\S+) \1 /g)].map((m) => m[1]);
   assert.deepEqual(binds.filter((b) => /\.worktrees(\/|$)/.test(b) && !b.startsWith(repo)), [], binds.join(" "));
+});
+
+// 2026-10-04: inside the sandbox mise couldn't record trust (its real state dir is read-only), so `mise exec`
+// failed and a repo's tool pin wasn't applied. A repo pinning an installed node gets that node, via mise exec and the shim.
+const mise = spawnSync("sh", ["-c", "command -v mise"], { encoding: "utf8" }).stdout.trim();
+const pinned = mise ? (spawnSync(mise, ["ls", "--installed", "node", "--json"], { encoding: "utf8" }).stdout || "[]") : "[]";
+const nodePin = (() => { try { const v = JSON.parse(pinned); return Array.isArray(v) && v.length > 1 ? v[0].version : null; } catch { return null; } })();
+test("sandbox real: mise trusts the repo and applies its tool pin (mise exec and the shim), with no install", { skip: (!realBwrap || !nodePin) && "bwrap, mise or a second installed node unavailable" }, () => {
+  const work = fs.mkdtempSync(join(os.tmpdir(), "agent-heavy-mise-")); spawnSync("git", ["init", "-q"], { cwd: work });
+  fs.writeFileSync(join(work, "mise.toml"), `[tools]\nnode = "${nodePin}"\n`);
+  try {
+    const shims = join(spawnSync("sh", ["-c", "getent passwd $(id -u) | cut -d: -f6"], { encoding: "utf8" }).stdout.trim(), ".local/share/mise/shims");
+    const r = spawnSync(join(repo, "bin/agent-heavy"), ["test", "--wait", "60", "--", "sh", "-c", "mise exec -- node -v; node -v"], { cwd: work, encoding: "utf8",
+      env: { PATH: `${bin}:${shims}:${dirname(mise)}:/usr/bin:/bin`, XDG_RUNTIME_DIR: root, USER: "t", AGENT_HEAVY_DIR: join(root, "real-locks"), AGENT_HEAVY_BWRAP: bwrapPath } });
+    assert.equal(r.status, 0, r.stdout + r.stderr);
+    assert.deepEqual(r.stdout.trim().split("\n"), [`v${nodePin}`, `v${nodePin}`], r.stderr);
+  } finally { fs.rmSync(work, { recursive: true, force: true }); }
 });

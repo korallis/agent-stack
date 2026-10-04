@@ -227,25 +227,33 @@ fi
 
 # The filesystem sandbox (2026-10-04: a mutation run of a test-harness cleanup called rmSync('/', {recursive: true}) as
 # the owner, outside any sandbox, and wiped ~/.config, ~/.local/share and the dotfiles). Every job runs under bwrap:
-# the whole filesystem read-only, except the job's own repository (its git top level and git common dir), ~/.cache,
-# /tmp, its TMPDIR and agent-heavy's own lock dir. Never other worktrees or projects (QA: a job in one repo could
-# change another project's worktree). HOME and the XDG
-# dirs point at a per-run scratch dir under ~/.cache/agent-heavy (removed afterwards); real config a tool needs is
-# passed read-only by path (gh, git, mise, Playwright's browsers). No way to skip it: if bwrap can't run, the job is
-# refused. Inside, no privileges can be gained (no sudo) and the host's groups are unmapped (no docker socket).
+# the whole filesystem read-only, except the job's own repository (its git top level and git common dir), its seat's
+# dir ~/.cache/agent-heavy/<seat>/ (the run's scratch HOME and XDG dirs, removed afterwards, and the seat's tool
+# caches) and agent-heavy's own lock dir. /tmp is a private tmpfs per run (TMPDIR=/tmp). Never another worktree, another
+# project, another seat's scratch or cache, or the host's /tmp (QA: a job in one repo could change another project's
+# worktree; a lead: a job could wipe other seats' ~/.cache/<rig>-tmp and /tmp dirs). Shared caches a tool needs
+# (Playwright's browsers, mise) and real config (gh, git, mise) are passed by path, read-only. No way to skip it: if
+# bwrap can't run, the job is refused. Inside, no privileges can be gained (no sudo) and the host's groups are unmapped
+# (no docker socket).
 real_home=$(getent passwd "$(id -u)" | cut -d: -f6); real_home=${real_home:-$HOME}
 bwrap=${AGENT_HEAVY_BWRAP:-bwrap}   # tests only
+seat=$(printf '%s' "${OPENRIG_SESSION_NAME:-${USER:-user}}" | tr -c 'A-Za-z0-9._@-' _)
+seatdir=$real_home/.cache/agent-heavy/$seat
+# A nested run inside another job's sandbox (a build inside a browser run, or a test that runs agent-heavy) can't write
+# ~/.cache/agent-heavy: its seat dir then lives in the outer job's private /tmp (TMPDIR), which that job may write.
+if ! { mkdir -p "$seatdir" 2>/dev/null && [[ -w $seatdir ]]; }; then   # -w: a read-only mount says no (EROFS)
+  seatdir=${TMPDIR:-/tmp}/agent-heavy-nested/$seat
+  mkdir -p "$seatdir" || { echo "agent-heavy: refused: can't create a seat dir for $seat" >&2; exit 2; }
+fi
 top=$(git rev-parse --show-toplevel 2>/dev/null) || top=$PWD
 common=$(git rev-parse --path-format=absolute --git-common-dir 2>/dev/null) || common=""
-rw=("$top" "$real_home/.cache" "$dir")
-[[ ${AGENT_HEAVY_TMP_RW:-1} == 0 ]] || rw+=(/tmp)   # AGENT_HEAVY_TMP_RW=0: tests only (stricter, never looser)
+rw=("$top" "$seatdir" "$dir")
 [[ -n $common ]] && rw+=("$common")
-[[ -n ${TMPDIR:-} && -d $TMPDIR ]] && rw+=("$TMPDIR")
 for p in "${rw[@]}"; do
   r=$(realpath -m "$p")
-  if [[ $r == / || $real_home/ == "$r"/* ]]; then
-    echo "agent-heavy: refused: the job would get write access to $r, which holds your home directory. Run it from a" \
-         "repository or worktree (cd into it), not from ${r}." >&2
+  if [[ $r == / || $real_home/ == "$r"/* || $r == /tmp || $r == "$real_home/.cache" ]]; then
+    echo "agent-heavy: refused: the job would get write access to $r, which holds your home directory or other seats'" \
+         "files. Run it from a repository or worktree (cd into it), not from ${r}." >&2
     exit 2
   fi
 done
@@ -254,16 +262,21 @@ if ! "$bwrap" --ro-bind / / --dev-bind /dev /dev true 2>/dev/null; then
   exit 78
 fi
 sandbox() {   # <scratch> -- cmd...: the bwrap prefix for one job
-  local sc=$1 a=(--ro-bind / / --dev-bind /dev /dev --bind /proc /proc) p; shift
+  local sc=$1 a=(--ro-bind / / --dev-bind /dev /dev --bind /proc /proc --tmpfs /tmp) p; shift
   for p in "${rw[@]}"; do a+=(--bind "$p" "$p"); done
-  a+=(--chdir "$PWD" --die-with-parent --setenv HOME "$sc/home" --setenv XDG_CONFIG_HOME "$sc/config"
-      --setenv XDG_DATA_HOME "$sc/data" --setenv XDG_STATE_HOME "$sc/state" --setenv XDG_CACHE_HOME "$sc/cache"
+  a+=(--chdir "$PWD" --die-with-parent --setenv TMPDIR /tmp --setenv HOME "$sc/home" --setenv XDG_CONFIG_HOME "$sc/config"
+      --setenv XDG_DATA_HOME "$sc/data" --setenv XDG_STATE_HOME "$sc/state" --setenv XDG_CACHE_HOME "$seatdir/cache"
       --setenv AGENT_HEAVY_REAL_HOME "$real_home"
       --setenv GH_CONFIG_DIR "${GH_CONFIG_DIR:-$real_home/.config/gh}"
       --setenv MISE_CONFIG_DIR "${MISE_CONFIG_DIR:-$real_home/.config/mise}"
       --setenv MISE_DATA_DIR "${MISE_DATA_DIR:-$real_home/.local/share/mise}"
-      --setenv MISE_STATE_DIR "${MISE_STATE_DIR:-$real_home/.local/state/mise}"
-      --setenv npm_config_cache "${npm_config_cache:-$real_home/.cache/agent-heavy/npm}")
+      # mise records trust under its state dir; the real one is read-only here (EROFS), so it gets the scratch one and
+      # trusts the projects (and this repo) by path instead. It never installs a tool inside a job.
+      --setenv MISE_STATE_DIR "$sc/home/.mise-state"
+      --setenv MISE_TRUSTED_CONFIG_PATHS "${MISE_TRUSTED_CONFIG_PATHS:+$MISE_TRUSTED_CONFIG_PATHS:}$real_home/Projects:$top"
+      --setenv MISE_YES 0 --setenv MISE_EXEC_AUTO_INSTALL false --setenv MISE_NOT_FOUND_AUTO_INSTALL false
+      --setenv MISE_TASK_RUN_AUTO_INSTALL false
+      --setenv npm_config_cache "$seatdir/npm")
   [[ -z ${GIT_CONFIG_GLOBAL:-} && -f $real_home/.gitconfig ]] && a+=(--setenv GIT_CONFIG_GLOBAL "$real_home/.gitconfig")
   [[ -z ${GIT_CONFIG_GLOBAL:-} && ! -f $real_home/.gitconfig && -f $real_home/.config/git/config ]] && a+=(--setenv GIT_CONFIG_GLOBAL "$real_home/.config/git/config")
   [[ -z ${PLAYWRIGHT_BROWSERS_PATH:-} && -d $real_home/.cache/ms-playwright ]] && a+=(--setenv PLAYWRIGHT_BROWSERS_PATH "$real_home/.cache/ms-playwright")
@@ -316,8 +329,8 @@ while :; do
         "$(printf '%s ' "$@" | tr '\n' ' ' | sed 's/ $//')" > "$holder"
       trap 'rm -f "$holder"' EXIT
       export AGENT_HEAVY_ACTIVE="${AGENT_HEAVY_ACTIVE:+$AGENT_HEAVY_ACTIVE }$class" AGENT_HEAVY_SLOT="${AGENT_HEAVY_SLOT:+$AGENT_HEAVY_SLOT }$class.$i"
-      scratch=$real_home/.cache/agent-heavy/run-$unit
-      mkdir -p "$scratch"/{home,config,data,state,cache} "$real_home/.cache/agent-heavy/npm"
+      scratch=$seatdir/run-$unit
+      mkdir -p "$scratch"/{home,config,data,state} "$seatdir"/{npm,cache}
       trap 'rm -f "$holder"; rm -rf "${scratch:?}"' EXIT
       mapfile -d '' -t box < <(sandbox "$scratch")
       orig=("$@"); set -- "${box[@]}" "$@"
