@@ -106,3 +106,15 @@ test("independent-review statuses: every seat's newest, bound to this head, by t
   const comment = (at, verdict) => ({ body: `## review-kimi\nhead: ${H}\nVerdict: ${verdict}`, at, url: "c" });
   assert.deepEqual(reviewFamilies({ notes: [comment("2026-10-04T07:00:00Z", "BLOCK")], head: H, authorFamily: "claude", statuses, pr }).map((r) => r.family), ["codex"], "a later BLOCK comment withdraws the seat's earlier status");
 });
+
+// 2026-10-04: a risky feature's PR named it only in its body ("Implement F-006 ...", title "feat: ..."), so the tier was
+// never read and the gate passed without the owner-approved label.
+test("the risk tier comes from the F-ids in the PR's title OR body (the highest wins)", () => {
+  const pr = { title: "feat: dispatch assignments from native evidence", body: "Implement F-007 dispatch.\n\n- F-001 journeys pass" };
+  const t = featureTier(features, `${pr.title}\n${pr.body}`);
+  assert.deepEqual([t.tier, t.ids], ["risky", ["F-007", "F-001"]]);
+  assert.match(riskProblems({ ...t, featuresFile: "read", authorFamily: "codex", reviewFamilies: [{ family: "claude" }, { family: "kimi" }], ownerApproved: false })[0], /^MISSING: the owner-approved label/);
+  const src = fs.readFileSync(join(repo, "orchestration/merge-evidence.js"), "utf8");
+  assert.match(src, /const named = `\$\{v\.title \|\| ""\}\\n\$\{v\.body \|\| ""\}`;\n  if \(\/\\bF-\\d\{3,\}\\b\/\.test\(named\)\) \{/);
+  assert.match(src, /const t = featureTier\(features, named\);/);
+});
