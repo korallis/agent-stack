@@ -48,18 +48,43 @@ export function liveModel(dir, { projects = process.env.AGENT_CLAUDE_PROJECTS ||
   return modelFromTranscript(lines);
 }
 
-// Pure: the PR a row is about and the head it names, from its text: "owner/repo#N" (or a /pull/N URL) wins over "PR #N".
+// Pure: the PR a row is about and the head it names. The CURRENT ones (QA PR173): the first PR reference in the text
+// (owner/repo#N, a /pull/N URL or "PR #N", whichever comes first) and the first head sha that isn't marked as a past one
+// ("previous head", "old head", "was", "superseded", "instead of" just before it). A bare PR number takes the
+// repository of a full reference to the same number, if the row has one.
+const PAST = /\b(previous(ly)?|prior|old|earlier|former(ly)?|was|were|superseded|replaced|instead\s+of|before)\b[^.;\n]{0,24}$/i;
 export function prRef(text) {
   const t = String(text || "");
-  const full = t.match(/\b([\w.-]+\/[\w.-]+)#(\d+)\b/) || t.match(/github\.com\/([\w.-]+\/[\w.-]+)\/pull\/(\d+)/);
-  const bare = t.match(/\bPR\s*#?(\d+)\b/i);
-  const head = t.match(/\b(?:exact[- ]head|head(?:\s+sha)?|at)\s*[:=]?\s*`?([0-9a-f]{7,40})\b/i);
-  if (!full && !bare) return null;
-  return { repo: full ? full[1] : null, pr: Number(full ? full[2] : bare[1]), head: head ? head[1].toLowerCase() : null };
+  const refs = [];
+  for (const m of t.matchAll(/\b([\w.-]+\/[\w.-]+)#(\d+)\b/g)) refs.push({ at: m.index, repo: m[1], pr: Number(m[2]) });
+  for (const m of t.matchAll(/github\.com\/([\w.-]+\/[\w.-]+)\/pull\/(\d+)/g)) refs.push({ at: m.index, repo: m[1], pr: Number(m[2]) });
+  for (const m of t.matchAll(/\bPR\s*#?(\d+)\b/gi)) refs.push({ at: m.index, repo: null, pr: Number(m[1]) });
+  const current = refs.sort((a, b) => a.at - b.at).find((r) => !PAST.test(t.slice(Math.max(0, r.at - 40), r.at)));
+  if (!current) return null;
+  const repo = current.repo || refs.find((r) => r.repo && r.pr === current.pr)?.repo || null;
+  let head = null;
+  for (const m of t.matchAll(/\b(?:exact[- ]head|current[- ]head|new[- ]head|head(?:\s+sha)?|at)\s*[:=]?\s*`?([0-9a-f]{7,40})\b/gi)) {
+    if (PAST.test(t.slice(Math.max(0, m.index - 40), m.index + m[0].length - m[1].length))) continue;
+    head = m[1].toLowerCase(); break;
+  }
+  return { repo, pr: current.pr, head };
 }
 
 // Pure: is a review row a refresh or delta of the original reviewer's own earlier review? Those stay with that family.
-export const PRIOR_REVIEW = /\b(re-?review|refresh(ed)?\s+(review|qa)|delta\s+(review|qa)|review\s+(the\s+)?delta|follow-?up\s+review|re-?check|your\s+(prior|previous|earlier|last)\s+(review|verdict|findings?|block)|since\s+your\s+(review|block)|(answer|fix(es)?)\s+(to|for)\s+your\s+(review|findings?|block))\b/i;
+// Positive wording only (QA PR173): a refresh/delta/re-review of a review or QA, or a reference to "your" earlier
+// review; a negated phrase ("not a re-review", "no delta review") doesn't count, and neither does a plain "re-check CI".
+const PRIOR = [
+  /\b(qa|review)[- ]refresh\b/gi, /\brefresh(ed)?[- ](review|qa)\b/gi, /\bdelta[- ](review|qa)\b/gi, /\b(review|qa)[- ]delta\b/gi,
+  /\breview\s+(of\s+)?the\s+delta\b/gi, /\bre-?review\b/gi, /\bfollow-?up\s+review\b/gi,
+  /\byour\s+(prior|previous|earlier|last|own)\s+(review|verdict|findings?|block)\b/gi, /\bsince\s+your\s+(review|block|findings?)\b/gi,
+  /\b(answer|fix(es)?|response)\s+(to|for)\s+your\s+(review|findings?|block)\b/gi,
+  /\bre-?check\s+(your|the)\s+(own\s+)?(review|findings?|block)\b/gi,
+];
+const NEGATED = /\b(not|no|isn'?t|never|without|nor)\s+(an?\s+|the\s+)?$/i;
+export function isPriorReview(text) {
+  const t = String(text || "");
+  return PRIOR.some((re) => [...t.matchAll(re)].some((m) => !NEGATED.test(t.slice(Math.max(0, m.index - 16), m.index))));
+}
 
 // The repo of the checkout in dir ("owner/name" from its origin remote), or null.
 export function repoOf(dir) {

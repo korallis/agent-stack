@@ -466,6 +466,14 @@ test("stale rows: a merged or closed PR, or a named head that moved, is never re
   assert.deepEqual(prRef("Review PR #401 at exact head 1a2b3c4d5e6f"), { repo: null, pr: 401, head: "1a2b3c4d5e6f" });
   assert.deepEqual(prRef("Refresh korallis/demo#362 head: ABCDEF1234567"), { repo: "korallis/demo", pr: 362, head: "abcdef1234567" });
   assert.equal(prRef("Write the release notes"), null);
+  // QA PR173: the CURRENT reference and head, never a historical one
+  assert.deepEqual(prRef("Review PR #173 at exact head bbbbbbb (previous head aaaaaaa)"), { repo: null, pr: 173, head: "bbbbbbb" });
+  assert.deepEqual(prRef("Review PR #173 (previous head aaaaaaa) at exact head bbbbbbb"), { repo: null, pr: 173, head: "bbbbbbb" });
+  assert.deepEqual(prRef("PR #173; https://github.com/o/r/pull/172; exact head bbbbbbb"), { repo: null, pr: 173, head: "bbbbbbb" });
+  assert.deepEqual(prRef("Previously PR #170; now review PR #173 at head ccccccc"), { repo: null, pr: 173, head: "ccccccc" });
+  assert.deepEqual(prRef("PR #362 (korallis/demo#362) at head ddddddd"), { repo: "korallis/demo", pr: 362, head: "ddddddd" }, "a bare number takes its full reference's repo");
+  assert.deepEqual(prRef("Review the PR #12 from impl-codex-1 at head eeeeeee"), { repo: null, pr: 12, head: "eeeeeee" }, "'from' isn't a past marker");
+  assert.equal(prRef("Superseded PR #9 (now closed)"), null, "only a past reference: none");
   const view = (state, head = "1a2b3c4d5e6f7a8b") => () => ({ state, headRefOid: head });
   assert.match(staleReason({ pr: 401, head: null }, { repo: "o/r", ghView: view("MERGED") }), /o\/r#401 is merged/);
   assert.match(staleReason({ pr: 401, head: null }, { repo: "o/r", ghView: view("CLOSED") }), /is closed/);
@@ -489,7 +497,7 @@ test("a refresh or delta review stays with the original reviewer's family: moved
   const c1 = node("review.claude-1", "claude-code", { model: "claude-fable-5-1" });
   const row = (body) => ({ id: "q", state: "pending", destination: "review-claude-1@app", updated: ago, tags: [], body: `${body}\nAuthor: impl-codex-1 (codex)` });
   const kimiOnly = [c1, node("review.kimi", "terminal")].map(seatInfo);
-  for (const body of ["Delta review of PR #12 since your review", "Refresh review: your previous findings were fixed", "Re-review the fixes for your block at the new head", "Please re-check PR #12"])
+  for (const body of ["Delta review of PR #12 since your review", "Refresh review: your previous findings were fixed", "Re-review the fixes for your block at the new head", "QA refresh for PR #12", "Review refresh at the new head"])
     assert.deepEqual(plan([row(body)], kimiOnly, fableOut, { now }).map((m) => m.to), [null], body);
   assert.match(plan([row("Refresh review of PR #12")], kimiOnly, fableOut, { now })[0].note, /builds on review-claude-1@app's own earlier review .* stays with a claude reviewer/);
   // a free Claude reviewer on a model that isn't cooling may take it
@@ -497,6 +505,9 @@ test("a refresh or delta review stays with the original reviewer's family: moved
   assert.equal(plan([row("Refresh review of PR #12")], withC2, fableOut, { now })[0].to, "review-claude-2@app");
   // a first review is unaffected
   assert.equal(plan([row("Review PR #12")], kimiOnly, fableOut, { now })[0].to, "review-kimi@app");
+  // QA PR173: negated or unrelated wording is not a refresh: those rows move as first reviews do
+  for (const body of ["Review PR #12: not a re-review", "First review: re-check CI before you start", "No delta review needed: first review of PR #12"])
+    assert.equal(plan([row(body)], kimiOnly, fableOut, { now })[0].to, "review-kimi@app", body);
 });
 
 test("agent-reroute end to end: a reviewer switched off a cooling model with /model keeps its rows (the spec still names the old model)", () => {

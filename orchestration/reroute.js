@@ -23,7 +23,7 @@ import { realpathSync } from "node:fs";
 import { pathToFileURL } from "node:url";
 import { rig, seats, eligibleFamilies, seatAvailable, servableAt, familyGap, odb, CONTEXT_WALL } from "./lib.js";
 import { pickForWork } from "./pickseat.js";
-import { paneDirs, liveModel, prRef, staleReason, repoOf, PRIOR_REVIEW } from "./seatlive.js";
+import { paneDirs, liveModel, prRef, staleReason, repoOf, isPriorReview } from "./seatlive.js";
 
 export { CONTEXT_WALL };
 const HUMAN = /^human@|^owner@/;
@@ -77,7 +77,7 @@ export function plan(rows, all, families, { minutes = 20, now = Date.now(), move
     }
     const gone = stale ? stale(full) : null;
     if (gone) { out.push({ id: r.id, from: r.destination, why, to: null, note: `not moved: no longer actionable (${gone})` }); continue; }
-    const prior = seat.role === "reviewer" && PRIOR_REVIEW.test(`${full.summary || ""}\n${full.body || ""}`);
+    const prior = seat.role === "reviewer" && isPriorReview(`${full.summary || ""}\n${full.body || ""}`);
     const pool = all.filter((s) => s.seat !== seat.seat && !taken.has(s.seat) && (!prior || s.family === seat.family));
     const pick = pickForWork(pool, seat.role, full, { families });
     if (prior && !pick.seat) { out.push({ id: r.id, from: r.destination, why, to: null, note: `left for the lead: it builds on ${seat.seat}'s own earlier review (a refresh or delta), so it stays with a ${seat.family} reviewer, and none is free` }); continue; }
