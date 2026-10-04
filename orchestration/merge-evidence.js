@@ -5,7 +5,7 @@
 // The merge gate's evidence, assembled from exact-head facts instead of a hand-written summary (Jev decides better
 // on evidence than on conclusions: 51% of review.merge_gate calls came back "uncertain" before this, 2026-09-30).
 // Prints the review.merge_gate input as JSON: pr, full head and base shas, the change, every required check by name,
-// the independent-review status on that head, QA's bug-review-board proof (proof/brb-<head>.md), the blast-radius
+// the independent-review status on that head, QA's bug-review-board proof (proof/brb-<head>[-rN].md in the rig workspace, see findBrb), the blast-radius
 // comment, and the target branch, deploy effect and rollback as limits. Anything missing says MISSING, never
 // "fine". --decide also asks Jev, but never while GitHub reports mergeable UNKNOWN (it waits up to 90 s first; still
 // UNKNOWN: exit 4, Jev not asked). Exit 0: live Jev merge in the act band, and the helper has posted the PR comment
@@ -17,6 +17,7 @@
 import { execFileSync } from "node:child_process";
 import { existsSync, readFileSync, readdirSync } from "node:fs";
 import { dirname, join } from "node:path";
+import { homedir } from "node:os";
 import { createRequire } from "node:module";
 import { decideOrStub } from "./jevcall.js";
 import { redact } from "./redact.js";
@@ -693,6 +694,33 @@ export function riskProblems(risk) {
   return p;
 }
 
+// ---- QA's bug-review-board proof: where it lives -------------------------------------------------------------------
+// Rig workspaces keep missions in <Project>-work beside the repo (~/Projects/App-work), not in the checkout the
+// integrator runs from (~/Projects/App.worktrees/integ-codex): a false "MISSING: no bug-review-board proof" twice.
+// Pure: the workspace roots to search, in order: $OPENRIG_WORK_ROOT, the <Project>-work beside the checkout
+// (<P>.worktrees/<seat> or <P>), <projects>/<repo name>-work, then the current directory. No duplicates.
+export function workspaceRoots({ env = process.env, cwd = process.cwd(), nwo = null, projects = env.AGENT_PROJECTS_DIR || join(homedir(), "Projects") } = {}) {
+  const out = [];
+  const add = (p) => { if (p && !out.includes(p)) out.push(p); };
+  add(env.OPENRIG_WORK_ROOT);
+  const worktree = String(cwd).match(/^(.*)\.worktrees\/[^/]+/)?.[1];   // <P>.worktrees/<seat>[/...] -> <P>-work
+  if (worktree) add(`${worktree}-work`);
+  else for (let d = String(cwd); d && d !== dirname(d); d = dirname(d)) if (existsSync(join(d, ".git"))) { add(`${d}-work`); break; }   // <P>[/...] -> <P>-work
+  if (nwo) add(join(projects, `${nwo.split("/")[1]}-work`));
+  add(".");
+  return out;
+}
+// Pure (reads the dir): the proof file for this head in one slice's proof dir: brb-<sha>.md with the full sha or a
+// prefix of 7+, optionally -rN (the highest N wins; an unrevised file counts as r0).
+export function findBrb(proofDir, head) {
+  let files = [];
+  try { files = readdirSync(proofDir); } catch { return null; }
+  const h = String(head).toLowerCase();
+  const hits = files.map((f) => f.match(/^brb-([0-9a-f]{7,40})(?:-r(\d+))?\.md$/i)).filter((m) => m && h.startsWith(m[1].toLowerCase()))
+    .sort((a, b) => Number(b[2] || 0) - Number(a[2] || 0) || b[1].length - a[1].length);
+  return hits.length ? join(proofDir, hits[0][0]) : null;
+}
+
 // Pure: the seat a branch names: the starter kit's branch prefixes agent/, tests/, wp/ and plan/ all start with the
 // author's seat ("tests/impl-claude-ui-f006-tighten"), so its family is the author's. null for any other branch.
 export const branchSeat = (ref) => String(ref || "").match(/^(?:agent|tests|wp|plan)\/([\w.-]+)/)?.[1] ?? null;
@@ -773,8 +801,10 @@ export function gather(pr, { repo, mission, slice, change, deploy, rollback, con
   }
   let brb = null, brbWhere = null;
   if (mission && slice && cfg.qa.source === "proof") {
-    brbWhere = join(process.env.OPENRIG_WORK_ROOT || ".", "missions", mission, "slices", slice, "proof", `brb-${v.headRefOid}.md`);
-    if (existsSync(brbWhere)) {
+    const dirs = workspaceRoots({ nwo }).map((r) => join(r, "missions", mission, "slices", slice, "proof"));
+    const found = dirs.map((d) => findBrb(d, v.headRefOid)).find(Boolean);
+    brbWhere = found || join(dirs.find((d) => existsSync(d)) || dirs[0], `brb-${v.headRefOid}.md`);
+    if (found) {
       const fm = frontmatter(brbWhere);
       brb = { file: brbWhere, artifact_type: fm.artifact_type, verdict: fm.verdict, candidate_sha: String(fm.candidate_sha), money_evidence: fm.money_evidence };
     }
@@ -802,7 +832,7 @@ export function gather(pr, { repo, mission, slice, change, deploy, rollback, con
     const carried = qaFromComments(comments, cfg.qa.headingRe || /^(?:#+\s*)?qa-[\w.@-]+/i, v.headRefOid);
     if (carried) {
       let others = [];
-      try { if (brbWhere) others = readdirSync(dirname(brbWhere)).filter((f) => /^brb-[0-9a-f]{40}\.md$/.test(f)); } catch { others = []; }
+      try { if (brbWhere) others = readdirSync(dirname(brbWhere)).filter((f) => /^brb-[0-9a-f]{7,40}(?:-r\d+)?\.md$/i.test(f)); } catch { others = []; }
       brb = { ...carried, carried: true, otherProofs: others };
     }
   }
