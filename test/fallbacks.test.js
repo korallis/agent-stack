@@ -192,7 +192,7 @@ function cli(script, args, { nodes, rows, proxy, state, jev = {}, caller = "agen
   w("rig", `#!/bin/sh\necho "rig $*" >> "${calls}"\ncase "$*" in "queue list"*) [ -f "${join(dir, "fail-list")}" ] && exit 1 ;; esac\ncase "$*" in "queue list -A --state in-progress "*) [ -f "${join(dir, "fail-left")}" ] && exit 1 ;; esac\ncase "$*" in\n  "ps --json") echo '[{"name":"app"}]' ;;\n` +
     `  "ps --nodes --rig app --json") cat "${join(dir, "nodes.json")}" ;;\n  "queue list -A --state pending,in-progress"*) cat "${join(dir, "rows.json")}" ;;\n` +
     `  "queue list -A --state in-progress"*) cat "${join(dir, "left.json")}" ;;\n  "queue show "*) cat "${join(dir, "show.json")}" ;;\n` +
-    `  "queue handoff"*) echo '{"qitemId":"q-new"}' ;;\n  "send "*) [ -f "${join(dir, "fail-send")}" ] && exit 1 ;;\nesac\nexit 0\n`);
+    `  "queue handoff"*) echo '{"closed":{"qitemId":"q-1","state":"handed-off"},"created":{"qitemId":"q-new","state":"pending"}}' ;;\n  "send "*) [ -f "${join(dir, "fail-send")}" ] && exit 1 ;;\nesac\nexit 0\n`);
   w("agent-proxy-status", `#!/bin/sh\ncat "${join(dir, "proxy.json")}"\n`);
   w("gh", "#!/bin/sh\necho 'gh: no network in tests' >&2\nexit 1\n");   // hermetic: PR evidence is unreadable here
   w("nodes.json", JSON.stringify(nodes)); w("rows.json", JSON.stringify(rows)); w("proxy.json", JSON.stringify(proxy));
@@ -221,13 +221,17 @@ test("agent-recover --apply on the cooling-down 429: MODEL OUT (accounts eligibl
   assert.match(calls, /rig queue handoff q-1 --to coord-deputy-codex@app --note recovery reassign from coord-lead-claude@app: rate_limited/);
 });
 
-test("agent-reroute --apply: moves the claimed row off the 429'd lead, remembers the seat, and nudges it once when it's served again", () => {
+test("agent-reroute --apply: moves the claimed row off the 429'd lead, remembers the seat, and nudges it once when it's served again", async () => {
   const state = fs.mkdtempSync(join(process.env.AGENT_STACK_STATE, "rr-")), ago = (m) => new Date(Date.now() - m * 60e3).toISOString();
   const rows = [{ qitemId: "q-1", state: "in-progress", destinationSession: "coord-lead-claude@app", sourceSession: "operator@app", tags: [], tsUpdated: ago(6) },
     { qitemId: "q-2", state: "in-progress", destinationSession: "coord-lead-claude@app", sourceSession: "operator@app", tags: [], tsUpdated: ago(7) }];
   const one = cli("reroute.js", ["--apply"], { nodes: stallNodes, rows, proxy: stallProxy(), state });
   assert.deepEqual(one.out.moves.map((m) => [m.id, m.to, m.applied ?? false]), [["q-1", "coord-deputy-codex@app", true], ["q-2", null, false]], "one row per free seat a pass");
   assert.match(one.calls, /rig queue handoff q-1 --to coord-deputy-codex@app --note rerouted by agent-reroute after 6 min: claimed and idle/);
+  assert.equal(one.out.moves[0].successor, "q-new", "the successor row the handoff created is recorded");
+  const { DatabaseSync } = await import("node:sqlite");
+  const ledger = new DatabaseSync(join(state, "orchestration.sqlite"), { readOnly: true });
+  assert.deepEqual(ledger.prepare("SELECT item, to_seat, successor FROM reroutes").all().map((r) => ({ ...r })), [{ item: "q-1", to_seat: "coord-deputy-codex@app", successor: "q-new" }]);
   assert.deepEqual(one.out.resumes, []);
   // the next pass: the moved row stays moved (ledger); Claude is served again; q-2 is still the lead's, so it gets one nudge
   const look = cli("reroute.js", [], { nodes: stallNodes, rows: [rows[1]], proxy: [acct("claude"), acct("codex")], state });
