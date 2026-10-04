@@ -46,6 +46,9 @@ LABEL = "korallis-local"
 MAIN_LABEL = "korallis-local-main"   # the main-lane runner's only label (install --main-lane)
 VAR = "CI_LOCAL"
 OFFLINE_GRACE_S = 600
+LOAD_HOLD_S = 600   # a job held this long by the host's load (or memory) moves its repo to hosted runners; this long calm brings it back
+LOADAVG = Path(os.environ.get("AGENT_CI_LOADAVG", "/proc/loadavg"))
+MEMINFO = Path(os.environ.get("AGENT_CI_MEMINFO", "/proc/meminfo"))
 REAL_HOME = Path(pwd.getpwuid(os.getuid()).pw_dir)
 OWNER = os.environ.get("AGENT_CI_OWNER", "korallis")
 ROOT = Path(os.environ.get("AGENT_CI_ROOT", REAL_HOME / ".local/share/agent-stack/ci-runners"))
@@ -551,6 +554,27 @@ def cmd_remove(repo, keep):
     say(f"{OWNER}/{repo}: local runner(s) removed; {VAR} cleared")
 
 
+def host_calm():
+    """The job gate's own test (ci-runner-hook): load1 <= CPUs x AGENT_CI_MAX_LOAD_PER_CPU and <= AGENT_CI_MAX_LOAD (24),
+    MemAvailable >= AGENT_CI_MIN_MEM_GB (6). Unreadable: not calm."""
+    try:
+        load = float(LOADAVG.read_text().split()[0])
+        avail = int(re.search(r"^MemAvailable:\s+(\d+)", MEMINFO.read_text(), re.M).group(1)) // 1048576
+    except (OSError, ValueError, AttributeError):
+        return False
+    cpus = float(os.environ.get("AGENT_CI_NPROC") or os.cpu_count() or 1)
+    ceiling = min(cpus * float(config_value("AGENT_CI_MAX_LOAD_PER_CPU", "1.0")), float(config_value("AGENT_CI_MAX_LOAD", "24")))
+    return load <= ceiling and avail >= float(config_value("AGENT_CI_MIN_MEM_GB", "6"))
+
+
+def held_by_host(inst, now):
+    """Seconds this instance's job has been held by the host (its gate's waiting marker), or 0."""
+    try:
+        return max(0, now - int((STATE / "waiting" / inst).read_text().split()[0]))
+    except (OSError, ValueError, IndexError):
+        return 0
+
+
 def load_state():
     try:
         return json.loads((STATE / "watch.json").read_text())
@@ -560,9 +584,34 @@ def load_state():
 
 def cmd_watch():
     st, now = load_state(), int(time.time())
+    # The host: calm since when (the gate's own test; host-calm.json). Load-paused repos come back after LOAD_HOLD_S of calm.
+    calm_file = STATE / "host-calm.json"
+    try:
+        since_calm = json.loads(calm_file.read_text()).get("since")
+    except (OSError, ValueError, AttributeError):
+        since_calm = None
+    since_calm = (since_calm or now) if host_calm() else None
+    STATE.mkdir(parents=True, exist_ok=True)
+    calm_file.write_text(json.dumps({"since": since_calm}))
+    calm_long = since_calm is not None and now - since_calm >= LOAD_HOLD_S
     for repo in repos():
         if (STATE / f"{repo}.paused").exists():
-            continue
+            continue   # paused by hand (stop): only start resumes it
+        lp = STATE / f"{repo}.load-paused"
+        if lp.exists():
+            if not calm_long:
+                continue   # stays hosted until the host is calm for LOAD_HOLD_S
+            lp.unlink()
+            say(f"{OWNER}/{repo}: the host has been calm {LOAD_HOLD_S // 60} min; local runners resumed (CI_LOCAL set once they are healthy)")
+        else:
+            held = max((held_by_host(i, now) for i in instances(repo)), default=0)
+            if held >= LOAD_HOLD_S:
+                var_set(repo, False)
+                lp.write_text(str(now))
+                say(f"{OWNER}/{repo}: a job held {held // 60} min by the host's load or memory; {VAR} cleared, jobs run hosted until the host is calm {LOAD_HOLD_S // 60} min")
+                subprocess.run(["notify-send", "--app-name=Agent stack", "CI moved to hosted runners",
+                                f"{OWNER}/{repo}: the host is too busy for local CI"], check=False, capture_output=True)
+                continue
         # The retry path for a failed registration: the runner unit Requires= its register oneshot, so when that fails
         # the runner's start fails as a dependency, which Restart= does not retry (it reacts only to the runner process
         # exiting). Each tick (2 min) starts such a runner again; register's backoff bounds the token requests.
@@ -607,7 +656,8 @@ def cmd_status(as_json):
             rows.append({"repo": repo, "instance": inst, "runner": runner_name(inst),
                          "unit": systemctl("is-active", unit(inst), check=False).stdout.strip(),
                          "online": None if up is None else runner_name(inst) in up, "ci_local": ci,
-                         "paused": (STATE / f"{repo}.paused").exists(), "job_slot": inst in busy, "label": label(inst)})
+                         "paused": (STATE / f"{repo}.paused").exists(), "load_paused": (STATE / f"{repo}.load-paused").exists(),
+                         "job_slot": inst in busy, "label": label(inst)})
     cfg = dict(re.findall(r"^(AGENT_CI_[A-Z_]+)=([0-9.]+)$", CONFIG.read_text(), re.M)) if CONFIG.is_file() else {}
     summary = {"runners": rows, "busy_slots": busy, "max_jobs": int(cfg.get("AGENT_CI_MAX_JOBS", 2)),
                "load1": float(Path("/proc/loadavg").read_text().split()[0]), "cpus": os.cpu_count()}
@@ -616,7 +666,7 @@ def cmd_status(as_json):
         return
     for r in rows:
         print(f"{r['instance']:<20} unit {r['unit']:<9} github {'online' if r['online'] else ('?' if r['online'] is None else 'offline'):<8}"
-              f" {VAR}={r['ci_local'] or 'unset':<6}{' paused' if r['paused'] else ''}{' main lane' if r['label'] == MAIN_LABEL else ''}"
+              f" {VAR}={r['ci_local'] or 'unset':<6}{' paused' if r['paused'] else ''}{' load paused' if r['load_paused'] else ''}{' main lane' if r['label'] == MAIN_LABEL else ''}"
               f"{' running a job' if r['job_slot'] else ''}")
     print(f"jobs: {len(busy)}/{summary['max_jobs']} slots busy; load {summary['load1']}/{summary['cpus']}")
 

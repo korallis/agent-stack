@@ -195,6 +195,32 @@ test("jobs get gh (hosted Ubuntu has it; here it lives under the home the sandbo
   const none = reg(join(w, "missing")); assert.equal(none.status, 0, none.stderr); assert.match(none.stderr, /no gh binary found/);
 });
 
+test("watch: a job held 10+ min by the host moves its repo to hosted runners; back after 10 calm min; a manual pause is never touched", () => {
+  const { env, run, set, scenario } = world(online());
+  assert.equal(run("install", "demo").status, 0);
+  set({ active: "active" });
+  const host = (load, memG = 16) => { fs.writeFileSync(join(env.AGENT_CI_STATE, "loadavg"), `${load} 1 1 1/1 1\n`); fs.writeFileSync(join(env.AGENT_CI_STATE, "meminfo"), `MemAvailable: ${memG * 1048576} kB\n`); };
+  Object.assign(env, { AGENT_CI_LOADAVG: join(env.AGENT_CI_STATE, "loadavg"), AGENT_CI_MEMINFO: join(env.AGENT_CI_STATE, "meminfo"), AGENT_CI_NPROC: "32" });
+  const now = Math.floor(Date.now() / 1000), lp = join(env.AGENT_CI_STATE, "demo.load-paused");
+  fs.mkdirSync(join(env.AGENT_CI_STATE, "waiting"), { recursive: true });
+  const held = (s) => fs.writeFileSync(join(env.AGENT_CI_STATE, "waiting", "demo"), `${now - s} host\n`);
+  host(40); held(300); run("watch"); assert.equal(scenario().vars.demo, "1", "held 5 min: still local");
+  held(700); const w = run("watch"); assert.equal(scenario().vars.demo, undefined, "held 11+ min: hosted"); assert.ok(fs.existsSync(lp));
+  assert.match(w.stdout, /a job held 11 min by the host's load or memory; CI_LOCAL cleared/);
+  // stays hosted while the host is busy, or calm for under 10 min
+  fs.rmSync(join(env.AGENT_CI_STATE, "waiting", "demo")); run("watch"); assert.equal(scenario().vars.demo, undefined);
+  host(10); run("watch"); assert.equal(scenario().vars.demo, undefined, "calm just now");
+  host(10, 3); fs.writeFileSync(join(env.AGENT_CI_STATE, "host-calm.json"), JSON.stringify({ since: now - 700 })); run("watch");
+  assert.equal(scenario().vars.demo, undefined, "load fine but memory short: not calm, whatever the old calm said");
+  // calm 10+ min: resumed (the healthy runner sets CI_LOCAL again)
+  host(10); fs.writeFileSync(join(env.AGENT_CI_STATE, "host-calm.json"), JSON.stringify({ since: now - 700 }));
+  const back = run("watch"); assert.equal(scenario().vars.demo, "1"); assert.ok(!fs.existsSync(lp)); assert.match(back.stdout, /calm 10 min; local runners resumed/);
+  // a manual pause (stop) is never resumed by the host rule
+  fs.writeFileSync(join(env.AGENT_CI_STATE, "demo.paused"), "1"); set({ vars: {} });
+  fs.writeFileSync(join(env.AGENT_CI_STATE, "host-calm.json"), JSON.stringify({ since: now - 700 })); run("watch");
+  assert.equal(scenario().vars.demo, undefined);
+});
+
 test("register: a fresh ephemeral registration with a clean work dir; the token reaches config.sh only by env and is never printed", () => {
   const { w, env, run } = world();
   const d = join(env.AGENT_CI_ROOT, "demo/runner"); fs.mkdirSync(join(d, "_work/old"), { recursive: true });
@@ -405,6 +431,19 @@ test("gate: load1 above AGENT_CI_MAX_LOAD (24) waits even on a host with CPUs to
   const s2 = gateState("25.00"); fs.copyFileSync(join(s, "config"), join(s2, "config"));
   const r = await done(gate(s2, "b", "start", { ...big, AGENT_CI_GATE_WAIT_S: "30", AGENT_CI_CONFIG: join(s2, "config") }));
   assert.equal(r.code, 0); assert.match(r.out, /waited 0s/);
+});
+
+test("gate: a job held by the host (load or memory) leaves a waiting marker, gone when it starts; the slot cap leaves none", async () => {
+  const hot = gateState("9.50");
+  const p = gate(hot, "a", "start", { AGENT_CI_GATE_WAIT_S: "1" }); const pd = done(p);
+  await sleep(300);
+  const mark = join(hot, "waiting", "a");
+  assert.ok(fs.existsSync(mark), "held by load: marker"); assert.match(fs.readFileSync(mark, "utf8"), /^\d+ host\n$/);
+  assert.equal((await pd).code, 0); assert.ok(!fs.existsSync(mark), "gone once the job starts");
+  const full = gateState(); fs.mkdirSync(join(full, "slots"), { recursive: true }); for (const r of ["x", "y"]) fs.writeFileSync(join(full, "slots", r), String(Math.floor(Date.now() / 1000)));
+  const c = gate(full, "c", "start", { AGENT_CI_GATE_WAIT_S: "0" }); const cd = done(c);
+  await sleep(300); assert.ok(!fs.existsSync(join(full, "waiting", "c")), "held only by the slot cap: no marker");
+  c.kill(); await cd;
 });
 
 test("gate: end frees its slot under the lock, so it never races a start's stale sweep", async () => {
