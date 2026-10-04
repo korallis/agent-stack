@@ -15,6 +15,8 @@
 // real turn), never the spec's launch model; unknown never blocks. A row is only moved while still actionable: never
 // one whose PR merged or closed or whose named head moved (or whose PR can't be read). A refresh or delta review, built
 // on the original reviewer's own earlier review, stays in that reviewer's family (2026-10-04).
+// A review row naming a PR never goes to a seat that already reviewed its exact head, and a third/other-family
+// review never to a family already counted; unreadable evidence or no one left: the lead (seatlive.headReviewers).
 // Every move carries an audit note naming the reason, both seats and the row's original sender; each row moves at most
 // once. Never to a human: rows for a human, or tagged as the owner's decision, are left alone, and so is a row with no
 // free seat anywhere (reported). A seat that was unservable and is served again, idle, still holding in-progress rows,
@@ -24,7 +26,7 @@ import { realpathSync } from "node:fs";
 import { pathToFileURL } from "node:url";
 import { rig, seats, eligibleFamilies, seatAvailable, servableAt, familyGap, odb, CONTEXT_WALL } from "./lib.js";
 import { pickForWork } from "./pickseat.js";
-import { paneDirs, liveModel, prRef, staleReason, repoOf, isPriorReview } from "./seatlive.js";
+import { paneDirs, liveModel, prRef, staleReason, repoOf, isPriorReview, headReviewers, isThirdFamilyReview } from "./seatlive.js";
 
 export { CONTEXT_WALL };
 const HUMAN = /^human@|^owner@/;
@@ -52,7 +54,10 @@ function unserved(seat, families, now, minutes) {
 // stale(row). stale(fullRow): why the row is no longer actionable (its PR merged or closed, its named head moved), or
 // null; such a row is never moved, and its lead is told. A review that is a refresh or delta of the original
 // reviewer's own earlier review stays in that reviewer's family (or is left for the lead).
-export function plan(rows, all, families, { minutes = 20, now = Date.now(), moved = new Set(), load = null, stale = null } = {}) {
+// reviewed(fullRow): for a review row naming a PR, who already reviewed its exact head ({ seats, families }), or null
+// when it can't be read (the row is then left for the lead). Those seats never take the row; a third or other-family
+// review row also never goes to a family already counted (2026-10-04: one went to the head's PRIMARY reviewer).
+export function plan(rows, all, families, { minutes = 20, now = Date.now(), moved = new Set(), load = null, stale = null, reviewed = null } = {}) {
   const out = [];
   const taken = new Set();   // one row per free seat in a single pass
   for (const r of rows) {
@@ -78,9 +83,18 @@ export function plan(rows, all, families, { minutes = 20, now = Date.now(), move
     }
     const gone = stale ? stale(full) : null;
     if (gone) { out.push({ id: r.id, from: r.destination, why, to: null, note: `not moved: no longer actionable (${gone})` }); continue; }
-    const prior = seat.role === "reviewer" && isPriorReview(`${full.summary || ""}\n${full.body || ""}`);
-    const pool = all.filter((s) => s.seat !== seat.seat && !taken.has(s.seat) && (!prior || s.family === seat.family));
+    const text = `${full.summary || ""}\n${full.body || ""}`;
+    const prior = seat.role === "reviewer" && isPriorReview(text);
+    let done = null;
+    if (seat.role === "reviewer" && reviewed && prRef(text)) {
+      done = reviewed(full);
+      if (!done) { out.push({ id: r.id, from: r.destination, why, to: null, note: "left for the lead: who already reviewed its PR's head couldn't be read, so an independent reviewer can't be chosen" }); continue; }
+    }
+    const third = !!done && isThirdFamilyReview(text);
+    const fresh = (s) => !done || (!done.seats.has(String(s.seat).split("@")[0].toLowerCase()) && !(third && done.families.has(s.family)));
+    const pool = all.filter((s) => s.seat !== seat.seat && !taken.has(s.seat) && (!prior || s.family === seat.family) && fresh(s));
     const pick = pickForWork(pool, seat.role, full, { families });
+    if (done && !pick.seat && (done.seats.size || done.families.size)) { out.push({ id: r.id, from: r.destination, why, to: null, note: `left for the lead: every free reviewer already reviewed ${done.head ? `head ${String(done.head).slice(0, 12)}` : "this head"} (${[...done.seats].join(", ") || "none"}${third ? `; a third review needs a family other than ${[...done.families].join(", ")}` : ""}), so none can be the independent one` }); continue; }
     if (prior && !pick.seat) { out.push({ id: r.id, from: r.destination, why, to: null, note: `left for the lead: it builds on ${seat.seat}'s own earlier review (a refresh or delta), so it stays with a ${seat.family} reviewer, and none is free` }); continue; }
     if (!pick.seat) { out.push({ id: r.id, from: r.destination, why, to: null, note: pick.why }); continue; }
     taken.add(pick.seat.seat);
@@ -191,7 +205,15 @@ async function main() {
       const rec = f?.item || f?.qitem || f;
       return rec && typeof rec.body === "string" ? { body: rec.body, summary: rec.summary, tags: rec.tags ?? r.tags } : null;
     };
-    const moves = plan(rows, all, families, { minutes, moved, load, stale });
+    const reviewedCache = new Map();
+    const reviewed = (row) => {
+      const ref = prRef(`${row.summary || ""}\n${row.body || ""}`);
+      const repo = ref?.repo || repoOf(dirs.get(row.destination));
+      const key = `${repo}#${ref?.pr}@${ref?.head}`;
+      if (!reviewedCache.has(key)) reviewedCache.set(key, headReviewers(ref, { repo }));
+      return reviewedCache.get(key);
+    };
+    const moves = plan(rows, all, families, { minutes, moved, load, stale, reviewed });
     for (const n of renudges(rows, all, families, { done: new Set([...renudged, ...moved]), moving: new Set(moves.filter((m) => m.to).map((m) => m.id)) })) {
       if (apply && rig(["send", n.seat, n.text], { allowFail: true }) !== null) {
         db.prepare("INSERT OR IGNORE INTO reroute_renudged VALUES (?,?,?)").run(n.id, Date.now(), n.seat);
