@@ -145,6 +145,28 @@ test("register: failures (failed registrations, abnormal runner exits) back off 
   assert.ok(st.calls.some((c) => c.tool === "systemctl" && c.argv.join(" ") === "--user start agent-ci-runner@demo.service"));
 });
 
+test("install re-registers an IDLE runner whose label changed (a lane moved); a busy one changes after its job", () => {
+  const r = (n, busy = false) => ({ id: 10 + n, name: n === 1 ? "testhost-demo" : `testhost-demo-${n}`, status: "online", busy });
+  const { env, run, set } = world({ runners: [r(1), r(2), r(3)] });
+  assert.equal(run("install", "demo", "--count", "2", "--main-lane").status, 0);   // demo_r2 is the lane
+  set({ active: "active" });
+  const restarts = (out) => out.calls.filter((c) => c.tool === "systemctl" && c.argv.includes("restart")).map((c) => c.argv.join(" "));
+  // the lane moves to a new third runner: demo_r2 (idle: no slot, not busy) is re-registered at once as a PR runner
+  const moved = run("install", "demo", "--count", "3", "--main-lane");
+  assert.equal(moved.status, 0, moved.stderr);
+  assert.deepEqual(restarts(moved), ["--user restart agent-ci-runner@demo_r2.service"]);
+  assert.match(moved.stdout, /demo_r2 was idle; re-registered now as korallis-local/);
+  // nothing changed: nothing restarted
+  assert.deepEqual(restarts(run("install", "demo", "--count", "3", "--main-lane")), []);
+  // busy on GitHub, or holding a job slot here: left to change after its job
+  set({ runners: [r(1), r(2), r(3, true)] });
+  const busy = run("install", "demo", "--count", "3", "--no-main-lane");
+  assert.deepEqual(restarts(busy), [], "demo_r3 busy on GitHub"); assert.match(busy.stdout, /demo_r3 now takes korallis-local; it is busy .*after its job/);
+  set({ runners: [r(1), r(2), r(3)] }); assert.equal(run("install", "demo", "--count", "3", "--main-lane").status, 0);
+  fs.mkdirSync(join(env.AGENT_CI_STATE, "slots"), { recursive: true }); fs.writeFileSync(join(env.AGENT_CI_STATE, "slots/demo_r3"), "1");
+  assert.deepEqual(restarts(run("install", "demo", "--count", "3", "--no-main-lane")), [], "demo_r3 holds a job slot");
+});
+
 test("watch retries a runner whose registration failed (Restart= doesn't: a failed Requires= is not an exit); never a busy, starting or paused one", () => {
   const { env, run, set } = world(online());
   assert.equal(run("install", "demo").status, 0);

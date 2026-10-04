@@ -476,6 +476,7 @@ def cmd_install(repo, count, dry, lane=None):
               f"agent-heavy.slice){'; remove ' + ', '.join(extra) if extra else ''}"
               f"{'; ' + lane_inst + ' takes only ' + MAIN_LABEL if lane_inst else ''}; wait for them online, then set {VAR}=1 on {OWNER}/{repo}")
         return
+    before = {i: label(i) for i in want if runner_dir(i).is_dir()}   # installed runners' labels, before the lane moves
     # Only a new instance is extracted here: register re-extracts the verified release before every start anyway, and an
     # installed runner may be in the middle of a job (re-extracting it would pull its files from under that job).
     for inst in want:
@@ -493,6 +494,19 @@ def cmd_install(repo, count, dry, lane=None):
     for inst in want:
         systemctl("enable", unit(inst))
         start_inactive(inst)
+    # An active runner whose label changed (a lane moved) would keep the old one until its next job, which for an idle
+    # main lane may never come: re-register it now, but only when it is idle (no job slot here, not busy on GitHub);
+    # a busy one changes at its next registration, after its job.
+    changed = [i for i, old in before.items() if old != label(i) and systemctl("is-active", unit(i), check=False).stdout.strip() == "active"]
+    if changed:
+        listed = github_runners(repo)
+        busy = None if listed is None else {x["name"] for x in listed if x.get("busy")}
+        for inst in changed:
+            if busy is None or runner_name(inst) in busy or (STATE / "slots" / inst).exists():
+                say(f"{OWNER}/{repo}: {inst} now takes {label(inst)}; it is busy (or GitHub can't say), so it changes after its job")
+                continue
+            systemctl("restart", unit(inst))
+            say(f"{OWNER}/{repo}: {inst} was idle; re-registered now as {label(inst)}")
     names = [runner_name(i) for i in want]
     if not wait_online(repo, names, float(os.environ.get("AGENT_CI_ONLINE_WAIT_S", "120"))):
         die(f"{', '.join(names)} did not all come online; {VAR} left unset (jobs stay hosted). See: agent-ci-runner logs {repo}")
