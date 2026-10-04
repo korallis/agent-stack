@@ -1,0 +1,11 @@
+# Reload the CI network guard when the CI slice's cgroup was recreated (nft binds the path's id at load); a no-op otherwise.
+[Unit]
+Description=Keep the local CI network guard loaded (agent-stack)
+
+[Timer]
+OnBootSec=30s
+OnUnitActiveSec=30s
+AccuracySec=5s
+
+[Install]
+WantedBy=timers.target

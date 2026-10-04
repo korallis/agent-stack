@@ -1,0 +1,60 @@
+#!/bin/bash
+# agent-ci-netguard (runs as root; agent-ci-runner netguard-install puts a root-owned copy in /usr/local/libexec and a
+# system timer that runs it every 30 s; docs/RUNNERS.md "Network guard").
+# A CI job runs on this host's network, so without this it could reach the host's own services (the OpenRig daemon,
+# the model proxy, anything on 0.0.0.0) and the LAN and tailnet. This loads one nftables table, inet agent_ci, that
+# touches only sockets in the CI slice (agent-heavy-ci.slice of the runners' user):
+#   - a new connection from the slice gets a ct mark bit; marked traffic to private, CGNAT (tailnet) and link-local
+#     ranges is rejected;
+#   - every local delivery arrives on lo (127.0.0.1, ::1 and the host's own LAN, tailnet and docker addresses alike):
+#     a marked connection is accepted there only when the listening socket is itself in the CI slice (a job's own
+#     E2E server), or it is DNS to a loopback resolver from /etc/resolv.conf. Everything else is refused.
+# Internet egress is untouched. nft resolves the slice's cgroup path to an id when the table loads, so the slice is
+# kept alive by agent-ci-netguard-anchor.service and the timer reloads the table (atomically) whenever the id changes.
+#   agent-ci-netguard apply UID [--print]   load (or with --print, only print) the table for that user's CI slice
+#   agent-ci-netguard remove                delete the table
+set -euo pipefail
+TABLE=agent_ci
+MARK=0x20000000   # one ct mark bit, clear of the bits tailscale and docker use
+cmd=${1:-}
+case "$cmd" in
+  remove) nft list table inet $TABLE >/dev/null 2>&1 && nft delete table inet $TABLE; exit 0 ;;
+  apply) ;;
+  *) echo "usage: agent-ci-netguard apply UID [--print] | remove" >&2; exit 2 ;;
+esac
+uid=${2:-}
+[[ $uid =~ ^[0-9]+$ ]] || { echo "agent-ci-netguard: UID must be a number" >&2; exit 2; }
+CG="user.slice/user-$uid.slice/user@$uid.service/agent.slice/agent-heavy.slice/agent-heavy-ci.slice"
+LEVEL=6
+dns4=$(awk '$1 == "nameserver" && $2 ~ /^127\./ {printf "%s%s", sep, $2; sep = ", "}' /etc/resolv.conf 2>/dev/null || true)
+dns6=$(awk '$1 == "nameserver" && $2 == "::1" {printf "::1"}' /etc/resolv.conf 2>/dev/null || true)
+rules() {
+  echo "table inet $TABLE"
+  echo "delete table inet $TABLE"
+  echo "table inet $TABLE {"
+  echo "  chain out {"
+  echo "    type filter hook output priority 0; policy accept;"
+  echo "    socket cgroupv2 level $LEVEL \"$CG\" ct state new ct mark set ct mark or $MARK"
+  echo "    ct mark and $MARK == $MARK ip daddr { 10.0.0.0/8, 100.64.0.0/10, 169.254.0.0/16, 172.16.0.0/12, 192.168.0.0/16 } reject with icmpx admin-prohibited"
+  echo "    ct mark and $MARK == $MARK ip6 daddr { fc00::/7, fe80::/10 } reject with icmpx admin-prohibited"
+  echo "  }"
+  echo "  chain in {"
+  echo "    type filter hook input priority 0; policy accept;"
+  [ -n "$dns4" ] && echo "    iif lo ct mark and $MARK == $MARK ct state new ip daddr { $dns4 } meta l4proto { tcp, udp } th dport 53 accept"
+  [ -n "$dns6" ] && echo "    iif lo ct mark and $MARK == $MARK ct state new ip6 daddr ::1 meta l4proto { tcp, udp } th dport 53 accept"
+  echo "    iif lo ct mark and $MARK == $MARK ct state new socket cgroupv2 level $LEVEL \"$CG\" accept"
+  echo "    iif lo ct mark and $MARK == $MARK ct state new meta l4proto tcp reject with tcp reset"
+  echo "    iif lo ct mark and $MARK == $MARK ct state new reject with icmpx admin-prohibited"
+  echo "  }"
+  echo "}"
+}
+if [ "${3:-}" = "--print" ]; then rules; exit 0; fi
+# No slice yet (no runner and no anchor running): nothing to guard, and the path can't be resolved. Leave any loaded
+# table as it is: a job can only run inside the slice, and register's own check refuses a runner the table doesn't cover.
+[ -d "/sys/fs/cgroup/$CG" ] || exit 0
+id=$(stat -c %i "/sys/fs/cgroup/$CG")
+stamp=/run/agent-ci-netguard.$uid
+if [ "$(cat "$stamp" 2>/dev/null)" = "$id" ] && nft list table inet $TABLE >/dev/null 2>&1; then exit 0; fi
+rules | nft -f -
+echo "$id" > "$stamp"
+echo "agent-ci-netguard: table inet $TABLE loaded for $CG (cgroup id $id)"

@@ -1,0 +1,18 @@
+# Keeps agent-heavy-ci.slice (the CI runners' slice) alive between jobs, so its cgroup id stays the one the network
+# guard's nftables table was loaded for (system/ci-netguard). It does nothing else.
+[Unit]
+Description=Anchor for the local CI slice (agent-stack network guard)
+
+[Service]
+Type=simple
+Slice=agent-heavy-ci.slice
+ExecStart=/usr/bin/sleep infinity
+Restart=always
+RestartSec=5
+PrivateUsers=yes
+ProtectHome=tmpfs
+PrivateTmp=yes
+NoNewPrivileges=yes
+
+[Install]
+WantedBy=default.target

@@ -2,7 +2,8 @@
 # Every job gets a freshly registered runner and a clean work dir: agent-ci-runner-register@%i runs before each start,
 # outside the sandbox (it needs gh).
 # The job itself runs sandboxed: it sees only its own runner dir, the shared gate hooks and the CI slot state, never
-# the agents' homes, keys or seats. It shares agent-heavy.slice's memory ceiling with heavy builds, at low CPU and
+# the agents' homes, keys or seats, and the network guard (agent-heavy-ci.slice, system/ci-netguard) keeps it off the
+# host's own services, the LAN and the tailnet. It shares agent-heavy.slice's memory ceiling with heavy builds, at low CPU and
 # IO weight, and the job-started hook holds it until one of the global CI job slots is free and the host isn't
 # overloaded (AGENT_CI_MAX_JOBS etc. in ~/.config/agent-stack/ci-runners.env).
 [Unit]
@@ -16,7 +17,8 @@ StartLimitIntervalSec=0
 
 [Service]
 Type=simple
-Slice=agent-heavy.slice
+# agent-heavy-ci.slice is a child of agent-heavy.slice (same limits); the network guard matches it
+Slice=agent-heavy-ci.slice
 Environment=AGENT_CI_REPO=%i
 Environment=AGENT_CI_STATE=%h/.local/state/agent-stack/ci-runners
 Environment=AGENT_CI_CONFIG=%h/.config/agent-stack/ci-runners.env

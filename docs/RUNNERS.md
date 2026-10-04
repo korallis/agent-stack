@@ -31,6 +31,28 @@ remain only for the exceptions below, and as the automatic fallback.
 
   It never sees `~/.codex`, `~/.claude`, the proxy's keys, `gh`'s login or the seats' worktrees. That was proven on
   this host with a transient unit using the same properties.
+- **The network guard.** The sandbox shares the host's network, so without a guard a job could reach the host's own
+  services (the OpenRig daemon, the model proxy, anything listening on 0.0.0.0) and the LAN and tailnet. A systemd
+  user unit can't filter that: `IPAddressDeny` needs privileges a user manager doesn't have (a transient user unit with
+  `IPAddressDeny=127.0.0.1` still connected). So the runners run in `agent-heavy-ci.slice` (a child of
+  `agent-heavy.slice`, with the same limits), and one root nftables table, `inet agent_ci` (`system/ci-netguard`), touches
+  only sockets in that slice:
+  - a new connection from the slice gets a ct mark bit, and marked traffic to 10/8, 172.16/12, 192.168/16,
+    100.64/10 (tailnet), 169.254/16, fc00::/7 and fe80::/10 is rejected;
+  - every local delivery arrives on `lo` (127.0.0.1, ::1 and the host's own LAN, tailnet and docker addresses alike).
+    A marked connection is accepted there only when the listening socket is itself in the CI slice (a job's own E2E
+    server on 127.0.0.1:<E2E_PORT>), or it is DNS to a loopback resolver from `/etc/resolv.conf`. Everything else is
+    refused.
+
+  Internet egress (checkouts, packages, GitHub) is untouched. nft binds the slice's cgroup id when the table loads, so
+  `agent-ci-netguard-anchor.service` keeps the slice alive, and a root timer re-runs the guard every 30 s; it reloads the
+  table (atomically) only when the id changed. **Fail closed:** before every registration, `register` runs a probe
+  inside the slice: its own loopback server must answer and a canary on the host's loopback must not. Otherwise the
+  runner doesn't start and the repo's `CI_LOCAL` is cleared (jobs run hosted); `watch` sets it again once the runner
+  is back. Install once with `agent-ci-runner netguard-install` (through sudo: a root-owned copy of the script in
+  `/usr/local/libexec`, never the checkout, plus `agent-ci-netguard.service`/`.timer` in `/etc/systemd/system`), and
+  install it BEFORE a runner unit with `Slice=agent-heavy-ci.slice` starts: until then every registration refuses.
+  `agent-ci-runner netguard-check` runs the probe; `sudo /usr/local/libexec/agent-ci-netguard remove` drops the table.
 - **Load bounds.**
   - Every runner sits in `agent-heavy.slice`, sharing its 24G memory ceiling with heavy builds.
   - Each runner has `MemoryMax=8G`, `MemorySwapMax=0`, `CPUQuota=800%` and `CPUWeight`/`IOWeight` 20, so seats win
