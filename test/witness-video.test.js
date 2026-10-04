@@ -61,3 +61,9 @@ test("agent-video-fit: a video over the limit becomes a playable .fit.mp4 under 
   assert.equal(fs.readdirSync(root).filter((f) => f.includes(".tmp.")).length, 0, "no temp file left");
   const tiny = run([big], 2000); assert.equal(tiny.status, 1); assert.match(tiny.stderr, /couldn't fit .* trim it/);
 });
+
+test("template: snapshot discipline for browser checklists (browser_find or depth <= 6; full page only when a step needs it)", () => {
+  const flat = (f) => read(f).replace(/\s+/g, " ");
+  assert.match(flat("rig/template/guidance/coordination.md"), /use `browser_find` \(text or regex\) to locate an element and its ref, or `browser_snapshot` with `depth` 6 or less, or a `target` element\. Take a full-page snapshot only when a step needs the whole page/);
+  assert.match(flat("rig/template/witness-slice/SPEC.md"), /Snapshots: prefer `browser_find` or a targeted `browser_snapshot` \(`depth` 6 or less, or a `target`\) over full-page snapshots, and take a full one only when a step needs the whole page\./);
+});

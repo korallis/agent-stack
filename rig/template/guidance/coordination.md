@@ -9,6 +9,10 @@ Read when sending a human row, planning a wave, dispatching work or closing a me
   automatically once Slack has posted it (`agent-human-inbox-tidy`, every 5 minutes); don't reopen it. A row without
   `--human-intent` counts as a decision and stays open. Decision requests use `--human-intent decision` and
   stay pending until answered: the owner's Slack reply closes a pending row, and parking or claiming it breaks that.
+- Browser snapshots fill a seat's context: a long checklist of full-page snapshots compacts the session mid-turn every
+  few minutes and the seat loses detail. With the Playwright MCP, use `browser_find` (text or regex) to locate an
+  element and its ref, or `browser_snapshot` with `depth` 6 or less, or a `target` element. Take a full-page snapshot
+  only when a step needs the whole page (a layout check, a page you haven't seen yet).
 - Visual proof for the owner: an update row to the owner (`--human-intent update`) can carry ONE file,
   `--evidence-ref <absolute path>`: a .png/.jpg/.gif/.webp, an .mp4/.webm/.mov or a .pdf, at most 50 MiB. The daemon
   posts the row's text, then uploads the file into that message's Slack thread; if the upload fails the text still

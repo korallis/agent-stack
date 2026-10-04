@@ -45,6 +45,10 @@ health before the witness starts. A failed deploy parks this slice with a wake; 
 
 Mark anything you couldn't confirm, and say where you looked.
 
+Snapshots: prefer `browser_find` or a targeted `browser_snapshot` (`depth` 6 or less, or a `target`) over full-page
+snapshots, and take a full one only when a step needs the whole page. Full snapshots on every step compact the session
+mid-walk (agent-stack `guidance/coordination.md`).
+
 Video (owner rule 2026-10-02): record the whole end-to-end check as a screen video (.mp4/.webm) and keep it with the
 proof (`rig proof add --media <file>`). With the Playwright MCP: call `browser_start_video` (`filename: "walk.webm"`,
 `size: {width: 1280, height: 720}`) at the start of the walk and `browser_stop_video` at its end, then run
