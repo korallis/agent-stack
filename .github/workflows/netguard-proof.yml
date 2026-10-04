@@ -1,0 +1,37 @@
+# TEMPORARY (closed unmerged): proves the CI network guard from inside a real job on the local runner.
+name: netguard-proof
+on: pull_request
+permissions:
+  contents: read
+jobs:
+  probe:
+    runs-on: [self-hosted, linux, korallis-local]
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@v4
+      - name: probe
+        run: |
+          python3 - <<'PY'
+          import os, socket, subprocess, urllib.request
+          def probe(label, host, port):
+              try:
+                  socket.create_connection((host, port), timeout=5).close(); r = "OPEN"
+              except OSError as e:
+                  r = f"refused ({type(e).__name__})"
+              print(f"{label:28} {r}")
+              return r
+          own = socket.socket(); own.bind(("127.0.0.1", int(os.environ.get("E2E_PORT", "0")))); own.listen(1)
+          probe("own E2E server (loopback)", "127.0.0.1", own.getsockname()[1])
+          bad = []
+          bad += [probe("daemon (loopback)", "127.0.0.1", 7433), probe("model proxy (loopback)", "127.0.0.1", 8317),
+                  probe("model proxy (::1)", "::1", 8317)]
+          ts = subprocess.run(["ip", "-o", "-4", "addr", "show", "dev", "tailscale0"], capture_output=True, text=True).stdout.split()
+          if len(ts) > 3: bad.append(probe("daemon (tailnet address)", ts[3].split("/")[0], 7433))
+          gw = subprocess.run(["ip", "-4", "route", "show", "default"], capture_output=True, text=True).stdout.split()
+          if len(gw) > 2: bad.append(probe("LAN router", gw[2], 80))
+          bad.append(probe("link-local metadata", "169.254.169.254", 80))
+          code = urllib.request.urlopen("https://github.com", timeout=15).status
+          print(f"{'github.com (https)':28} HTTP {code}")
+          assert all(r != "OPEN" for r in bad) and code == 200, "guard not holding"
+          print("network guard holds inside a real job")
+          PY
