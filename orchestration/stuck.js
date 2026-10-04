@@ -3,7 +3,8 @@
 // never acts. Runs every 10 minutes (agent-stuck-check.timer).
 //
 // Code gathers the evidence and owns the thresholds; Jev (seat.stuck) judges only the seats code flags:
-//   - the seat holds open work (assigned work, or an in-progress queue row);
+//   - the seat holds open work (an in-progress queue row, or assigned work beyond its parked rows: a row parked on a
+//     named blocker is waiting, not stuck);
 //   - its screen (last 40 lines, digits ignored so timers and spinners don't count as change) was the same at the last
 //     2 checks, or it keeps showing the same few screens, or the same line repeats in it.
 // Verdict looping / rate_limited / stalled (act or review band) -> one message to the rig's lead, at most once an
@@ -39,6 +40,18 @@ export function repeatedLine(text) {
 export const unchangedRuns = (hashes) => { let n = 1; for (let i = hashes.length - 1; i > 0 && hashes[i] === hashes[i - 1]; i--) n++; return n; };
 // Screens keep coming back: over the last 6 checks at most 2 different screens, and not simply the same one.
 export const cycling = (hashes) => hashes.length >= KEEP && new Set(hashes.slice(-KEEP)).size <= 2 && unchangedRuns(hashes) < KEEP;
+
+// Does the seat hold work it could be doing? A parked row (state blocked: it waits on a named blocker and comes back by
+// itself) is not open work: an idle seat whose only rows are parked isn't stuck (a project, 2026-10-04: seats waiting on
+// external:...:github-auth were flagged). OpenRig's assigned count includes parked rows, so with the queue rows at hand
+// only work beyond the seat's parked rows counts; without them (the list didn't read) the assigned count decides.
+export function holdsOpenWork({ assigned = 0, rows, seat }) {
+  if (!Array.isArray(rows)) return assigned > 0;
+  const mine = rows.filter((q) => q.destinationSession === seat);
+  const parked = mine.filter((q) => q.state === "blocked").length;
+  const active = mine.filter((q) => ["in-progress", "claimed"].includes(q.state)).length;
+  return active > 0 || assigned - parked > 0;
+}
 
 export function shouldAsk({ openWork, hashes, repeat }) {
   if (!openWork) return false;
@@ -81,8 +94,9 @@ async function main() {
   for (const rigName of rigs) {
     const all = seats(rigName);
     const lead = all.find((s) => s.role === "lead")?.seat;
-    const rows = (rig(["queue", "list", "-A", "--limit", "500"], { json: true, allowFail: true }) || []);
-    const list = Array.isArray(rows) ? rows : rows.items || rows.qitems || [];
+    const rows = rig(["queue", "list", "-A", "--limit", "500"], { json: true, allowFail: true });
+    const listed = Array.isArray(rows) ? rows : rows?.items || rows?.qitems || null;   // null: the list didn't read
+    const list = listed || [];
     for (const s of all.filter((x) => x.running && x.role !== "lead")) {
       let tail = "";
       try { tail = execFileSync("tmux", ["capture-pane", "-p", "-S", "-60", "-t", s.seat], { encoding: "utf8", timeout: 10_000 }); } catch { continue; }
@@ -94,7 +108,7 @@ async function main() {
       const openRows = list.filter((q) => q.destinationSession === s.seat && ["in-progress", "claimed"].includes(q.state))
         .map((q) => ({ id: q.qitemId, state: q.state, summary: q.summary, ageMin: Math.round((now - Date.parse(q.claimedAt || q.tsUpdated || q.tsCreated)) / 60_000) }));
       const repeat = repeatedLine(tail);
-      const openWork = s.assigned > 0 || openRows.length > 0;
+      const openWork = holdsOpenWork({ assigned: s.assigned, rows: listed, seat: s.seat });
       if (shouldAsk({ openWork, hashes: st.hashes, repeat }))
         flagged.push({ s, st, file, lead, evidence: buildEvidence({ state, minutesInState: Math.round((now - st.since) / 60_000), hashes: st.hashes, intervalMin, repeat, openRows, tail }) });
       writeFileSync(file, JSON.stringify(st));
