@@ -504,6 +504,39 @@ function historyRewrite(verb, args) {
   return null;
 }
 
+// Test guard (2026-10-04): a mutation run of a test-harness cleanup called rmSync('/', {recursive: true}) as the owner,
+// outside any sandbox, and wiped ~/.config, ~/.local/share and the dotfiles. Tests, mutation runs and test scripts run
+// only through agent-heavy, whose bwrap sandbox keeps everything but the job's repo, ~/.cache and /tmp read-only. A
+// test runner started directly is refused; `agent-heavy build -- <the same command>` is the way (also inside a
+// mutation wrapper: `mutate … -- agent-heavy build -- node --test …`). Best effort against accidents, like the rest.
+const TEST_BINS = /^(vitest|jest|mocha|ava|tap|pytest|py\.test)$/;
+const PM_VALUE_OPTS = new Set(["--prefix", "-C", "--dir", "--cwd", "--filter", "-F", "--workspace", "-w"]);
+function testRun(verb, args) {
+  const operands = (list) => { const out = []; for (let i = 0; i < list.length; i++) { if (list[i] === "--") { out.push(...list.slice(i + 1)); break; }
+    if (list[i].startsWith("-")) { if (PM_VALUE_OPTS.has(list[i])) i++; continue; } out.push(list[i]); } return out; };
+  const bin = (w) => path.basename(String(w || "")).replace(/@[^/]*$/, "");
+  const runner = (words) => { const b = bin(words[0]); return TEST_BINS.test(b) || (b === "playwright" && words[1] === "test"); };
+  if (/^(node|nodejs)$/.test(verb)) {   // node's own options come before the script; later words are the script's
+    for (let i = 0; i < args.length && args[i].startsWith("-"); i++) {
+      if (args[i] === "--test" || args[i].startsWith("--test=")) return "node --test";
+      if (args[i] === "--run" && /^test(:|$)/.test(args[i + 1] || "")) return `node --run ${args[i + 1]}`;
+      if (/^(-r|--require|--import|--loader|--experimental-loader|-C|--conditions|--env-file|--run)$/.test(args[i])) i++;
+    }
+  }
+  if (/^(npm|pnpm|yarn|bun)$/.test(verb)) {
+    const ops = operands(args);
+    // npm test / npm t / npm run test:unit; pnpm, yarn and bun also run a script named directly (yarn test:e2e)
+    if (/^(test|t|tst)$/.test(ops[0] || "") || (/^(run|run-script)$/.test(ops[0] || "") && /^test(:|$)/.test(ops[1] || "")) || (verb !== "npm" && /^test:/.test(ops[0] || "")))
+      return `${verb} ${ops.slice(0, ops[0] === "run" || ops[0] === "run-script" ? 2 : 1).join(" ")}`;
+    if (/^(exec|x|dlx)$/.test(ops[0] || "") && runner(ops.slice(1))) return `${verb} ${ops[0]} ${bin(ops[1])}`;
+  }
+  if (/^(npx|bunx|pnpx)$/.test(verb)) { const ops = operands(args.filter((a, i) => !(args[i - 1] === "-p" || args[i - 1] === "--package"))); if (runner(ops)) return `${verb} ${bin(ops[0])}`; }
+  if (TEST_BINS.test(verb) || (verb === "playwright" && args[0] === "test")) return verb;
+  if (/^python[0-9.]*$/.test(verb) && args[args.indexOf("-m") + 1] === "pytest" && args.includes("-m")) return `${verb} -m pytest`;
+  if (/^(go|cargo|deno)$/.test(verb) && operands(args)[0] === "test") return `${verb} test`;
+  return null;
+}
+
 // Pure: why this Bash command would print a protected file, or null.
 const ASSIGN = /^[A-Za-z_][A-Za-z0-9_]*=/;
 function bashVerdict(command, ctx, depth = 0) {
@@ -610,6 +643,8 @@ function bashVerdict(command, ctx, depth = 0) {
     if (dump) return { env: true, why: dump };
     const rewrite = historyRewrite(verb, args);
     if (rewrite) return { rewrite: true, why: rewrite };
+    const tests = testRun(verb, args);
+    if (tests) return { tests: true, why: tests };
     if (verb === "cd" || verb === "pushd") { const t = args.find((a) => !/^-/.test(a) && !/^\+\d/.test(a)); addDirs(t === undefined ? ctx.home : t); continue; }
     if (verb === "popd") continue;   // every directory the command visited stays a candidate
     // dotglob: on counts everywhere; off counts only where it certainly applies to this shell
@@ -848,6 +883,15 @@ function decide(input, { home = os.homedir(), pats = patterns(process.env, home)
     "  fix something:                     a new commit on the branch, then a plain git push",
     "Squash before the FIRST push only (git reset --soft \"$(git merge-base HEAD origin/main)\"). If history truly must change, ask the operator.",
   ].join("\n") };
+  if (v.tests) return { deny: true, reason: [
+    `agent-stack test guard: blocked, because ${v.why} runs tests outside agent-heavy. Tests, mutation runs and test`,
+    "scripts run only inside agent-heavy's sandbox (bwrap: everything but the job's repo, ~/.cache and /tmp is read-only, and",
+    "HOME is a scratch dir). On 2026-10-04 a test cleanup run outside it deleted ~/.config, ~/.local/share and the dotfiles.",
+    "Instead:",
+    "  agent-heavy build -- <this command>            (browser tests: agent-heavy browser -- …)",
+    "  a mutation control: <mutate …> -- agent-heavy build -- <the test command>",
+    "Run it from the repository or worktree the tests belong to.",
+  ].join("\n") };
   if (v.env) return { deny: true, reason: [
     `agent-stack credential guard: blocked, because ${v.why}. Environments hold API keys and tokens, and the transcript keeps whatever is printed.`,
     "Names only, never values:",
@@ -892,5 +936,5 @@ function main() {
   process.exit(0);
 }
 
-module.exports = { envDump, historyRewrite, SECRET_NAME, DEFAULT_PATTERNS, VERCEL_DIR, BYPASS, PW_DIR, NET_DIR, NET_TOOL, netDir, legacyNetDir, netKind, netVerdict, patterns, globRe, protectedPath, lex, parseArgs, bashVerdict, keyNames, decide };
+module.exports = { envDump, historyRewrite, testRun, SECRET_NAME, DEFAULT_PATTERNS, VERCEL_DIR, BYPASS, PW_DIR, NET_DIR, NET_TOOL, netDir, legacyNetDir, netKind, netVerdict, patterns, globRe, protectedPath, lex, parseArgs, bashVerdict, keyNames, decide };
 if (require.main === module) main();

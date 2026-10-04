@@ -48,13 +48,13 @@ test("Bash: commands that would print a credential file are denied", () => {
 test("Bash: using credentials without printing them, and ordinary commands, are allowed", () => {
   for (const c of [
     "grep -r TODO .", "cat README.md", "ls .env*", "ls -la", "cat .env.example", "cat .env.sample", "head .env.template",
-    "set -a; . .env; set +a; npm run migrate", "source .env && npm test", "source .env && echo done", "npm run dev -- --env-file .env",
+    "set -a; . .env; set +a; npm run migrate", "source .env && npm run build", "source .env && echo done", "npm run dev -- --env-file .env",
     "docker run --env-file .env img", "grep -q '^DATABASE_URL=' .env && echo present", "grep -c KEY .env", "grep -l KEY -r .",
     "rg -l TOKEN", "wc -l .env", "sha256sum .env", "test -f .env && echo yes", "stat .env",
     "cp .env .env.bak", "mv .env.local .env", "sed -i 's/old/new/' .env", "echo 'X=1' >> .env", "printf 'K=v\\n' > .env.local",
     "tail -f log.txt 2>&1 | grep err",
     // QA WO42 f3: quiet input redirection, set options after loading, a file-looking pattern after --
-    "grep -q FIXTURE_KEY < .env", "source .env; set -e; true", "source .env; set -euo pipefail; npm test", "grep -- .env README.md",
+    "grep -q FIXTURE_KEY < .env", "source .env; set -e; true", "source .env; set -euo pipefail; npm run build", "grep -- .env README.md",
     "rg -- prod.env docs/", "cat <<'EOF'\n$(cat .env)\nEOF", "export -n FOO", "declare -r X=1",
     "source .env; declare OTHER=safe", "source .env; declare -i COUNT=3", "jq -n --arg k v '$k'", "jq -n --rawfile tpl notes.txt '$tpl'", "git add .env.example", "git status", "chmod 600 .env",
     "cat <<'EOF' > notes.md\nNever run: cat .env\nEOF", "echo 'do not cat .env'", "grep -rn 'runtime-url' docs/",
@@ -116,7 +116,7 @@ test("the hook's output contract: Claude JSON deny, Codex exit 2 + stderr, allow
   r = run(deny, "codex");
   assert.equal(r.status, 2); assert.equal(r.stdout, ""); assert.match(r.stderr, /credential guard: blocked/);
   for (const rt of [undefined, "codex"]) {
-    r = run({ tool_name: "Bash", tool_input: { command: "npm test" }, cwd }, rt);
+    r = run({ tool_name: "Bash", tool_input: { command: "npm run build" }, cwd }, rt);
     assert.deepEqual([r.status, r.stdout, r.stderr], [0, "", ""]);
     r = run("not json", rt); assert.equal(r.status, 0, "a broken input must not block every tool call");
   }

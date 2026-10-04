@@ -372,7 +372,15 @@ Details are in the `agent-stack` skill. What went wrong before: [docs/incidents/
   `AGENT_HEAVY_WORKERS`): `PYTEST_XDIST_AUTO_NUM_WORKERS` (pytest `-n auto`), `VITEST_MAX_WORKERS` (Vitest 4+),
   `VITEST_MAX_THREADS`/`VITEST_MAX_FORKS` (Vitest 3). `node --test` and Jest read no such variable: pass
   `--test-concurrency=4` / `--maxWorkers=4`. Without a systemd user session it warns and runs the job unconfined, under
-  `timeout` for the max runtime. Every scope is cleared afterwards (`reset-failed`), so failed ones don't pile up. It refuses long-lived servers (`npm start`,
+  `timeout` for the max runtime.
+  Filesystem sandbox (2026-10-04, after a test cleanup run outside it deleted ~/.config, ~/.local/share and the
+  dotfiles): every job runs under `bwrap` with the whole filesystem read-only except its repository (git top level
+  and common dir), `~/.cache`, `~/Projects/*.worktrees`, `/tmp`, its `TMPDIR` and the slot dir. `HOME` and the XDG dirs
+  are a per-run scratch dir under `~/.cache/agent-heavy/` (removed afterwards); gh, git, mise and Playwright's
+  browsers get their real config by path, read-only. No privileges inside (no sudo) and the host's groups are unmapped
+  (no docker socket). A job run from a directory that holds the home directory (`~`, `/home`, `/`) is refused, and so is
+  any job where bwrap can't run (exit 78): there is no unsandboxed fallback. The read guard refuses a test runner
+  (`node --test`, `npm test`, vitest, jest, playwright test, pytest, go/cargo/deno test, …) started outside agent-heavy. Every scope is cleared afterwards (`reset-failed`), so failed ones don't pile up. It refuses long-lived servers (`npm start`,
   `start:*`, `dev`, `next start`, `vite`), which run outside it. `agent-heavy status` shows who holds each slot and who waits.
   Waiters queue first come, first served per class (a ticket each in the slot dir; only the first K live tickets, K =
   free slots, may try a slot, and a dead waiter's ticket is skipped). `--priority urgent|critical` (or

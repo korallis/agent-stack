@@ -23,10 +23,16 @@ process.on("exit", () => roots.forEach((r) => fs.rmSync(r, { recursive: true, fo
 const bin = fs.mkdtempSync(join(os.tmpdir(), "heavyfs-bin-")); roots.push(bin);
 fs.writeFileSync(join(bin, "systemctl"), "#!/usr/bin/env bash\nexit 1\n", { mode: 0o755 });
 fs.writeFileSync(join(bin, "logger"), "#!/usr/bin/env bash\nexit 0\n", { mode: 0o755 });
+// bwrap is stubbed (it records its arguments and runs the job): the filesystem sandbox has its own tests
+fs.writeFileSync(join(bin, "bwrap"), `#!/usr/bin/env bash
+[ -n "\${BWRAP_CALLS:-}" ] && printf '%s\\n' "$*" >> "$BWRAP_CALLS"
+while [ $# -gt 0 ] && [ "$1" != "--" ]; do shift; done; [ $# -gt 0 ] && shift
+[ $# -gt 0 ] && exec "$@"; exit 0
+`, { mode: 0o755 });
 
 function lab(base) {
   const d = fs.mkdtempSync(join(base, "heavyfs-")); roots.push(d);
-  const env = { PATH: `${bin}:/usr/bin:/bin`, USER: "t", AGENT_HEAVY_DIR: join(d, "heavy"), AGENT_HEAVY_BUILD_SLOTS: "1", AGENT_HEAVY_POLL: "0.1", OPENRIG_SESSION_NAME: "seat-a@lab" };
+  const env = { PATH: `${bin}:/usr/bin:/bin`, USER: "t", AGENT_HEAVY_BWRAP: join(bin, "bwrap"), AGENT_HEAVY_DIR: join(d, "heavy"), AGENT_HEAVY_BUILD_SLOTS: "1", AGENT_HEAVY_POLL: "0.1", OPENRIG_SESSION_NAME: "seat-a@lab" };
   return { d, env };
 }
 const until = async (cond, what, ms = 8000) => { const t0 = Date.now(); while (!cond()) { if (Date.now() - t0 > ms) throw new Error(`timed out: ${what}`); await new Promise((r) => setTimeout(r, 25)); } };

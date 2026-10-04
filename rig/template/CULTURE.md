@@ -55,7 +55,9 @@ Human queue rows also need a specific `--summary`; the headings belong in the bo
 - Work in your own worktree. Preserve OpenRig managed blocks, but do not commit them. Stop only your own processes
   by PID; no pattern-based killall or pkill. Destructive operations and publication need the applicable authority.
 - Run tests, builds and lint through `agent-heavy build -- <cmd>`; browser tests use `agent-heavy browser -- <cmd>`.
-  Servers run outside the limiter. Use focused runs and few workers. Read `guidance/host-operations.md` before
+  Tests, mutation runs and test scripts run ONLY there, from their own repo or worktree: its sandbox keeps everything
+  but that repo, ~/.cache and /tmp read-only (2026-10-04: a test cleanup run outside it deleted ~/.config,
+  ~/.local/share and the dotfiles). The read guard refuses a test runner started directly. Servers run outside the limiter. Use focused runs and few workers. Read `guidance/host-operations.md` before
   scratch setup, heavy work, credential CLI use or context handover (paths resolve under `$OPENRIG_WORK_ROOT/rig`).
 - Send an informational row to the owner (@OWNER@) with `--human-intent update`; requests use
   `--human-intent decision`. Give human rows a `--summary`. Read `guidance/coordination.md` before sending one,

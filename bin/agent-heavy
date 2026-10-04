@@ -2,7 +2,9 @@
 # agent-heavy <build|browser> [--wait SECONDS] [--max-runtime SPAN] [--allow-long] [--priority routine|urgent|critical] -- <command...>
 # agent-heavy status [build|browser]   who holds each slot (seat, cwd, command, age, remaining runtime) and who waits, in
 #                                      order (position, seat, priority, waiting time); read-only
-# Runs a heavy build or browser test under a SHARED machine budget so 24 agents cannot starve the host:
+# Runs a heavy build or browser test under a SHARED machine budget so 24 agents cannot starve the host, and in a
+# filesystem sandbox (bwrap; see "The filesystem sandbox" below) so a job can't delete or change anything outside
+# its own repository, ~/.cache and /tmp:
 #   - concurrency slots (flock)            build: 2 at once, browser: 2 at once
 #   - cgroup limits via systemd-run --user build: 8 CPUs / 14G RAM, browser: 4 CPUs / 8G RAM, no swap; a run over
 #                                          its ceiling is OOM-killed inside its own scope (exit 137, says so, logs it)
@@ -219,6 +221,50 @@ if [[ " ${AGENT_HEAVY_ACTIVE:-} " == *" $class "* ]]; then
   AGENT_HEAVY_SLOT=$(tr ' ' '\n' <<<"${AGENT_HEAVY_SLOT:-}" | grep -v "^$class\." | paste -sd' ' || true)
 fi
 
+# The filesystem sandbox (2026-10-04: a mutation run of a test-harness cleanup called rmSync('/', {recursive: true}) as
+# the owner, outside any sandbox, and wiped ~/.config, ~/.local/share and the dotfiles). Every job runs under bwrap:
+# the whole filesystem read-only, except the job's own repository (its git top level and git common dir), ~/.cache,
+# the agents' worktrees (~/Projects/*.worktrees), /tmp, its TMPDIR and agent-heavy's own lock dir. HOME and the XDG
+# dirs point at a per-run scratch dir under ~/.cache/agent-heavy (removed afterwards); real config a tool needs is
+# passed read-only by path (gh, git, mise, Playwright's browsers). No way to skip it: if bwrap can't run, the job is
+# refused. Inside, no privileges can be gained (no sudo) and the host's groups are unmapped (no docker socket).
+real_home=$(getent passwd "$(id -u)" | cut -d: -f6); real_home=${real_home:-$HOME}
+bwrap=${AGENT_HEAVY_BWRAP:-bwrap}   # tests only
+top=$(git rev-parse --show-toplevel 2>/dev/null) || top=$PWD
+common=$(git rev-parse --path-format=absolute --git-common-dir 2>/dev/null) || common=""
+rw=("$top" "$real_home/.cache" "$dir")
+[[ ${AGENT_HEAVY_TMP_RW:-1} == 0 ]] || rw+=(/tmp)   # AGENT_HEAVY_TMP_RW=0: tests only (stricter, never looser)
+[[ -n $common ]] && rw+=("$common")
+for w in "$real_home"/Projects/*.worktrees; do [[ -d $w ]] && rw+=("$w"); done
+[[ -n ${TMPDIR:-} && -d $TMPDIR ]] && rw+=("$TMPDIR")
+for p in "${rw[@]}"; do
+  r=$(realpath -m "$p")
+  if [[ $r == / || $real_home/ == "$r"/* ]]; then
+    echo "agent-heavy: refused: the job would get write access to $r, which holds your home directory. Run it from a" \
+         "repository or worktree (cd into it), not from ${r}." >&2
+    exit 2
+  fi
+done
+if ! "$bwrap" --ro-bind / / --dev-bind /dev /dev true 2>/dev/null; then
+  echo "agent-heavy: refused: the filesystem sandbox (bwrap) can't run here, and jobs never run without it." >&2
+  exit 78
+fi
+sandbox() {   # <scratch> -- cmd...: the bwrap prefix for one job
+  local sc=$1 a=(--ro-bind / / --dev-bind /dev /dev --bind /proc /proc) p; shift
+  for p in "${rw[@]}"; do a+=(--bind "$p" "$p"); done
+  a+=(--chdir "$PWD" --die-with-parent --setenv HOME "$sc/home" --setenv XDG_CONFIG_HOME "$sc/config"
+      --setenv XDG_DATA_HOME "$sc/data" --setenv XDG_STATE_HOME "$sc/state" --setenv XDG_CACHE_HOME "$sc/cache"
+      --setenv AGENT_HEAVY_REAL_HOME "$real_home"
+      --setenv GH_CONFIG_DIR "${GH_CONFIG_DIR:-$real_home/.config/gh}"
+      --setenv MISE_CONFIG_DIR "${MISE_CONFIG_DIR:-$real_home/.config/mise}"
+      --setenv MISE_DATA_DIR "${MISE_DATA_DIR:-$real_home/.local/share/mise}"
+      --setenv MISE_STATE_DIR "${MISE_STATE_DIR:-$real_home/.local/state/mise}"
+      --setenv npm_config_cache "${npm_config_cache:-$real_home/.cache/agent-heavy/npm}")
+  [[ -z ${GIT_CONFIG_GLOBAL:-} && -f $real_home/.gitconfig ]] && a+=(--setenv GIT_CONFIG_GLOBAL "$real_home/.gitconfig")
+  [[ -z ${GIT_CONFIG_GLOBAL:-} && ! -f $real_home/.gitconfig && -f $real_home/.config/git/config ]] && a+=(--setenv GIT_CONFIG_GLOBAL "$real_home/.config/git/config")
+  [[ -z ${PLAYWRIGHT_BROWSERS_PATH:-} && -d $real_home/.cache/ms-playwright ]] && a+=(--setenv PLAYWRIGHT_BROWSERS_PATH "$real_home/.cache/ms-playwright")
+  printf '%s\0' "$bwrap" "${a[@]}" --
+}
 total=${AGENT_HEAVY_TOTAL_MEM:-24G} workers=${AGENT_HEAVY_WORKERS:-4}
 # Test runners default to one worker per core (32 here, ~1 GB each): a hint the job's tools read, unless already set.
 export PYTEST_XDIST_AUTO_NUM_WORKERS=${PYTEST_XDIST_AUTO_NUM_WORKERS:-$workers} VITEST_MAX_WORKERS=${VITEST_MAX_WORKERS:-$workers} \
@@ -266,12 +312,17 @@ while :; do
         "$(printf '%s ' "$@" | tr '\n' ' ' | sed 's/ $//')" > "$holder"
       trap 'rm -f "$holder"' EXIT
       export AGENT_HEAVY_ACTIVE="${AGENT_HEAVY_ACTIVE:+$AGENT_HEAVY_ACTIVE }$class" AGENT_HEAVY_SLOT="${AGENT_HEAVY_SLOT:+$AGENT_HEAVY_SLOT }$class.$i"
+      scratch=$real_home/.cache/agent-heavy/run-$unit
+      mkdir -p "$scratch"/{home,config,data,state,cache} "$real_home/.cache/agent-heavy/npm"
+      trap 'rm -f "$holder"; rm -rf "${scratch:?}"' EXIT
+      mapfile -d '' -t box < <(sandbox "$scratch")
+      orig=("$@"); set -- "${box[@]}" "$@"
       if [[ $systemd == 0 ]]; then
         echo "[agent-heavy] WARN: no systemd user session (systemd-run --user unavailable): running WITHOUT the CPU and memory" \
              "limits, only the slot and the max runtime" >&2
         timeout --kill-after=30 "$max_s" "$@" || rc=$?
         if [[ $rc == 124 || $rc == 137 && $(( $(date +%s) - start )) -ge $max_s ]]; then
-          log "stopped at the $class max runtime" "$@"
+          log "stopped at the $class max runtime" "${orig[@]}"
           echo "[agent-heavy] stopped: reached the $class max runtime ($max). Split the job, run a focused subset, or pass" \
                "--max-runtime if it genuinely needs longer." >&2
           exit 124
@@ -287,7 +338,7 @@ while :; do
       ooms=$(systemctl --user show -p OOMKills --value "$unit.scope" 2>/dev/null || true)
       if [[ ${ooms:-0} =~ ^[0-9]+$ && ${ooms:-0} -gt 0 ]]; then
         systemctl --user reset-failed "$unit.scope" 2>/dev/null || true
-        log "killed for memory: $class ceiling $mem, all heavy runs $total" "$@"
+        log "killed for memory: $class ceiling $mem, all heavy runs $total" "${orig[@]}"
         echo "[agent-heavy] killed: the run went over its memory ceiling ($class: $mem, no swap; all heavy runs together:" \
              "$total) and the kernel stopped it inside its own scope; the host was not touched. $focused." \
              "If it genuinely needs more, set AGENT_HEAVY_${class^^}_MEM." >&2
@@ -303,7 +354,7 @@ while :; do
       if [[ $timed_out == 1 ]]; then
         systemctl --user reset-failed "$unit.scope" 2>/dev/null || true
         # findable later with `journalctl -t agent-heavy`, like a kernel OOM kill
-        log "stopped at the $class max runtime" "$@"
+        log "stopped at the $class max runtime" "${orig[@]}"
         echo "[agent-heavy] stopped: reached the $class max runtime ($max). Split the job, run a focused subset, or pass" \
              "--max-runtime if it genuinely needs longer." >&2
         exit 124   # as timeout(1): never a success, whatever the job returned when it was stopped

@@ -33,7 +33,9 @@ Keep --summary specific ("Staging sign-in restored") and pass a multiline body w
 """
 import json, os, re, subprocess, sys
 
-REAL = os.path.expanduser("~/.local/bin/rig")
+import pwd
+# the real home, not $HOME: inside agent-heavy's sandbox HOME is a per-run scratch dir
+REAL = os.path.join(pwd.getpwuid(os.getuid()).pw_dir, ".local/bin/rig")
 args = sys.argv[1:]
 
 

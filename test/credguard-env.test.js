@@ -33,7 +33,7 @@ test("ordinary commands and names-only forms pass", () => {
   for (const c of ["ps -ef", "ps aux", "ps -o user,pid", "ps -o user", "ps -p 1 -o etime", "ps axo user,cmd", "ps -eo pid,etime,cmd", "ps --sort=-rss aux",
     "env FOO=1 node x.js", "env -C /tmp ls", "printenv PATH", "printenv HOME USER", "set -euo pipefail", "set -x", "export FOO=1", "export PATH=$PATH:/x",
     "declare -p HOME", "declare -a arr", "ls /proc/1/environ", "test -r /proc/self/environ", "compgen -e", '[ -n "${OPENAI_API_KEY:+x}" ] && echo set',
-    "git status", "npm test"]) assert.equal(denied(c), null, `should pass: ${c}`);
+    "git status", "npm run build"]) assert.equal(denied(c), null, `should pass: ${c}`);
 });
 
 test("--env-names prints a process's variable names and never a value", () => {
