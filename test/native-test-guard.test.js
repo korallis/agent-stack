@@ -45,7 +45,7 @@ test("anything else, and every call inside agent-heavy, runs the real program wi
   }
   const n = run(["node", "-e", "console.log(process.argv.slice(1).join('|'))", "a", "b c"]);
   assert.equal(n.status, 0); assert.equal(n.stdout.trim(), "a|b c", "node itself, arguments intact");
-  const inside = { AGENT_HEAVY_SLOT: "test.1", AGENT_HEAVY_REAL_HOME: "/home/x" };
+  const inside = { AGENT_HEAVY_SLOT: "test.1", AGENT_HEAVY_REAL_HOME: "/srv/x" };
   for (const argv of [["npm", "test"], ["go", "test", "./..."], ["pytest", "-q"]]) {
     const r = run(argv, inside);
     assert.equal(r.status, 0, argv.join(" ")); assert.equal(r.stdout.trim(), `real ${argv.join(" ")}`);
