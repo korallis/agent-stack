@@ -221,6 +221,22 @@ test("watch: a job held 10+ min by the host moves its repo to hosted runners; ba
   assert.equal(scenario().vars.demo, undefined);
 });
 
+test("watch: one run at a time (a second exits quietly); under systemd each line is logged once, not twice", () => {
+  const { w, env, run } = world(online());
+  assert.equal(run("install", "demo").status, 0);
+  // a run already holding the lock: this one does nothing and exits 0
+  fs.mkdirSync(env.AGENT_CI_STATE, { recursive: true }); fs.writeFileSync(env.CALLS, "");
+  const holder = spawnSync("bash", ["-c", `exec 9>"${join(env.AGENT_CI_STATE, "watch.lock")}"; flock 9; python3 "${tool}" watch; echo rc=$?`], { encoding: "utf8", env: { ...env } });
+  assert.match(holder.stdout, /rc=0/); assert.equal(fs.readFileSync(env.CALLS, "utf8").trim(), "", "no gh or systemctl call while another run holds the lock");
+  // say(): logger only when stdout isn't the journal already (systemd sets JOURNAL_STREAM)
+  const rec = join(w, "logbin"); fs.mkdirSync(rec); fs.writeFileSync(join(rec, "logger"), `#!/bin/sh\necho "logger $*" >> "${join(w, "logger.log")}"\n`, { mode: 0o755 });
+  const sayVia = (extra) => { fs.rmSync(join(w, "logger.log"), { force: true });
+    spawnSync("python3", [tool, "stop", "demo"], { encoding: "utf8", env: { ...env, PATH: `${rec}:${env.PATH}`, ...extra } });
+    return fs.existsSync(join(w, "logger.log")) ? fs.readFileSync(join(w, "logger.log"), "utf8") : ""; };
+  assert.match(sayVia({}), /^logger -t agent-ci-runner .*paused/m, "from a shell: to syslog too");
+  assert.equal(sayVia({ JOURNAL_STREAM: "8:12345" }), "", "under systemd: stdout only (the journal already has it)");
+});
+
 test("register: a fresh ephemeral registration with a clean work dir; the token reaches config.sh only by env and is never printed", () => {
   const { w, env, run } = world();
   const d = join(env.AGENT_CI_ROOT, "demo/runner"); fs.mkdirSync(join(d, "_work/old"), { recursive: true });

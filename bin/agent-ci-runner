@@ -25,7 +25,7 @@ ephemeral runner per repo, and the job gate (system/ci-runner-hook) caps how man
 `gh api` and reach the runner only as ACTIONS_RUNNER_INPUT_TOKEN in its environment: never printed, never on a
 command line. Fork pull requests never reach a local runner: the workflows' runs-on picks the hosted runner for them.
 """
-import argparse
+import argparse, fcntl
 import hashlib
 import json
 import os
@@ -73,8 +73,11 @@ def die(msg, code=1):
 
 
 def say(msg):
+    # Under systemd stdout already goes to the journal (JOURNAL_STREAM is set): logging it again through logger wrote
+    # every line twice, from two pids, which read as two overlapping runs (2026-10-04).
     print(msg, flush=True)
-    subprocess.run(["logger", "-t", "agent-ci-runner", msg], check=False)
+    if not os.environ.get("JOURNAL_STREAM"):
+        subprocess.run(["logger", "-t", "agent-ci-runner", msg], check=False)
 
 
 def repo_ok(repo):
@@ -583,6 +586,13 @@ def load_state():
 
 
 def cmd_watch():
+    # One run at a time: a second one (a manual call during the timer's) exits quietly rather than act twice.
+    STATE.mkdir(parents=True, exist_ok=True)
+    lock = open(STATE / "watch.lock", "w")
+    try:
+        fcntl.flock(lock, fcntl.LOCK_EX | fcntl.LOCK_NB)
+    except BlockingIOError:
+        return
     st, now = load_state(), int(time.time())
     # The host: calm since when (the gate's own test; host-calm.json). Load-paused repos come back after LOAD_HOLD_S of calm.
     calm_file = STATE / "host-calm.json"
