@@ -343,10 +343,13 @@ def netguard_probe():
     return False, f"the probe failed (its own loopback server, or systemd-run): {(r.stderr or out).strip()[-200:]}"
 
 
-def netguard_require(repo):
-    """Before every registration: no runner starts while the network guard doesn't hold. Fail closed: CI_LOCAL is
-    cleared (jobs run hosted) and register fails, so the runner backs off and watch sets CI_LOCAL again once it is back."""
-    ok, detail = netguard_probe()
+def netguard_require(repo, inst):
+    """Before every registration: no runner starts while the network guard doesn't hold, or outside the slice it
+    guards (a runner unit loaded before install.sh --apply placed the new one). Fail closed: CI_LOCAL is cleared (jobs
+    run hosted) and register fails, so the runner backs off and watch sets CI_LOCAL again once it is back."""
+    slice_ = systemctl("show", unit(inst), "-p", "Slice", "--value", check=False).stdout.strip()
+    ok, detail = (False, f"{unit(inst)} runs in {slice_ or 'an unknown slice'}, not {SLICE}: run install.sh --apply") \
+        if slice_ != SLICE else netguard_probe()
     if ok:
         return
     var_set(repo, False)
@@ -361,7 +364,7 @@ def cmd_register(inst):
     if not runner_dir(inst).is_dir():
         die(f"{runner_dir(inst)} has no runner; run agent-ci-runner install {repo}")
     (STATE / "slots" / inst).unlink(missing_ok=True)  # a (re)start means the previous job is over
-    netguard_require(repo)
+    netguard_require(repo, inst)
     install_hooks()
     # Nothing a job wrote may reach the next one: the job can write its whole runner directory, so the runner itself
     # is re-extracted from the checksum-verified release (with a fresh _work), and its home and tool cache are wiped,
@@ -758,6 +761,16 @@ def cmd_netguard_install(dry):
         rendered.mkdir(parents=True, exist_ok=True)
         for n in ("agent-ci-netguard.service", "agent-ci-netguard.timer"):
             (rendered / n).write_text((src / "netguard" / n).read_text().replace("@UID@", uid))
+    # the anchor's user unit too (install.sh --apply places it as well): netguard-install runs first, before
+    # install.sh --apply moves the runners into the slice, so it can't rely on install.sh having placed it
+    anchor = Path(os.environ.get("AGENT_CI_USER_UNITS", REAL_HOME / ".config/systemd/user")) / "agent-ci-netguard-anchor.service"
+    if not dry:
+        anchor.parent.mkdir(parents=True, exist_ok=True)
+        put(anchor, (src / "systemd" / anchor.name).read_bytes())
+        anchor.chmod(0o644)
+        systemctl("daemon-reload")
+    else:
+        print(f"would write: {anchor}; systemctl --user daemon-reload")
     steps = [["sudo", "install", "-o", "root", "-g", "root", "-m", "0755", str(src / "ci-netguard"), NETGUARD_BIN]]
     steps += [["sudo", "install", "-o", "root", "-g", "root", "-m", "0644", str(rendered / n), f"/etc/systemd/system/{n}"]
               for n in ("agent-ci-netguard.service", "agent-ci-netguard.timer")]
