@@ -380,7 +380,10 @@ Details are in the `agent-stack` skill. What went wrong before: [docs/incidents/
   browsers get their real config by path, read-only. No privileges inside (no sudo) and the host's groups are unmapped
   (no docker socket). A job run from a directory that holds the home directory (`~`, `/home`, `/`) is refused, and so is
   any job where bwrap can't run (exit 78): there is no unsandboxed fallback. The read guard refuses a test runner
-  (`node --test`, `npm test`, vitest, jest, playwright test, pytest, go/cargo/deno test, …) started outside agent-heavy. Every scope is cleared afterwards (`reset-failed`), so failed ones don't pile up. It refuses long-lived servers (`npm start`,
+  (`node --test`, `npm test`, vitest, jest, playwright test, pytest, go/cargo/deno test, …) started outside agent-heavy.
+  Test runs use the `test` class (`agent-heavy test -- <cmd>`): 4 slots of their own, 200% CPU, 4G, no swap, 30 min,
+  2 workers (`AGENT_HEAVY_TEST_*`), the same sandbox; builds keep their 2 slots. Docker and sudo stay outside
+  agent-heavy: bring services up first, then run the tests in it. Every scope is cleared afterwards (`reset-failed`), so failed ones don't pile up. It refuses long-lived servers (`npm start`,
   `start:*`, `dev`, `next start`, `vite`), which run outside it. `agent-heavy status` shows who holds each slot and who waits.
   Waiters queue first come, first served per class (a ticket each in the slot dir; only the first K live tickets, K =
   free slots, may try a slot, and a dead waiter's ticket is skipped). `--priority urgent|critical` (or

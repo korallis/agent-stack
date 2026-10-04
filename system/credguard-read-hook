@@ -507,8 +507,8 @@ function historyRewrite(verb, args) {
 // Test guard (2026-10-04): a mutation run of a test-harness cleanup called rmSync('/', {recursive: true}) as the owner,
 // outside any sandbox, and wiped ~/.config, ~/.local/share and the dotfiles. Tests, mutation runs and test scripts run
 // only through agent-heavy, whose bwrap sandbox keeps everything but the job's repo, ~/.cache and /tmp read-only. A
-// test runner started directly is refused; `agent-heavy build -- <the same command>` is the way (also inside a
-// mutation wrapper: `mutate … -- agent-heavy build -- node --test …`). Best effort against accidents, like the rest.
+// test runner started directly is refused; `agent-heavy test -- <the same command>` is the way (also inside a
+// mutation wrapper: `mutate … -- agent-heavy test -- node --test …`). Best effort against accidents, like the rest.
 const TEST_BINS = /^(vitest|jest|mocha|ava|tap|pytest|py\.test)$/;
 const PM_VALUE_OPTS = new Set(["--prefix", "-C", "--dir", "--cwd", "--filter", "-F", "--workspace", "-w"]);
 function testRun(verb, args) {
@@ -888,8 +888,9 @@ function decide(input, { home = os.homedir(), pats = patterns(process.env, home)
     "scripts run only inside agent-heavy's sandbox (bwrap: everything but the job's repo, ~/.cache and /tmp is read-only, and",
     "HOME is a scratch dir). On 2026-10-04 a test cleanup run outside it deleted ~/.config, ~/.local/share and the dotfiles.",
     "Instead:",
-    "  agent-heavy build -- <this command>            (browser tests: agent-heavy browser -- …)",
-    "  a mutation control: <mutate …> -- agent-heavy build -- <the test command>",
+    "  agent-heavy test -- <this command>             (browser tests: agent-heavy browser -- …; builds: agent-heavy build -- …)",
+    "  a mutation control: <mutate …> -- agent-heavy test -- <the test command>",
+    "Docker and sudo don't work inside agent-heavy: bring services up first (docker compose up), then run the tests there.",
     "Run it from the repository or worktree the tests belong to.",
   ].join("\n") };
   if (v.env) return { deny: true, reason: [

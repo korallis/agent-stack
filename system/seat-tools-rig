@@ -34,8 +34,10 @@ Keep --summary specific ("Staging sign-in restored") and pass a multiline body w
 import json, os, re, subprocess, sys
 
 import pwd
-# the real home, not $HOME: inside agent-heavy's sandbox HOME is a per-run scratch dir
-REAL = os.path.join(pwd.getpwuid(os.getuid()).pw_dir, ".local/bin/rig")
+# ~/.local/bin/rig; inside agent-heavy's sandbox HOME is a per-run scratch dir without it, so the passwd home's then
+REAL = os.path.expanduser("~/.local/bin/rig")
+if not os.path.exists(REAL):
+    REAL = os.path.join(pwd.getpwuid(os.getuid()).pw_dir, ".local/bin/rig")
 args = sys.argv[1:]
 
 

@@ -30,14 +30,14 @@ test("a test runner started directly is refused, in both runtimes, nested shells
     const v = verdict(c);
     assert.ok(v.denied, c);
     assert.match(v.reason.replace(/\s+/g, " "), /agent-stack test guard: blocked, because .* runs tests outside agent-heavy/, c);
-    assert.match(v.reason, /agent-heavy build -- <this command>/);
+    assert.match(v.reason, /agent-heavy test -- <this command>/); assert.match(v.reason, /Docker and sudo don't work inside agent-heavy: bring services up first \(docker compose up\)/);
   }
 });
 
 test("the same commands through agent-heavy, and look-alikes that run no tests, stay allowed", () => {
   for (const c of [
-    "agent-heavy build -- node --test test/x.test.js", "agent-heavy browser -- npx playwright test", "agent-heavy build --priority urgent -- npm test",
-    "~/.cache/x/bin/mutate f.js a b -- agent-heavy build -- node --test test/f.test.js",
+    "agent-heavy test -- node --test test/x.test.js", "agent-heavy build -- node --test test/x.test.js", "agent-heavy browser -- npx playwright test",
+    "agent-heavy test --priority urgent -- npm test", "~/.cache/x/bin/mutate f.js a b -- agent-heavy test -- node --test test/f.test.js",
     "node script.js --test", "node --run build", "npm run build", "npm install", "npx playwright install chromium", "npx tsc --noEmit",
     "cat test/x.test.js", "git log -- test/", "rg 'node --test' docs", "echo npm test", "go build ./...", "npm run lint",
   ]) assert.equal(verdict(c).denied, false, c);
@@ -45,6 +45,8 @@ test("the same commands through agent-heavy, and look-alikes that run no tests, 
 
 test("the rule is in CULTURE and the hook says why", () => {
   const culture = fs.readFileSync(join(repo, "rig/template/CULTURE.md"), "utf8").replace(/\s+/g, " ");
+  assert.match(culture, /Run tests through `agent-heavy test -- <cmd>`, builds and lint through `agent-heavy build -- <cmd>`/);
   assert.match(culture, /Tests, mutation runs and test scripts run ONLY there, from their own repo or worktree/);
+  assert.match(culture, /Docker and sudo stay outside agent-heavy: bring services up first \(`docker compose up`\), then run the tests in it\./);
   assert.match(verdict("npm test").reason, /deleted ~\/\.config, ~\/\.local\/share and the dotfiles/);
 });

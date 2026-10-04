@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
-# agent-heavy <build|browser> [--wait SECONDS] [--max-runtime SPAN] [--allow-long] [--priority routine|urgent|critical] -- <command...>
-# agent-heavy status [build|browser]   who holds each slot (seat, cwd, command, age, remaining runtime) and who waits, in
+# agent-heavy <build|browser|test> [--wait SECONDS] [--max-runtime SPAN] [--allow-long] [--priority routine|urgent|critical] -- <command...>
+# agent-heavy status [build|browser|test]   who holds each slot (seat, cwd, command, age, remaining runtime) and who waits, in
 #                                      order (position, seat, priority, waiting time); read-only
 # Runs a heavy build or browser test under a SHARED machine budget so 24 agents cannot starve the host, and in a
 # filesystem sandbox (bwrap; see "The filesystem sandbox" below) so a job can't delete or change anything outside
@@ -73,12 +73,12 @@ holders() {
   done | sort -un
 }
 if [[ ${1:-} == status ]]; then
-  case ${2:-} in "") classes="build browser";; build|browser) classes=$2;; *) echo "usage: agent-heavy status [build|browser]" >&2; exit 2;; esac
+  case ${2:-} in "") classes="build browser test";; build|browser|test) classes=$2;; *) echo "usage: agent-heavy status [build|browser|test]" >&2; exit 2;; esac
   now=$(date +%s)
   locks=$(cat "$PROC/locks" 2>/dev/null) || locks=""
   [[ -n $locks || -r $PROC/locks ]] && table=1 || table=0
   for c in $classes; do
-    [[ $c == build ]] && n=${AGENT_HEAVY_BUILD_SLOTS:-2} || n=${AGENT_HEAVY_BROWSER_SLOTS:-2}
+    case $c in build) n=${AGENT_HEAVY_BUILD_SLOTS:-2};; browser) n=${AGENT_HEAVY_BROWSER_SLOTS:-2};; *) n=${AGENT_HEAVY_TEST_SLOTS:-4};; esac
     for i in $(seq 1 "$n"); do
       lock=$dir/$c.$i.lock holder=$dir/$c.$i.holder pid=""
       [[ -e $lock ]] || { echo "$c $i/$n  free"; continue; }
@@ -129,7 +129,7 @@ if [[ ${1:-} == status ]]; then
   exit 0
 fi
 
-usage="usage: agent-heavy <build|browser> [--wait S] [--max-runtime SPAN] [--allow-long] -- cmd..."
+usage="usage: agent-heavy <build|browser|test> [--wait S] [--max-runtime SPAN] [--allow-long] -- cmd..."
 class=${1:?$usage}; shift
 wait_s=1800 max="" allow_long=0 priority=${AGENT_HEAVY_PRIORITY:-routine}
 while [[ $# -gt 0 && $1 != "--" ]]; do case $1 in
@@ -148,7 +148,11 @@ case $class in
            swap=${AGENT_HEAVY_BUILD_SWAP:-0}; max=${max:-${AGENT_HEAVY_BUILD_MAX_RUNTIME:-45min}} ;;
   browser) slots=${AGENT_HEAVY_BROWSER_SLOTS:-2}; cpu=${AGENT_HEAVY_BROWSER_CPU:-400%}; mem=${AGENT_HEAVY_BROWSER_MEM:-8G}
            swap=${AGENT_HEAVY_BROWSER_SWAP:-0}; max=${max:-${AGENT_HEAVY_BROWSER_MAX_RUNTIME:-30min}} ;;
-  *) echo "class must be build or browser" >&2; exit 2 ;;
+  # test (2026-10-04): every test run goes through agent-heavy now (the read guard sends test runners here), so the
+  # light ones get their own 4 smaller slots instead of queueing behind builds
+  test)    slots=${AGENT_HEAVY_TEST_SLOTS:-4};    cpu=${AGENT_HEAVY_TEST_CPU:-200%};    mem=${AGENT_HEAVY_TEST_MEM:-4G}
+           swap=${AGENT_HEAVY_TEST_SWAP:-0}; max=${max:-${AGENT_HEAVY_TEST_MAX_RUNTIME:-30min}} ;;
+  *) echo "class must be build, browser or test" >&2; exit 2 ;;
 esac
 # A span in seconds: N, Ns, Nmin (or Nm), Nh.
 secs() { [[ $1 =~ ^([0-9]+)(s|m|min|h)?$ ]] || return 1
@@ -265,7 +269,7 @@ sandbox() {   # <scratch> -- cmd...: the bwrap prefix for one job
   [[ -z ${PLAYWRIGHT_BROWSERS_PATH:-} && -d $real_home/.cache/ms-playwright ]] && a+=(--setenv PLAYWRIGHT_BROWSERS_PATH "$real_home/.cache/ms-playwright")
   printf '%s\0' "$bwrap" "${a[@]}" --
 }
-total=${AGENT_HEAVY_TOTAL_MEM:-24G} workers=${AGENT_HEAVY_WORKERS:-4}
+total=${AGENT_HEAVY_TOTAL_MEM:-24G} workers=${AGENT_HEAVY_WORKERS:-$([[ $class == test ]] && echo 2 || echo 4)}
 # Test runners default to one worker per core (32 here, ~1 GB each): a hint the job's tools read, unless already set.
 export PYTEST_XDIST_AUTO_NUM_WORKERS=${PYTEST_XDIST_AUTO_NUM_WORKERS:-$workers} VITEST_MAX_WORKERS=${VITEST_MAX_WORKERS:-$workers} \
   VITEST_MAX_THREADS=${VITEST_MAX_THREADS:-$workers} VITEST_MAX_FORKS=${VITEST_MAX_FORKS:-$workers}

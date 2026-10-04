@@ -154,7 +154,7 @@ const until = async (pred, ms = 5000) => { const t = Date.now(); while (!pred())
 test("status: every slot free when nothing runs; a bad class is a usage error", () => {
   const r = status();
   assert.equal(r.status, 0, r.stderr);
-  assert.equal(r.stdout, "build 1/2  free\nbuild 2/2  free\nbuild queue  empty\nbrowser 1/2  free\nbrowser 2/2  free\nbrowser queue  empty\n");
+  assert.equal(r.stdout, "build 1/2  free\nbuild 2/2  free\nbuild queue  empty\nbrowser 1/2  free\nbrowser 2/2  free\nbrowser queue  empty\ntest 1/4  free\ntest 2/4  free\ntest 3/4  free\ntest 4/4  free\ntest queue  empty\n");
   assert.equal(status("browser").stdout, "browser 1/2  free\nbrowser 2/2  free\nbrowser queue  empty\n");
   assert.equal(status("gpu").status, 2);
 });
@@ -442,4 +442,17 @@ test("sandbox real: rm -rf outside the writable set fails with EROFS and changes
     assert.match(r.stdout, /home=\S+\/\.cache\/agent-heavy\/run-/, "HOME is the run's scratch dir");
     assert.equal(fs.readFileSync(join(victim, "deep/keep"), "utf8"), "x", "nothing outside the writable set changed");
   } finally { fs.rmSync(base, { recursive: true, force: true }); }
+});
+
+test("the test class: 4 slots of their own (2 CPUs, 4G, no swap, 30 min, 2 workers), sandboxed like the others; builds keep 2", () => {
+  const log = join(root, "bwrap-calls-test"); fs.rmSync(log, { force: true });
+  const r = heavy(["test", "--", "sh", "-c", "echo w=$VITEST_MAX_WORKERS/$PYTEST_XDIST_AUTO_NUM_WORKERS"], { BWRAP_CALLS: log });
+  assert.equal(r.status, 0, r.stderr); assert.match(r.stdout, /w=2\/2/);
+  assert.match(r.stderr, /\[agent-heavy\] test slot 1\/4 \(cpu=200% mem=4G swap=0 all-heavy=24G max=30min workers=2\)/);
+  assert.match(r.c, /^systemd-run --user --scope --quiet --slice=agent-heavy\.slice -p CPUQuota=200% -p MemoryMax=4G -p MemorySwapMax=0 -p RuntimeMaxSec=1800 --unit=agent-heavy-test-1-\d+ /m);
+  assert.match(fs.readFileSync(log, "utf8"), /--ro-bind \/ \/ --dev-bind \/dev \/dev --bind \/proc \/proc /, "the same sandbox");
+  assert.match(heavy(["build", "--", "true"]).stderr, /build slot 1\/2 .*workers=4/);
+  const st = heavy(["status", "test"]);
+  assert.equal(st.status, 0); assert.equal((st.stdout.match(/^test \d\/4 /gm) || []).length, 4);
+  assert.match(heavy(["nope", "--", "true"]).stderr, /class must be build, browser or test/);
 });
