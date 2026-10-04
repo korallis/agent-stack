@@ -185,6 +185,37 @@ def var_set(repo, on):
         gh("variable", "set", VAR, "--body", "1", "--repo", f"{OWNER}/{repo}")
     elif var_get(repo) is not None:
         gh("variable", "delete", VAR, "--repo", f"{OWNER}/{repo}")
+        requeue_hosted(repo)
+
+
+def requeue_hosted(repo):
+    """After CI_LOCAL is cleared: a run created while it was set keeps its self-hosted runs-on and would wait for a
+    local runner forever (2026-10-04: runs sat queued until the operator force-cancelled and re-ran them). Each queued
+    or running run with a job still queued for a self-hosted label is cancelled (force-cancel if a plain cancel is
+    refused) and, once it has stopped, re-run: runs-on is evaluated again, now without CI_LOCAL, so it goes hosted.
+    Best effort: a failure is logged and never blocks the caller."""
+    base = f"repos/{OWNER}/{repo}/actions/runs"
+    ids = []
+    for status in ("queued", "in_progress"):
+        r = gh("api", f"{base}?status={status}&per_page=100", "--jq", ".workflow_runs[].id", check=False)
+        ids += [x for x in r.stdout.split() if x.isdigit()] if r.returncode == 0 else []
+    for rid in dict.fromkeys(ids):
+        r = gh("api", f"{base}/{rid}/jobs?per_page=100", "--jq",
+               '.jobs[] | select(.status == "queued") | .labels | join(",")', check=False)
+        if r.returncode != 0 or not any("self-hosted" in l.split(",") for l in r.stdout.split()):
+            continue
+        if gh("api", "-X", "POST", f"{base}/{rid}/cancel", check=False).returncode != 0 and \
+                gh("api", "-X", "POST", f"{base}/{rid}/force-cancel", check=False).returncode != 0:
+            say(f"{OWNER}/{repo}: run {rid} waits for a local runner and could not be cancelled; cancel and re-run it by hand")
+            continue
+        deadline = time.time() + float(os.environ.get("AGENT_CI_REQUEUE_WAIT_S", "90"))
+        while gh("api", f"{base}/{rid}", "--jq", ".status", check=False).stdout.strip() != "completed":
+            if time.time() > deadline:
+                break
+            time.sleep(float(os.environ.get("AGENT_CI_POLL_S", "5")))
+        ok = gh("api", "-X", "POST", f"{base}/{rid}/rerun", check=False).returncode == 0
+        say(f"{OWNER}/{repo}: run {rid} was waiting for a local runner: cancelled and "
+            + ("re-run (now hosted)" if ok else "NOT re-run (re-run it by hand)"))
 
 
 def run_config(inst, args, tok):
@@ -351,6 +382,7 @@ def netguard_require(repo, inst):
     ok, detail = (False, f"{unit(inst)} runs in {slice_ or 'an unknown slice'}, not {SLICE}: run install.sh --apply") \
         if slice_ != SLICE else netguard_probe()
     if ok:
+        print(f"network guard holds: {detail}")   # the unit's journal: each job's registration records its check
         return
     var_set(repo, False)
     msg = (f"{OWNER}/{repo}: network guard not holding ({detail}); {VAR} cleared, jobs run hosted. "
@@ -771,7 +803,8 @@ def cmd_netguard_install(dry):
         systemctl("daemon-reload")
     else:
         print(f"would write: {anchor}; systemctl --user daemon-reload")
-    steps = [["sudo", "install", "-o", "root", "-g", "root", "-m", "0755", str(src / "ci-netguard"), NETGUARD_BIN]]
+    # -D: /usr/local/libexec may not exist yet (it didn't on the first live install)
+    steps = [["sudo", "install", "-D", "-o", "root", "-g", "root", "-m", "0755", str(src / "ci-netguard"), NETGUARD_BIN]]
     steps += [["sudo", "install", "-o", "root", "-g", "root", "-m", "0644", str(rendered / n), f"/etc/systemd/system/{n}"]
               for n in ("agent-ci-netguard.service", "agent-ci-netguard.timer")]
     steps += [["sudo", "systemctl", "daemon-reload"], ["sudo", "systemctl", "enable", "agent-ci-netguard.timer"],
