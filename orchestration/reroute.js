@@ -18,7 +18,8 @@
 // Every move carries an audit note naming the reason, both seats and the row's original sender; each row moves at most
 // once. Never to a human: rows for a human, or tagged as the owner's decision, are left alone, and so is a row with no
 // free seat anywhere (reported). A seat that was unservable and is served again, idle, still holding in-progress rows,
-// gets one resume message. Without --apply it only reports. Runs every 10 minutes (agent-reroute.timer, --apply).
+// gets one resume message. A delivered but unclaimed row 10+ min old on an idle seat gets ONE reminder (renudges).
+// Without --apply it only reports. Runs every 10 minutes (agent-reroute.timer, --apply).
 import { realpathSync } from "node:fs";
 import { pathToFileURL } from "node:url";
 import { rig, seats, eligibleFamilies, seatAvailable, servableAt, familyGap, odb, CONTEXT_WALL } from "./lib.js";
@@ -94,6 +95,27 @@ export function plan(rows, all, families, { minutes = 20, now = Date.now(), move
   return out;
 }
 
+// Pure: rows to remind their seat about once (agent-renudge, 2026-10-04). A handoff nudge can reach a seat mid-turn: the
+// model sees it, finishes its current work, never claims it, and the next context compaction drops it, so the seat
+// sits idle beside an unclaimed row (no daemon path re-delivers it). A row qualifies when it is pending and unclaimed
+// for `minutes` (10), its last nudge was delivered (delivered-ack-pending or verified), it isn't for a human or the
+// owner, and its seat is running, servable and idle NOW. Once per row (`done`); rows this pass moves are skipped.
+export function renudges(rows, all, families, { minutes = 10, now = Date.now(), done = new Set(), moving = new Set() } = {}) {
+  const out = [];
+  for (const r of rows) {
+    if (r.state !== "pending" || r.claimedAt || done.has(r.id) || moving.has(r.id) || HUMAN.test(r.destination || "")) continue;
+    if ((r.tags || []).some((t) => /^(human|owner)(-decision)?$|^decision:owner$/.test(t))) continue;
+    if (!["delivered-ack-pending", "verified"].includes(r.lastNudgeResult)) continue;
+    const age = (now - Date.parse(r.created || r.updated || 0)) / 60_000;
+    if (!(age >= minutes)) continue;
+    const seat = all.find((s) => s.seat === r.destination);
+    if (!seat?.running || !seat.idle || !seatAvailable(seat, families)) continue;
+    out.push({ id: r.id, seat: seat.seat, waited_min: Math.round(age),
+      text: `[agent-renudge] Queue handoff reminder: ${r.id} is still unclaimed after ${Math.round(age)} min. Claim it now with rig queue claim ${r.id} (work it later if needed), then read it with rig queue show ${r.id} --full --json.` });
+  }
+  return out;
+}
+
 // Pure: who hears about a row left unmoved: the rig's lead if it is running and servable, else its deputy (a lead on a
 // 429 can't read it), else nobody (reported). Returns the seat or null.
 export function tellWhom(all, families) {
@@ -136,6 +158,9 @@ async function main() {
   db.exec("CREATE TABLE IF NOT EXISTS reroutes (item TEXT PRIMARY KEY, ts INTEGER, from_seat TEXT, to_seat TEXT, why TEXT)");
   db.exec("CREATE TABLE IF NOT EXISTS reroute_unserved (seat TEXT PRIMARY KEY, since INTEGER)");
   db.exec("CREATE TABLE IF NOT EXISTS reroute_told (item TEXT PRIMARY KEY, ts INTEGER, seat TEXT, note TEXT)");
+  db.exec("CREATE TABLE IF NOT EXISTS reroute_renudged (item TEXT PRIMARY KEY, ts INTEGER, seat TEXT)");
+  const renudged = new Set(db.prepare("SELECT item FROM reroute_renudged").all().map((r) => r.item));
+  const reminders = [];
   const moved = new Set(db.prepare("SELECT item FROM reroutes").all().map((r) => r.item));
   const wasOut = new Set(db.prepare("SELECT seat FROM reroute_unserved").all().map((r) => r.seat));
   const families = eligibleFamilies(), report = [], nudges = [], errors = [];
@@ -159,13 +184,22 @@ async function main() {
     if (!listed(q)) { errors.push({ rig: rigName, error: "rig queue list failed: nothing moved, resumes kept for the next pass" }); remember(); continue; }
     const rows = listed(q).map((x) => ({ id: x.qitemId, state: x.state, destination: x.destinationSession,
       source: x.sourceSession, tags: x.tags, updated: x.tsUpdated, created: x.tsCreated, body: x.body, summary: x.summary,
+      claimedAt: x.claimedAt ?? null, lastNudgeResult: x.lastNudgeResult ?? null,
       elided: x.fieldsElided || [] })).filter((r) => String(r.destination || "").endsWith(`@${rigName}`));
     const load = (r) => {
       const f = rig(["queue", "show", r.id, "--full"], { json: true, allowFail: true });
       const rec = f?.item || f?.qitem || f;
       return rec && typeof rec.body === "string" ? { body: rec.body, summary: rec.summary, tags: rec.tags ?? r.tags } : null;
     };
-    for (const m of plan(rows, all, families, { minutes, moved, load, stale })) {
+    const moves = plan(rows, all, families, { minutes, moved, load, stale });
+    for (const n of renudges(rows, all, families, { done: new Set([...renudged, ...moved]), moving: new Set(moves.filter((m) => m.to).map((m) => m.id)) })) {
+      if (apply && rig(["send", n.seat, n.text], { allowFail: true }) !== null) {
+        db.prepare("INSERT OR IGNORE INTO reroute_renudged VALUES (?,?,?)").run(n.id, Date.now(), n.seat);
+        n.sent = true;
+      }
+      reminders.push({ rig: rigName, ...n });
+    }
+    for (const m of moves) {
       if (apply && m.to) {
         rig(["queue", "handoff", m.id, "--to", m.to, "--note", m.note], { json: true });
         db.prepare("INSERT OR IGNORE INTO reroutes VALUES (?,?,?,?,?)").run(m.id, Date.now(), m.from, m.to, m.why);
@@ -201,7 +235,7 @@ async function main() {
       for (const s of wasOut) if (s.endsWith(`@${rigName}`) && !r.out.includes(s) && !failed.has(s)) db.prepare("DELETE FROM reroute_unserved WHERE seat = ?").run(s);
     }
   }
-  console.log(JSON.stringify({ minutes, applied: apply, moves: report, resumes: nudges, ...(errors.length ? { errors } : {}) }, null, 2));
+  console.log(JSON.stringify({ minutes, applied: apply, moves: report, resumes: nudges, reminders, ...(errors.length ? { errors } : {}) }, null, 2));
 }
 
 if (import.meta.url === pathToFileURL(realpathSync(process.argv[1] || "")).href) {
