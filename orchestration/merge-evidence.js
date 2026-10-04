@@ -518,7 +518,12 @@ export function buildMergeInput(f) {
     : `${checks.length} required check(s) on ${f.head}: ` + checks.map((c) => `${c.name}=${c.bucket}`).join(", ")
       + (failed.length ? `; NOT passing: ${failed.map((c) => c.name).join(", ")}` : "; all pass");
   const rv = f.reviewVerdict;
+  // carried reviews (risky tier): each shown as carried, proven or not, never as a fresh exact-head review
+  const carried = (f.risk?.carries || []).map((c) => c.ok
+    ? `carried review: ${c.seat}, carried from ${String(c.from).slice(0, 12)} to ${f.head}: proven by this helper (ancestor; the PR's own files byte-identical; only base-branch changes in between; required CI green on the head; ${c.seat} passed at ${String(c.from).slice(0, 7)}); NOT a fresh review of this head`
+    : `carried review NOT accepted: ${c.seat}, claimed carried from ${String(c.from).slice(0, 12)}: ${c.problems.join("; ")}`);
   const review = [
+    ...carried,
     ...(rv ? [rv.state
       ? `review verdict: ${rv.state === "conflict" ? `CONFLICT (${rv.first} from ${rv.source}; ${rv.conflict.join("; ")})` : `${rv.state}, from ${rv.source}`}; bound to head ${f.head}`
         + (rv.others?.length && rv.state !== "conflict" ? `; agreeing: ${rv.others.join("; ")}` : "") + (rv.notes?.length ? `; ${rv.notes.join("; ")}` : "")
@@ -640,8 +645,10 @@ export function featureTier(features, text) {
 // names is the head, or (naming none) its target_url is on this PR. Each seat counts by its newest status.
 export function statusReviewers(statuses = [], { head, context = "independent-review", pr = null } = {}) {
   const short = String(head || "").toLowerCase();
+  const carriedFrom = (s) => (String(s.description || "").match(/\bcarried from\s+([0-9a-f]{7,40})\b/i) || [])[1]?.toLowerCase() ?? null;
   const onHead = (s) => {
-    const shas = String(s.description || "").match(/\b[0-9a-f]{7,40}\b/gi) || [];
+    const from = carriedFrom(s);
+    const shas = (String(s.description || "").match(/\b[0-9a-f]{7,40}\b/gi) || []).filter((x) => x.toLowerCase() !== from);
     if (shas.length) return shas.every((x) => short.startsWith(x.toLowerCase()));
     return pr != null && new RegExp(`/pull/${pr}(?:[#/?]|$)`).test(String(s.target_url || s.url || ""));
   };
@@ -649,19 +656,21 @@ export function statusReviewers(statuses = [], { head, context = "independent-re
   for (const s of [...statuses].filter((x) => x.context === context).sort((a, b) => String(b.created_at || "").localeCompare(String(a.created_at || "")))) {
     const seat = (String(s.description || "").trim().match(/^([\w.-]+(?:@[\w.-]+)?)/) || [])[1];
     if (!seat || out.has(seat) || !onHead(s)) continue;   // newest first: a seat's first seen is its latest
-    out.set(seat, { seat, family: familyOf(seat), state: s.state, by: s.target_url || "status", at: s.created_at || "" });
+    out.set(seat, { seat, family: familyOf(seat), state: s.state, by: s.target_url || "status", at: s.created_at || "", carriedFrom: carriedFrom(s) });
   }
   return [...out.values()];
 }
 
-export function reviewFamilies({ notes = [], head, authorFamily, identities = {}, headings = [], status = null, statuses = null, context = "independent-review", pr = null }) {
+// A status that says "carried from <sha A>" counts only when carry(seat, A) proves it ({ ok, problems }): the review is
+// then marked carried (2026-10-04, operator: the helper proves the carry itself; see carryProblems).
+export function reviewFamilies({ notes = [], head, authorFamily, identities = {}, headings = [], status = null, statuses = null, context = "independent-review", pr = null, carry = null, carries = null }) {
   if (!authorFamily) return [];
   const seatHeads = FAMILIES.map((f) => ({ re: new RegExp(`^(?:#+\\s*)?review-${f}\\b`, "i"), family: f }));
   const all = [...headings, ...seatHeads];
   const latest = new Map();   // reviewer -> its newest record { family, state, by, at } (comments, reviews and statuses)
-  const put = (who, family, state, by, at = "") => {
+  const put = (who, family, state, by, at = "", carried = null) => {
     const cur = latest.get(who);
-    if (who && (!cur || String(at) >= String(cur.at))) latest.set(who, { family, state, by, at: String(at) });
+    if (who && (!cur || String(at) >= String(cur.at))) latest.set(who, { family, state, by, at: String(at), carried });
   };
   for (const r of records(notes.filter((n) => n.kind !== "review"), /^(?:#+\s*)?review-(claude|codex|kimi|grok)/i, head))
     put(`seat:${r.seat}`, familyOf(r.seat), r.state, r.url || r.seat, r.at);
@@ -672,12 +681,22 @@ export function reviewFamilies({ notes = [], head, authorFamily, identities = {}
     const seat = (String(r.body || "").split("\n", 1)[0].match(/^#*\s*(review-[\w.@-]+)/i) || [])[1];
     put(seat ? `seat:${seat}` : `login:${r.author}`, family, verdictOf(r.body, r.reviewState), r.url, r.at);
   }
-  if (statuses) for (const r of statusReviewers(statuses, { head, context, pr })) put(`seat:${r.seat}`, r.family, r.state === "success" ? "success" : "failure", r.by, r.at);
+  if (statuses) for (const r of statusReviewers(statuses, { head, context, pr })) {
+    if (r.carriedFrom) {
+      const proof = carry ? carry(r.seat, r.carriedFrom) : { ok: false, problems: ["the carry can't be checked here"] };
+      carries?.push({ seat: r.seat, from: r.carriedFrom, ...proof });
+      if (!proof.ok) continue;   // an unproven carry counts for nothing
+    }
+    put(`seat:${r.seat}`, r.family, r.state === "success" ? "success" : "failure", r.by, r.at, r.carriedFrom);
+  }
   else if (status) put("status", familyFromDescription(status.description, all).family, status.state, status.url || "status");
-  const fams = new Map();
-  for (const { family, state, by } of latest.values())
-    if (state === "success" && family && family !== authorFamily && FAMILIES.includes(family) && !fams.has(family)) fams.set(family, by);
-  return [...fams].map(([family, by]) => ({ family, by }));
+  const fams = new Map();   // a family counts fresh if any of its seats is fresh
+  for (const { family, state, by, carried } of latest.values()) {
+    if (state !== "success" || !family || family === authorFamily || !FAMILIES.includes(family)) continue;
+    const cur = fams.get(family);
+    if (!cur || (cur.carried && !carried)) fams.set(family, { by, carried });
+  }
+  return [...fams].map(([family, v]) => ({ family, by: v.by, ...(v.carried ? { carried: v.carried } : {}) }));
 }
 // Pure: what a PR still lacks for its tier, as MISSING lines (empty when not risky, or complete). Fails closed
 // (operator 2026-10-04): a repo that HAS a features.json and a PR naming F-ids, with the file unreadable or an F-id
@@ -690,6 +709,8 @@ export function riskProblems(risk) {
   const p = [];
   if (!risk.authorFamily) p.push(`MISSING: the PR author's model family (unknown, so no review can be verified as cross-family; pass --author-family or use an agent/<seat> branch)`);
   if ((risk.reviewFamilies || []).length < 2) p.push(`MISSING: a second independent review from another family (risky ${risk.features.map((f) => f.id).join(", ")} needs two families other than the author's; have ${(risk.reviewFamilies || []).map((r) => r.family).join(", ") || "none"})`);
+  if ((risk.reviewFamilies || []).length >= 2 && !(risk.reviewFamilies || []).some((r) => !r.carried))
+    p.push(`MISSING: a fresh exact-head review from at least one family (risky ${risk.features.map((f) => f.id).join(", ")}: every counted review is carried from an earlier commit)`);
   if (!risk.ownerApproved) p.push(`MISSING: the ${OWNER_LABEL} label (risky ${risk.features.map((f) => f.id).join(", ")} needs the owner's OK, or a CULTURE standing approval cited when adding the label)`);
   return p;
 }
@@ -724,6 +745,42 @@ export function findBrb(proofDir, head) {
 // Pure: the seat a branch names: the starter kit's branch prefixes agent/, tests/, wp/ and plan/ all start with the
 // author's seat ("tests/impl-claude-ui-f006-tighten"), so its family is the author's. null for any other branch.
 export const branchSeat = (ref) => String(ref || "").match(/^(?:agent|tests|wp|plan)\/([\w.-]+)/)?.[1] ?? null;
+
+// ---- Review carry (operator 2026-10-04): a review of commit A counts for head B only when the helper proves, itself:
+// (1) A is an ancestor of B; (2) the PR's own change set is the same at A and B (same paths vs each merge-base, blob
+// shas byte-identical); (3) everything A..B changed came from the base branch (a pure "merge main in" refresh, no
+// author edit); (4) required CI is green on B (main's changes meeting the PR are caught by CI); and the seat itself
+// passed at A. Pure: each failed condition as a line (empty: the carry is proven).
+export function carryProblems({ ancestor, filesA, filesB, abPaths, basePaths, ciGreen, seatPassedAtA, seat = "the seat", from = "A" }) {
+  const p = [];
+  if (!ancestor) p.push(`(1) ${from} is not an ancestor of the head`);
+  const a = filesA || {}, b = filesB || {}, keys = new Set([...Object.keys(a), ...Object.keys(b)]);
+  const diff = [...keys].filter((k) => a[k] !== b[k]);
+  if (!filesA || !filesB) p.push("(2) the PR's change set couldn't be read at both commits");
+  else if (diff.length) p.push(`(2) the PR's own files differ between ${from} and the head: ${diff.slice(0, 5).join(", ")}${diff.length > 5 ? ` and ${diff.length - 5} more` : ""}`);
+  const base = new Set(basePaths || []), own = (abPaths || []).filter((x) => !base.has(x));
+  if (!abPaths || !basePaths) p.push(`(3) what changed from ${from} to the head couldn't be read`);
+  else if (own.length) p.push(`(3) changes from ${from} to the head that didn't come from the base branch: ${own.slice(0, 5).join(", ")}${own.length > 5 ? ` and ${own.length - 5} more` : ""}`);
+  if (!ciGreen) p.push("(4) required CI isn't green on the head");
+  if (!seatPassedAtA) p.push(`${seat} has no passing review of its own at ${from}`);
+  return p;
+}
+// The facts for carryProblems, through gh compare (blob shas) and the statuses on A.
+export function proveCarry({ nwo, base, head, from, seat, ciGreen, reviewContext = "independent-review" }) {
+  const j = (path) => { try { return ghJson("api", path); } catch { return null; } };
+  const A = j(`repos/${nwo}/commits/${from}`)?.sha;
+  if (!A) return { ok: false, problems: [`the carried-from commit ${from} couldn't be read`] };
+  const ab = j(`repos/${nwo}/compare/${A}...${head}`);
+  const toA = j(`repos/${nwo}/compare/${encodeURIComponent(base)}...${A}`), toB = j(`repos/${nwo}/compare/${encodeURIComponent(base)}...${head}`);
+  const files = (c) => (c?.files ? Object.fromEntries(c.files.map((f) => [f.filename, f.status === "removed" ? "removed" : f.sha])) : null);
+  const mbA = toA?.merge_base_commit?.sha, mbB = toB?.merge_base_commit?.sha;
+  const baseCmp = mbA && mbB ? (mbA === mbB ? { files: [] } : j(`repos/${nwo}/compare/${mbA}...${mbB}`)) : null;
+  let statusesA = []; try { const pages = ghJson("api", `repos/${nwo}/commits/${A}/statuses?per_page=100`, "--paginate", "--slurp") || []; statusesA = pages.every(Array.isArray) ? pages.flat() : pages; } catch { statusesA = []; }
+  const seatPassedAtA = statusesA.some((s) => s.context === reviewContext && s.state === "success" && new RegExp(`^\\s*${seat.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")}\\b`, "i").test(String(s.description || "")) && !/carried from/i.test(String(s.description || "")));
+  const problems = carryProblems({ ancestor: ab ? ab.behind_by === 0 : false, filesA: files(toA), filesB: files(toB), abPaths: ab?.files ? ab.files.map((f) => f.filename) : null,
+    basePaths: baseCmp?.files ? baseCmp.files.map((f) => f.filename) : null, ciGreen, seatPassedAtA, seat, from: A.slice(0, 7) });
+  return { ok: !problems.length, problems, from: A };
+}
 
 export function gather(pr, { repo, mission, slice, change, deploy, rollback, config, configPath, authorFamily } = {}) {
   const R = repo ? ["-R", repo] : [];
@@ -896,6 +953,7 @@ export function gather(pr, { repo, mission, slice, change, deploy, rollback, con
     throw new Error(`the PR moved while its evidence was collected (head ${v.headRefOid.slice(0, 12)} -> ${again.headRefOid.slice(0, 12)}, base ${v.baseRefOid.slice(0, 12)} -> ${again.baseRefOid.slice(0, 12)}); run it again`);
   // the risk tier of the features the PR names (starter-kit repos: features.json on the base branch)
   let risk = null;
+  const carries = [];
   // the features the PR names in its title OR its body (2026-10-04: a risky feature's PR named it only in the body,
   // "Implement F-006 …", so its tier was never read and it passed without its owner-approved label). Every F-id named
   // counts; the highest tier wins, so a passing mention can only make the gate stricter.
@@ -910,7 +968,10 @@ export function gather(pr, { repo, mission, slice, change, deploy, rollback, con
     const t = featureTier(features, named);
     risk = { ...t, featuresFile, featuresError, authorFamily: author.family, ownerApproved: (v.labels || []).some((l) => l.name === OWNER_LABEL),
       reviewFamilies: t.tier === "risky" ? reviewFamilies({ notes, head: v.headRefOid, authorFamily: author.family, identities: cfg.identities || {},
-        headings: cfg.identityHeadingRes || [], statuses, context: cfg.review.context, pr: v.number }) : [] };
+        headings: cfg.identityHeadingRes || [], statuses, context: cfg.review.context, pr: v.number, carries,
+        carry: (seat, from) => proveCarry({ nwo, base: v.baseRefName, head: v.headRefOid, from, seat, reviewContext: cfg.review.context,
+          ciGreen: (checks.length ? checks.every((c) => c.bucket === "pass") : (observedChecks || []).length > 0 && observedChecks.every((c) => c.bucket === "pass")) }) }) : [] };
+    risk.carries = carries;
   }
   return {
     pr: v.number, nwo, risk, head: v.headRefOid, base: v.baseRefOid, baseRef: v.baseRefName, headRef: v.headRefName,

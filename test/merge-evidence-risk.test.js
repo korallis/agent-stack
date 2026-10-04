@@ -6,7 +6,7 @@ import assert from "node:assert/strict";
 import * as fs from "node:fs";
 import { join, dirname } from "node:path";
 import { fileURLToPath } from "node:url";
-import { featureTier, reviewFamilies, riskProblems, OWNER_LABEL, statusReviewers, branchSeat, familyOf } from "../orchestration/merge-evidence.js";
+import { featureTier, reviewFamilies, riskProblems, OWNER_LABEL, statusReviewers, branchSeat, familyOf, carryProblems, buildMergeInput } from "../orchestration/merge-evidence.js";
 
 const repo = join(dirname(fileURLToPath(import.meta.url)), "..");
 const HEAD = "c".repeat(40), OTHER = "d".repeat(40);
@@ -117,4 +117,44 @@ test("the risk tier comes from the F-ids in the PR's title OR body (the highest 
   const src = fs.readFileSync(join(repo, "orchestration/merge-evidence.js"), "utf8");
   assert.match(src, /const named = `\$\{v\.title \|\| ""\}\\n\$\{v\.body \|\| ""\}`;\n  if \(\/\\bF-\\d\{3,\}\\b\/\.test\(named\)\) \{/);
   assert.match(src, /const t = featureTier\(features, named\);/);
+});
+
+// Review carry (operator 2026-10-04): a review of commit A counts for head B only when the helper proves (1) A is an
+// ancestor of B, (2) the PR's own files are byte-identical, (3) A..B changed only base-branch paths, (4) required CI is
+// green on B, and the seat itself passed at A. Risky: at least one family must still be fresh.
+const ok = { ancestor: true, filesA: { "src/a.ts": "b1", "test/a.ts": "b2" }, filesB: { "src/a.ts": "b1", "test/a.ts": "b2" }, abPaths: ["docs/x.md", "lib/y.ts"],
+  basePaths: ["docs/x.md", "lib/y.ts", "lib/z.ts"], ciGreen: true, seatPassedAtA: true, seat: "review-kimi", from: "e311017" };
+test("carryProblems: each of (1) to (4), and the seat's own pass at A, fails on its own", () => {
+  assert.deepEqual(carryProblems(ok), []);
+  const one = (patch, re) => { const p = carryProblems({ ...ok, ...patch }); assert.equal(p.length, 1, JSON.stringify(p)); assert.match(p[0], re); };
+  one({ ancestor: false }, /^\(1\) e311017 is not an ancestor of the head/);
+  one({ filesB: { ...ok.filesB, "src/a.ts": "CHANGED" } }, /^\(2\) the PR's own files differ between e311017 and the head: src\/a\.ts/);
+  one({ filesB: { ...ok.filesB, "src/new.ts": "b9" } }, /^\(2\) .*src\/new\.ts/);
+  one({ abPaths: [...ok.abPaths, "src/a.ts"] }, /^\(3\) changes from e311017 to the head that didn't come from the base branch: src\/a\.ts/);
+  one({ ciGreen: false }, /^\(4\) required CI isn't green on the head/);
+  one({ seatPassedAtA: false }, /^review-kimi has no passing review of its own at e311017/);
+  one({ filesA: null }, /^\(2\) the PR's change set couldn't be read/);
+  one({ basePaths: null }, /^\(3\) what changed .* couldn't be read/);
+});
+
+test("a 'carried from' status counts only when proven, is marked carried, and a risky PR needs one fresh family", () => {
+  const H = "547a9683551509c3097cd677d44beb0e1b9d6f12", pr = 92, u = (x) => `https://github.com/o/r/pull/92#${x}`;
+  const st = (desc, at = "2026-10-04T10:00:00Z") => ({ context: "independent-review", created_at: at, state: "success", description: desc, target_url: u(at) });
+  const statuses = [st("review-kimi (Kimi K3): carried from e311017; PR files byte-identical at 547a968", "2026-10-04T11:00:00Z"), st("review-codex (Codex): clean exact-head review at 547a968")];
+  assert.deepEqual(statusReviewers(statuses, { head: H, pr }).map((r) => [r.seat, r.carriedFrom]), [["review-kimi", "e311017"], ["review-codex", null]], "the carried-from sha doesn't unbind it from the head");
+  const proven = []; const fams = reviewFamilies({ head: H, authorFamily: "claude", statuses, pr, carries: proven, carry: () => ({ ok: true, problems: [] }) });
+  assert.deepEqual(fams.map((f) => [f.family, f.carried ?? null]).sort(), [["codex", null], ["kimi", "e311017"]]);
+  assert.deepEqual(proven.map((c) => [c.seat, c.from, c.ok]), [["review-kimi", "e311017", true]]);
+  const refused = []; const only = reviewFamilies({ head: H, authorFamily: "claude", statuses, pr, carries: refused, carry: () => ({ ok: false, problems: ["(3) changes that didn't come from the base branch: src/a.ts"] }) });
+  assert.deepEqual(only.map((f) => f.family), ["codex"], "an unproven carry counts for nothing");
+  assert.deepEqual(reviewFamilies({ head: H, authorFamily: "claude", statuses, pr }).map((f) => f.family), ["codex"], "no prover: no carry");
+  // risky: two families but both carried: a fresh one is MISSING; one fresh plus one carried: fine
+  const risky = { tier: "risky", features: [{ id: "F-010" }], authorFamily: "claude", ownerApproved: true };
+  assert.match(riskProblems({ ...risky, reviewFamilies: [{ family: "kimi", carried: "e311017" }, { family: "codex", carried: "e311017" }] })[0], /^MISSING: a fresh exact-head review from at least one family/);
+  assert.deepEqual(riskProblems({ ...risky, reviewFamilies: [{ family: "kimi", carried: "e311017" }, { family: "codex" }] }), []);
+  // Jev sees it as carried, proven or refused, never as a fresh review
+  const base = { head: H, pr, base: "b".repeat(40), checks: [], reviewVerdict: null, independentReview: null };
+  const inp = (carries) => String(buildMergeInput({ ...base, risk: { carries } }).review);
+  assert.match(inp([{ seat: "review-kimi", from: "e31101734cf0316850418909455b6b13b7645af2", ok: true, problems: [] }]), /carried review: review-kimi, carried from e31101734cf0 to 547a968[0-9a-f]+: proven by this helper .*NOT a fresh review of this head/);
+  assert.match(inp([{ seat: "review-kimi", from: "e311017", ok: false, problems: ["(1) e311017 is not an ancestor of the head"] }]), /carried review NOT accepted: review-kimi, claimed carried from e311017: \(1\) e311017 is not an ancestor/);
 });
