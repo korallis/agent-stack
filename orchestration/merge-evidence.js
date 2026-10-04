@@ -612,9 +612,49 @@ export async function awaitMergeable({ read, sleep = (s) => new Promise((r) => s
   return { value, waited };
 }
 
+// ---- Risk tier (starter-kit repos) ----------------------------------------------------------------------------------
+// A starter-kit repo's features.json gives each feature (F-NNN) a risk_tier; a PR names its features in its title
+// ("F-012 WP-08: ..."). A risky PR needs two independent reviews from two different families, neither the author's,
+// and the owner-approved label, before Jev is asked (2026-10-04: a risky PR merged with one review and no label).
+const TIER_RANK = { trivial: 0, standard: 1, risky: 2 };
+export const OWNER_LABEL = "owner-approved";
+// Pure: the highest tier among the features a PR names. features: the parsed features.json (a list, or { features }).
+export function featureTier(features, text) {
+  const ids = [...new Set(String(text || "").match(/\bF-\d{3,}\b/g) || [])];
+  const list = Array.isArray(features) ? features : Array.isArray(features?.features) ? features.features : [];
+  const named = ids.map((id) => ({ id, tier: list.find((f) => f?.id === id)?.risk_tier ?? null })).filter((f) => f.tier);
+  const top = named.reduce((a, f) => (TIER_RANK[f.tier] ?? -1) > (TIER_RANK[a?.tier] ?? -1) ? f : a, null);
+  return { ids, features: named, tier: top?.tier ?? null };
+}
+// Pure: the distinct families of independent reviews that PASS on this head, none the author's: review-seat comment
+// records ("## review-<family>..." declaring this head), GitHub reviews on the head (family by identities or heading),
+// and the review status (family from its description's signer).
+export function reviewFamilies({ notes = [], head, authorFamily, identities = {}, headings = [], status = null }) {
+  const seatHeads = FAMILIES.map((f) => ({ re: new RegExp(`^(?:#+\\s*)?review-${f}\\b`, "i"), family: f }));
+  const all = [...headings, ...seatHeads], fams = new Map();
+  const add = (family, by) => { if (family && family !== authorFamily && FAMILIES.includes(family) && !fams.has(family)) fams.set(family, by); };
+  for (const r of records(notes.filter((n) => n.kind !== "review"), /^(?:#+\s*)?review-(claude|codex|kimi|grok)/i, head))
+    if (r.state === "success") add(familyOf(r.seat), r.url || r.seat);
+  for (const r of notes.filter((n) => n.kind === "review" && String(n.commit || "").toLowerCase() === String(head).toLowerCase())) {
+    if (verdictOf(r.body, r.reviewState) !== "success") continue;
+    const byLogin = identities[r.author];
+    add(byLogin && byLogin !== "shared" ? byLogin : familyFromHeading(r.body, all), r.url);
+  }
+  if (status?.state === "success") add(familyFromDescription(status.description, all).family, status.url || "status");
+  return [...fams].map(([family, by]) => ({ family, by }));
+}
+// Pure: what a risky PR still lacks, as MISSING lines (empty when not risky, or complete).
+export function riskProblems(risk) {
+  if (risk?.tier !== "risky") return [];
+  const p = [];
+  if ((risk.reviewFamilies || []).length < 2) p.push(`MISSING: a second independent review from another family (risky ${risk.features.map((f) => f.id).join(", ")} needs two families other than the author's; have ${(risk.reviewFamilies || []).map((r) => r.family).join(", ") || "none"})`);
+  if (!risk.ownerApproved) p.push(`MISSING: the ${OWNER_LABEL} label (risky ${risk.features.map((f) => f.id).join(", ")} needs the owner's OK, or a CULTURE standing approval cited when adding the label)`);
+  return p;
+}
+
 export function gather(pr, { repo, mission, slice, change, deploy, rollback, config, configPath, authorFamily } = {}) {
   const R = repo ? ["-R", repo] : [];
-  const FIELDS = "number,title,body,createdAt,headRefOid,baseRefOid,baseRefName,headRefName,mergeable,mergeStateStatus,reviewDecision,isDraft,comments,reviews";
+  const FIELDS = "number,title,body,createdAt,headRefOid,baseRefOid,baseRefName,headRefName,mergeable,mergeStateStatus,reviewDecision,isDraft,comments,reviews,labels";
   const v = ghJson("pr", "view", String(pr), ...R, "--json", FIELDS);
   const nwo = repo || ghJson("repo", "view", "--json", "nameWithOwner").nameWithOwner;
   const cfg = config || loadConfig({ flagPath: configPath, nwo });
@@ -779,8 +819,19 @@ export function gather(pr, { repo, mission, slice, change, deploy, rollback, con
   const again = ghJson("pr", "view", String(pr), ...R, "--json", "headRefOid,baseRefOid");
   if (again.headRefOid !== v.headRefOid || again.baseRefOid !== v.baseRefOid)
     throw new Error(`the PR moved while its evidence was collected (head ${v.headRefOid.slice(0, 12)} -> ${again.headRefOid.slice(0, 12)}, base ${v.baseRefOid.slice(0, 12)} -> ${again.baseRefOid.slice(0, 12)}); run it again`);
+  // the risk tier of the features the PR names (starter-kit repos: features.json on the base branch)
+  let risk = null;
+  if (/\bF-\d{3,}\b/.test(v.title || "")) {
+    let features = null;
+    try { const c = ghJson("api", `repos/${nwo}/contents/features.json?ref=${encodeURIComponent(v.baseRefName)}`); features = JSON.parse(Buffer.from(c.content, "base64").toString("utf8")); }
+    catch { features = null; }
+    const t = featureTier(features, v.title);
+    risk = { ...t, featuresRead: !!features, ownerApproved: (v.labels || []).some((l) => l.name === OWNER_LABEL),
+      reviewFamilies: t.tier === "risky" ? reviewFamilies({ notes, head: v.headRefOid, authorFamily: author.family, identities: cfg.identities || {},
+        headings: cfg.identityHeadingRes || [], status: statusRecord(statuses, cfg.review.context) }) : [] };
+  }
   return {
-    pr: v.number, nwo, head: v.headRefOid, base: v.baseRefOid, baseRef: v.baseRefName, headRef: v.headRefName,
+    pr: v.number, nwo, risk, head: v.headRefOid, base: v.baseRefOid, baseRef: v.baseRefName, headRef: v.headRefName,
     mergeable: v.mergeable, mergeState: v.mergeStateStatus, reviewDecision: v.reviewDecision || null, isDraft: v.isDraft, change: change || [v.title, firstSection(v.body)].filter(Boolean).join(". "), scope: testScope(files), checks,
     requirements, observedChecks, unstable, gateHistory: gateRuns, gateContext: cfg.gate.context, reviewContext: cfg.review.context, sources: { review: cfg.review.source, qa: cfg.qa.source, gate: cfg.gate.source },
     authorFamily: author.family, independentReview, reviewProblem, reviewNote, reviewLinkProblem,
@@ -903,6 +954,11 @@ if (import.meta.url === `file://${process.argv[1]}` || process.argv[1]?.endsWith
   if (facts.mergeable === "UNKNOWN") {   // it can flip back between the wait and the full read
     console.error("merge gate: NOT DECIDED (GitHub reports mergeable UNKNOWN again: it is recomputing). Jev was not asked; run the gate again in a minute.");
     process.exit(4);
+  }
+  const riskMissing = riskProblems(facts.risk);
+  if (riskMissing.length) {   // a risky PR without its two reviews and the owner's OK is never sent to Jev
+    console.error(`merge gate: HOLD (risky tier: ${facts.risk.features.map((f) => f.id).join(", ")}). Jev was not asked.\n${riskMissing.join("\n")}`);
+    process.exit(1);
   }
   const rec = await decideOrStub("review.merge_gate", input, { caller: process.env.OPENRIG_SESSION_NAME || "agent-merge-evidence" });
   console.log(JSON.stringify({ input, history, decision: { decided_by: rec.decided_by, band: rec.band, result: rec.result, request_id: rec.request_id, ...(rec.stubbed ? { stubbed: true } : {}) } }, null, 2));
