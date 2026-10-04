@@ -45,6 +45,18 @@ test("riskProblems: a risky PR needs two review families and the owner-approved 
   assert.deepEqual(riskProblems(null), []);
 });
 
+test("fail closed (operator 2026-10-04): a features.json that exists but is unreadable, or an F-id not in it, is 'tier unknown'; no features.json keeps no tier", () => {
+  const unreadable = riskProblems({ ...featureTier(null, "F-007: x"), featuresFile: "unreadable", featuresError: "HTTP 500" });
+  assert.deepEqual(unreadable, ["MISSING: the risk tier of F-007 (features.json exists but couldn't be read: HTTP 500)"]);
+  const notIn = riskProblems({ ...featureTier(features, "F-001 F-404: x"), featuresFile: "read", reviewFamilies: [], ownerApproved: false });
+  assert.deepEqual(notIn, ["MISSING: the risk tier of F-404 (not in features.json; fix the PR title's F-id or add the feature)"]);
+  assert.deepEqual(riskProblems({ ...featureTier(null, "F-007: x"), featuresFile: "absent" }), [], "no features.json: no tier, nothing more required");
+  assert.deepEqual(riskProblems({ ...featureTier(features, "F-001: x"), featuresFile: "read" }), [], "every F-id known, standard");
+  // the CLI: a 404 is absent, anything else unreadable
+  const src = fs.readFileSync(join(repo, "orchestration/merge-evidence.js"), "utf8");
+  assert.match(src, /featuresFile = \/HTTP 404\|Not Found\/i\.test\(why\) \? "absent" : "unreadable"/);
+});
+
 test("the CLI holds a risky PR with MISSING lines before Jev is asked; gather reads features.json on the base and the labels", () => {
   const src = fs.readFileSync(join(repo, "orchestration/merge-evidence.js"), "utf8");
   assert.ok(src.indexOf("const riskMissing = riskProblems(facts.risk);") < src.indexOf('const rec = await decideOrStub("review.merge_gate"'), "the risk check comes before the Jev call");

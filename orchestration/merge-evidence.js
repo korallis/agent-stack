@@ -624,7 +624,7 @@ export function featureTier(features, text) {
   const list = Array.isArray(features) ? features : Array.isArray(features?.features) ? features.features : [];
   const named = ids.map((id) => ({ id, tier: list.find((f) => f?.id === id)?.risk_tier ?? null })).filter((f) => f.tier);
   const top = named.reduce((a, f) => (TIER_RANK[f.tier] ?? -1) > (TIER_RANK[a?.tier] ?? -1) ? f : a, null);
-  return { ids, features: named, tier: top?.tier ?? null };
+  return { ids, features: named, tier: top?.tier ?? null, unknown: ids.filter((id) => !named.some((f) => f.id === id)) };
 }
 // Pure: the distinct families of independent reviews that PASS on this head, none the author's: review-seat comment
 // records ("## review-<family>..." declaring this head), GitHub reviews on the head (family by identities or heading),
@@ -643,9 +643,14 @@ export function reviewFamilies({ notes = [], head, authorFamily, identities = {}
   if (status?.state === "success") add(familyFromDescription(status.description, all).family, status.url || "status");
   return [...fams].map(([family, by]) => ({ family, by }));
 }
-// Pure: what a risky PR still lacks, as MISSING lines (empty when not risky, or complete).
+// Pure: what a PR still lacks for its tier, as MISSING lines (empty when not risky, or complete). Fails closed
+// (operator 2026-10-04): a repo that HAS a features.json and a PR naming F-ids, with the file unreadable or an F-id
+// not in it, is "tier unknown". A repo with no features.json keeps "no tier".
 export function riskProblems(risk) {
-  if (risk?.tier !== "risky") return [];
+  if (!risk) return [];
+  if (risk.featuresFile === "unreadable" && risk.ids?.length) return [`MISSING: the risk tier of ${risk.ids.join(", ")} (features.json exists but couldn't be read: ${risk.featuresError || "unreadable"})`];
+  if (risk.featuresFile === "read" && risk.unknown?.length) return [`MISSING: the risk tier of ${risk.unknown.join(", ")} (not in features.json; fix the PR title's F-id or add the feature)`];
+  if (risk.tier !== "risky") return [];
   const p = [];
   if ((risk.reviewFamilies || []).length < 2) p.push(`MISSING: a second independent review from another family (risky ${risk.features.map((f) => f.id).join(", ")} needs two families other than the author's; have ${(risk.reviewFamilies || []).map((r) => r.family).join(", ") || "none"})`);
   if (!risk.ownerApproved) p.push(`MISSING: the ${OWNER_LABEL} label (risky ${risk.features.map((f) => f.id).join(", ")} needs the owner's OK, or a CULTURE standing approval cited when adding the label)`);
@@ -822,11 +827,14 @@ export function gather(pr, { repo, mission, slice, change, deploy, rollback, con
   // the risk tier of the features the PR names (starter-kit repos: features.json on the base branch)
   let risk = null;
   if (/\bF-\d{3,}\b/.test(v.title || "")) {
-    let features = null;
+    let features = null, featuresFile = "read", featuresError = null;
     try { const c = ghJson("api", `repos/${nwo}/contents/features.json?ref=${encodeURIComponent(v.baseRefName)}`); features = JSON.parse(Buffer.from(c.content, "base64").toString("utf8")); }
-    catch { features = null; }
+    catch (e) {   // 404: the repo has no features.json (no tier); anything else: it has one we can't read (tier unknown)
+      const why = String(e.stderr || e.message || "");
+      featuresFile = /HTTP 404|Not Found/i.test(why) ? "absent" : "unreadable"; featuresError = why.trim().split("\n")[0].slice(0, 160);
+    }
     const t = featureTier(features, v.title);
-    risk = { ...t, featuresRead: !!features, ownerApproved: (v.labels || []).some((l) => l.name === OWNER_LABEL),
+    risk = { ...t, featuresFile, featuresError, ownerApproved: (v.labels || []).some((l) => l.name === OWNER_LABEL),
       reviewFamilies: t.tier === "risky" ? reviewFamilies({ notes, head: v.headRefOid, authorFamily: author.family, identities: cfg.identities || {},
         headings: cfg.identityHeadingRes || [], status: statusRecord(statuses, cfg.review.context) }) : [] };
   }
@@ -957,7 +965,7 @@ if (import.meta.url === `file://${process.argv[1]}` || process.argv[1]?.endsWith
   }
   const riskMissing = riskProblems(facts.risk);
   if (riskMissing.length) {   // a risky PR without its two reviews and the owner's OK is never sent to Jev
-    console.error(`merge gate: HOLD (risky tier: ${facts.risk.features.map((f) => f.id).join(", ")}). Jev was not asked.\n${riskMissing.join("\n")}`);
+    console.error(`merge gate: HOLD (${facts.risk.tier === "risky" ? `risky tier: ${facts.risk.features.map((f) => f.id).join(", ")}` : "risk tier unknown"}). Jev was not asked.\n${riskMissing.join("\n")}`);
     process.exit(1);
   }
   const rec = await decideOrStub("review.merge_gate", input, { caller: process.env.OPENRIG_SESSION_NAME || "agent-merge-evidence" });
