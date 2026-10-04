@@ -717,6 +717,16 @@ function reducedProblems(risk) {
   return p;
 }
 
+// Labels don't move with the head (2026-10-04: a refreshed risky PR still carried its old head's labels), so a risky PR
+// also needs the approver's comment naming the EXACT head: its own first line (not quoted or fenced) reads
+// "owner-approved … applied|re-confirmed|confirmed by <approver> at [refreshed] head <full sha>".
+export const OWNER_APPROVER = process.env.AGENT_MERGE_EVIDENCE_APPROVER || "operator-agent@kernel";
+export function ownerApprovalAtHead(comments = [], head, approver = OWNER_APPROVER) {
+  const who = approver.replace(/[.*+?^${}()|[\]\\]/g, "\\$&"), h = String(head || "").toLowerCase();
+  const re = new RegExp(`owner-approved\\b.*\\b(?:applied|re-confirmed|confirmed)\\s+by\\s+${who}\\s+at\\s+(?:refreshed\\s+)?head\\s+([0-9a-f]{40})\\b`, "i");
+  return comments.some((c) => { const first = ownLines(c.body).find((l) => l) || ""; const m = first.match(re); return !!m && m[1].toLowerCase() === h; });
+}
+
 // Pure: what a PR still lacks for its tier, as MISSING lines (empty when not risky, or complete). Fails closed
 // (operator 2026-10-04): a repo that HAS a features.json and a PR naming F-ids, with the file unreadable or an F-id
 // not in it, is "tier unknown". A repo with no features.json keeps "no tier".
@@ -726,8 +736,10 @@ export function riskProblems(risk) {
   if (risk.featuresFile === "read" && risk.unknown?.length) return [`MISSING: the risk tier of ${risk.unknown.join(", ")} (not in features.json; fix the PR title's F-id or add the feature)`];
   if (risk.tier !== "risky") return [];
   const p = [];
+  const approvalAtHead = risk.approvedAtHead === false
+    ? [`MISSING: owner approval not confirmed at this head (no "owner-approved … by ${OWNER_APPROVER} at head <this sha>" comment; labels don't move with the head)`] : [];
   if (risk.reducedReview && risk.authorFamily) {
-    p.push(...reducedProblems(risk));
+    p.push(...reducedProblems(risk), ...approvalAtHead);
     if (!risk.ownerApproved) p.push(`MISSING: the ${OWNER_LABEL} label (risky ${risk.features.map((f) => f.id).join(", ")} needs the owner's OK, or a CULTURE standing approval cited when adding the label)`);
     return p;
   }
@@ -736,6 +748,7 @@ export function riskProblems(risk) {
   if ((risk.reviewFamilies || []).length >= 2 && !(risk.reviewFamilies || []).some((r) => !r.carried))
     p.push(`MISSING: a fresh exact-head review from at least one family (risky ${risk.features.map((f) => f.id).join(", ")}: every counted review is carried from an earlier commit)`);
   if (!risk.ownerApproved) p.push(`MISSING: the ${OWNER_LABEL} label (risky ${risk.features.map((f) => f.id).join(", ")} needs the owner's OK, or a CULTURE standing approval cited when adding the label)`);
+  p.push(...approvalAtHead);
   return p;
 }
 
@@ -994,7 +1007,7 @@ export function gather(pr, { repo, mission, slice, change, deploy, rollback, con
     const t = featureTier(features, named);
     const reviewSeats = [];
     const writers = [branchSeat(v.headRefName), ...[...String(v.body || "").matchAll(/^\s*Author:\s*([\w.-]+)/gim)].map((m) => m[1])].filter(Boolean);
-    risk = { ...t, featuresFile, featuresError, authorFamily: author.family, reviewSeats, writers, reducedReview: (v.labels || []).some((l) => l.name === REDUCED_LABEL), ownerApproved: (v.labels || []).some((l) => l.name === OWNER_LABEL),
+    risk = { ...t, featuresFile, featuresError, authorFamily: author.family, reviewSeats, writers, approvedAtHead: ownerApprovalAtHead(allNotes.filter((n) => n.kind !== "review"), v.headRefOid),   // all comments: an approval may also read as a gate report reducedReview: (v.labels || []).some((l) => l.name === REDUCED_LABEL), ownerApproved: (v.labels || []).some((l) => l.name === OWNER_LABEL),
       reviewFamilies: t.tier === "risky" ? reviewFamilies({ notes, head: v.headRefOid, authorFamily: author.family, identities: cfg.identities || {},
         headings: cfg.identityHeadingRes || [], statuses, context: cfg.review.context, pr: v.number, carries, seatsOut: reviewSeats,
         carry: (seat, from) => proveCarry({ nwo, base: v.baseRefName, head: v.headRefOid, from, seat, reviewContext: cfg.review.context,
