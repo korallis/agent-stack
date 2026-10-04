@@ -31,17 +31,28 @@ test("reviewFamilies: distinct passing reviews on this head from families other 
   const status = { state: "success", description: "review-grok-1: exact head PASS", url: "s1" };
   assert.deepEqual(reviewFamilies({ notes: [...notes, gh], head: HEAD, authorFamily: "codex", identities: { "kimi-bot": "kimi" }, status }).map((r) => r.family).sort(), ["claude", "grok", "kimi"]);
   assert.deepEqual(reviewFamilies({ notes: [{ ...gh, commit: OTHER }], head: HEAD, authorFamily: "codex", identities: { "kimi-bot": "kimi" } }), [], "a review of another commit");
+  // QA PR174: dismissed or pending GitHub reviews never count, even when their body says PASS
+  for (const reviewState of ["DISMISSED", "PENDING"])
+    assert.deepEqual(reviewFamilies({ notes: [{ ...gh, reviewState, body: `## review-kimi\nhead: ${HEAD}\nVerdict: PASS` }], head: HEAD, authorFamily: "codex", identities: { "kimi-bot": "kimi" } }), [], reviewState);
+  // a reviewer's later BLOCK on this head withdraws its earlier PASS (by seat, for comments and reviews alike)
+  assert.deepEqual(reviewFamilies({ notes: [comment("review-kimi", HEAD), comment("review-kimi", HEAD, "BLOCK")], head: HEAD, authorFamily: "codex" }), []);
+  assert.deepEqual(reviewFamilies({ notes: [comment("review-kimi", HEAD, "BLOCK"), comment("review-kimi", HEAD)], head: HEAD, authorFamily: "codex" }).map((r) => r.family), ["kimi"], "a PASS after the BLOCK counts");
+  assert.deepEqual(reviewFamilies({ notes: [gh, { ...gh, reviewState: "CHANGES_REQUESTED", url: "r2" }], head: HEAD, authorFamily: "codex", identities: { "kimi-bot": "kimi" } }), [], "the same login's later change request");
+  assert.deepEqual(reviewFamilies({ notes: [comment("review-claude-1", HEAD), comment("review-claude-2", HEAD, "BLOCK")], head: HEAD, authorFamily: "codex" }).map((r) => r.family), ["claude"], "another seat's BLOCK doesn't withdraw this seat's PASS");
+  // an unknown author family counts nothing (the other collectors refuse it too)
+  assert.deepEqual(reviewFamilies({ notes, head: HEAD, authorFamily: null }), []);
 });
 
 test("riskProblems: a risky PR needs two review families and the owner-approved label; other tiers need nothing more", () => {
   const risky = { tier: "risky", features: [{ id: "F-007", tier: "risky" }] };
-  const p = riskProblems({ ...risky, reviewFamilies: [{ family: "claude" }], ownerApproved: false });
+  const p = riskProblems({ ...risky, authorFamily: "codex", reviewFamilies: [{ family: "claude" }], ownerApproved: false });
   assert.equal(p.length, 2);
   assert.match(p[0], /^MISSING: a second independent review from another family \(risky F-007 .*have claude\)/);
   assert.match(p[1], new RegExp(`^MISSING: the ${OWNER_LABEL} label`));
-  assert.deepEqual(riskProblems({ ...risky, reviewFamilies: [{ family: "claude" }, { family: "kimi" }], ownerApproved: true }), []);
-  assert.deepEqual(riskProblems({ ...risky, reviewFamilies: [{ family: "claude" }, { family: "kimi" }], ownerApproved: false }).length, 1);
+  assert.deepEqual(riskProblems({ ...risky, authorFamily: "codex", reviewFamilies: [{ family: "claude" }, { family: "kimi" }], ownerApproved: true }), []);
+  assert.deepEqual(riskProblems({ ...risky, authorFamily: "codex", reviewFamilies: [{ family: "claude" }, { family: "kimi" }], ownerApproved: false }).length, 1);
   assert.deepEqual(riskProblems({ tier: "standard", features: [], reviewFamilies: [], ownerApproved: false }), []);
+  assert.match(riskProblems({ ...risky, authorFamily: null, reviewFamilies: [], ownerApproved: true })[0], /^MISSING: the PR author's model family \(unknown/);
   assert.deepEqual(riskProblems(null), []);
 });
 

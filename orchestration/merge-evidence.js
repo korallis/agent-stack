@@ -629,18 +629,28 @@ export function featureTier(features, text) {
 // Pure: the distinct families of independent reviews that PASS on this head, none the author's: review-seat comment
 // records ("## review-<family>..." declaring this head), GitHub reviews on the head (family by identities or heading),
 // and the review status (family from its description's signer).
+// Each reviewer counts by its LATEST record on this head (a later BLOCK withdraws an earlier PASS); dismissed and
+// pending GitHub reviews never count; an unknown author family counts nothing (cross-family can't be verified, as for
+// the other collectors). QA PR174.
 export function reviewFamilies({ notes = [], head, authorFamily, identities = {}, headings = [], status = null }) {
+  if (!authorFamily) return [];
   const seatHeads = FAMILIES.map((f) => ({ re: new RegExp(`^(?:#+\\s*)?review-${f}\\b`, "i"), family: f }));
-  const all = [...headings, ...seatHeads], fams = new Map();
-  const add = (family, by) => { if (family && family !== authorFamily && FAMILIES.includes(family) && !fams.has(family)) fams.set(family, by); };
+  const all = [...headings, ...seatHeads];
+  const latest = new Map();   // reviewer -> { family, state, by }, oldest first so the last write wins
+  const put = (who, family, state, by) => { if (who) latest.set(who, { family, state, by }); };
   for (const r of records(notes.filter((n) => n.kind !== "review"), /^(?:#+\s*)?review-(claude|codex|kimi|grok)/i, head))
-    if (r.state === "success") add(familyOf(r.seat), r.url || r.seat);
+    put(`seat:${r.seat}`, familyOf(r.seat), r.state, r.url || r.seat);
   for (const r of notes.filter((n) => n.kind === "review" && String(n.commit || "").toLowerCase() === String(head).toLowerCase())) {
-    if (verdictOf(r.body, r.reviewState) !== "success") continue;
+    if (/^(DISMISSED|PENDING)$/i.test(r.reviewState || "")) continue;
     const byLogin = identities[r.author];
-    add(byLogin && byLogin !== "shared" ? byLogin : familyFromHeading(r.body, all), r.url);
+    const family = byLogin && byLogin !== "shared" ? byLogin : familyFromHeading(r.body, all);
+    const seat = (String(r.body || "").split("\n", 1)[0].match(/^#*\s*(review-[\w.@-]+)/i) || [])[1];
+    put(seat ? `seat:${seat}` : `login:${r.author}`, family, verdictOf(r.body, r.reviewState), r.url);
   }
-  if (status?.state === "success") add(familyFromDescription(status.description, all).family, status.url || "status");
+  if (status) put("status", familyFromDescription(status.description, all).family, status.state, status.url || "status");
+  const fams = new Map();
+  for (const { family, state, by } of latest.values())
+    if (state === "success" && family && family !== authorFamily && FAMILIES.includes(family) && !fams.has(family)) fams.set(family, by);
   return [...fams].map(([family, by]) => ({ family, by }));
 }
 // Pure: what a PR still lacks for its tier, as MISSING lines (empty when not risky, or complete). Fails closed
@@ -652,6 +662,7 @@ export function riskProblems(risk) {
   if (risk.featuresFile === "read" && risk.unknown?.length) return [`MISSING: the risk tier of ${risk.unknown.join(", ")} (not in features.json; fix the PR title's F-id or add the feature)`];
   if (risk.tier !== "risky") return [];
   const p = [];
+  if (!risk.authorFamily) p.push(`MISSING: the PR author's model family (unknown, so no review can be verified as cross-family; pass --author-family or use an agent/<seat> branch)`);
   if ((risk.reviewFamilies || []).length < 2) p.push(`MISSING: a second independent review from another family (risky ${risk.features.map((f) => f.id).join(", ")} needs two families other than the author's; have ${(risk.reviewFamilies || []).map((r) => r.family).join(", ") || "none"})`);
   if (!risk.ownerApproved) p.push(`MISSING: the ${OWNER_LABEL} label (risky ${risk.features.map((f) => f.id).join(", ")} needs the owner's OK, or a CULTURE standing approval cited when adding the label)`);
   return p;
@@ -834,7 +845,7 @@ export function gather(pr, { repo, mission, slice, change, deploy, rollback, con
       featuresFile = /HTTP 404|Not Found/i.test(why) ? "absent" : "unreadable"; featuresError = why.trim().split("\n")[0].slice(0, 160);
     }
     const t = featureTier(features, v.title);
-    risk = { ...t, featuresFile, featuresError, ownerApproved: (v.labels || []).some((l) => l.name === OWNER_LABEL),
+    risk = { ...t, featuresFile, featuresError, authorFamily: author.family, ownerApproved: (v.labels || []).some((l) => l.name === OWNER_LABEL),
       reviewFamilies: t.tier === "risky" ? reviewFamilies({ notes, head: v.headRefOid, authorFamily: author.family, identities: cfg.identities || {},
         headings: cfg.identityHeadingRes || [], status: statusRecord(statuses, cfg.review.context) }) : [] };
   }
