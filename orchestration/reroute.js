@@ -11,6 +11,10 @@
 //   <model> are cooling down") and nothing will resume it until the cooldown ends (2026-10-02: 1h20 of Claude seats
 //   idle on claimed rows).
 // When the seat won't be served again for 30+ minutes (or nobody knows when), rows move after 5 minutes, not N.
+// A Claude Code seat's model is its LIVE one, from its own transcript (seatlive.js: a confirmed /model or the latest
+// real turn), never the spec's launch model; unknown never blocks. A row is only moved while still actionable: never
+// one whose PR merged or closed or whose named head moved (or whose PR can't be read). A refresh or delta review, built
+// on the original reviewer's own earlier review, stays in that reviewer's family (2026-10-04).
 // Every move carries an audit note naming the reason, both seats and the row's original sender; each row moves at most
 // once. Never to a human: rows for a human, or tagged as the owner's decision, are left alone, and so is a row with no
 // free seat anywhere (reported). A seat that was unservable and is served again, idle, still holding in-progress rows,
@@ -19,6 +23,7 @@ import { realpathSync } from "node:fs";
 import { pathToFileURL } from "node:url";
 import { rig, seats, eligibleFamilies, seatAvailable, servableAt, familyGap, odb, CONTEXT_WALL } from "./lib.js";
 import { pickForWork } from "./pickseat.js";
+import { paneDirs, liveModel, prRef, staleReason, repoOf, PRIOR_REVIEW } from "./seatlive.js";
 
 export { CONTEXT_WALL };
 const HUMAN = /^human@|^owner@/;
@@ -42,8 +47,11 @@ function unserved(seat, families, now, minutes) {
 
 // Pure: the moves for one rig's active rows. rows: [{ id, state, destination, source, tags, updated }]; now: ms.
 // load(row): the full row ({ body, summary, tags }) when the list elided its text (rig queue list does), or null when
-// unreadable. Reviews and implementations need it for their constraint; without it they're left for the lead.
-export function plan(rows, all, families, { minutes = 20, now = Date.now(), moved = new Set(), load = null } = {}) {
+// unreadable. Every move needs it (2026-10-04): reviews and implementations for their constraint, every row for
+// stale(row). stale(fullRow): why the row is no longer actionable (its PR merged or closed, its named head moved), or
+// null; such a row is never moved, and its lead is told. A review that is a refresh or delta of the original
+// reviewer's own earlier review stays in that reviewer's family (or is left for the lead).
+export function plan(rows, all, families, { minutes = 20, now = Date.now(), moved = new Set(), load = null, stale = null } = {}) {
   const out = [];
   const taken = new Set();   // one row per free seat in a single pass
   for (const r of rows) {
@@ -62,12 +70,17 @@ export function plan(rows, all, families, { minutes = 20, now = Date.now(), move
     // the destination: idle, servable, below its wall, with no open work; and the row's own constraint kept (a review's
     // author family, the locked tests' family), or the row is left for the lead
     let full = r;
-    if (["reviewer", "implementer", "test-author"].includes(seat.role) && (r.elided || []).includes("body")) {
+    if ((r.elided || []).includes("body")) {   // the list elides text (rig queue list): every move reads the full row
       const got = load ? load(r) : null;
-      if (!got) { out.push({ id: r.id, from: r.destination, why, to: null, note: "left for the lead: the row's text couldn't be read to keep its review, locked-test or implementer constraint" }); continue; }
+      if (!got) { out.push({ id: r.id, from: r.destination, why, to: null, note: "left for the lead: the row's text couldn't be read to check it is still actionable and keep its review, locked-test or implementer constraint" }); continue; }
       full = { ...r, ...got };
     }
-    const pick = pickForWork(all.filter((s) => s.seat !== seat.seat && !taken.has(s.seat)), seat.role, full, { families });
+    const gone = stale ? stale(full) : null;
+    if (gone) { out.push({ id: r.id, from: r.destination, why, to: null, note: `not moved: no longer actionable (${gone})` }); continue; }
+    const prior = seat.role === "reviewer" && PRIOR_REVIEW.test(`${full.summary || ""}\n${full.body || ""}`);
+    const pool = all.filter((s) => s.seat !== seat.seat && !taken.has(s.seat) && (!prior || s.family === seat.family));
+    const pick = pickForWork(pool, seat.role, full, { families });
+    if (prior && !pick.seat) { out.push({ id: r.id, from: r.destination, why, to: null, note: `left for the lead: it builds on ${seat.seat}'s own earlier review (a refresh or delta), so it stays with a ${seat.family} reviewer, and none is free` }); continue; }
     if (!pick.seat) { out.push({ id: r.id, from: r.destination, why, to: null, note: pick.why }); continue; }
     taken.add(pick.seat.seat);
     const via = [pick.as ? `as ${pick.as}: no free ${seat.role} seat` : null, pick.fallback ? `fallback: ${pick.fallback.skipped.map((x) => x.reason).join("; ")}` : null,
@@ -127,7 +140,18 @@ async function main() {
   const wasOut = new Set(db.prepare("SELECT seat FROM reroute_unserved").all().map((r) => r.seat));
   const families = eligibleFamilies(), report = [], nudges = [], errors = [];
   for (const rigName of rigsToCheck(flag("--rig"))) {
-    const all = seats(rigName);
+    // the live model (the seat's own transcript), never the spec's launch model: a /model switch must count
+    const dirs = paneDirs();
+    const all = seats(rigName).map((s) => (s.runtime === "claude-code" ? { ...s, specModel: s.model, model: liveModel(dirs.get(s.seat)) } : s));
+    const prCache = new Map();
+    const stale = (row) => {
+      const ref = prRef(`${row.summary || ""}\n${row.body || ""}`);
+      if (!ref) return null;
+      const repo = ref.repo || repoOf(dirs.get(row.destination));
+      const key = `${repo}#${ref.pr}@${ref.head}`;
+      if (!prCache.has(key)) prCache.set(key, staleReason(ref, { repo }));
+      return prCache.get(key);
+    };
     const q = rig(["queue", "list", "-A", "--state", "pending,in-progress", "--limit", "1000"], { json: true, allowFail: true });
     // a failed or malformed read is unknown, not an empty queue: nothing moves, nothing remembered is forgotten
     const listed = (x) => (Array.isArray(x) ? x : Array.isArray(x?.items) ? x.items : null);
@@ -141,7 +165,7 @@ async function main() {
       const rec = f?.item || f?.qitem || f;
       return rec && typeof rec.body === "string" ? { body: rec.body, summary: rec.summary, tags: rec.tags ?? r.tags } : null;
     };
-    for (const m of plan(rows, all, families, { minutes, moved, load })) {
+    for (const m of plan(rows, all, families, { minutes, moved, load, stale })) {
       if (apply && m.to) {
         rig(["queue", "handoff", m.id, "--to", m.to, "--note", m.note], { json: true });
         db.prepare("INSERT OR IGNORE INTO reroutes VALUES (?,?,?,?,?)").run(m.id, Date.now(), m.from, m.to, m.why);

@@ -177,9 +177,18 @@ test("agent-recover reads the proxy's cooling-down 429 as rate limited; role fal
 
 // End to end, both CLIs on the stall: a fake `rig` (records every call) and a fake agent-proxy-status; Jev stubbed.
 import { spawnSync } from "node:child_process";
-function cli(script, args, { nodes, rows, proxy, state, jev = {}, caller = "agent-reroute@app", show = null, failSend = false, failList = false, failLeft = false }) {
+function cli(script, args, { nodes, rows, proxy, state, jev = {}, caller = "agent-reroute@app", show = null, failSend = false, failList = false, failLeft = false, live = {} }) {
   const dir = fs.mkdtempSync(join(process.env.AGENT_STACK_STATE, "e2e-")), calls = join(dir, "calls.log");
   const w = (n, s) => fs.writeFileSync(join(dir, n), s, { mode: 0o755 });
+  // each Claude Code seat runs in a tmux pane whose transcript says its live model: the node's own, unless live[seat]
+  // says otherwise (a /model switch the spec doesn't know)
+  const panes = nodes.filter((n) => n.runtime === "claude-code").map((n) => [n.canonicalSessionName, `/w/${n.canonicalSessionName.replace(/@/, "-")}`]);
+  w("tmux", `#!/bin/sh\nprintf '%s\\n' ${panes.map(([s, d]) => `'${s}\t${d}'`).join(" ")}\n`);
+  for (const [s, d] of panes) {
+    const pd = join(dir, ".claude/projects", d.replace(/[^A-Za-z0-9]/g, "-")); fs.mkdirSync(pd, { recursive: true });
+    const model = live[s] ?? nodes.find((n) => n.canonicalSessionName === s).model;
+    fs.writeFileSync(join(pd, "s.jsonl"), model ? JSON.stringify({ type: "assistant", message: { model } }) + "\n" : "");
+  }
   w("rig", `#!/bin/sh\necho "rig $*" >> "${calls}"\ncase "$*" in "queue list"*) [ -f "${join(dir, "fail-list")}" ] && exit 1 ;; esac\ncase "$*" in "queue list -A --state in-progress "*) [ -f "${join(dir, "fail-left")}" ] && exit 1 ;; esac\ncase "$*" in\n  "ps --json") echo '[{"name":"app"}]' ;;\n` +
     `  "ps --nodes --rig app --json") cat "${join(dir, "nodes.json")}" ;;\n  "queue list -A --state pending,in-progress"*) cat "${join(dir, "rows.json")}" ;;\n` +
     `  "queue list -A --state in-progress"*) cat "${join(dir, "left.json")}" ;;\n  "queue show "*) cat "${join(dir, "show.json")}" ;;\n` +
@@ -426,4 +435,77 @@ test("agent-reroute tells the lead once about a row it leaves unmoved; the deput
   // without --apply: who would hear, nothing sent
   const dry = cli("reroute.js", [], { nodes, rows: [row], proxy: kimiOut, state: fs.mkdtempSync(join(process.env.AGENT_STACK_STATE, "tell3-")) });
   assert.deepEqual([dry.out.moves[0].tell, told(dry.calls)], ["coord-lead-claude@app", []]);
+});
+
+// 2026-10-04: agent-reroute moved review rows off Claude reviewers that had been switched to another model with
+// /model (the spec still named the old model, cooling on the proxy), rows that were already stale, and refresh reviews
+// that only the original reviewer's family can do. The model now comes from the seat's own transcript; a row whose PR
+// merged or closed, or whose named head moved, is never moved; a review building on its reviewer's earlier review
+// stays in that family.
+test("live model: a confirmed /model switch or a real assistant turn, latest wins; <synthetic> and unconfirmed switches don't count", async () => {
+  const { modelFromTranscript, liveModel } = await import("../orchestration/seatlive.js");
+  const a = (model) => JSON.stringify({ type: "assistant", message: { model } });
+  const cmd = (arg, ok = true) => JSON.stringify({ type: "user", message: { content: `<command-name>/model</command-name>\n<command-message>model</command-message>\n<command-args>${arg}</command-args>` } })
+    + "\n" + (ok ? JSON.stringify({ type: "user", message: { content: `<local-command-stdout>Set model to \`X\` and saved as your default</local-command-stdout>` } }) : "");
+  const lines = (...x) => x.join("\n").split("\n");
+  assert.equal(modelFromTranscript(lines(a("claude-fable-5-1"), cmd("claude-opus-5-5"))), "claude-opus-5-5", "switched with /model: the new model, before any turn");
+  assert.equal(modelFromTranscript(lines(a("claude-fable-5-1"), cmd("claude-opus-5-5"), a("<synthetic>"))), "claude-opus-5-5", "a local error turn is no model");
+  assert.equal(modelFromTranscript(lines(a("claude-fable-5-1"), cmd("claude-opus-5-5", false))), "claude-fable-5-1", "a /model Claude Code didn't confirm");
+  assert.equal(modelFromTranscript(lines(cmd("claude-opus-5-5"), a("claude-fable-5-1"))), "claude-fable-5-1", "a later real turn wins");
+  assert.equal(modelFromTranscript([]), null);
+  // the newest transcript of the pane's directory; unknown dir or no transcript: null (never the spec's model)
+  const p = fs.mkdtempSync(join(process.env.AGENT_STACK_STATE, "proj-")), d = join(p, "-w-review-1"); fs.mkdirSync(d);
+  fs.writeFileSync(join(d, "old.jsonl"), a("claude-fable-5-1") + "\n"); fs.utimesSync(join(d, "old.jsonl"), new Date(0), new Date(0));
+  fs.writeFileSync(join(d, "new.jsonl"), lines(a("claude-fable-5-1"), cmd("claude-opus-5-5")).join("\n") + "\n");
+  assert.equal(liveModel("/w/review.1", { projects: p }), "claude-opus-5-5");
+  assert.equal(liveModel("/w/none", { projects: p }), null); assert.equal(liveModel(undefined, { projects: p }), null);
+});
+
+test("stale rows: a merged or closed PR, or a named head that moved, is never rerouted; an unreadable PR isn't guessed", async () => {
+  const { prRef, staleReason } = await import("../orchestration/seatlive.js");
+  assert.deepEqual(prRef("Review PR #401 at exact head 1a2b3c4d5e6f"), { repo: null, pr: 401, head: "1a2b3c4d5e6f" });
+  assert.deepEqual(prRef("Refresh korallis/demo#362 head: ABCDEF1234567"), { repo: "korallis/demo", pr: 362, head: "abcdef1234567" });
+  assert.equal(prRef("Write the release notes"), null);
+  const view = (state, head = "1a2b3c4d5e6f7a8b") => () => ({ state, headRefOid: head });
+  assert.match(staleReason({ pr: 401, head: null }, { repo: "o/r", ghView: view("MERGED") }), /o\/r#401 is merged/);
+  assert.match(staleReason({ pr: 401, head: null }, { repo: "o/r", ghView: view("CLOSED") }), /is closed/);
+  assert.match(staleReason({ pr: 349, head: "deadbeef" }, { repo: "o/r", ghView: view("OPEN") }), /head moved \(the row names deadbeef/);
+  assert.equal(staleReason({ pr: 349, head: "1a2b3c4" }, { repo: "o/r", ghView: view("OPEN") }), null, "open at the named head: actionable");
+  assert.match(staleReason({ pr: 7, head: null }, { repo: "o/r", ghView: () => null }), /couldn't be read/);
+  assert.match(staleReason({ pr: 7, head: null }, { repo: null, ghView: view("OPEN") }), /repository is unknown/);
+  // plan(): such a row stays where it is and is reported (its lead is told)
+  const now = Date.now(), ago = new Date(now - 60 * 60e3).toISOString();
+  const rev = [node("review.claude-1", "claude-code", { model: "claude-fable-5-1" }), node("review.kimi", "terminal")].map(seatInfo);
+  const fableOut = eligibleFamilies([acct("claude", { cooldowns: [{ scope: "model", model_key: "claude-fable-5-1", retry_at: new Date(now + 5 * 3600e3).toISOString() }] }), acct("codex")]);
+  const row = { id: "q", state: "pending", destination: "review-claude-1@app", updated: ago, tags: [], body: "Review PR #401 at head 1a2b3c4.\nAuthor: impl-codex-1 (codex)" };
+  const m = plan([row], rev, fableOut, { now, stale: () => "o/r#401 is merged" });
+  assert.deepEqual([m[0].to, m[0].note], [null, "not moved: no longer actionable (o/r#401 is merged)"]);
+  assert.equal(plan([row], rev, fableOut, { now, stale: () => null })[0].to, "review-kimi@app", "still actionable: moved as before");
+});
+
+test("a refresh or delta review stays with the original reviewer's family: moved only to a free same-family reviewer, else left for the lead", () => {
+  const now = Date.now(), ago = new Date(now - 60 * 60e3).toISOString();
+  const fableOut = eligibleFamilies([acct("claude", { cooldowns: [{ scope: "model", model_key: "claude-fable-5-1", retry_at: new Date(now + 5 * 3600e3).toISOString() }] }), acct("codex")]);
+  const c1 = node("review.claude-1", "claude-code", { model: "claude-fable-5-1" });
+  const row = (body) => ({ id: "q", state: "pending", destination: "review-claude-1@app", updated: ago, tags: [], body: `${body}\nAuthor: impl-codex-1 (codex)` });
+  const kimiOnly = [c1, node("review.kimi", "terminal")].map(seatInfo);
+  for (const body of ["Delta review of PR #12 since your review", "Refresh review: your previous findings were fixed", "Re-review the fixes for your block at the new head", "Please re-check PR #12"])
+    assert.deepEqual(plan([row(body)], kimiOnly, fableOut, { now }).map((m) => m.to), [null], body);
+  assert.match(plan([row("Refresh review of PR #12")], kimiOnly, fableOut, { now })[0].note, /builds on review-claude-1@app's own earlier review .* stays with a claude reviewer/);
+  // a free Claude reviewer on a model that isn't cooling may take it
+  const withC2 = [c1, node("review.claude-2", "claude-code", { model: "claude-opus-5-5" }), node("review.kimi", "terminal")].map(seatInfo);
+  assert.equal(plan([row("Refresh review of PR #12")], withC2, fableOut, { now })[0].to, "review-claude-2@app");
+  // a first review is unaffected
+  assert.equal(plan([row("Review PR #12")], kimiOnly, fableOut, { now })[0].to, "review-kimi@app");
+});
+
+test("agent-reroute end to end: a reviewer switched off a cooling model with /model keeps its rows (the spec still names the old model)", () => {
+  const H = new Date(Date.now() + 5 * 3600e3).toISOString(), ago = new Date(Date.now() - 60 * 60e3).toISOString();
+  const nodes = [node("review.claude-1", "claude-code", { model: "claude-fable-5-1" }), node("review.kimi", "terminal")];
+  const proxy = [acct("claude", { cooldowns: [{ scope: "model", model_key: "claude-fable-5-1", retry_at: H }] }), acct("codex"), acct("kimi")];
+  const rows = [{ qitemId: "q-9", state: "pending", destinationSession: "review-claude-1@app", sourceSession: "lead@app", tags: [], tsUpdated: ago, body: "Review the docs change.\nAuthor: impl-codex-1 (codex)" }];
+  const kept = cli("reroute.js", [], { nodes, rows, proxy, state: fs.mkdtempSync(join(process.env.AGENT_STACK_STATE, "live-")), live: { "review-claude-1@app": "claude-opus-5-5" } });
+  assert.deepEqual(kept.out.moves, [], "live model Opus 5.5 isn't cooling: nothing moves");
+  const moved = cli("reroute.js", [], { nodes, rows, proxy, state: fs.mkdtempSync(join(process.env.AGENT_STACK_STATE, "live-")) });
+  assert.equal(moved.out.moves[0]?.to, "review-kimi@app", "control: still on the cooling model, the row moves");
 });
