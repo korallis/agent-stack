@@ -37,4 +37,5 @@ test("CULTURE's Operating rules start with claim-first on a queue handoff, and s
   const culture = fs.readFileSync(join(repo, "rig/template/CULTURE.md"), "utf8");
   const ops = culture.slice(culture.indexOf("## Operating rules"), culture.indexOf("\n## ", culture.indexOf("## Operating rules") + 5));
   assert.match(ops.replace(/\s+/g, " "), /- On any Queue handoff, your first action is `rig queue claim <id>` \(work it later if needed\); keep turns short: one row, then end the turn\./);
+  assert.match(ops.replace(/\s+/g, " "), /- A QA or witness run is ONE row: do every listed step in that turn and end it only when each step is PASS or FAIL with the on-screen error; short turns are for queue handling, never for stopping mid-checklist\. Unattempted steps are NOT RUN, not FAIL\./);
 });
