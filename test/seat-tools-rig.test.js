@@ -241,7 +241,14 @@ test("park: a seat's block/update-to-blocked must name a blocker that clears; th
     ["queue", "block", "q1", "--on", "human@kernel", "--summary", "s", "--evidence-ref", "/x"],
     ["queue", "block", "q1", "--on", "owner@external"],
     ["queue", "block", "q1", "--on", "external:qa-codex-3@r:needs the preview helper", "--wake-after", "2h"],
-    ["queue", "block", "q1", "--on=external:qa-codex-3@r:helper", "--wake-after=1h30m"],
+    ["queue", "block", "q1", "--on=external:qa-codex-3@r:helper", "--wake-after=90m"],
+    // OpenRig's own duration forms (QA #194): bare seconds, any-case suffix
+    ["queue", "block", "q1", "--on", "external:qa-codex-3@r:helper", "--wake-after", "3600"],
+    ["queue", "block", "q1", "--on", "external:qa-codex-3@r:helper", "--wake-after", "1H"],
+    ["queue", "block", "q1", "--on", "gate:owner-plan-approval", "--wake-after", "7200S"],
+    // a repeated option: OpenRig uses the last one, and so does the check (QA #194)
+    ["queue", "block", "q1", "--on", "external:qa-scheduling", "--on", "pr:acme/app#9"],
+    ["queue", "block", "q1", "--on", "external:qa-codex-3@r:x", "--wake-after", "5h", "--wake-after", "2h"],
     ["queue", "update", "q1", "--state", "blocked", "--blocked-on", "pr:acme/app#7"],
     // the lead-loop template's plan-approval park
     ["queue", "block", "q1", "--on", "gate:owner-plan-approval", "--summary", "Plan approval: 4 features", "--evidence-ref", "features.json", "--continuation", "dispatch", "--wake-after", "2h"],
@@ -264,6 +271,14 @@ test("park: a seat's block/update-to-blocked must name a blocker that clears; th
     [["queue", "block", "q1", "--on", "external:qa-codex-3@r:helper"], /needs --wake-after \(at most 2h\)/],
     [["queue", "block", "q1", "--on", "external:qa-codex-3@r:helper", "--wake-after", "3h"], /--wake-after 3h is longer than 2h/],
     [["queue", "block", "q1", "--on", "external:qa-codex-3@r:helper", "--wake-after", "soon"], /needs --wake-after/],
+    [["queue", "block", "q1", "--on", "external:qa-codex-3@r:helper", "--wake-after", "1h30m"], /needs --wake-after/],
+    [["queue", "block", "q1", "--on", "external:qa-codex-3@r:helper", "--wake-after", "7201"], /longer than 2h/],
+    [["queue", "block", "q1", "--on", "external:qa-codex-3@r:helper", "--wake-after", "0"], /needs --wake-after/],
+    // repeated options: the LAST is what OpenRig uses (QA #194 P1)
+    [["queue", "block", "q1", "--on", "github-ci:123", "--on", "external:qa-scheduling"], /refused park on 'external:qa-scheduling'/],
+    [["queue", "block", "q1", "--on", "github-ci:123", "--on=external:qa-scheduling"], /refused park on 'external:qa-scheduling'/],
+    [["queue", "update", "q1", "--state", "in-progress", "--state", "blocked", "--blocked-on", "external:queue-scheduling"], /external:<seat>:<reason>/],
+    [["queue", "block", "q1", "--on", "external:qa-codex-3@r:x", "--wake-after", "1h", "--wake-after", "3h"], /longer than 2h/],
     [["queue", "block", "q1", "--on", "external:ghost@r:helper", "--wake-after", "1h"], /there is no seat ghost@r/],
     [["queue", "block", "q1", "--on", "external:coord-lead@r:me", "--wake-after", "1h"], /coord-lead@r is you/],
     [["queue", "update", "q1", "--state", "blocked", "--blocked-on", "external:queue-scheduling"], /external:<seat>:<reason>/],

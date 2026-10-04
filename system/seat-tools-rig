@@ -143,11 +143,22 @@ MAX_WAKE_S = 2 * 3600
 
 
 def wake_seconds(text):
-    """'90s', '15m', '2h', '1h30m' -> seconds; None when it isn't a duration."""
-    m = re.fullmatch(r"(?:\d+[smhd])+", (text or "").strip())
-    if not m:
-        return None
-    return sum(int(n) * {"s": 1, "m": 60, "h": 3600, "d": 86400}[u] for n, u in re.findall(r"(\d+)([smhd])", text))
+    """Seconds, parsed exactly as OpenRig's --wake-after: a positive integer with an optional s, m or h suffix (any
+    case); None when OpenRig wouldn't accept it either."""
+    m = re.fullmatch(r"(\d+)([smh])?", (text or "").strip(), re.I)
+    secs = m and int(m.group(1)) * {"h": 3600, "m": 60}.get((m.group(2) or "s").lower(), 1)
+    return secs or None
+
+
+def last_opt(name):
+    """The value OpenRig will use: Commander keeps the LAST of a repeated option, so the check must read that one."""
+    value = None
+    for i, a in enumerate(args):
+        if a == name and i + 1 < len(args):
+            value = args[i + 1]
+        elif a.startswith(name + "="):
+            value = a.split("=", 1)[1]
+    return value
 
 
 def seat_exists(session):
@@ -199,11 +210,11 @@ def park_problem(blocker, wake, me):
 
 if args[1] in PARKS:
     flag = "--on" if args[1] == "block" else "--blocked-on"
-    _, blocker = opt(flag)
-    parking = args[1] == "block" or opt("--state")[1] == "blocked"
+    blocker = last_opt(flag)
+    parking = args[1] == "block" or last_opt("--state") == "blocked"
     if parking:
         # no blocker at all: OpenRig refuses that itself
-        why = blocker is not None and park_problem(blocker, opt("--wake-after")[1], os.environ["OPENRIG_SESSION_NAME"])
+        why = blocker is not None and park_problem(blocker, last_opt("--wake-after"), os.environ["OPENRIG_SESSION_NAME"])
         if why:
             print(PARK_HELP.format(blocker=blocker, why=why), file=sys.stderr)
             sys.exit(2)
