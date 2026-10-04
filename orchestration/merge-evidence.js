@@ -523,6 +523,7 @@ export function buildMergeInput(f) {
     ? `carried review: ${c.seat}, carried from ${String(c.from).slice(0, 12)} to ${f.head}: proven by this helper (ancestor; the PR's own files byte-identical; only base-branch changes in between; required CI green on the head; ${c.seat} passed at ${String(c.from).slice(0, 7)}); NOT a fresh review of this head`
     : `carried review NOT accepted: ${c.seat}, claimed carried from ${String(c.from).slice(0, 12)}: ${c.problems.join("; ")}`);
   const review = [
+    ...(f.risk?.reducedReview ? [`${REDUCED_NOTE}: this risky PR needs one review from a family other than the author's plus one by a ${f.risk.authorFamily || "same-family"} seat that wrote none of it (${REDUCED_LABEL} label)`] : []),
     ...carried,
     ...(rv ? [rv.state
       ? `review verdict: ${rv.state === "conflict" ? `CONFLICT (${rv.first} from ${rv.source}; ${rv.conflict.join("; ")})` : `${rv.state}, from ${rv.source}`}; bound to head ${f.head}`
@@ -663,7 +664,7 @@ export function statusReviewers(statuses = [], { head, context = "independent-re
 
 // A status that says "carried from <sha A>" counts only when carry(seat, A) proves it ({ ok, problems }): the review is
 // then marked carried (2026-10-04, operator: the helper proves the carry itself; see carryProblems).
-export function reviewFamilies({ notes = [], head, authorFamily, identities = {}, headings = [], status = null, statuses = null, context = "independent-review", pr = null, carry = null, carries = null }) {
+export function reviewFamilies({ notes = [], head, authorFamily, identities = {}, headings = [], status = null, statuses = null, context = "independent-review", pr = null, carry = null, carries = null, seatsOut = null }) {
   if (!authorFamily) return [];
   const seatHeads = FAMILIES.map((f) => ({ re: new RegExp(`^(?:#+\\s*)?review-${f}\\b`, "i"), family: f }));
   const all = [...headings, ...seatHeads];
@@ -690,6 +691,7 @@ export function reviewFamilies({ notes = [], head, authorFamily, identities = {}
     put(`seat:${r.seat}`, r.family, r.state === "success" ? "success" : "failure", r.by, r.at, r.carriedFrom);
   }
   else if (status) put("status", familyFromDescription(status.description, all).family, status.state, status.url || "status");
+  if (seatsOut) for (const [who, v] of latest) if (v.state === "success") seatsOut.push({ seat: who.replace(/^(seat|login):/, ""), family: v.family, by: v.by, carried: v.carried || null });
   const fams = new Map();   // a family counts fresh if any of its seats is fresh
   for (const { family, state, by, carried } of latest.values()) {
     if (state !== "success" || !family || family === authorFamily || !FAMILIES.includes(family)) continue;
@@ -698,6 +700,23 @@ export function reviewFamilies({ notes = [], head, authorFamily, identities = {}
   }
   return [...fams].map(([family, v]) => ({ family, by: v.by, ...(v.carried ? { carried: v.carried } : {}) }));
 }
+// Reduced review (owner decision 2026-10-04, interim while the third families are unavailable): a risky PR with the
+// reduced-review label passes with ONE fresh review from a family other than the author's plus ONE fresh exact-head
+// review by a seat of the author's OWN family that wrote none of the PR (not its branch seat, nor a seat its body
+// names as an author), on distinct seats.
+export const REDUCED_LABEL = "reduced-review";
+export const REDUCED_NOTE = "reduced review: Kimi/Grok unavailable, owner decision 2026-10-04";
+function reducedProblems(risk) {
+  const ids = risk.features.map((f) => f.id).join(", "), seats = risk.reviewSeats || [], writers = new Set((risk.writers || []).map((w) => w.toLowerCase()));
+  const other = seats.filter((s) => !s.carried && s.family && s.family !== risk.authorFamily);
+  const same = seats.filter((s) => !s.carried && s.family && s.family === risk.authorFamily && !writers.has(String(s.seat).toLowerCase()));
+  const p = [];
+  if (!other.length) p.push(`MISSING: a fresh exact-head review from a family other than the author's (risky ${ids}, ${REDUCED_LABEL})`);
+  if (!same.length) p.push(`MISSING: a fresh exact-head review by a ${risk.authorFamily} seat that wrote none of the PR (risky ${ids}, ${REDUCED_LABEL}; writers: ${[...writers].join(", ") || "unknown"})`);
+  else if (other.length && same.every((s) => other.some((o) => o.seat === s.seat))) p.push("MISSING: the two reviews must come from distinct seats");
+  return p;
+}
+
 // Pure: what a PR still lacks for its tier, as MISSING lines (empty when not risky, or complete). Fails closed
 // (operator 2026-10-04): a repo that HAS a features.json and a PR naming F-ids, with the file unreadable or an F-id
 // not in it, is "tier unknown". A repo with no features.json keeps "no tier".
@@ -707,6 +726,11 @@ export function riskProblems(risk) {
   if (risk.featuresFile === "read" && risk.unknown?.length) return [`MISSING: the risk tier of ${risk.unknown.join(", ")} (not in features.json; fix the PR title's F-id or add the feature)`];
   if (risk.tier !== "risky") return [];
   const p = [];
+  if (risk.reducedReview && risk.authorFamily) {
+    p.push(...reducedProblems(risk));
+    if (!risk.ownerApproved) p.push(`MISSING: the ${OWNER_LABEL} label (risky ${risk.features.map((f) => f.id).join(", ")} needs the owner's OK, or a CULTURE standing approval cited when adding the label)`);
+    return p;
+  }
   if (!risk.authorFamily) p.push(`MISSING: the PR author's model family (unknown, so no review can be verified as cross-family; pass --author-family or use an agent/<seat> branch)`);
   if ((risk.reviewFamilies || []).length < 2) p.push(`MISSING: a second independent review from another family (risky ${risk.features.map((f) => f.id).join(", ")} needs two families other than the author's; have ${(risk.reviewFamilies || []).map((r) => r.family).join(", ") || "none"})`);
   if ((risk.reviewFamilies || []).length >= 2 && !(risk.reviewFamilies || []).some((r) => !r.carried))
@@ -968,9 +992,11 @@ export function gather(pr, { repo, mission, slice, change, deploy, rollback, con
       featuresFile = /HTTP 404|Not Found/i.test(why) ? "absent" : "unreadable"; featuresError = why.trim().split("\n")[0].slice(0, 160);
     }
     const t = featureTier(features, named);
-    risk = { ...t, featuresFile, featuresError, authorFamily: author.family, ownerApproved: (v.labels || []).some((l) => l.name === OWNER_LABEL),
+    const reviewSeats = [];
+    const writers = [branchSeat(v.headRefName), ...[...String(v.body || "").matchAll(/^\s*Author:\s*([\w.-]+)/gim)].map((m) => m[1])].filter(Boolean);
+    risk = { ...t, featuresFile, featuresError, authorFamily: author.family, reviewSeats, writers, reducedReview: (v.labels || []).some((l) => l.name === REDUCED_LABEL), ownerApproved: (v.labels || []).some((l) => l.name === OWNER_LABEL),
       reviewFamilies: t.tier === "risky" ? reviewFamilies({ notes, head: v.headRefOid, authorFamily: author.family, identities: cfg.identities || {},
-        headings: cfg.identityHeadingRes || [], statuses, context: cfg.review.context, pr: v.number, carries,
+        headings: cfg.identityHeadingRes || [], statuses, context: cfg.review.context, pr: v.number, carries, seatsOut: reviewSeats,
         carry: (seat, from) => proveCarry({ nwo, base: v.baseRefName, head: v.headRefOid, from, seat, reviewContext: cfg.review.context,
           ciGreen: (checks.length ? checks.every((c) => c.bucket === "pass") : (observedChecks || []).length > 0 && observedChecks.every((c) => c.bucket === "pass")) }) }) : [] };
     risk.carries = carries;

@@ -6,7 +6,7 @@ import assert from "node:assert/strict";
 import * as fs from "node:fs";
 import { join, dirname } from "node:path";
 import { fileURLToPath } from "node:url";
-import { featureTier, reviewFamilies, riskProblems, OWNER_LABEL, statusReviewers, branchSeat, familyOf, carryProblems, buildMergeInput } from "../orchestration/merge-evidence.js";
+import { featureTier, reviewFamilies, riskProblems, OWNER_LABEL, statusReviewers, branchSeat, familyOf, carryProblems, buildMergeInput, REDUCED_LABEL } from "../orchestration/merge-evidence.js";
 
 const repo = join(dirname(fileURLToPath(import.meta.url)), "..");
 const HEAD = "c".repeat(40), OTHER = "d".repeat(40);
@@ -166,4 +166,32 @@ test("proveCarry fails closed on GitHub's 300-file compare cap (a truncated list
   // unreadable lists fail (2) and (3) in carryProblems
   assert.match(carryProblems({ ...ok, filesB: null }).join(), /\(2\) the PR's change set couldn't be read/);
   assert.match(carryProblems({ ...ok, abPaths: null }).join(), /\(3\) what changed .* couldn't be read/);
+});
+
+// Owner decision 2026-10-04 (interim, while Kimi and Grok are unavailable): with the reduced-review label a risky PR needs
+// ONE review from a family other than the author's plus ONE by a same-family seat that wrote none of the PR.
+test("reduced-review label: one other-family plus one same-family non-writer review; without the label the two-family rule stands", () => {
+  const H = "547a9683551509c3097cd677d44beb0e1b9d6f12", pr = 92;
+  const st = (desc, at) => ({ context: "independent-review", created_at: at, state: "success", description: desc, target_url: `https://github.com/o/r/pull/92#${at}` });
+  const statuses = [st("review-codex (Codex): clean at 547a968", "2026-10-04T10:00:00Z"), st("review-claude-2 (Opus): clean at 547a968", "2026-10-04T10:05:00Z")];
+  const seats = []; const fams = reviewFamilies({ head: H, authorFamily: "claude", statuses, pr, seatsOut: seats });
+  assert.deepEqual(fams.map((f) => f.family), ["codex"], "two-family count: claude-2 is the author's family");
+  assert.deepEqual(seats.map((x) => [x.seat, x.family]).sort(), [["review-claude-2", "claude"], ["review-codex", "codex"]], "every passing seat, for the reduced rule");
+  const risky = { tier: "risky", features: [{ id: "F-010" }], authorFamily: "claude", ownerApproved: true, reviewSeats: seats, reviewFamilies: fams, writers: ["impl-claude-ui-1"] };
+  // without the label: still MISSING a second family
+  assert.match(riskProblems(risky).join(), /MISSING: a second independent review from another family/);
+  // with it: codex (other family) + claude-2 (same family, not a writer): passes
+  assert.deepEqual(riskProblems({ ...risky, reducedReview: true }), []);
+  // the same-family reviewer wrote the PR: refused; no other family: refused; a carried review doesn't count
+  assert.match(riskProblems({ ...risky, reducedReview: true, writers: ["review-claude-2"] }).join(), /MISSING: a fresh exact-head review by a claude seat that wrote none of the PR/);
+  assert.match(riskProblems({ ...risky, reducedReview: true, reviewSeats: seats.filter((x) => x.family === "claude") }).join(), /MISSING: a fresh exact-head review from a family other than the author's/);
+  assert.match(riskProblems({ ...risky, reducedReview: true, reviewSeats: seats.map((x) => (x.family === "claude" ? { ...x, carried: "e311017" } : x)) }).join(), /by a claude seat that wrote none/);
+  assert.match(riskProblems({ ...risky, reducedReview: true, ownerApproved: false }).join(), /MISSING: the owner-approved label/);
+  // Jev is told which rule applied
+  const inp = String(buildMergeInput({ head: H, pr, base: "b".repeat(40), checks: [], reviewVerdict: null, independentReview: null, risk: { reducedReview: true, authorFamily: "claude" } }).review);
+  assert.match(inp, /^reduced review: Kimi\/Grok unavailable, owner decision 2026-10-04: this risky PR needs one review from a family other than the author's plus one by a claude seat that wrote none of it \(reduced-review label\)/m);
+  assert.doesNotMatch(String(buildMergeInput({ head: H, pr, base: "b".repeat(40), checks: [], reviewVerdict: null, independentReview: null, risk: {} }).review), /reduced review/);
+  assert.equal(REDUCED_LABEL, "reduced-review");
+  const src = fs.readFileSync(join(repo, "orchestration/merge-evidence.js"), "utf8");
+  assert.match(src, /reducedReview: \(v\.labels \|\| \[\]\)\.some\(\(l\) => l\.name === REDUCED_LABEL\)/);
 });
