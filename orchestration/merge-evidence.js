@@ -670,8 +670,8 @@ export function riskProblems(risk) {
 }
 
 // ---- QA's bug-review-board proof: where it lives -------------------------------------------------------------------
-// Rig workspaces keep missions in <Project>-work beside the repo (~/Projects/MTA-work), not in the checkout the
-// integrator runs from (~/Projects/MTA.worktrees/integ-codex): a false "MISSING: no bug-review-board proof" twice.
+// Rig workspaces keep missions in <Project>-work beside the repo (~/Projects/App-work), not in the checkout the
+// integrator runs from (~/Projects/App.worktrees/integ-codex): a false "MISSING: no bug-review-board proof" twice.
 // Pure: the workspace roots to search, in order: $OPENRIG_WORK_ROOT, the <Project>-work beside the checkout
 // (<P>.worktrees/<seat> or <P>), <projects>/<repo name>-work, then the current directory. No duplicates.
 export function workspaceRoots({ env = process.env, cwd = process.cwd(), nwo = null, projects = env.AGENT_PROJECTS_DIR || join(homedir(), "Projects") } = {}) {
