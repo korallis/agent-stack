@@ -45,6 +45,8 @@ Human queue rows also need a specific `--summary`; the headings belong in the bo
 
 ## Operating rules
 
+- On any Queue handoff, your first action is `rig queue claim <id>` (work it later if needed); keep turns short: one
+  row, then end the turn.
 - Credentials and client data stay out of code, commits, tool inputs, transcripts and screenshots. Load credential
   files by name; do not print them or bypass the read guard. Report an exposure to the owner for rotation.
 - Work in your own worktree. Preserve OpenRig managed blocks, but do not commit them. Stop only your own processes
