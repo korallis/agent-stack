@@ -772,13 +772,15 @@ export function proveCarry({ nwo, base, head, from, seat, ciGreen, reviewContext
   if (!A) return { ok: false, problems: [`the carried-from commit ${from} couldn't be read`] };
   const ab = j(`repos/${nwo}/compare/${A}...${head}`);
   const toA = j(`repos/${nwo}/compare/${encodeURIComponent(base)}...${A}`), toB = j(`repos/${nwo}/compare/${encodeURIComponent(base)}...${head}`);
-  const files = (c) => (c?.files ? Object.fromEntries(c.files.map((f) => [f.filename, f.status === "removed" ? "removed" : f.sha])) : null);
+  // GitHub's compare lists at most 300 files: a full list could be longer, so 300 is treated as unreadable (fails closed)
+  const full = (c) => (Array.isArray(c?.files) && c.files.length < 300 ? c.files : null);
+  const files = (c) => (full(c) ? Object.fromEntries(full(c).map((f) => [f.filename, f.status === "removed" ? "removed" : f.sha])) : null);
   const mbA = toA?.merge_base_commit?.sha, mbB = toB?.merge_base_commit?.sha;
   const baseCmp = mbA && mbB ? (mbA === mbB ? { files: [] } : j(`repos/${nwo}/compare/${mbA}...${mbB}`)) : null;
   let statusesA = []; try { const pages = ghJson("api", `repos/${nwo}/commits/${A}/statuses?per_page=100`, "--paginate", "--slurp") || []; statusesA = pages.every(Array.isArray) ? pages.flat() : pages; } catch { statusesA = []; }
   const seatPassedAtA = statusesA.some((s) => s.context === reviewContext && s.state === "success" && new RegExp(`^\\s*${seat.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")}\\b`, "i").test(String(s.description || "")) && !/carried from/i.test(String(s.description || "")));
-  const problems = carryProblems({ ancestor: ab ? ab.behind_by === 0 : false, filesA: files(toA), filesB: files(toB), abPaths: ab?.files ? ab.files.map((f) => f.filename) : null,
-    basePaths: baseCmp?.files ? baseCmp.files.map((f) => f.filename) : null, ciGreen, seatPassedAtA, seat, from: A.slice(0, 7) });
+  const problems = carryProblems({ ancestor: ab ? ab.behind_by === 0 : false, filesA: files(toA), filesB: files(toB), abPaths: full(ab) ? full(ab).map((f) => f.filename) : null,
+    basePaths: full(baseCmp) ? full(baseCmp).map((f) => f.filename) : null, ciGreen, seatPassedAtA, seat, from: A.slice(0, 7) });
   return { ok: !problems.length, problems, from: A };
 }
 

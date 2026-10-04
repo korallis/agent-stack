@@ -158,3 +158,12 @@ test("a 'carried from' status counts only when proven, is marked carried, and a 
   assert.match(inp([{ seat: "review-kimi", from: "e31101734cf0316850418909455b6b13b7645af2", ok: true, problems: [] }]), /carried review: review-kimi, carried from e31101734cf0 to 547a968[0-9a-f]+: proven by this helper .*NOT a fresh review of this head/);
   assert.match(inp([{ seat: "review-kimi", from: "e311017", ok: false, problems: ["(1) e311017 is not an ancestor of the head"] }]), /carried review NOT accepted: review-kimi, claimed carried from e311017: \(1\) e311017 is not an ancestor/);
 });
+
+test("proveCarry fails closed on GitHub's 300-file compare cap (a truncated list could hide a changed PR file)", () => {
+  const src = fs.readFileSync(join(repo, "orchestration/merge-evidence.js"), "utf8");
+  assert.match(src, /const full = \(c\) => \(Array\.isArray\(c\?\.files\) && c\.files\.length < 300 \? c\.files : null\);/);
+  assert.match(src, /abPaths: full\(ab\) \? full\(ab\)\.map/); assert.match(src, /basePaths: full\(baseCmp\) \? full\(baseCmp\)\.map/);
+  // unreadable lists fail (2) and (3) in carryProblems
+  assert.match(carryProblems({ ...ok, filesB: null }).join(), /\(2\) the PR's change set couldn't be read/);
+  assert.match(carryProblems({ ...ok, abPaths: null }).join(), /\(3\) what changed .* couldn't be read/);
+});
