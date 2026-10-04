@@ -203,6 +203,8 @@ test("owner approval at the exact head: the approver's 'owner-approved … by <a
   const c = (body) => ({ body });
   assert.equal(ownerApprovalAtHead([c(`owner-approved applied by operator-agent@kernel at head ${H} under the standing approval`)], H), true);
   assert.equal(ownerApprovalAtHead([c(`reduced-review plus owner-approved re-confirmed by operator-agent@kernel at refreshed head ${H} (the old approval is superseded)`)], H), true);
+  assert.equal(ownerApprovalAtHead([c(`reduced-review plus owner-approved applied by operator-agent@kernel at head ${H}: arch-claude (non-author)`)], H), true, "the reduced-review form");
+  assert.equal(ownerApprovalAtHead([c(`reduced-review plus owner-approved re-applied by operator-agent@kernel at refreshed head ${H}`)], H), true, "re-applied");
   for (const [why, body] of [["the old head", `owner-approved applied by operator-agent@kernel at head ${OLD}`], ["another seat", `owner-approved applied by coord-lead-claude@app at head ${H}`],
     ["a short sha", `owner-approved applied by operator-agent@kernel at head 1fdda5e`], ["quoted", `> owner-approved applied by operator-agent@kernel at head ${H}`],
     ["not on its first line", `Summary\nowner-approved applied by operator-agent@kernel at head ${H}`], ["no owner-approved", `reviewed by operator-agent@kernel at head ${H}`]])
@@ -216,4 +218,18 @@ test("owner approval at the exact head: the approver's 'owner-approved … by <a
   const reduced = { ...risky, reducedReview: true, writers: [], reviewSeats: [{ seat: "review-codex", family: "codex" }, { seat: "review-claude-2", family: "claude" }] };
   assert.deepEqual(riskProblems({ ...reduced, approvedAtHead: true }), []);
   assert.match(riskProblems({ ...reduced, approvedAtHead: false }).join(), /MISSING: owner approval not confirmed at this head/, "the reduced mode too");
+});
+
+test("per-repo config: a repo with a standing owner approval needs neither the label nor the exact-head comment, and says so to Jev", async () => {
+  const { resolveConfig } = await import("../orchestration/merge-evidence.js");
+  assert.equal(resolveConfig(null, "o/r").risk.ownerApproval, "label", "the default");
+  const cfg = resolveConfig({ repos: { "o/m": { risk: { ownerApproval: "standing", standing: "CULTURE D-29" } } } }, "o/m");
+  assert.deepEqual([cfg.risk.ownerApproval, cfg.risk.standing], ["standing", "CULTURE D-29"]);
+  assert.throws(() => resolveConfig({ risk: { ownerApproval: "standing" } }, "o/r"), /needs risk\.standing/);
+  assert.throws(() => resolveConfig({ risk: { ownerApproval: "maybe" } }, "o/r"), /must be "label" or "standing"/);
+  const risky = { tier: "risky", features: [{ id: "F-010" }], authorFamily: "claude", reviewFamilies: [{ family: "codex" }, { family: "kimi" }], ownerApproved: false, approvedAtHead: false };
+  assert.equal(riskProblems(risky).length, 2, "label repo: the label and the head approval are MISSING");
+  assert.deepEqual(riskProblems({ ...risky, standingApproval: "CULTURE D-29" }), [], "standing repo: neither is required");
+  const inp = String(buildMergeInput({ head: "a".repeat(40), pr: 1, base: "b".repeat(40), checks: [], reviewVerdict: null, independentReview: null, risk: { tier: "risky", standingApproval: "CULTURE D-29" } }).review);
+  assert.match(inp, /^owner approval: standing for this repository \(CULTURE D-29\); no owner-approved label or exact-head approval comment is required/m);
 });

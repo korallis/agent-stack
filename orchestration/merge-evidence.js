@@ -172,7 +172,12 @@ const SOURCES = { review: ["status", "comments"], qa: ["proof", "comments"], gat
 export function resolveConfig(raw, nwo) {
   const own = (raw?.repos && nwo && raw.repos[nwo]) || {};
   const cfg = { authorFamily: own.authorFamily || raw?.authorFamily || null, identities: { ...raw?.identities, ...own.identities },
-    identityHeadings: { ...raw?.identityHeadings, ...own.identityHeadings } };
+    identityHeadings: { ...raw?.identityHeadings, ...own.identityHeadings },
+    // risky-tier owner approval: "label" (the owner-approved label plus the approver's exact-head comment) or
+    // "standing" (a repo whose owner approval is standing, e.g. a CULTURE decision: neither is required; cite it)
+    risk: { ownerApproval: "label", standing: null, ...raw?.risk, ...own.risk } };
+  if (!["label", "standing"].includes(cfg.risk.ownerApproval)) throw new Error(`merge-evidence config: risk.ownerApproval must be "label" or "standing", not ${JSON.stringify(cfg.risk.ownerApproval)}`);
+  if (cfg.risk.ownerApproval === "standing" && !cfg.risk.standing) throw new Error('merge-evidence config: risk.ownerApproval "standing" needs risk.standing (where the standing approval is recorded)');
   for (const k of Object.keys(SOURCES)) {
     const c = cfg[k] = { ...DEFAULT_CONFIG[k], ...raw?.[k], ...own[k] };
     if (!SOURCES[k].includes(c.source)) throw new Error(`merge-evidence config: ${k}.source must be ${SOURCES[k].join(" or ")}, not ${JSON.stringify(c.source)}`);
@@ -523,6 +528,7 @@ export function buildMergeInput(f) {
     ? `carried review: ${c.seat}, carried from ${String(c.from).slice(0, 12)} to ${f.head}: proven by this helper (ancestor; the PR's own files byte-identical; only base-branch changes in between; required CI green on the head; ${c.seat} passed at ${String(c.from).slice(0, 7)}); NOT a fresh review of this head`
     : `carried review NOT accepted: ${c.seat}, claimed carried from ${String(c.from).slice(0, 12)}: ${c.problems.join("; ")}`);
   const review = [
+    ...(f.risk?.standingApproval && f.risk?.tier === "risky" ? [`owner approval: standing for this repository (${f.risk.standingApproval}); no owner-approved label or exact-head approval comment is required`] : []),
     ...(f.risk?.reducedReview ? [`${REDUCED_NOTE}: this risky PR needs one review from a family other than the author's plus one by a ${f.risk.authorFamily || "same-family"} seat that wrote none of it (${REDUCED_LABEL} label)`] : []),
     ...carried,
     ...(rv ? [rv.state
@@ -736,6 +742,7 @@ export function riskProblems(risk) {
   if (risk.featuresFile === "read" && risk.unknown?.length) return [`MISSING: the risk tier of ${risk.unknown.join(", ")} (not in features.json; fix the PR title's F-id or add the feature)`];
   if (risk.tier !== "risky") return [];
   const p = [];
+  if (risk.standingApproval) { risk = { ...risk, ownerApproved: true, approvedAtHead: true }; }   // per-repo config: standing owner approval
   const approvalAtHead = risk.approvedAtHead === false
     ? [`MISSING: owner approval not confirmed at this head (no "owner-approved … by ${OWNER_APPROVER} at head <this sha>" comment; labels don't move with the head)`] : [];
   if (risk.reducedReview && risk.authorFamily) {
@@ -1007,7 +1014,7 @@ export function gather(pr, { repo, mission, slice, change, deploy, rollback, con
     const t = featureTier(features, named);
     const reviewSeats = [];
     const writers = [branchSeat(v.headRefName), ...[...String(v.body || "").matchAll(/^\s*Author:\s*([\w.-]+)/gim)].map((m) => m[1])].filter(Boolean);
-    risk = { ...t, featuresFile, featuresError, authorFamily: author.family, reviewSeats, writers, approvedAtHead: ownerApprovalAtHead(allNotes.filter((n) => n.kind !== "review"), v.headRefOid),   // all comments: an approval may also read as a gate report reducedReview: (v.labels || []).some((l) => l.name === REDUCED_LABEL), ownerApproved: (v.labels || []).some((l) => l.name === OWNER_LABEL),
+    risk = { ...t, featuresFile, featuresError, authorFamily: author.family, reviewSeats, writers, approvedAtHead: ownerApprovalAtHead(allNotes.filter((n) => n.kind !== "review"), v.headRefOid), standingApproval: cfg.risk.ownerApproval === "standing" ? cfg.risk.standing : null,   // all comments: an approval may also read as a gate report reducedReview: (v.labels || []).some((l) => l.name === REDUCED_LABEL), ownerApproved: (v.labels || []).some((l) => l.name === OWNER_LABEL),
       reviewFamilies: t.tier === "risky" ? reviewFamilies({ notes, head: v.headRefOid, authorFamily: author.family, identities: cfg.identities || {},
         headings: cfg.identityHeadingRes || [], statuses, context: cfg.review.context, pr: v.number, carries, seatsOut: reviewSeats,
         carry: (seat, from) => proveCarry({ nwo, base: v.baseRefName, head: v.headRefOid, from, seat, reviewContext: cfg.review.context,
