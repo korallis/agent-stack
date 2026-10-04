@@ -41,6 +41,10 @@ Read when sending a human row, planning a wave, dispatching work or closing a me
 - Waves: slices build in parallel in disjoint file territories; the merge owner merges serially; the independent wave review fires once per wave on top of the per-PR checks. Waves live in each mission.yaml `arrangement.waves` (members = slice SPEC ids), maintained by the lead; the TUI reads only that.
 - Every queue row names its mission and slice (`--mission`, `--slice`); the seat `rig` adds `project:<id>` and `worktree_path=`. Don't strip them.
 - End every turn by passing the ball (`rig queue handoff`) or parking it WITH a wake (`rig queue block … --wake-after`); never go idle holding work.
+  A park names a blocker that clears: a live `qitem-…`, `pr:<owner/repo>#<n>`, `check:<name>@<sha>`, `github-ci:<run>`,
+  `fold:`/`auth:`, a human seat, `gate:owner-<decision>`, or `external:<seat>:<reason>` (a real seat that owes it, with
+  `--wake-after` of at most 2h). The seat `rig` refuses anything else. Waiting for a seat to have time is not a
+  blocker: hand that seat a row and end your turn.
 - Proof: QA and the merge owner accept each proof-contract item with `rig proof judge` once it is shown to work; readiness in the TUI comes only from those judgments.
 - Keep slice/mission status honest; the files serve the product, not the other way round.
 - Your AGENTS.md / CLAUDE.local.md carries OpenRig managed blocks (your instructions). Never discard them (`git checkout -- AGENTS.md`, `git restore .`, `git stash -u`, resets) and never commit them: stage your own lines with `git add -p`. A pre-commit hook refuses commits containing them.
