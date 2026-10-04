@@ -632,22 +632,47 @@ export function featureTier(features, text) {
 // Each reviewer counts by its LATEST record on this head (a later BLOCK withdraws an earlier PASS); dismissed and
 // pending GitHub reviews never count; an unknown author family counts nothing (cross-family can't be verified, as for
 // the other collectors). QA PR174.
-export function reviewFamilies({ notes = [], head, authorFamily, identities = {}, headings = [], status = null }) {
+// Statuses (2026-10-04): every reviewer posts the review context from one GitHub account, and the combined status keeps
+// only the newest per context, so the full list is read (gather: commits/<sha>/statuses, paginated) and every one of
+// the review context counts by its seat. The seat is the description's first word ("review-kimi (Kimi K3): clean at
+// exact head 96b7d3a"), its family from the seat name; a status is about this head when the sha its description
+// names is the head, or (naming none) its target_url is on this PR. Each seat counts by its newest status.
+export function statusReviewers(statuses = [], { head, context = "independent-review", pr = null } = {}) {
+  const short = String(head || "").toLowerCase();
+  const onHead = (s) => {
+    const shas = String(s.description || "").match(/\b[0-9a-f]{7,40}\b/gi) || [];
+    if (shas.length) return shas.every((x) => short.startsWith(x.toLowerCase()));
+    return pr != null && new RegExp(`/pull/${pr}(?:[#/?]|$)`).test(String(s.target_url || s.url || ""));
+  };
+  const out = new Map();
+  for (const s of [...statuses].filter((x) => x.context === context).sort((a, b) => String(b.created_at || "").localeCompare(String(a.created_at || "")))) {
+    const seat = (String(s.description || "").trim().match(/^([\w.-]+(?:@[\w.-]+)?)/) || [])[1];
+    if (!seat || out.has(seat) || !onHead(s)) continue;   // newest first: a seat's first seen is its latest
+    out.set(seat, { seat, family: familyOf(seat), state: s.state, by: s.target_url || "status", at: s.created_at || "" });
+  }
+  return [...out.values()];
+}
+
+export function reviewFamilies({ notes = [], head, authorFamily, identities = {}, headings = [], status = null, statuses = null, context = "independent-review", pr = null }) {
   if (!authorFamily) return [];
   const seatHeads = FAMILIES.map((f) => ({ re: new RegExp(`^(?:#+\\s*)?review-${f}\\b`, "i"), family: f }));
   const all = [...headings, ...seatHeads];
-  const latest = new Map();   // reviewer -> { family, state, by }, oldest first so the last write wins
-  const put = (who, family, state, by) => { if (who) latest.set(who, { family, state, by }); };
+  const latest = new Map();   // reviewer -> its newest record { family, state, by, at } (comments, reviews and statuses)
+  const put = (who, family, state, by, at = "") => {
+    const cur = latest.get(who);
+    if (who && (!cur || String(at) >= String(cur.at))) latest.set(who, { family, state, by, at: String(at) });
+  };
   for (const r of records(notes.filter((n) => n.kind !== "review"), /^(?:#+\s*)?review-(claude|codex|kimi|grok)/i, head))
-    put(`seat:${r.seat}`, familyOf(r.seat), r.state, r.url || r.seat);
+    put(`seat:${r.seat}`, familyOf(r.seat), r.state, r.url || r.seat, r.at);
   for (const r of notes.filter((n) => n.kind === "review" && String(n.commit || "").toLowerCase() === String(head).toLowerCase())) {
     if (/^(DISMISSED|PENDING)$/i.test(r.reviewState || "")) continue;
     const byLogin = identities[r.author];
     const family = byLogin && byLogin !== "shared" ? byLogin : familyFromHeading(r.body, all);
     const seat = (String(r.body || "").split("\n", 1)[0].match(/^#*\s*(review-[\w.@-]+)/i) || [])[1];
-    put(seat ? `seat:${seat}` : `login:${r.author}`, family, verdictOf(r.body, r.reviewState), r.url);
+    put(seat ? `seat:${seat}` : `login:${r.author}`, family, verdictOf(r.body, r.reviewState), r.url, r.at);
   }
-  if (status) put("status", familyFromDescription(status.description, all).family, status.state, status.url || "status");
+  if (statuses) for (const r of statusReviewers(statuses, { head, context, pr })) put(`seat:${r.seat}`, r.family, r.state === "success" ? "success" : "failure", r.by, r.at);
+  else if (status) put("status", familyFromDescription(status.description, all).family, status.state, status.url || "status");
   const fams = new Map();
   for (const { family, state, by } of latest.values())
     if (state === "success" && family && family !== authorFamily && FAMILIES.includes(family) && !fams.has(family)) fams.set(family, by);
@@ -667,6 +692,10 @@ export function riskProblems(risk) {
   if (!risk.ownerApproved) p.push(`MISSING: the ${OWNER_LABEL} label (risky ${risk.features.map((f) => f.id).join(", ")} needs the owner's OK, or a CULTURE standing approval cited when adding the label)`);
   return p;
 }
+
+// Pure: the seat a branch names: the starter kit's branch prefixes agent/, tests/, wp/ and plan/ all start with the
+// author's seat ("tests/impl-claude-ui-f006-tighten"), so its family is the author's. null for any other branch.
+export const branchSeat = (ref) => String(ref || "").match(/^(?:agent|tests|wp|plan)\/([\w.-]+)/)?.[1] ?? null;
 
 export function gather(pr, { repo, mission, slice, change, deploy, rollback, config, configPath, authorFamily } = {}) {
   const R = repo ? ["-R", repo] : [];
@@ -764,7 +793,7 @@ export function gather(pr, { repo, mission, slice, change, deploy, rollback, con
   // Comment sources read PR comments only. A GitHub review is its own source with its own eligibility (exact-head
   // commit, not dismissed or pending, a mapped login of another family), so it never re-enters as a "comment".
   const comments = notes.filter((n) => n.kind !== "review");
-  const author = { family: authorFamily || cfg.authorFamily || familyOf((v.headRefName || "").match(/^agent\/([\w.-]+)/)?.[1]) || null };
+  const author = { family: authorFamily || cfg.authorFamily || familyOf(branchSeat(v.headRefName)) || null };
   if (cfg.qa.source === "comments") { brb = qaFromComments(comments, cfg.qa.headingRe, v.headRefOid); brbWhere = `PR comments headed /${cfg.qa.heading}/`; }
   // No proof file for this head (a branch refresh left brb-<old head>.md): a QA seat's comment on the PR that
   // declares this exact head and a verdict carries it. The seat is self-declared in the comment, so it is shown as
@@ -847,7 +876,7 @@ export function gather(pr, { repo, mission, slice, change, deploy, rollback, con
     const t = featureTier(features, v.title);
     risk = { ...t, featuresFile, featuresError, authorFamily: author.family, ownerApproved: (v.labels || []).some((l) => l.name === OWNER_LABEL),
       reviewFamilies: t.tier === "risky" ? reviewFamilies({ notes, head: v.headRefOid, authorFamily: author.family, identities: cfg.identities || {},
-        headings: cfg.identityHeadingRes || [], status: statusRecord(statuses, cfg.review.context) }) : [] };
+        headings: cfg.identityHeadingRes || [], statuses, context: cfg.review.context, pr: v.number }) : [] };
   }
   return {
     pr: v.number, nwo, risk, head: v.headRefOid, base: v.baseRefOid, baseRef: v.baseRefName, headRef: v.headRefName,

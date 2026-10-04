@@ -6,7 +6,7 @@ import assert from "node:assert/strict";
 import * as fs from "node:fs";
 import { join, dirname } from "node:path";
 import { fileURLToPath } from "node:url";
-import { featureTier, reviewFamilies, riskProblems, OWNER_LABEL } from "../orchestration/merge-evidence.js";
+import { featureTier, reviewFamilies, riskProblems, OWNER_LABEL, statusReviewers, branchSeat, familyOf } from "../orchestration/merge-evidence.js";
 
 const repo = join(dirname(fileURLToPath(import.meta.url)), "..");
 const HEAD = "c".repeat(40), OTHER = "d".repeat(40);
@@ -75,4 +75,34 @@ test("the CLI holds a risky PR with MISSING lines before Jev is asked; gather re
   assert.match(src, /contents\/features\.json\?ref=\$\{encodeURIComponent\(v\.baseRefName\)\}/); assert.match(src, /mergeStateStatus,reviewDecision,isDraft,comments,reviews,labels"/);
   const role = fs.readFileSync(join(repo, "rig/template/agents/integrator/guidance/role.md"), "utf8");
   assert.match(role, /a risky feature .*agent-merge-evidence holds it .*two independent reviews from two families .*owner-approved/);
+});
+
+// 2026-10-04: every reviewer posts the independent-review status from ONE GitHub account, so the combined status shows
+// only the newest. The full list (one project's PR at 96b7d3a: three successes) must count every seat.
+test("independent-review statuses: every seat's newest, bound to this head, by the description's seat prefix", () => {
+  const H = "96b7d3a86d1af4b7862f260cc182641ced03de25", pr = 68, u = (x) => `https://github.com/o/r/pull/68#${x}`;
+  const st = (at, state, desc, url) => ({ context: "independent-review", created_at: at, state, description: desc, target_url: url });
+  const statuses = [
+    st("2026-10-04T05:43:16Z", "success", "review-codex (Codex): clean at exact head 96b7d3a", u("pullrequestreview-1")),
+    st("2026-10-04T04:27:56Z", "success", "review-kimi (Kimi K3): merge-only refresh clean at exact head 96b7d3a", u("pullrequestreview-2")),
+    st("2026-10-04T04:02:45Z", "success", "arch-claude (Opus): delta confirm at exact head 96b7d3a", u("issuecomment-3")),
+    { context: "jev-merge", created_at: "2026-10-04T05:50:00Z", state: "success", description: "review-grok: other context" },
+  ];
+  assert.deepEqual(statusReviewers(statuses, { head: H, pr }).map((r) => [r.seat, r.family, r.state]),
+    [["review-codex", "codex", "success"], ["review-kimi", "kimi", "success"], ["arch-claude", "claude", "success"]]);
+  assert.deepEqual(reviewFamilies({ head: H, authorFamily: "grok", statuses, pr }).map((r) => r.family).sort(), ["claude", "codex", "kimi"]);
+  assert.deepEqual(reviewFamilies({ head: H, authorFamily: "claude", statuses, pr }).map((r) => r.family).sort(), ["codex", "kimi"], "the author's family never counts");
+  // the author of that PR, from its branch: tests/impl-claude-ui-... is a claude seat's
+  assert.equal(familyOf(branchSeat("tests/impl-claude-ui-f006-tighten")), "claude");
+  for (const b of ["agent/impl-codex-2-x", "wp/impl-kimi-1-y", "plan/arch-grok-z"]) assert.ok(familyOf(branchSeat(b)), b);
+  assert.equal(branchSeat("feature/x"), null);
+  // a seat's newer non-success withdraws its older success; a status naming another head, or none and off this PR, doesn't count
+  const blocked = [...statuses, st("2026-10-04T06:00:00Z", "failure", "review-kimi (Kimi K3): BLOCK at exact head 96b7d3a", u("x"))];
+  assert.deepEqual(reviewFamilies({ head: H, authorFamily: "claude", statuses: blocked, pr }).map((r) => r.family), ["codex"]);
+  const other = [st("2026-10-04T05:00:00Z", "success", "review-kimi (Kimi K3): clean at exact head 1234567", u("y")), st("2026-10-04T05:00:00Z", "success", "review-grok: clean", "https://github.com/o/r/pull/69#z")];
+  assert.deepEqual(statusReviewers(other, { head: H, pr }), [], "another head, or another PR's link");
+  assert.deepEqual(statusReviewers([st("2026-10-04T05:00:00Z", "success", "review-grok: clean, no sha", u("w"))], { head: H, pr }).map((r) => r.family), ["grok"], "no sha but a link on this PR");
+  // statuses and comments of one seat: the newest wins
+  const comment = (at, verdict) => ({ body: `## review-kimi\nhead: ${H}\nVerdict: ${verdict}`, at, url: "c" });
+  assert.deepEqual(reviewFamilies({ notes: [comment("2026-10-04T07:00:00Z", "BLOCK")], head: H, authorFamily: "claude", statuses, pr }).map((r) => r.family), ["codex"], "a later BLOCK comment withdraws the seat's earlier status");
 });
