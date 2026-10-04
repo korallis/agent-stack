@@ -828,6 +828,19 @@ export function proveCarry({ nwo, base, head, from, seat, ciGreen, reviewContext
   return { ok: !problems.length, problems, from: A };
 }
 
+// Pure: the risk facts gather builds for a PR that names features (QA PR190: a comment once swallowed fields here, so
+// the wiring is a function the tests drive). labels: the PR's labels; comments: ALL its comments (an approval comment
+// often also reads as a gate report, which the evidence filter drops).
+export function riskFacts({ t, featuresFile, featuresError, authorFamily, reviewSeats = [], writers = [], labels = [], comments = [], head, cfg, reviewFamilies: fams = [] }) {
+  const has = (name) => (labels || []).some((l) => l.name === name);
+  return { ...t, featuresFile, featuresError, authorFamily, reviewSeats, writers,
+    approvedAtHead: ownerApprovalAtHead(comments, head),
+    standingApproval: cfg?.risk?.ownerApproval === "standing" ? cfg.risk.standing : null,
+    reducedReview: has(REDUCED_LABEL),
+    ownerApproved: has(OWNER_LABEL),
+    reviewFamilies: fams };
+}
+
 export function gather(pr, { repo, mission, slice, change, deploy, rollback, config, configPath, authorFamily } = {}) {
   const R = repo ? ["-R", repo] : [];
   const FIELDS = "number,title,body,createdAt,headRefOid,baseRefOid,baseRefName,headRefName,mergeable,mergeStateStatus,reviewDecision,isDraft,comments,reviews,labels";
@@ -1014,11 +1027,12 @@ export function gather(pr, { repo, mission, slice, change, deploy, rollback, con
     const t = featureTier(features, named);
     const reviewSeats = [];
     const writers = [branchSeat(v.headRefName), ...[...String(v.body || "").matchAll(/^\s*Author:\s*([\w.-]+)/gim)].map((m) => m[1])].filter(Boolean);
-    risk = { ...t, featuresFile, featuresError, authorFamily: author.family, reviewSeats, writers, approvedAtHead: ownerApprovalAtHead(allNotes.filter((n) => n.kind !== "review"), v.headRefOid), standingApproval: cfg.risk.ownerApproval === "standing" ? cfg.risk.standing : null,   // all comments: an approval may also read as a gate report reducedReview: (v.labels || []).some((l) => l.name === REDUCED_LABEL), ownerApproved: (v.labels || []).some((l) => l.name === OWNER_LABEL),
+    risk = riskFacts({ t, featuresFile, featuresError, authorFamily: author.family, reviewSeats, writers, labels: v.labels,
+      comments: allNotes.filter((n) => n.kind !== "review"), head: v.headRefOid, cfg,
       reviewFamilies: t.tier === "risky" ? reviewFamilies({ notes, head: v.headRefOid, authorFamily: author.family, identities: cfg.identities || {},
         headings: cfg.identityHeadingRes || [], statuses, context: cfg.review.context, pr: v.number, carries, seatsOut: reviewSeats,
         carry: (seat, from) => proveCarry({ nwo, base: v.baseRefName, head: v.headRefOid, from, seat, reviewContext: cfg.review.context,
-          ciGreen: (checks.length ? checks.every((c) => c.bucket === "pass") : (observedChecks || []).length > 0 && observedChecks.every((c) => c.bucket === "pass")) }) }) : [] };
+          ciGreen: (checks.length ? checks.every((c) => c.bucket === "pass") : (observedChecks || []).length > 0 && observedChecks.every((c) => c.bucket === "pass")) }) }) : [] });
     risk.carries = carries;
   }
   return {

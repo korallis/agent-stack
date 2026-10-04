@@ -193,7 +193,7 @@ test("reduced-review label: one other-family plus one same-family non-writer rev
   assert.doesNotMatch(String(buildMergeInput({ head: H, pr, base: "b".repeat(40), checks: [], reviewVerdict: null, independentReview: null, risk: {} }).review), /reduced review/);
   assert.equal(REDUCED_LABEL, "reduced-review");
   const src = fs.readFileSync(join(repo, "orchestration/merge-evidence.js"), "utf8");
-  assert.match(src, /reducedReview: \(v\.labels \|\| \[\]\)\.some\(\(l\) => l\.name === REDUCED_LABEL\)/);
+  assert.match(src, /reducedReview: has\(REDUCED_LABEL\),/);
 });
 
 // Labels don't move with the head: a risky PR also needs the approver's comment naming the EXACT head (2026-10-04).
@@ -211,7 +211,7 @@ test("owner approval at the exact head: the approver's 'owner-approved … by <a
     assert.equal(ownerApprovalAtHead([c(body)], H), false, why);
   // the operator's approval often also mentions the merge gate, so it reads as a gate report: gather must still see it
   const src = fs.readFileSync(join(repo, "orchestration/merge-evidence.js"), "utf8");
-  assert.match(src, /approvedAtHead: ownerApprovalAtHead\(allNotes\.filter\(\(n\) => n\.kind !== "review"\), v\.headRefOid\)/, "read from all comments, not the gate-report-filtered ones");
+  assert.match(src, /comments: allNotes\.filter\(\(n\) => n\.kind !== "review"\), head: v\.headRefOid, cfg,/, "read from all comments, not the gate-report-filtered ones");
   const risky = { tier: "risky", features: [{ id: "F-010" }], authorFamily: "claude", ownerApproved: true, reviewFamilies: [{ family: "codex" }, { family: "kimi" }] };
   assert.deepEqual(riskProblems({ ...risky, approvedAtHead: true }), []);
   assert.match(riskProblems({ ...risky, approvedAtHead: false }).join(), /MISSING: owner approval not confirmed at this head/);
@@ -232,4 +232,21 @@ test("per-repo config: a repo with a standing owner approval needs neither the l
   assert.deepEqual(riskProblems({ ...risky, standingApproval: "CULTURE D-29" }), [], "standing repo: neither is required");
   const inp = String(buildMergeInput({ head: "a".repeat(40), pr: 1, base: "b".repeat(40), checks: [], reviewVerdict: null, independentReview: null, risk: { tier: "risky", standingApproval: "CULTURE D-29" } }).review);
   assert.match(inp, /^owner approval: standing for this repository \(CULTURE D-29\); no owner-approved label or exact-head approval comment is required/m);
+});
+
+// QA PR190: an inline comment in gather once swallowed reducedReview and ownerApproved. riskFacts builds them from the
+// PR's labels and ALL its comments, and gather calls it.
+test("riskFacts: reducedReview and ownerApproved from the labels, the exact-head approval from all comments, standing from config", async () => {
+  const { riskFacts, resolveConfig } = await import("../orchestration/merge-evidence.js");
+  const H = "1fdda5e53f917277732d5a0d0fd4d33e0cb48fef", t = { tier: "risky", features: [{ id: "F-010" }], ids: ["F-010"] };
+  const labels = [{ name: "owner-approved" }, { name: "reduced-review" }];
+  const comments = [{ body: `reduced-review plus owner-approved re-confirmed by operator-agent@kernel at refreshed head ${H} (merge gate re-run follows)` }];
+  const r = riskFacts({ t, featuresFile: "read", authorFamily: "claude", labels, comments, head: H, cfg: resolveConfig(null, "o/r") });
+  assert.deepEqual([r.tier, r.reducedReview, r.ownerApproved, r.approvedAtHead, r.standingApproval], ["risky", true, true, true, null]);
+  const none = riskFacts({ t, authorFamily: "claude", labels: [], comments: [], head: H, cfg: resolveConfig(null, "o/r") });
+  assert.deepEqual([none.reducedReview, none.ownerApproved, none.approvedAtHead], [false, false, false]);
+  const standing = riskFacts({ t, authorFamily: "claude", labels: [], comments: [], head: H, cfg: resolveConfig({ risk: { ownerApproval: "standing", standing: "CULTURE D-29" } }, "o/r") });
+  assert.equal(standing.standingApproval, "CULTURE D-29");
+  const src = fs.readFileSync(join(repo, "orchestration/merge-evidence.js"), "utf8");
+  assert.match(src, /risk = riskFacts\(\{ t, featuresFile, featuresError, authorFamily: author\.family, reviewSeats, writers, labels: v\.labels,\n      comments: allNotes\.filter\(\(n\) => n\.kind !== "review"\), head: v\.headRefOid, cfg,/, "gather builds risk through riskFacts");
 });
