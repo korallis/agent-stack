@@ -11,7 +11,7 @@ import { fileURLToPath } from "node:url";
 const repo = join(dirname(fileURLToPath(import.meta.url)), "..");
 process.env.AGENT_STACK_STATE ??= fs.mkdtempSync(join(fs.existsSync("/tmp/claude-1000") ? "/tmp/claude-1000" : "/tmp", "fallbacks-"));
 const { seatInfo, eligibleFamilies, seatAvailable, servableAt, pickSeat, pickFor, reviewerFor, ROLE_CHAIN, PROVIDER_FAMILY } = await import("../orchestration/lib.js");
-const { plan, blocked, resumes } = await import("../orchestration/reroute.js");
+const { plan, blocked, resumes, renudges } = await import("../orchestration/reroute.js");
 const { ruleClass } = await import("../orchestration/recover.js");
 
 const node = (id, runtime, o = {}) => ({ logicalId: id, canonicalSessionName: `${id.replace(".", "-")}@app`, runtime, model: o.model ?? null,
@@ -519,4 +519,39 @@ test("agent-reroute end to end: a reviewer switched off a cooling model with /mo
   assert.deepEqual(kept.out.moves, [], "live model Opus 5.5 isn't cooling: nothing moves");
   const moved = cli("reroute.js", [], { nodes, rows, proxy, state: fs.mkdtempSync(join(process.env.AGENT_STACK_STATE, "live-")) });
   assert.equal(moved.out.moves[0]?.to, "review-kimi@app", "control: still on the cooling model, the row moves");
+});
+
+// agent-renudge (2026-10-04): a seat that saw a handoff mid-turn, never claimed it and lost it at compaction sits idle
+// beside the unclaimed row; nothing re-delivers it. One reminder per row, only to an idle, running, servable seat.
+test("renudges: one reminder for a delivered, unclaimed row 10+ min old whose seat is idle now; never for a human, a busy seat or twice", () => {
+  const now = Date.now(), ago = (m) => new Date(now - m * 60e3).toISOString();
+  const all = [node("qa.codex-1", "codex", { model: "gpt-6.1-sol" }), node("qa.codex-2", "codex", { model: "gpt-6.1-sol", working: true })].map(seatInfo);
+  const fam = eligibleFamilies([acct("codex"), acct("claude")]);
+  const row = (o = {}) => ({ id: "q1", state: "pending", destination: "qa-codex-1@app", created: ago(15), claimedAt: null, lastNudgeResult: "delivered-ack-pending", tags: [], ...o });
+  const one = renudges([row()], all, fam, { now });
+  assert.deepEqual(one.map((n) => [n.id, n.seat, n.waited_min]), [["q1", "qa-codex-1@app", 15]]);
+  assert.match(one[0].text, /^\[agent-renudge\] Queue handoff reminder: q1 is still unclaimed after 15 min\. Claim it now with rig queue claim q1/);
+  assert.equal(renudges([row({ lastNudgeResult: "verified" })], all, fam, { now }).length, 1, "verified but still unclaimed");
+  for (const [why, r, o] of [
+    ["too young", row({ created: ago(5) }), {}], ["claimed", row({ claimedAt: ago(1) }), {}], ["in progress", row({ state: "in-progress" }), {}],
+    ["a failed nudge (the ladder's job)", row({ lastNudgeResult: "failed:unreachable" }), {}], ["never nudged", row({ lastNudgeResult: null }), {}],
+    ["a human", row({ destination: "human@app" }), {}], ["the owner's decision", row({ tags: ["owner-decision"] }), {}],
+    ["a busy seat", row({ destination: "qa-codex-2@app" }), {}], ["no such seat", row({ destination: "gone@app" }), {}],
+    ["already reminded", row(), { done: new Set(["q1"]) }], ["moved this pass", row(), { moving: new Set(["q1"]) }],
+  ]) assert.deepEqual(renudges([r], all, fam, { now, ...o }), [], why);
+  // a seat the proxy can't serve isn't reminded (reroute moves its rows instead)
+  assert.deepEqual(renudges([row()], all, eligibleFamilies([acct("codex", { over_limit: true })]), { now }), []);
+});
+
+test("agent-reroute --apply sends the reminder once per row and remembers it", () => {
+  const state = fs.mkdtempSync(join(process.env.AGENT_STACK_STATE, "renudge-")), ago = new Date(Date.now() - 15 * 60e3).toISOString();
+  const nodes = [node("qa.codex-1", "codex", { model: "gpt-6.1-sol" })];
+  const rows = [{ qitemId: "q-7", state: "pending", destinationSession: "qa-codex-1@app", sourceSession: "lead@app", tags: [], tsCreated: ago, tsUpdated: ago, claimedAt: null, lastNudgeResult: "delivered-ack-pending" }];
+  const one = cli("reroute.js", ["--apply"], { nodes, rows, proxy: [acct("codex")], state });
+  assert.deepEqual(one.out.reminders.map((n) => [n.id, n.seat, n.sent]), [["q-7", "qa-codex-1@app", true]]);
+  assert.match(one.calls, /rig send qa-codex-1@app \[agent-renudge\] Queue handoff reminder: q-7/);
+  const two = cli("reroute.js", ["--apply"], { nodes, rows, proxy: [acct("codex")], state });
+  assert.deepEqual(two.out.reminders, [], "once per row"); assert.doesNotMatch(two.calls, /agent-renudge/);
+  const dry = cli("reroute.js", [], { nodes, rows, proxy: [acct("codex")], state: fs.mkdtempSync(join(process.env.AGENT_STACK_STATE, "renudge-dry-")) });
+  assert.equal(dry.out.reminders.length, 1); assert.doesNotMatch(dry.calls, /rig send/, "without --apply: reported, not sent");
 });
