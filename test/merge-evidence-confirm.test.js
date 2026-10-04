@@ -50,13 +50,14 @@ test("confirmProblems: on this PR, an other-family seat, its own 'confirm <exact
   ]) assert.match(ok(body, o).problems.join("; "), re, why);
 });
 
+// printf, not echo: dash's echo (hosted Ubuntu's /bin/sh) turns the JSON's \n into a raw newline, which JSON.parse refuses
 function stubGh() {
   const d = fs.mkdtempSync(join(root, "gh-")), bin = join(d, "bin"); fs.mkdirSync(bin);
   fs.writeFileSync(join(bin, "gh"), `#!/bin/sh
 n=$(ls "${d}" | grep -c '^call-'); printf '%s\\n' "$@" > "${d}/call-$((n + 1))"
 case "$*" in
-  *issues/comments/5976370520*) echo '{"body":"## review-kimi\\nconfirm ${HEAD}","html_url":"${URL}"}' ;;
-  *pulls/68/reviews/77*) echo '{"body":"## review-codex\\nconfirm ${HEAD}"}' ;;
+  *issues/comments/5976370520*) printf '%s\\n' '{"body":"## review-kimi\\nconfirm ${HEAD}","html_url":"${URL}"}' ;;
+  *pulls/68/reviews/77*) printf '%s\\n' '{"body":"## review-codex\\nconfirm ${HEAD}"}' ;;
   *statuses/*) echo '{}' ;;
   *) echo "unexpected: $*" >&2; exit 1 ;;
 esac
